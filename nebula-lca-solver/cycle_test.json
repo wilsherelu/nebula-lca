@@ -1,0 +1,213 @@
+{
+  "model": {
+    "model_id": "c1e243b9-0091-4f53-8cbc-e191d07c35d0",
+    "model_uuid": "c1e243b9-0091-4f53-8cbc-e191d07c35d0",
+    "model_name": "石化循环计算测试",
+    "export_time": "2026-01-06T14:34:45.116Z",
+    "tiangong_commit": null,
+    "schema_version": "1.1"
+  },
+  "processes": [
+    {
+      "process_uuid": "e9e5ee4e-aedc-4d6f-a579-a240dd55ae89",
+      "process_name": "原油-甲醇",
+      "reference_product_flow_uuid": "1"
+    },
+    {
+      "process_uuid": "1a3f8d1c-6351-4299-b857-6f06ac9a1fc8",
+      "process_name": "甲醇-原油",
+      "reference_product_flow_uuid": "0"
+    }
+  ],
+  "flows": [
+    {
+      "flow_uuid": "7fd5ee11-bcf8-47eb-83b4-778ed51eac29",
+      "flow_name": "重油",
+      "flow_type": "Product flow",
+      "default_unit_uuid": "0",
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66"
+    },
+    {
+      "flow_uuid": "adbc8430-7937-4ade-b7a5-cb1797dda661",
+      "flow_name": "甲醇（市场平均）",
+      "flow_type": "Product flow",
+      "default_unit_uuid": "0",
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66"
+    },
+    {
+      "flow_uuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+      "flow_name": "二氧化碳（化石源）",
+      "flow_type": "Elementary flow",
+      "default_unit_uuid": "0",
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66"
+    }
+  ],
+  "exchanges": [
+    {
+      "exchange_id": "0",
+      "process_uuid": "e9e5ee4e-aedc-4d6f-a579-a240dd55ae89",
+      "flow_uuid": "7fd5ee11-bcf8-47eb-83b4-778ed51eac29",
+      "direction": "input",
+      "amount": 0.5,
+      "is_reference_product": false,
+      "allocation_fraction": null
+    },
+    {
+      "exchange_id": "1",
+      "process_uuid": "e9e5ee4e-aedc-4d6f-a579-a240dd55ae89",
+      "flow_uuid": "adbc8430-7937-4ade-b7a5-cb1797dda661",
+      "direction": "output",
+      "amount": 1,
+      "is_reference_product": false,
+      "allocation_fraction": "10%"
+    },
+    {
+      "exchange_id": "2",
+      "process_uuid": "e9e5ee4e-aedc-4d6f-a579-a240dd55ae89",
+      "flow_uuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+      "direction": "output",
+      "amount": 0.2,
+      "is_reference_product": false,
+      "allocation_fraction": null
+    },
+    {
+      "exchange_id": "0",
+      "process_uuid": "1a3f8d1c-6351-4299-b857-6f06ac9a1fc8",
+      "flow_uuid": "7fd5ee11-bcf8-47eb-83b4-778ed51eac29",
+      "direction": "output",
+      "amount": 1,
+      "is_reference_product": false,
+      "allocation_fraction": "10%"
+    },
+    {
+      "exchange_id": "1",
+      "process_uuid": "1a3f8d1c-6351-4299-b857-6f06ac9a1fc8",
+      "flow_uuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+      "direction": "output",
+      "amount": 1,
+      "is_reference_product": false,
+      "allocation_fraction": null
+    },
+    {
+      "exchange_id": "2",
+      "process_uuid": "1a3f8d1c-6351-4299-b857-6f06ac9a1fc8",
+      "flow_uuid": "adbc8430-7937-4ade-b7a5-cb1797dda661",
+      "direction": "input",
+      "amount": 0.5,
+      "is_reference_product": false,
+      "allocation_fraction": null
+    }
+  ],
+  "flow_properties": [
+    {
+      "flow_property_uuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+      "flow_property_name": "质量",
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66"
+    }
+  ],
+  "unit_groups": [
+    {
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+      "unit_group_name": "质量",
+      "reference_unit_uuid": "0"
+    }
+  ],
+  "units": [
+    {
+      "unit_uuid": "0",
+      "unit_name": "kg",
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+      "conversion_factor_to_reference": "1.0"
+    },
+    {
+      "unit_uuid": "1",
+      "unit_name": "t",
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+      "conversion_factor_to_reference": "1000.0"
+    },
+    {
+      "unit_uuid": "2",
+      "unit_name": "lb av",
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+      "conversion_factor_to_reference": "0.45359237"
+    },
+    {
+      "unit_uuid": "3",
+      "unit_name": "Mg",
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+      "conversion_factor_to_reference": "1000.0"
+    },
+    {
+      "unit_uuid": "4",
+      "unit_name": "kt",
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+      "conversion_factor_to_reference": "2.0E-4"
+    },
+    {
+      "unit_uuid": "5",
+      "unit_name": "oz av",
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+      "conversion_factor_to_reference": "0.028349523125"
+    },
+    {
+      "unit_uuid": "6",
+      "unit_name": "oz t",
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+      "conversion_factor_to_reference": "0.0311034768"
+    },
+    {
+      "unit_uuid": "7",
+      "unit_name": "sh tn",
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+      "conversion_factor_to_reference": "907.18474"
+    },
+    {
+      "unit_uuid": "8",
+      "unit_name": "long tn",
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+      "conversion_factor_to_reference": "1016.0469088"
+    },
+    {
+      "unit_uuid": "9",
+      "unit_name": "g",
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+      "conversion_factor_to_reference": "0.0010"
+    },
+    {
+      "unit_uuid": "10",
+      "unit_name": "mg",
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+      "conversion_factor_to_reference": "1.0E-6"
+    },
+    {
+      "unit_uuid": "11",
+      "unit_name": "ug",
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+      "conversion_factor_to_reference": "1.0E-9"
+    },
+    {
+      "unit_uuid": "12",
+      "unit_name": "ng",
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+      "conversion_factor_to_reference": "1.0E-12"
+    },
+    {
+      "unit_uuid": "13",
+      "unit_name": "pg",
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+      "conversion_factor_to_reference": "1.0E-15"
+    }
+  ],
+  "links": [
+    {
+      "consumer_process_uuid": "1a3f8d1c-6351-4299-b857-6f06ac9a1fc8",
+      "provider_process_uuid": "e9e5ee4e-aedc-4d6f-a579-a240dd55ae89",
+      "flow_uuid": "adbc8430-7937-4ade-b7a5-cb1797dda661"
+    },
+    {
+      "consumer_process_uuid": "e9e5ee4e-aedc-4d6f-a579-a240dd55ae89",
+      "provider_process_uuid": "1a3f8d1c-6351-4299-b857-6f06ac9a1fc8",
+      "flow_uuid": "7fd5ee11-bcf8-47eb-83b4-778ed51eac29"
+    }
+  ]
+}

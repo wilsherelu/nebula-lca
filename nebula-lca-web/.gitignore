@@ -1,0 +1,32 @@
+﻿node_modules/
+dist/
+.venv/
+.vscode/
+.idea/
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# local build/cache
+*.tsbuildinfo
+
+# local env
+.env
+.env.*.local
+
+# temp/local recovery files
+lcaGraphStorebackup.ts
+tmp_diff_store.txt
+tmp_pts_update*.json
+.recovery/
+
+# local-only docs and db snapshots
+docs/
+*.md
+*.db
+*.db-*
+*.db.*

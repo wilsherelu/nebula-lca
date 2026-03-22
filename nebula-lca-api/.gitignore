@@ -1,0 +1,36 @@
+﻿.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE/system
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# local runtime/data
+*.db
+*.db-*
+*.db.*
+*.sqlite
+*.sqlite3
+*.log
+*.out
+*.err
+
+# local-only docs
+docs/
+*.md
+
+# temp/work files
+tmp/
+archive/
+_tmp*
+_write_test*
+lca_demo.backup_*
+
+# env
+.env
+.env.*

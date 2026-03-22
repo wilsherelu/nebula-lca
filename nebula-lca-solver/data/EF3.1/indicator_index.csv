@@ -1,0 +1,26 @@
+﻿indicator_index;method_en;method_zh;indicator_en;indicator_zh;ecoinvent_category
+0;Acidification;酸雨;Acidification - Accumulated Exceedance (AE);;acidification
+1;Climate change;气候变化;Climate change - Radiative forcing as Global Warming Potential (GWP100);;climate change
+2;Climate change-Biogenic;气候变化-生物源;Climate change - Radiative forcing as Global Warming Potential (GWP100);;climate change: biogenic
+3;Climate change-Fossil;气候变化-化石源;Climate change - Radiative forcing as Global Warming Potential (GWP100);;climate change: fossil
+4;Climate change-Land use and land use change;气候变化-土地利用和土地利用改变;Climate change - Radiative forcing as Global Warming Potential (GWP100);;climate change: land use and land use change
+5;Ecotoxicity, freshwater;生态毒性, 淡水;Aquatic eco-toxicity - Comparative Toxic Unit for ecosystems (CTUe);;ecotoxicity: freshwater
+6;Ecotoxicity, freshwater-inorganics;生态毒性, 淡水-无机物;Aquatic eco-toxicity - Comparative Toxic Unit for ecosystems (CTUe);;ecotoxicity: freshwater, inorganics
+7;Ecotoxicity, freshwater-organics;;Aquatic eco-toxicity - Comparative Toxic Unit for ecosystems (CTUe);;ecotoxicity: freshwater, organics
+8;Resource use, fossils;资源消耗, 化石能源;Abiotic resource depletion - Abiotic resource depletion fossil fuels (ADP-fossil);;energy resources: non-renewable
+9;Eutrophication, freshwater;富营养化, 淡水;Aquatic Eutrophication - Fraction of nutrients reaching freshwater end compartment (P);;eutrophication: freshwater
+10;Eutrophication marine;富营养化, 海水;Aquatic Eutrophication - Fraction of nutrients reaching marine end compartment (N);;eutrophication: marine
+11;Eutrophication, terrestrial;富营养化, 陆地;Terrestrial Eutrophication - Accumulated Exceedance (AE);;eutrophication: terrestrial
+12;Human toxicity, cancer;人类毒性, 致癌;Cancer human health effects - Comparative Toxic Unit for human (CTUh);;human toxicity: carcinogenic
+13;Human toxicity, cancer-inorganics;人类毒性, 致癌-无机物;Cancer human health effects - Comparative Toxic Unit for human (CTUh);;human toxicity: carcinogenic, inorganics
+14;Human toxicity, cancer-organics;人类毒性, 致癌-有机物;Cancer human health effects - Comparative Toxic Unit for human (CTUh);;human toxicity: carcinogenic, organics
+15;Human toxicity, non-cancer;人类毒性, 非致癌;Non-cancer human health effects - Comparative Toxic Unit for human (CTUh);;human toxicity: non-carcinogenic
+16;Human toxicity, non-cancer_inorganics;人类毒性, 非致癌-无机物;Non-cancer human health effects - Comparative Toxic Unit for human (CTUh);;human toxicity: non-carcinogenic, inorganics
+17;Human toxicity, non-cancer_organics;人类毒性, 非致癌-有机物;Non-cancer human health effects - Comparative Toxic Unit for human (CTUh);;human toxicity: non-carcinogenic, organics
+18;Ionising radiation, human health;电离辐射, 人类健康;Ionizing radiation - Human exposure efficiency relative to U235;;ionising radiation: human health
+19;Land use;土地利用;Land use - Soil quality index;;land use
+20;Resource use, minerals and metals;资源消耗, 矿物和金属;Abiotic resource depletion - Abiotic resource depletion (ADP ultimate reserve);;material resources: metals/minerals
+21;Ozone depletion;臭氧消耗;Ozone depletion - Ozone Depletion Potential (ODP);;ozone depletion
+22;EF-particulate Matter;颗粒物;Respiratory inorganics - Impact on human health;;particulate matter formation
+23;Photochemical ozone formation - human health;光化学烟雾, 人类健康;Photochemical ozone creation - Tropospheric ozone concentration increase;;photochemical oxidant formation: human health
+24;Water use;水资源消耗;other - User deprivation potential (deprivation-weighted water consumption);;water use

@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package tiangong.mmr;
+
+message SparseEntry {
+  uint32 row = 1;
+  uint32 col = 2;
+  double value = 3;
+}
+
+message SparseMatrix {
+  uint32 rows = 1;
+  uint32 cols = 2;
+  repeated SparseEntry entries = 3;
+}
+
+message MMR {
+  string mmr_version = 1;
+  string generated_at = 2;
+  string source_snapshot_id = 3;
+  string solver_version = 4;
+  map<string, string> params = 5;
+
+  // index -> process_uuid
+  repeated string process_index = 6;
+  // index -> elementary flow uuid
+  repeated string elementary_flow_index = 7;
+
+  SparseMatrix A = 8;
+  SparseMatrix B = 9;
+}

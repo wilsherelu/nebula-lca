@@ -1,0 +1,100 @@
+{
+  "graph": {
+    "functionalUnit": "1 kg 对二甲苯",
+    "metadata": {
+      "source": "lca-graph-editor"
+    },
+    "nodes": [
+      {
+        "id": "node_a",
+        "node_kind": "unit_process",
+        "process_uuid": "proc_continuous_reforming",
+        "name": "连续重整",
+        "location": "CN-SH",
+        "reference_product": "重整油",
+        "inputs": [
+          {
+            "id": "in_1",
+            "flowUuid": "flow_naphtha",
+            "name": "石脑油",
+            "unit": "kg",
+            "amount": 1000,
+            "type": "technosphere",
+            "direction": "input",
+            "showOnNode": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "out_1",
+            "flowUuid": "flow_reformate",
+            "name": "重整油",
+            "unit": "kg",
+            "amount": 700,
+            "type": "technosphere",
+            "direction": "output",
+            "showOnNode": true
+          }
+        ],
+        "emissions": [
+          {
+            "id": "em_1",
+            "flowUuid": "flow_co2",
+            "name": "CO2",
+            "unit": "kg",
+            "amount": 12.5,
+            "type": "biosphere",
+            "direction": "output",
+            "showOnNode": true
+          }
+        ]
+      },
+      {
+        "id": "node_b",
+        "node_kind": "unit_process",
+        "process_uuid": "proc_distillation",
+        "name": "芳烃分馏",
+        "location": "CN-SH",
+        "reference_product": "混合芳烃",
+        "inputs": [
+          {
+            "id": "in_1",
+            "flowUuid": "flow_reformate",
+            "name": "重整油",
+            "unit": "kg",
+            "amount": 700,
+            "type": "technosphere",
+            "direction": "input",
+            "showOnNode": true
+          }
+        ],
+        "outputs": [
+          {
+            "id": "out_1",
+            "flowUuid": "flow_aromatic_mix",
+            "name": "混合芳烃",
+            "unit": "kg",
+            "amount": 650,
+            "type": "technosphere",
+            "direction": "output",
+            "showOnNode": true
+          }
+        ],
+        "emissions": []
+      }
+    ],
+    "exchanges": [
+      {
+        "id": "edge_1",
+        "fromNode": "node_a",
+        "toNode": "node_b",
+        "flowUuid": "flow_reformate",
+        "flowName": "重整油",
+        "amount": 700,
+        "unit": "kg",
+        "type": "technosphere",
+        "allocation": "physical"
+      }
+    ]
+  }
+}

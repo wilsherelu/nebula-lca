@@ -1,0 +1,26 @@
+﻿indicator_index,method_en,method_zh,indicator_en,indicator_zh,LCIA_unit
+0,Acidification,酸雨,Acidification - Accumulated Exceedance (AE),酸化潜势—累积超额（AE）,mol H+-Eq
+1,Climate change,气候变化,Climate change - Radiative forcing as Global Warming Potential (GWP100),气候变化—全球变暖潜势（GWP100）,kg CO2-Eq
+2,Climate change-Biogenic,气候变化-生物源,Climate change - Radiative forcing as Global Warming Potential (GWP100),气候变化—全球变暖潜势（GWP100）,kg CO2-Eq
+3,Climate change-Fossil,气候变化-化石源,Climate change - Radiative forcing as Global Warming Potential (GWP100),气候变化—全球变暖潜势（GWP100）,kg CO2-Eq
+4,Climate change-Land use and land use change,气候变化-土地利用和土地利用改变,Climate change - Radiative forcing as Global Warming Potential (GWP100),气候变化—全球变暖潜势（GWP100）,kg CO2-Eq
+5,"Ecotoxicity, freshwater","生态毒性, 淡水",Aquatic eco-toxicity - Comparative Toxic Unit for ecosystems (CTUe),水生生态毒性—生态系统比较毒性单位（CTUe）,CTUe
+6,"Ecotoxicity, freshwater-inorganics","生态毒性, 淡水-无机物",Aquatic eco-toxicity - Comparative Toxic Unit for ecosystems (CTUe),水生生态毒性—生态系统比较毒性单位（CTUe）,CTUe
+7,"Ecotoxicity, freshwater-organics","生态毒性, 淡水-有机物",Aquatic eco-toxicity - Comparative Toxic Unit for ecosystems (CTUe),水生生态毒性—生态系统比较毒性单位（CTUe）,CTUe
+8,"Resource use, fossils","资源消耗, 化石能源",Abiotic resource depletion - Abiotic resource depletion fossil fuels (ADP-fossil),非生物资源枯竭—化石资源枯竭（ADP-fossil）,"MJ, net calorific value"
+9,"Eutrophication, freshwater","富营养化, 淡水",Aquatic Eutrophication - Fraction of nutrients reaching freshwater end compartment (P),水体富营养化—进入淡水终端环境的营养物质比例（P）,kg P-Eq
+10,Eutrophication marine,"富营养化, 海水",Aquatic Eutrophication - Fraction of nutrients reaching marine end compartment (N),水体富营养化—进入海洋终端环境的营养物质比例（N）,kg N-Eq
+11,"Eutrophication, terrestrial","富营养化, 陆地",Terrestrial Eutrophication - Accumulated Exceedance (AE),陆地富营养化—累积超额（AE）,mol N-Eq
+12,"Human toxicity, cancer","人类毒性, 致癌",Cancer human health effects - Comparative Toxic Unit for human (CTUh),人类健康致癌效应—人体比较毒性单位（CTUh）,CTUh
+13,"Human toxicity, cancer-inorganics","人类毒性, 致癌-无机物",Cancer human health effects - Comparative Toxic Unit for human (CTUh),人类健康致癌效应—人体比较毒性单位（CTUh）,CTUh
+14,"Human toxicity, cancer-organics","人类毒性, 致癌-有机物",Cancer human health effects - Comparative Toxic Unit for human (CTUh),人类健康致癌效应—人体比较毒性单位（CTUh）,CTUh
+15,"Human toxicity, non-cancer","人类毒性, 非致癌",Non-cancer human health effects - Comparative Toxic Unit for human (CTUh),人类健康非致癌效应—人体比较毒性单位（CTUh）,CTUh
+16,"Human toxicity, non-cancer_inorganics","人类毒性, 非致癌-无机物",Non-cancer human health effects - Comparative Toxic Unit for human (CTUh),人类健康非致癌效应—人体比较毒性单位（CTUh）,CTUh
+17,"Human toxicity, non-cancer_organics","人类毒性, 非致癌-有机物",Non-cancer human health effects - Comparative Toxic Unit for human (CTUh),人类健康非致癌效应—人体比较毒性单位（CTUh）,CTUh
+18,"Ionising radiation, human health","电离辐射, 人类健康",Ionizing radiation - Human exposure efficiency relative to U235,电离辐射—相对于U235的人体暴露效率,kBq U235-Eq
+19,Land use,土地利用,Land use - Soil quality index,土地利用—土壤质量指数,dimensionless
+20,"Resource use, minerals and metals","资源消耗, 矿物和金属",Abiotic resource depletion - Abiotic resource depletion (ADP ultimate reserve),非生物资源枯竭—资源终极储量枯竭（ADP ultimate reserve）,kg Sb-Eq
+21,Ozone depletion,臭氧消耗,Ozone depletion - Ozone Depletion Potential (ODP),臭氧层消耗—臭氧消耗潜势（ODP）,kg CFC-11-Eq
+22,EF-particulate Matter,颗粒物,Respiratory inorganics - Impact on human health,呼吸性无机物—对人体健康影响,disease incidence
+23,Photochemical ozone formation - human health,"光化学烟雾, 人类健康",Photochemical ozone creation - Tropospheric ozone concentration increase,光化学臭氧生成—对流层臭氧浓度增加,kg NMVOC-Eq
+24,Water use,水资源消耗,other - User deprivation potential (deprivation-weighted water consumption),其他—用户剥夺潜势（基于缺水加权的用水消耗）,m3 world Eq deprived

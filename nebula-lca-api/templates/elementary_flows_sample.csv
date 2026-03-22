@@ -1,0 +1,4 @@
+﻿flow_uuid,flow_name_zh,flow_name_en,flow_type,default_unit,unit_group,compartment,lcia_key,is_active,updated_at
+08a91e70-3ddc-11dd-923d-0050c2490048,二氧化碳（化石源）,Carbon dioxide (fossil),Elementary flow,kg,mass,air,08a91e70-3ddc-11dd-923d-0050c2490048,true,2026-02-12
+08a91e70-3ddc-11dd-924e-0050c2490048,甲烷（化石源）,Methane (fossil),Elementary flow,kg,mass,air,08a91e70-3ddc-11dd-924e-0050c2490048,true,2026-02-12
+fe0acd60-3ddc-11dd-ac4a-0050c2490048,二氧化硫,Sulfur dioxide,Elementary flow,kg,mass,air,fe0acd60-3ddc-11dd-ac4a-0050c2490048,true,2026-02-12
