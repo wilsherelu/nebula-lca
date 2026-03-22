@@ -1,0 +1,89 @@
+name: ${COMPOSE_PROJECT_NAME:-nebula-lca}
+
+services:
+  nebula-lca-solver:
+    build:
+      context: ./nebula-lca-solver
+      dockerfile: Dockerfile
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).status == 200 else sys.exit(1)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - nebula-lca-net
+    restart: unless-stopped
+
+  nebula-lca-api:
+    build:
+      context: ./nebula-lca-api
+      dockerfile: Dockerfile
+    depends_on:
+      nebula-lca-solver:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: sqlite:////app/data/runtime/lca_demo.db
+      NEBULA_LCA_SOLVER_API_URL: http://nebula-lca-solver:8000
+      NEBULA_LCA_EF31_DIR: /app/data/EF3.1
+      DEBUG: ${DEBUG:-false}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-change_me}
+      AUTO_BOOTSTRAP_REFERENCE_DATA_ON_STARTUP: ${AUTO_BOOTSTRAP_REFERENCE_DATA_ON_STARTUP:-true}
+      KEEP_LATEST_VERSIONS_PER_PROJECT: ${KEEP_LATEST_VERSIONS_PER_PROJECT:-1000}
+      AUTO_PRUNE_ON_STARTUP: ${AUTO_PRUNE_ON_STARTUP:-true}
+      AUTO_VACUUM_AFTER_PRUNE_ON_STARTUP: ${AUTO_VACUUM_AFTER_PRUNE_ON_STARTUP:-false}
+    expose:
+      - "18080"
+    volumes:
+      - nebula-lca-api-data:/app/data/runtime
+      - ./nebula-lca-api/data/Tiangong:/app/data/Tiangong:ro
+      - ./nebula-lca-api/data/EF3.1:/app/data/EF3.1:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:18080/health', timeout=5).status == 200 else sys.exit(1)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    networks:
+      - nebula-lca-net
+    restart: unless-stopped
+
+  nebula-lca-web:
+    build:
+      context: ./nebula-lca-web
+      dockerfile: Dockerfile
+    depends_on:
+      nebula-lca-api:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-16988}:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - nebula-lca-net
+    restart: unless-stopped
+
+networks:
+  nebula-lca-net:
+    driver: bridge
+
+volumes:
+  nebula-lca-api-data:

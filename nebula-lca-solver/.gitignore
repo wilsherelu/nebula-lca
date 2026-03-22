@@ -1,0 +1,31 @@
+# Python virtual environment
+.venv/
+venv/
+refcode/
+# Generated outputs
+exports/
+# MMR protobufs
+mmr_*.pb
+# Local release notes
+RELEASE_CHECKLIST.md
+docs/
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# VS Code
+.vscode/
+# PyCharm
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# pytest
+.pytest_cache/
+
+# mypy
+.mypy_cache/

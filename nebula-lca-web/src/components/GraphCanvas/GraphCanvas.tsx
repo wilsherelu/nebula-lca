@@ -1,0 +1,844 @@
+﻿import {
+  Background,
+  Controls,
+  ReactFlow,
+  ReactFlowProvider,
+  type Connection,
+  type Viewport,
+  useReactFlow,
+} from "@xyflow/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type React from "react";
+import { LcaExchangeEdge } from "./LcaExchangeEdge";
+import { LcaProcessNode } from "./LcaProcessNode";
+import { useLcaGraphStore } from "../../store/lcaGraphStore";
+
+const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
+const API_BASE = RAW_API_BASE.endsWith("/api") ? RAW_API_BASE : `${RAW_API_BASE}/api`;
+
+type HandleValidationIssue = {
+  edge_id?: string;
+  suggested_source_port_id?: string;
+  suggested_target_port_id?: string;
+};
+
+type HandleValidationResponse = {
+  ok?: boolean;
+  issues?: HandleValidationIssue[];
+};
+
+const parseHandlePortId = (handleId: string | null | undefined, prefix: "in:" | "out:"): string | undefined => {
+  if (!handleId) {
+    return undefined;
+  }
+  const candidates = prefix === "in:" ? ["in:", "inl:", "inr:"] : ["out:", "outl:", "outr:"];
+  const matched = candidates.find((p) => handleId.startsWith(p));
+  return matched ? handleId.slice(matched.length) : undefined;
+};
+
+const buildHandleWithSameSide = (
+  handleId: string | null | undefined,
+  prefix: "in:" | "out:",
+  portId: string,
+): string => {
+  const sidePrefixes = prefix === "in:" ? ["inl:", "inr:", "in:"] : ["outl:", "outr:", "out:"];
+  const matched = sidePrefixes.find((p) => Boolean(handleId && handleId.startsWith(p)));
+  return `${matched ?? prefix}${portId}`;
+};
+
+const matchesPortId = (
+  port: { id: string; legacyPortId?: string; flowUuid: string },
+  portId: string | undefined,
+  flowUuid: string,
+): boolean => {
+  if (!portId || port.flowUuid !== flowUuid) {
+    return false;
+  }
+  return port.id === portId || String(port.legacyPortId ?? "").trim() === portId;
+};
+
+const nodeTypes = {
+  lcaProcess: LcaProcessNode,
+};
+
+const edgeTypes = {
+  lcaExchange: LcaExchangeEdge,
+};
+
+function GraphCanvasInner(props: {
+  onBeforeAutoConnect?: () => Promise<void> | void;
+  onRequestUnpackPts?: (nodeId: string) => Promise<void> | void;
+  onOpenProjectTarget?: () => void;
+}) {
+  const [interactionMode, setInteractionMode] = useState<"cursor" | "hand">("hand");
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [hoverDropNodeId, setHoverDropNodeId] = useState<string | undefined>(undefined);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const rf = useReactFlow();
+  const {
+    nodes,
+    edges,
+    onConnect,
+    onEdgesChange,
+    onNodesChange,
+    setSelection,
+    openNodeInspector,
+    openEdgeInspector,
+    closeInspector,
+    clearConnectionHint,
+    enterPtsNode,
+    packageSelectionAsPts,
+    removeEdge,
+    removeNode,
+    cloneNodeAt,
+    openFlowBalanceDialogForEdge,
+    openPtsPortEditor,
+    activeCanvasKind,
+    selection,
+    addBlankNodeAt,
+    openUnitProcessImportDialog,
+    autoConnectByUuid,
+    pendingAutoConnect,
+    consumePendingAutoConnect,
+    viewport,
+    setViewport,
+    autoPopupEnabled,
+    setAutoPopupEnabled,
+    flowAnimationEnabled,
+    setFlowAnimationEnabled,
+    unitAutoScaleEnabled,
+    setUnitAutoScaleEnabled,
+    uiLanguage,
+    pendingEdges,
+    flushPendingEdges,
+    applyHandleValidationIssues,
+    exportGraph,
+    deferredBalanceEdgeId,
+    consumeDeferredBalanceEdge,
+  } = useLcaGraphStore();
+  const [menu, setMenu] = useState<
+    | {
+        x: number;
+        y: number;
+        kind: "pane";
+        flowPos: { x: number; y: number };
+      }
+    | {
+        x: number;
+        y: number;
+        kind: "node";
+        nodeId: string;
+      }
+    | {
+        x: number;
+        y: number;
+        kind: "edge";
+        edgeId: string;
+      }
+    | null
+  >(null);
+  const [copiedNodeId, setCopiedNodeId] = useState<string | null>(null);
+  const connectingRef = useRef<{ nodeId?: string | null; handleId?: string | null } | null>(null);
+  const suppressNodeSelectionUntilRef = useRef(0);
+  const didApplyInitialViewportRef = useRef(false);
+  const validatingRef = useRef(false);
+
+  const resolveNodeIdFromEvent = useCallback((event: MouseEvent | TouchEvent): string | undefined => {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return undefined;
+    }
+    const nodeEl = target.closest(".react-flow__node");
+    const nodeId = nodeEl?.getAttribute("data-id") ?? undefined;
+    return nodeId || undefined;
+  }, []);
+
+  const resolveNodeIdFromElement = useCallback((target: EventTarget | null): string | undefined => {
+    if (!(target instanceof Element)) {
+      return undefined;
+    }
+    return target.closest(".react-flow__node")?.getAttribute("data-id") ?? undefined;
+  }, []);
+
+  const resolveEdgeIdFromElement = useCallback((target: EventTarget | null): string | undefined => {
+    if (!(target instanceof Element)) {
+      return undefined;
+    }
+    return target.closest(".react-flow__edge")?.getAttribute("data-id") ?? undefined;
+  }, []);
+
+  const resolveHandleIdFromElement = useCallback((target: EventTarget | null): string | undefined => {
+    if (!(target instanceof Element)) {
+      return undefined;
+    }
+    const handleEl = target.closest(".react-flow__handle");
+    if (!(handleEl instanceof Element)) {
+      return undefined;
+    }
+    return (
+      handleEl.getAttribute("data-handleid") ??
+      handleEl.getAttribute("data-id") ??
+      undefined
+    ) || undefined;
+  }, []);
+
+  useEffect(() => {
+    if (!pendingAutoConnect || activeCanvasKind !== "root") {
+      return;
+    }
+    consumePendingAutoConnect();
+    void (async () => {
+      await props.onBeforeAutoConnect?.();
+      autoConnectByUuid({ silentNoCandidate: true, silentSuccess: true });
+    })();
+  }, [activeCanvasKind, autoConnectByUuid, consumePendingAutoConnect, pendingAutoConnect, props]);
+
+  useEffect(() => {
+    const root = wrapperRef.current;
+    if (!root) {
+      return;
+    }
+    const nodeEls = root.querySelectorAll<HTMLElement>(".react-flow__node");
+    nodeEls.forEach((el) => {
+      const nodeId = el.getAttribute("data-id") ?? "";
+      el.classList.toggle("drop-target-highlight", Boolean(isConnecting && hoverDropNodeId && nodeId === hoverDropNodeId));
+    });
+  }, [hoverDropNodeId, isConnecting, nodes, edges]);
+
+  const onDrop = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const kind = event.dataTransfer.getData("application/lca-node-kind");
+      if (!kind || !wrapperRef.current) {
+        return;
+      }
+      const position = rf.screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      });
+      if (kind === "unit_process" || kind === "market_process" || kind === "pts_module" || kind === "lci_dataset") {
+        addBlankNodeAt(kind, position);
+      }
+    },
+    [addBlankNodeAt, rf],
+  );
+
+  useEffect(() => {
+    if (didApplyInitialViewportRef.current) {
+      return;
+    }
+    didApplyInitialViewportRef.current = true;
+    void rf.setViewport(viewport, { duration: 0 });
+  }, [rf, viewport]);
+
+  useEffect(() => {
+    const current = rf.getViewport();
+    if (
+      Math.abs(current.x - viewport.x) < 0.01 &&
+      Math.abs(current.y - viewport.y) < 0.01 &&
+      Math.abs(current.zoom - viewport.zoom) < 0.0001
+    ) {
+      return;
+    }
+    void rf.setViewport(viewport, { duration: 0 });
+  }, [rf, viewport.x, viewport.y, viewport.zoom]);
+
+  const renderedEdges = useMemo((): typeof edges => {
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    const next: typeof edges = [];
+    for (const edge of edges) {
+      const sourceNode = nodeById.get(edge.source);
+      const targetNode = nodeById.get(edge.target);
+      const flowUuid = edge.data?.flowUuid ?? "";
+      if (!sourceNode || !targetNode || !flowUuid) {
+        continue;
+      }
+
+      const sourcePortId = parseHandlePortId(edge.sourceHandle, "out:");
+      const sourcePort =
+        (sourcePortId &&
+          sourceNode.data.outputs.find((port) => matchesPortId(port, sourcePortId, flowUuid))) ||
+        (sourceNode.data.outputs.filter((port) => port.flowUuid === flowUuid).length === 1
+          ? sourceNode.data.outputs.find((port) => port.flowUuid === flowUuid)
+          : undefined);
+      if (!sourcePort) {
+        continue;
+      }
+
+      const targetPortId = parseHandlePortId(edge.targetHandle, "in:");
+      const targetPort =
+        (targetPortId &&
+          targetNode.data.inputs.find((port) => matchesPortId(port, targetPortId, flowUuid))) ||
+        (targetNode.data.inputs.filter((port) => port.flowUuid === flowUuid).length === 1
+          ? targetNode.data.inputs.find((port) => port.flowUuid === flowUuid)
+          : undefined);
+      if (!targetPort) {
+        continue;
+      }
+
+      next.push({
+        ...edge,
+        sourceHandle: buildHandleWithSameSide(edge.sourceHandle, "out:", sourcePort.id),
+        targetHandle: buildHandleWithSameSide(edge.targetHandle, "in:", targetPort.id),
+      });
+    }
+    return next;
+  }, [edges, nodes]);
+
+  useEffect(() => {
+    if (pendingEdges.length === 0) {
+      return;
+    }
+    if (validatingRef.current) {
+      return;
+    }
+    let canceled = false;
+    const frame = window.requestAnimationFrame(() => {
+      if (canceled) {
+        return;
+      }
+      window.requestAnimationFrame(async () => {
+        if (canceled) {
+          return;
+        }
+        validatingRef.current = true;
+        try {
+          const graph = exportGraph();
+          const resp = await fetch(`${API_BASE}/model/validate-handles`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ graph }),
+          });
+          if (resp.ok) {
+            const payload = (await resp.json()) as HandleValidationResponse;
+            const issues = Array.isArray(payload.issues) ? payload.issues : [];
+            if (issues.length > 0) {
+              applyHandleValidationIssues(issues);
+            }
+          }
+        } catch {
+          // ignore validation network errors and keep local fallback
+        } finally {
+          flushPendingEdges();
+          validatingRef.current = false;
+        }
+      });
+    });
+    return () => {
+      canceled = true;
+      window.cancelAnimationFrame(frame);
+    };
+  }, [applyHandleValidationIssues, exportGraph, flushPendingEdges, pendingEdges.length]);
+
+  useEffect(() => {
+    if (!deferredBalanceEdgeId) {
+      return;
+    }
+    const exists = renderedEdges.some((edge) => edge.id === deferredBalanceEdgeId);
+    if (!exists) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      openFlowBalanceDialogForEdge(deferredBalanceEdgeId);
+      consumeDeferredBalanceEdge();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [consumeDeferredBalanceEdge, deferredBalanceEdgeId, openFlowBalanceDialogForEdge, renderedEdges]);
+
+  const selectionNodes = useMemo(
+    () => nodes.filter((node) => selection.nodeIds.includes(node.id)),
+    [nodes, selection.nodeIds],
+  );
+  const canPackSelection =
+    activeCanvasKind === "root" &&
+    selectionNodes.length >= 2 &&
+    selectionNodes.every(
+      (node) =>
+        node.data.nodeKind === "unit_process" ||
+        node.data.nodeKind === "market_process" ||
+        node.data.nodeKind === "lci_dataset",
+    );
+  const isSingleSelectedPts =
+    activeCanvasKind === "root" &&
+    selection.nodeIds.length === 1 &&
+    Boolean(nodes.find((node) => node.id === selection.nodeIds[0] && node.data.nodeKind === "pts_module"));
+  return (
+    <div
+      ref={wrapperRef}
+      className={`graph-canvas ${interactionMode === "hand" ? "graph-canvas--hand" : "graph-canvas--cursor"}`}
+      onMouseMove={(event) => {
+        if (!isConnecting) {
+          return;
+        }
+        const hovered = resolveNodeIdFromEvent(event.nativeEvent);
+        const sourceId = connectingRef.current?.nodeId ?? undefined;
+        setHoverDropNodeId(hovered && hovered !== sourceId ? hovered : undefined);
+      }}
+      onDrop={onDrop}
+      onDragOver={(event) => event.preventDefault()}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        const targetNodeId = resolveNodeIdFromElement(event.target);
+        if (targetNodeId) {
+          const isInCurrentSelection = selection.nodeIds.includes(targetNodeId);
+          if (!isInCurrentSelection) {
+            setSelection({
+              nodeIds: [targetNodeId],
+              edgeIds: [],
+              nodeId: targetNodeId,
+              edgeId: undefined,
+            });
+          }
+          setMenu({ x: event.clientX, y: event.clientY, kind: "node", nodeId: targetNodeId });
+          return;
+        }
+        const targetEdgeId = resolveEdgeIdFromElement(event.target);
+        if (targetEdgeId) {
+          setSelection({
+            nodeIds: [],
+            edgeIds: [targetEdgeId],
+            nodeId: undefined,
+            edgeId: targetEdgeId,
+          });
+          setMenu({ x: event.clientX, y: event.clientY, kind: "edge", edgeId: targetEdgeId });
+          return;
+        }
+        const flowPos = rf.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+        setMenu({ x: event.clientX, y: event.clientY, kind: "pane", flowPos });
+      }}
+    >
+      <ReactFlow
+        nodes={nodes}
+        edges={renderedEdges}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        defaultViewport={viewport}
+        minZoom={0.3}
+        deleteKeyCode={["Backspace", "Delete"]}
+        multiSelectionKeyCode="Shift"
+        selectionOnDrag={interactionMode === "cursor"}
+        panOnDrag={interactionMode === "hand"}
+        nodesDraggable
+        elementsSelectable
+        onConnect={onConnect}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onSelectionChange={({ nodes: sNodes, edges: sEdges }) =>
+          {
+            const now = Date.now();
+            if (now < suppressNodeSelectionUntilRef.current && sEdges.length === 0 && sNodes.length > 0) {
+              return;
+            }
+            setSelection({
+              nodeIds: sNodes.map((n) => n.id),
+              edgeIds: [],
+              nodeId: sNodes[0]?.id,
+              edgeId: undefined,
+            });
+          }
+        }
+        onNodeDoubleClick={(event, node) => {
+          if (node.data.nodeKind === "pts_module" && !event.altKey) {
+            enterPtsNode(node.id);
+            return;
+          }
+          openNodeInspector(node.id);
+        }}
+        onEdgeDoubleClick={(_, edge) => openEdgeInspector(edge.id)}
+        onPaneClick={(event) => {
+          if (event.detail === 2) {
+            closeInspector();
+          }
+          setMenu(null);
+        }}
+        onNodeClick={(event, node) => {
+          setMenu(null);
+          if ((event.ctrlKey || event.metaKey) && node.data.nodeKind === "pts_module" && activeCanvasKind === "root") {
+            openPtsPortEditor(node.id);
+          }
+        }}
+        onConnectStart={(_, params) => {
+          clearConnectionHint();
+          closeInspector();
+          setSelection({ nodeIds: [], edgeIds: [], nodeId: undefined, edgeId: undefined });
+          suppressNodeSelectionUntilRef.current = Date.now() + 1200;
+          setIsConnecting(true);
+          connectingRef.current = {
+            nodeId: params.nodeId,
+            handleId: params.handleId ?? null,
+          };
+        }}
+        onConnectEnd={(event, connectionState) => {
+          suppressNodeSelectionUntilRef.current = Date.now() + 1200;
+          const finalState = connectionState as {
+            isValid?: boolean;
+            fromNode?: { id: string };
+            fromHandle?: { id: string | null };
+          };
+          if (finalState?.isValid) {
+            connectingRef.current = null;
+            setIsConnecting(false);
+            setHoverDropNodeId(undefined);
+            return;
+          }
+
+          const sourceNodeId = finalState?.fromNode?.id ?? connectingRef.current?.nodeId;
+          const sourceHandle = finalState?.fromHandle?.id ?? connectingRef.current?.handleId ?? null;
+          const targetNodeId = resolveNodeIdFromEvent(event);
+          const targetHandle = resolveHandleIdFromElement(event.target);
+
+          connectingRef.current = null;
+          setIsConnecting(false);
+          setHoverDropNodeId(undefined);
+          if (!sourceNodeId || !targetNodeId || sourceNodeId === targetNodeId) {
+            return;
+          }
+
+          const fallbackConnection: Connection = {
+            source: sourceNodeId,
+            sourceHandle,
+            target: targetNodeId,
+            targetHandle: targetHandle ?? null,
+          };
+          onConnect(fallbackConnection);
+        }}
+        onMoveEnd={(_, nextViewport: Viewport) => setViewport(nextViewport)}
+      >
+        <Background gap={18} size={1} color="#d6dde2" />
+        <Controls />
+      </ReactFlow>
+      <div className="canvas-mode-switch" role="group" aria-label="canvas-interaction-mode">
+        <div className="canvas-mode-switch-group">
+          <button
+            type="button"
+            className={interactionMode === "hand" ? "active" : ""}
+            onClick={() => setInteractionMode("hand")}
+            title={uiLanguage === "zh" ? "拖手模式：平移画布视角" : "Hand mode: pan canvas"}
+          >
+            {uiLanguage === "zh" ? "拖手" : "Hand"}
+          </button>
+          <button
+            type="button"
+            className={interactionMode === "cursor" ? "active" : ""}
+            onClick={() => setInteractionMode("cursor")}
+            title={uiLanguage === "zh" ? "光标模式：框选/多选" : "Cursor mode: multi-select"}
+          >
+            {uiLanguage === "zh" ? "光标" : "Cursor"}
+          </button>
+        </div>
+        <div className="canvas-mode-switch-divider" />
+        <div className="canvas-mode-switch-group">
+          <button
+            type="button"
+            className={autoPopupEnabled ? "active toggle-btn two-line-btn" : "toggle-btn two-line-btn"}
+            onClick={() => setAutoPopupEnabled(!autoPopupEnabled)}
+            title={uiLanguage === "zh" ? "自动弹窗开关" : "Auto popup"}
+          >
+            {uiLanguage === "zh" ? "配平\n弹窗" : "Popup"}
+          </button>
+          <button
+            type="button"
+            className={flowAnimationEnabled ? "active toggle-btn two-line-btn" : "toggle-btn two-line-btn"}
+            onClick={() => setFlowAnimationEnabled(!flowAnimationEnabled)}
+            title={uiLanguage === "zh" ? "流向动画开关" : "Flow animation"}
+          >
+            {uiLanguage === "zh" ? "流向\n动画" : "Flow\nAnim"}
+          </button>
+          <button
+            type="button"
+            className={unitAutoScaleEnabled ? "active toggle-btn two-line-btn" : "toggle-btn two-line-btn"}
+            onClick={() => setUnitAutoScaleEnabled(!unitAutoScaleEnabled)}
+            title={uiLanguage === "zh" ? "单位切换自动换算开关" : "Unit auto convert"}
+          >
+            {uiLanguage === "zh" ? "单位\n换算" : "Unit\nConvert"}
+          </button>
+        </div>
+        <div className="canvas-mode-switch-divider" />
+        <div className="canvas-mode-switch-group">
+          <button
+            type="button"
+            className="action-btn"
+            style={{ minWidth: 38, fontSize: 18, fontWeight: 700, lineHeight: 1, padding: "4px 8px" }}
+            onClick={() => window.dispatchEvent(new Event("nebula:history-undo"))}
+            title={uiLanguage === "zh" ? "回退到上一版本（Ctrl+Z）" : "Undo to previous version (Ctrl+Z)"}
+          >
+            ⟲
+          </button>
+          <button
+            type="button"
+            className="action-btn"
+            style={{ minWidth: 38, fontSize: 18, fontWeight: 700, lineHeight: 1, padding: "4px 8px" }}
+            onClick={() => window.dispatchEvent(new Event("nebula:history-redo"))}
+            title={uiLanguage === "zh" ? "前进到下一版本（Ctrl+Shift+Z）" : "Redo to next version (Ctrl+Shift+Z)"}
+          >
+            ⟳
+          </button>
+          {activeCanvasKind === "pts_internal" && (
+            <button
+              type="button"
+              className="action-btn two-line-btn"
+              onClick={() => openPtsPortEditor()}
+              title={uiLanguage === "zh" ? "编辑当前 PTS 的端口" : "Edit PTS ports"}
+            >
+              {uiLanguage === "zh" ? "暴露\n端口" : "Ports"}
+            </button>
+          )}
+          {activeCanvasKind === "root" && (
+            <button
+              type="button"
+              className="action-btn two-line-btn"
+              onClick={() => props.onOpenProjectTarget?.()}
+              title={uiLanguage === "zh" ? "设置项目目标产品与产量" : "Target product"}
+            >
+              {uiLanguage === "zh" ? "目标\n产品" : "Target"}
+            </button>
+          )}
+          <button
+            type="button"
+            className="action-btn two-line-btn"
+            onClick={() => {
+              void (async () => {
+                await props.onBeforeAutoConnect?.();
+                autoConnectByUuid();
+              })();
+            }}
+            title={uiLanguage === "zh" ? "按 UUID 自动连线（唯一市场产品优先）" : "Auto connect by UUID"}
+          >
+            {uiLanguage === "zh" ? "自动\n连线" : "Auto\nLink"}
+          </button>
+        </div>
+      </div>
+      {menu && (
+        <div className="context-menu" style={{ left: menu.x, top: menu.y }} onClick={() => setMenu(null)}>
+          {menu.kind === "edge" && (
+            <>
+              <button
+                onClick={() => {
+                  openFlowBalanceDialogForEdge(menu.edgeId);
+                  setMenu(null);
+                }}
+              >
+                {uiLanguage === "zh" ? "配平编辑" : "Balance"}
+              </button>
+              <button
+                onClick={() => {
+                  removeEdge(menu.edgeId);
+                  setMenu(null);
+                }}
+              >
+                {uiLanguage === "zh" ? "删除连线" : "Delete Edge"}
+              </button>
+            </>
+          )}
+            {menu.kind === "node" && (
+              <>
+                {!nodes.find((n) => n.id === menu.nodeId && n.data.nodeKind === "pts_module") && (
+                  <button
+                    onClick={() => {
+                      openNodeInspector(menu.nodeId);
+                      setMenu(null);
+                    }}
+                  >
+                    {uiLanguage === "zh" ? "编辑" : "Edit"}
+                  </button>
+                )}
+                <button
+                  disabled={activeCanvasKind !== "root" || !nodes.find((n) => n.id === menu.nodeId && n.data.nodeKind === "pts_module")}
+                  onClick={() => {
+                  openPtsPortEditor(menu.nodeId);
+                  setMenu(null);
+                }}
+              >
+                {uiLanguage === "zh" ? "编辑端口" : "Edit Ports"}
+              </button>
+              <button
+                disabled={!canPackSelection}
+                onClick={() => {
+                  packageSelectionAsPts();
+                  setMenu(null);
+                }}
+              >
+                {uiLanguage === "zh" ? "PTS封装" : "Pack as PTS"}
+              </button>
+              <button
+                disabled={
+                  activeCanvasKind !== "root" ||
+                  !nodes.find((n) => n.id === menu.nodeId && n.data.nodeKind === "pts_module")
+                }
+                onClick={() => {
+                  void props.onRequestUnpackPts?.(menu.nodeId);
+                  setMenu(null);
+                }}
+              >
+                {uiLanguage === "zh" ? "解封PTS" : "Unpack PTS"}
+              </button>
+              <button
+                onClick={() => {
+                  setCopiedNodeId(menu.nodeId);
+                  setMenu(null);
+                }}
+              >
+                {uiLanguage === "zh" ? "复制" : "Copy"}
+              </button>
+              <button
+                onClick={() => {
+                  removeNode(menu.nodeId);
+                  setMenu(null);
+                }}
+              >
+                {uiLanguage === "zh" ? "删除" : "Delete"}
+              </button>
+            </>
+          )}
+          {menu.kind === "pane" && (
+            <>
+              {selection.nodeIds.length === 0 && selection.edgeIds.length === 0 && (
+                <>
+                  <div className="context-menu-submenu-wrap" onClick={(event) => event.stopPropagation()}>
+                    <button
+                      type="button"
+                      className="context-menu-submenu-trigger"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <span>{uiLanguage === "zh" ? "导入" : "Import"}</span>
+                      <span className="context-menu-submenu-arrow">›</span>
+                    </button>
+                    <div className="context-menu-submenu">
+                      <button
+                        onClick={() => {
+                          openUnitProcessImportDialog(menu.flowPos, "unit_process");
+                          setMenu(null);
+                        }}
+                      >
+                        {uiLanguage === "zh" ? "单元过程" : "Unit Process"}
+                      </button>
+                      <button
+                        onClick={() => {
+                          openUnitProcessImportDialog(menu.flowPos, "market_process");
+                          setMenu(null);
+                        }}
+                      >
+                        {uiLanguage === "zh" ? "市场过程" : "Market Process"}
+                      </button>
+                      <button
+                        onClick={() => {
+                          openUnitProcessImportDialog(menu.flowPos, "lci_dataset");
+                          setMenu(null);
+                        }}
+                      >
+                        {uiLanguage === "zh" ? "LCI数据集" : "LCI Dataset"}
+                      </button>
+                      {activeCanvasKind !== "pts_internal" && (
+                        <button
+                          onClick={() => {
+                            openUnitProcessImportDialog(menu.flowPos, "pts_module");
+                            setMenu(null);
+                          }}
+                        >
+                          {uiLanguage === "zh" ? "PTS模块" : "PTS Module"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      addBlankNodeAt("unit_process", menu.flowPos);
+                      setMenu(null);
+                    }}
+                  >
+                    {uiLanguage === "zh" ? "新建单元过程" : "New Unit Process"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      addBlankNodeAt("market_process", menu.flowPos);
+                      setMenu(null);
+                    }}
+                  >
+                    {uiLanguage === "zh" ? "新建市场过程" : "New Market Process"}
+                  </button>
+                  {activeCanvasKind !== "pts_internal" && (
+                    <button
+                      onClick={() => {
+                        addBlankNodeAt("pts_module", menu.flowPos);
+                        setMenu(null);
+                      }}
+                    >
+                      {uiLanguage === "zh" ? "新建PTS模块" : "New PTS Module"}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      addBlankNodeAt("lci_dataset", menu.flowPos);
+                      setMenu(null);
+                    }}
+                  >
+                    {uiLanguage === "zh" ? "新建LCI数据集" : "New LCI Dataset"}
+                  </button>
+                </>
+              )}
+              {selection.nodeIds.length > 0 && (
+                <>
+                  <button
+                    disabled={!canPackSelection}
+                    onClick={() => {
+                      packageSelectionAsPts();
+                      setMenu(null);
+                    }}
+                  >
+                    {uiLanguage === "zh" ? "PTS封装" : "Pack as PTS"}
+                  </button>
+                  <button
+                    disabled={!isSingleSelectedPts}
+                    onClick={() => {
+                      void props.onRequestUnpackPts?.(selection.nodeIds[0]);
+                      setMenu(null);
+                    }}
+                  >
+                    {uiLanguage === "zh" ? "解封PTS" : "Unpack PTS"}
+                  </button>
+                </>
+              )}
+              <button
+                disabled={!copiedNodeId}
+                onClick={() => {
+                  if (copiedNodeId) {
+                    cloneNodeAt(copiedNodeId, menu.flowPos);
+                  }
+                  setMenu(null);
+                }}
+              >
+                {uiLanguage === "zh" ? "粘贴" : "Paste"}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function GraphCanvas(props: {
+  onBeforeAutoConnect?: () => Promise<void> | void;
+  onRequestUnpackPts?: (nodeId: string) => Promise<void> | void;
+  onOpenProjectTarget?: () => void;
+}) {
+  return (
+    <ReactFlowProvider>
+      <GraphCanvasInner
+        onBeforeAutoConnect={props.onBeforeAutoConnect}
+        onRequestUnpackPts={props.onRequestUnpackPts}
+        onOpenProjectTarget={props.onOpenProjectTarget}
+      />
+    </ReactFlowProvider>
+  );
+}
+
+
+
+
+
+
+
+
+
+

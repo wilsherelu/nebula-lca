@@ -1,0 +1,6 @@
+﻿flow_uuid,flow_name_zh,flow_name_en,flow_type,default_unit,unit_group,compartment,updated_at
+flow_naphtha,石脑油,Naphtha,Product flow,kg,mass,Technosphere;Products;Feedstock,2026-02-12
+flow_steam,蒸汽,Steam,Product flow,kg,mass,Technosphere;Utilities;Heat,2026-02-12
+flow_power,电力,Electricity,Product flow,kWh,energy,Technosphere;Utilities;Power,2026-02-12
+flow_reformate,重整油,Reformate,Product flow,kg,mass,Technosphere;Products;Intermediates,2026-02-12
+flow_wastewater,废水,Wastewater,Waste flow,kg,mass,Waste;To treatment;Wastewater,2026-02-12
