@@ -27,7 +27,7 @@ It combines:
 
 ## Quick Start
 
-1. Copy `.env.example` to `.env`
+1. Copy `env.example` to `.env`
 2. Start the stack from the repository root
 
 ```bash
