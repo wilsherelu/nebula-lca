@@ -22,7 +22,7 @@ Runtime SQLite data is persisted in the named volume `nebula-lca-api-data`.
 From the repository root:
 
 ```bash
-cp .env.example .env
+cp env.example .env
 docker compose up -d --build
 ```
 
