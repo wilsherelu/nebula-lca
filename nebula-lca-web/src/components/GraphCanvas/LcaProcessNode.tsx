@@ -36,14 +36,16 @@ const getHiddenHandleTop = (section: "inputs" | "outputs", index: number, total:
 };
 
 const normalizeNodeName = (value: string) => value.trim().toLowerCase();
+const EMPTY_PORT_LABELS: ReadonlyMap<string, string> = new Map();
 
 export function LcaProcessNode(props: NodeProps) {
   const data = props.data as LcaNodeData;
   const updateNodeInternals = useUpdateNodeInternals();
   const updateNode = useLcaGraphStore((state) => state.updateNode);
   const setConnectionHint = useLcaGraphStore((state) => state.setConnectionHint);
-  const nodes = useLcaGraphStore((state) => state.nodes);
-  const edges = useLcaGraphStore((state) => state.edges);
+  const connectedSourceInputLabelByPortId = useLcaGraphStore(
+    (state) => state.graphRelations.marketInputDisplayByNodeId.get(props.id) ?? EMPTY_PORT_LABELS,
+  );
   const uiLanguage = useLcaGraphStore((state) => state.uiLanguage);
   const activeCanvasKind = useLcaGraphStore((state) => state.activeCanvasKind);
   const pendingPtsCompileNodeId = useLcaGraphStore((state) => state.pendingPtsCompileNodeId);
@@ -187,84 +189,6 @@ export function LcaProcessNode(props: NodeProps) {
     }
     return `${resolvedBaseName} @ ${sourceProcessName || sourceProcessUuid || "unknown"}`;
   };
-  const extractPortSuffix = (value: string): string => {
-    const trimmed = String(value ?? "").trim();
-    const at = trimmed.indexOf("@");
-    return at >= 0 ? trimmed.slice(at + 1).trim() : "";
-  };
-  const stripPortSuffix = (value: string): string => {
-    const trimmed = String(value ?? "").trim();
-    const at = trimmed.indexOf("@");
-    return at > 0 ? trimmed.slice(0, at).trim() : trimmed;
-  };
-  const parseInputPortId = (handleId?: string): string => {
-    const raw = String(handleId ?? "").trim();
-    if (!raw) {
-      return "";
-    }
-    if (raw.startsWith("in:") || raw.startsWith("inl:") || raw.startsWith("inr:")) {
-      return raw.slice(raw.indexOf(":") + 1);
-    }
-    return "";
-  };
-  const parseOutputPortId = (handleId?: string): string => {
-    const raw = String(handleId ?? "").trim();
-    if (!raw) {
-      return "";
-    }
-    if (raw.startsWith("out:") || raw.startsWith("outl:") || raw.startsWith("outr:")) {
-      return raw.slice(raw.indexOf(":") + 1);
-    }
-    return "";
-  };
-  const connectedSourceInputLabelByPortId = useMemo(() => {
-    if (!marketProcess) {
-      return new Map<string, string>();
-    }
-    const nodeById = new Map(nodes.map((node) => [node.id, node]));
-    const result = new Map<string, string>();
-    edges.forEach((edge) => {
-      if (edge.target !== props.id) {
-        return;
-      }
-      const targetPortId = parseInputPortId(edge.targetHandle ?? undefined);
-      if (!targetPortId) {
-        return;
-      }
-      const sourceNode = nodeById.get(edge.source);
-      if (!sourceNode) {
-        return;
-      }
-      const sourcePortId = parseOutputPortId(edge.sourceHandle ?? undefined);
-      const sourcePort = sourcePortId
-        ? sourceNode.data.outputs.find((port) => port.id === sourcePortId)
-        : sourceNode.data.outputs.find((port) => port.flowUuid === edge.data?.flowUuid);
-      if (!sourcePort) {
-        return;
-      }
-      const flowLabel = stripPortSuffix(sourcePort.name) || String(edge.data?.flowName ?? "").trim();
-      if (!flowLabel) {
-        return;
-      }
-      if (sourceNode.data.nodeKind === "pts_module") {
-        const ptsLabel = String(sourceNode.data.name ?? "").trim();
-        const nestedLabel =
-          String(sourcePort.sourceProcessName ?? "").trim() || extractPortSuffix(sourcePort.name);
-        const suffix = [ptsLabel, nestedLabel].filter((part, index, arr) => part && arr.indexOf(part) === index);
-        if (suffix.length > 0) {
-          result.set(targetPortId, `${flowLabel}@${suffix.join("@")}`);
-        }
-        return;
-      }
-      if (sourceNode.data.nodeKind === "lci_dataset" || sourceNode.data.nodeKind === "unit_process") {
-        const sourceLabel = String(sourceNode.data.name ?? "").trim();
-        result.set(targetPortId, sourceLabel ? `${flowLabel}@${sourceLabel}` : flowLabel);
-        return;
-      }
-      result.set(targetPortId, flowLabel);
-    });
-    return result;
-  }, [edges, marketProcess, nodes, props.id]);
   const formatMarketInputLabel = (port: FlowPort): string => {
     const connectedLabel = connectedSourceInputLabelByPortId.get(port.id);
     if (connectedLabel) {
@@ -415,7 +339,9 @@ export function LcaProcessNode(props: NodeProps) {
       setDraftName(data.name);
       return;
     }
-    const duplicated = nodes.some(
+    const duplicated = useLcaGraphStore
+      .getState()
+      .nodes.some(
       (node) => node.id !== props.id && normalizeNodeName(node.data.name) === normalizeNodeName(next),
     );
     if (duplicated) {

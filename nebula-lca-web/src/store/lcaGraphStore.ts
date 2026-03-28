@@ -12,6 +12,11 @@ import { create } from "zustand";
 import { processLibrary } from "../data/processLibrary";
 import type { LcaEdgeData, LcaExchange, LcaGraphPayload } from "../model/exchange";
 import type { FlowPort, LcaNodeData, LcaProcessTemplate, LciRole, ProcessMode } from "../model/node";
+import {
+  buildGraphRelations,
+  createEmptyGraphRelations,
+  type GraphRelations,
+} from "./graphRelations";
 
 const UI_LANGUAGE_STORAGE_KEY = "nebula_ui_language";
 const resolveInitialUiLanguage = (): "zh" | "en" => {
@@ -167,6 +172,7 @@ type LcaGraphState = {
   viewport: CanvasViewport;
   nodes: Array<Node<LcaNodeData>>;
   edges: Array<Edge<LcaEdgeData>>;
+  graphRelations: GraphRelations;
   selection: Selection;
   inspectorOpen: boolean;
   flowBalanceDialog: FlowBalanceDialogState;
@@ -447,6 +453,8 @@ const setActiveCanvas = (
   keepSelection = false,
 ) => {
   const active = nextCanvases[nextCanvasId];
+  const previousRelations = state.activeCanvasId === nextCanvasId ? state.graphRelations : undefined;
+  const graphRelations = buildGraphRelations(active.nodes, active.edges, previousRelations);
   return {
     canvases: nextCanvases,
     activeCanvasId: nextCanvasId,
@@ -454,6 +462,7 @@ const setActiveCanvas = (
     canvasPath: getCanvasPath(nextCanvases, nextCanvasId),
     nodes: active.nodes,
     edges: active.edges,
+    graphRelations,
     selection: keepSelection ? state.selection : { nodeIds: [], edgeIds: [] },
   };
 };
@@ -2228,6 +2237,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
   viewport: { x: 0, y: 0, zoom: 0.82 },
   nodes: [],
   edges: [],
+  graphRelations: createEmptyGraphRelations(),
   selection: { nodeIds: [], edgeIds: [] },
   inspectorOpen: false,
   flowBalanceDialog: { open: false },
