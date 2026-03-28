@@ -7,7 +7,7 @@
   type Viewport,
   useReactFlow,
 } from "@xyflow/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import { LcaExchangeEdge } from "./LcaExchangeEdge";
 import { LcaProcessNode } from "./LcaProcessNode";
@@ -15,6 +15,11 @@ import { useLcaGraphStore } from "../../store/lcaGraphStore";
 
 const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
 const API_BASE = RAW_API_BASE.endsWith("/api") ? RAW_API_BASE : `${RAW_API_BASE}/api`;
+const ENABLE_LARGE_GRAPH_EDGE_STAGING = true;
+const ENABLE_LARGE_GRAPH_VISIBLE_CULLING = false;
+const LARGE_GRAPH_NODE_THRESHOLD = 40;
+const LARGE_GRAPH_EDGE_THRESHOLD = 100;
+const EDGE_RENDER_BATCH_SIZE = 120;
 
 type HandleValidationIssue = {
   edge_id?: string;
@@ -25,6 +30,12 @@ type HandleValidationIssue = {
 type HandleValidationResponse = {
   ok?: boolean;
   issues?: HandleValidationIssue[];
+};
+
+type GraphCanvasPort = {
+  id: string;
+  legacyPortId?: string;
+  flowUuid: string;
 };
 
 const parseHandlePortId = (handleId: string | null | undefined, prefix: "in:" | "out:"): string | undefined => {
@@ -46,16 +57,8 @@ const buildHandleWithSameSide = (
   return `${matched ?? prefix}${portId}`;
 };
 
-const matchesPortId = (
-  port: { id: string; legacyPortId?: string; flowUuid: string },
-  portId: string | undefined,
-  flowUuid: string,
-): boolean => {
-  if (!portId || port.flowUuid !== flowUuid) {
-    return false;
-  }
-  return port.id === portId || String(port.legacyPortId ?? "").trim() === portId;
-};
+const buildPortLookupKey = (nodeId: string, portId: string, flowUuid: string): string => `${nodeId}::${flowUuid}::${portId}`;
+const buildSingleFlowLookupKey = (nodeId: string, flowUuid: string): string => `${nodeId}::${flowUuid}`;
 
 const nodeTypes = {
   lcaProcess: LcaProcessNode,
@@ -69,6 +72,7 @@ function GraphCanvasInner(props: {
   onBeforeAutoConnect?: () => Promise<void> | void;
   onRequestUnpackPts?: (nodeId: string) => Promise<void> | void;
   onOpenProjectTarget?: () => void;
+  canvasLoadKey?: string | number;
 }) {
   const [interactionMode, setInteractionMode] = useState<"cursor" | "hand">("hand");
   const [isConnecting, setIsConnecting] = useState(false);
@@ -115,6 +119,7 @@ function GraphCanvasInner(props: {
     exportGraph,
     deferredBalanceEdgeId,
     consumeDeferredBalanceEdge,
+    activeCanvasId,
   } = useLcaGraphStore();
   const [menu, setMenu] = useState<
     | {
@@ -140,8 +145,11 @@ function GraphCanvasInner(props: {
   const [copiedNodeId, setCopiedNodeId] = useState<string | null>(null);
   const connectingRef = useRef<{ nodeId?: string | null; handleId?: string | null } | null>(null);
   const suppressNodeSelectionUntilRef = useRef(0);
-  const didApplyInitialViewportRef = useRef(false);
   const validatingRef = useRef(false);
+  const lastCanvasLoadKeyRef = useRef<string | number | undefined>(undefined);
+  const edgeRenderLimitByCanvasRef = useRef<Record<string, number>>({});
+  const hiddenDisplayMetricsRef = useRef<{ width: number; height: number; dpr: number } | null>(null);
+  const [edgeRenderLimit, setEdgeRenderLimit] = useState(0);
 
   const resolveNodeIdFromEvent = useCallback((event: MouseEvent | TouchEvent): string | undefined => {
     const target = event.target;
@@ -224,27 +232,146 @@ function GraphCanvasInner(props: {
   );
 
   useEffect(() => {
-    if (didApplyInitialViewportRef.current) {
-      return;
-    }
-    didApplyInitialViewportRef.current = true;
+    // Apply persisted viewport only when a whole graph/canvas load cycle happens.
     void rf.setViewport(viewport, { duration: 0 });
-  }, [rf, viewport]);
+  }, [activeCanvasId, props.canvasLoadKey, rf]);
 
   useEffect(() => {
-    const current = rf.getViewport();
-    if (
-      Math.abs(current.x - viewport.x) < 0.01 &&
-      Math.abs(current.y - viewport.y) < 0.01 &&
-      Math.abs(current.zoom - viewport.zoom) < 0.0001
-    ) {
-      return;
+    const readDisplayMetrics = () => {
+      const host = wrapperRef.current;
+      if (!host) {
+        return null;
+      }
+      return {
+        width: host.clientWidth,
+        height: host.clientHeight,
+        dpr: window.devicePixelRatio || 1,
+      };
+    };
+    const snapshotHiddenMetrics = () => {
+      const metrics = readDisplayMetrics();
+      hiddenDisplayMetricsRef.current = metrics;
+    };
+    const restoreViewportIfDisplayMetricsChanged = () => {
+      if (document.visibilityState === "hidden") {
+        return;
+      }
+      const before = hiddenDisplayMetricsRef.current;
+      hiddenDisplayMetricsRef.current = null;
+      const after = readDisplayMetrics();
+      if (!before || !after || after.width <= 0 || after.height <= 0) {
+        return;
+      }
+      const metricsChanged =
+        before.width !== after.width ||
+        before.height !== after.height ||
+        Math.abs(before.dpr - after.dpr) > 0.001;
+      if (!metricsChanged) {
+        return;
+      }
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          const latestMetrics = readDisplayMetrics();
+          if (!latestMetrics || latestMetrics.width <= 0 || latestMetrics.height <= 0) {
+            return;
+          }
+          void rf.setViewport(viewport, { duration: 0 });
+        });
+      });
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        snapshotHiddenMetrics();
+        return;
+      }
+      restoreViewportIfDisplayMetricsChanged();
+    };
+    const onFocus = () => {
+      restoreViewportIfDisplayMetricsChanged();
+    };
+    const onBlur = () => {
+      snapshotHiddenMetrics();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [rf, viewport]);
+
+  const edgeLookup = useMemo(() => {
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    const outputPortByNodeAndPortId = new Map<string, GraphCanvasPort>();
+    const inputPortByNodeAndPortId = new Map<string, GraphCanvasPort>();
+    const singleOutputByNodeAndFlowUuid = new Map<string, GraphCanvasPort>();
+    const singleInputByNodeAndFlowUuid = new Map<string, GraphCanvasPort>();
+
+    for (const node of nodes) {
+      const outputCountByFlow = new Map<string, number>();
+      const inputCountByFlow = new Map<string, number>();
+      for (const port of node.data.outputs) {
+        const flowUuid = String(port.flowUuid ?? "").trim();
+        const portId = String(port.id ?? "").trim();
+        const legacyPortId = String(port.legacyPortId ?? "").trim();
+        if (portId && flowUuid) {
+          outputPortByNodeAndPortId.set(buildPortLookupKey(node.id, portId, flowUuid), port);
+        }
+        if (legacyPortId && flowUuid) {
+          outputPortByNodeAndPortId.set(buildPortLookupKey(node.id, legacyPortId, flowUuid), port);
+        }
+        if (flowUuid) {
+          outputCountByFlow.set(flowUuid, (outputCountByFlow.get(flowUuid) ?? 0) + 1);
+        }
+      }
+      for (const port of node.data.outputs) {
+        const flowUuid = String(port.flowUuid ?? "").trim();
+        if (flowUuid && outputCountByFlow.get(flowUuid) === 1) {
+          singleOutputByNodeAndFlowUuid.set(buildSingleFlowLookupKey(node.id, flowUuid), port);
+        }
+      }
+
+      for (const port of node.data.inputs) {
+        const flowUuid = String(port.flowUuid ?? "").trim();
+        const portId = String(port.id ?? "").trim();
+        const legacyPortId = String(port.legacyPortId ?? "").trim();
+        if (portId && flowUuid) {
+          inputPortByNodeAndPortId.set(buildPortLookupKey(node.id, portId, flowUuid), port);
+        }
+        if (legacyPortId && flowUuid) {
+          inputPortByNodeAndPortId.set(buildPortLookupKey(node.id, legacyPortId, flowUuid), port);
+        }
+        if (flowUuid) {
+          inputCountByFlow.set(flowUuid, (inputCountByFlow.get(flowUuid) ?? 0) + 1);
+        }
+      }
+      for (const port of node.data.inputs) {
+        const flowUuid = String(port.flowUuid ?? "").trim();
+        if (flowUuid && inputCountByFlow.get(flowUuid) === 1) {
+          singleInputByNodeAndFlowUuid.set(buildSingleFlowLookupKey(node.id, flowUuid), port);
+        }
+      }
     }
-    void rf.setViewport(viewport, { duration: 0 });
-  }, [rf, viewport.x, viewport.y, viewport.zoom]);
+
+    return {
+      nodeById,
+      outputPortByNodeAndPortId,
+      inputPortByNodeAndPortId,
+      singleOutputByNodeAndFlowUuid,
+      singleInputByNodeAndFlowUuid,
+    };
+  }, [nodes]);
 
   const renderedEdges = useMemo((): typeof edges => {
-    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    const {
+      nodeById,
+      outputPortByNodeAndPortId,
+      inputPortByNodeAndPortId,
+      singleOutputByNodeAndFlowUuid,
+      singleInputByNodeAndFlowUuid,
+    } = edgeLookup;
     const next: typeof edges = [];
     for (const edge of edges) {
       const sourceNode = nodeById.get(edge.source);
@@ -256,22 +383,18 @@ function GraphCanvasInner(props: {
 
       const sourcePortId = parseHandlePortId(edge.sourceHandle, "out:");
       const sourcePort =
-        (sourcePortId &&
-          sourceNode.data.outputs.find((port) => matchesPortId(port, sourcePortId, flowUuid))) ||
-        (sourceNode.data.outputs.filter((port) => port.flowUuid === flowUuid).length === 1
-          ? sourceNode.data.outputs.find((port) => port.flowUuid === flowUuid)
-          : undefined);
+        (sourcePortId
+          ? outputPortByNodeAndPortId.get(buildPortLookupKey(edge.source, sourcePortId, flowUuid))
+          : undefined) ?? singleOutputByNodeAndFlowUuid.get(buildSingleFlowLookupKey(edge.source, flowUuid));
       if (!sourcePort) {
         continue;
       }
 
       const targetPortId = parseHandlePortId(edge.targetHandle, "in:");
       const targetPort =
-        (targetPortId &&
-          targetNode.data.inputs.find((port) => matchesPortId(port, targetPortId, flowUuid))) ||
-        (targetNode.data.inputs.filter((port) => port.flowUuid === flowUuid).length === 1
-          ? targetNode.data.inputs.find((port) => port.flowUuid === flowUuid)
-          : undefined);
+        (targetPortId
+          ? inputPortByNodeAndPortId.get(buildPortLookupKey(edge.target, targetPortId, flowUuid))
+          : undefined) ?? singleInputByNodeAndFlowUuid.get(buildSingleFlowLookupKey(edge.target, flowUuid));
       if (!targetPort) {
         continue;
       }
@@ -283,7 +406,55 @@ function GraphCanvasInner(props: {
       });
     }
     return next;
-  }, [edges, nodes]);
+  }, [edgeLookup, edges]);
+
+  const largeGraphMode =
+    ENABLE_LARGE_GRAPH_EDGE_STAGING &&
+    (nodes.length >= LARGE_GRAPH_NODE_THRESHOLD || renderedEdges.length >= LARGE_GRAPH_EDGE_THRESHOLD);
+
+  useLayoutEffect(() => {
+    const loadCycleChanged = lastCanvasLoadKeyRef.current !== props.canvasLoadKey;
+    lastCanvasLoadKeyRef.current = props.canvasLoadKey;
+    if (!ENABLE_LARGE_GRAPH_EDGE_STAGING || !largeGraphMode) {
+      edgeRenderLimitByCanvasRef.current[activeCanvasId] = renderedEdges.length;
+      setEdgeRenderLimit(renderedEdges.length);
+      return;
+    }
+    const rememberedLimit = edgeRenderLimitByCanvasRef.current[activeCanvasId];
+    if (loadCycleChanged || typeof rememberedLimit !== "number") {
+      const initialLimit = Math.min(EDGE_RENDER_BATCH_SIZE, renderedEdges.length);
+      edgeRenderLimitByCanvasRef.current[activeCanvasId] = initialLimit;
+      setEdgeRenderLimit(initialLimit);
+      return;
+    }
+    const nextLimit = Math.min(
+      Math.max(rememberedLimit ?? edgeRenderLimit, Math.min(EDGE_RENDER_BATCH_SIZE, renderedEdges.length)),
+      renderedEdges.length,
+    );
+    edgeRenderLimitByCanvasRef.current[activeCanvasId] = nextLimit;
+    setEdgeRenderLimit(nextLimit);
+  }, [activeCanvasId, edgeRenderLimit, largeGraphMode, props.canvasLoadKey, renderedEdges.length]);
+
+  useEffect(() => {
+    if (!ENABLE_LARGE_GRAPH_EDGE_STAGING || !largeGraphMode || edgeRenderLimit >= renderedEdges.length) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      setEdgeRenderLimit((prev) => {
+        const nextLimit = Math.min(prev + EDGE_RENDER_BATCH_SIZE, renderedEdges.length);
+        edgeRenderLimitByCanvasRef.current[activeCanvasId] = nextLimit;
+        return nextLimit;
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [activeCanvasId, edgeRenderLimit, largeGraphMode, renderedEdges.length]);
+
+  const mountedEdges = useMemo(
+    () => (largeGraphMode ? renderedEdges.slice(0, edgeRenderLimit) : renderedEdges),
+    [edgeRenderLimit, largeGraphMode, renderedEdges],
+  );
 
   useEffect(() => {
     if (pendingEdges.length === 0) {
@@ -334,7 +505,7 @@ function GraphCanvasInner(props: {
     if (!deferredBalanceEdgeId) {
       return;
     }
-    const exists = renderedEdges.some((edge) => edge.id === deferredBalanceEdgeId);
+    const exists = mountedEdges.some((edge) => edge.id === deferredBalanceEdgeId);
     if (!exists) {
       return;
     }
@@ -343,7 +514,7 @@ function GraphCanvasInner(props: {
       consumeDeferredBalanceEdge();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [consumeDeferredBalanceEdge, deferredBalanceEdgeId, openFlowBalanceDialogForEdge, renderedEdges]);
+  }, [consumeDeferredBalanceEdge, deferredBalanceEdgeId, mountedEdges, openFlowBalanceDialogForEdge]);
 
   const selectionNodes = useMemo(
     () => nodes.filter((node) => selection.nodeIds.includes(node.id)),
@@ -409,9 +580,10 @@ function GraphCanvasInner(props: {
     >
       <ReactFlow
         nodes={nodes}
-        edges={renderedEdges}
+        edges={mountedEdges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
+        onlyRenderVisibleElements={ENABLE_LARGE_GRAPH_VISIBLE_CULLING && largeGraphMode}
         defaultViewport={viewport}
         minZoom={0.3}
         deleteKeyCode={["Backspace", "Delete"]}
@@ -502,7 +674,9 @@ function GraphCanvasInner(props: {
           };
           onConnect(fallbackConnection);
         }}
-        onMoveEnd={(_, nextViewport: Viewport) => setViewport(nextViewport)}
+        onMoveEnd={(_, nextViewport: Viewport) => {
+          setViewport(nextViewport);
+        }}
       >
         <Background gap={18} size={1} color="#d6dde2" />
         <Controls />
@@ -821,10 +995,12 @@ export function GraphCanvas(props: {
   onBeforeAutoConnect?: () => Promise<void> | void;
   onRequestUnpackPts?: (nodeId: string) => Promise<void> | void;
   onOpenProjectTarget?: () => void;
+  canvasLoadKey?: string | number;
 }) {
   return (
     <ReactFlowProvider>
       <GraphCanvasInner
+        canvasLoadKey={props.canvasLoadKey}
         onBeforeAutoConnect={props.onBeforeAutoConnect}
         onRequestUnpackPts={props.onRequestUnpackPts}
         onOpenProjectTarget={props.onOpenProjectTarget}
