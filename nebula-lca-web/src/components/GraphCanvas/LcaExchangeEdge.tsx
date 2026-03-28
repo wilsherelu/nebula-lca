@@ -5,80 +5,24 @@ import { useLcaGraphStore } from "../../store/lcaGraphStore";
 
 type Point = { x: number; y: number };
 
-type Rect = {
-  left: number;
-  right: number;
-  top: number;
-  bottom: number;
-};
-
 type HorizontalSide = "left" | "right";
 
-const DEFAULT_NODE_WIDTH = 220;
-const DEFAULT_NODE_HEIGHT = 160;
 const HORIZONTAL_OFFSET = 20;
 const CORNER_RADIUS = 10;
-const OBSTACLE_MARGIN = 20;
+const HEAVY_EDGE_ANIMATION_THRESHOLD = 160;
+const LIGHT_EDGE_SWAY = 18;
 
-const normalizeRect = (left: number, right: number, top: number, bottom: number): Rect => ({
-  left: Math.min(left, right),
-  right: Math.max(left, right),
-  top: Math.min(top, bottom),
-  bottom: Math.max(top, bottom),
-});
-
-const buildObstacleRect = (
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  margin = OBSTACLE_MARGIN,
-): Rect =>
-  normalizeRect(x - margin, x + width + margin, y - margin, y + height + margin);
-
-const intersectsVerticalSegment = (x: number, y1: number, y2: number, rect: Rect): boolean => {
-  const top = Math.min(y1, y2);
-  const bottom = Math.max(y1, y2);
-  return x >= rect.left && x <= rect.right && bottom >= rect.top && top <= rect.bottom;
+const hashEdgeId = (value: string): number => {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash);
 };
 
-const chooseRoutedMidX = (baseMidX: number, y1: number, y2: number, obstacles: Rect[]): number => {
-  if (obstacles.length === 0) {
-    return baseMidX;
-  }
-  const candidates = new Set<number>([baseMidX]);
-  obstacles.forEach((rect) => {
-    candidates.add(rect.left - OBSTACLE_MARGIN);
-    candidates.add(rect.right + OBSTACLE_MARGIN);
-  });
-  const ordered = Array.from(candidates).sort((a, b) => Math.abs(a - baseMidX) - Math.abs(b - baseMidX));
-  return (
-    ordered.find((candidate) => obstacles.every((rect) => !intersectsVerticalSegment(candidate, y1, y2, rect))) ?? baseMidX
-  );
-};
-
-const getNodeRect = (node: { position: { x: number; y: number }; width?: number; height?: number } | undefined): Rect | undefined => {
-  if (!node) {
-    return undefined;
-  }
-  return normalizeRect(
-    node.position.x,
-    node.position.x + (typeof node.width === "number" && Number.isFinite(node.width) ? node.width : DEFAULT_NODE_WIDTH),
-    node.position.y,
-    node.position.y + (typeof node.height === "number" && Number.isFinite(node.height) ? node.height : DEFAULT_NODE_HEIGHT),
-  );
-};
-
-const isSameColumnLayout = (
-  sourceRect: Rect | undefined,
-  targetRect: Rect | undefined,
-): boolean => {
-  if (!sourceRect || !targetRect) {
-    return false;
-  }
-  const xOverlap = Math.min(sourceRect.right, targetRect.right) >= Math.max(sourceRect.left, targetRect.left) - 12;
-  const centerGap = Math.abs((sourceRect.left + sourceRect.right) / 2 - (targetRect.left + targetRect.right) / 2);
-  return xOverlap || centerGap <= 90;
+const getStableEdgeSway = (edgeId: string): number => {
+  const bucket = hashEdgeId(edgeId) % 5;
+  return (bucket - 2) * LIGHT_EDGE_SWAY;
 };
 
 const resolveSourceHorizontalSide = (
@@ -155,20 +99,16 @@ const buildClassicCurvePath = (
   targetY: number,
   sourceSide: HorizontalSide,
   targetSide: HorizontalSide,
-  sourceRect?: Rect,
-  targetRect?: Rect,
   horizontalOffset = HORIZONTAL_OFFSET,
 ): string => {
   const sourceStubX = sourceX + (sourceSide === "right" ? horizontalOffset : -horizontalOffset);
   const targetStubX = targetX + (targetSide === "left" ? -horizontalOffset : horizontalOffset);
-  const sameColumn = isSameColumnLayout(sourceRect, targetRect);
   const span = Math.abs(targetStubX - sourceStubX);
   const baseHandle = Math.max(24, Math.min(84, span * 0.45));
-  const columnBoost = sameColumn ? Math.max(18, Math.min(64, Math.abs(targetY - sourceY) * 0.22)) : 0;
   const sourceDirection = sourceSide === "right" ? 1 : -1;
   const targetDirection = targetSide === "right" ? 1 : -1;
-  const c1x = sourceStubX + sourceDirection * (baseHandle + columnBoost);
-  const c2x = targetStubX + targetDirection * (baseHandle + columnBoost);
+  const c1x = sourceStubX + sourceDirection * baseHandle;
+  const c2x = targetStubX + targetDirection * baseHandle;
   return [
     `M ${sourceX} ${sourceY}`,
     `L ${sourceStubX} ${sourceY}`,
@@ -181,8 +121,6 @@ export function LcaExchangeEdge({
   id,
   data,
   selected,
-  source,
-  target,
   sourceX,
   sourceY,
   targetX,
@@ -193,83 +131,23 @@ export function LcaExchangeEdge({
   const flowAnimationEnabled = useLcaGraphStore((state) => state.flowAnimationEnabled);
   const flowAnimationEpoch = useLcaGraphStore((state) => state.flowAnimationEpoch);
   const edgeRoutingStyle = useLcaGraphStore((state) => state.edgeRoutingStyle);
-  const nodes = useLcaGraphStore((state) => state.nodes);
-  const edges = useLcaGraphStore((state) => state.edges);
-  const currentEdge = useMemo(() => edges.find((edge) => edge.id === id), [edges, id]);
-  const sourceNodeId = typeof source === "string" ? source : "";
-  const targetNodeId = typeof target === "string" ? target : "";
-  const sourceNode = nodes.find((node) => node.id === sourceNodeId);
-  const targetNode = nodes.find((node) => node.id === targetNodeId);
-  const sourceRect = getNodeRect(sourceNode);
-  const targetRect = getNodeRect(targetNode);
+  const totalEdgeCount = useLcaGraphStore((state) => state.edges.length);
+  const currentEdge = useLcaGraphStore((state) => state.edges.find((edge) => edge.id === id));
   const sourceSide = resolveSourceHorizontalSide(currentEdge?.sourceHandle ?? undefined, sourcePosition);
   const targetSide = resolveTargetHorizontalSide(currentEdge?.targetHandle ?? undefined, targetPosition);
   const edgeData = (data ?? {}) as Partial<LcaEdgeData>;
   const quantityMode = edgeData.quantityMode ?? "single";
   const strokeColor = quantityMode === "single" ? "#2ea44f" : "#8a94a6";
   const pulseColor = quantityMode === "single" ? "#22c55e" : "#94a3b8";
+  const stableEdgeSway = useMemo(() => getStableEdgeSway(id), [id]);
   const orthogonalPath = useMemo(() => {
     const sourceStubX = sourceX + (sourceSide === "right" ? HORIZONTAL_OFFSET : -HORIZONTAL_OFFSET);
     const targetStubX = targetX + (targetSide === "left" ? -HORIZONTAL_OFFSET : HORIZONTAL_OFFSET);
-    const isLeftToRight = sourceStubX <= targetStubX;
-    const currentSourceHandle = currentEdge?.sourceHandle;
-    const siblingEdges = edges
-      .filter((edge) => edge.source === sourceNodeId && edge.sourceHandle === currentSourceHandle && edge.id !== id)
-      .sort((a, b) => {
-        const aTarget = nodes.find((node) => node.id === a.target);
-        const bTarget = nodes.find((node) => node.id === b.target);
-        const ay = aTarget?.position.y ?? 0;
-        const by = bTarget?.position.y ?? 0;
-        if (Math.abs(ay - by) > 0.1) {
-          return ay - by;
-        }
-        return a.id.localeCompare(b.id);
-      });
-    const currentTargetY = nodes.find((node) => node.id === targetNodeId)?.position.y ?? targetY;
-    const laneOrder = [...siblingEdges, { id, target: targetNodeId, source: sourceNodeId, sourceHandle: currentSourceHandle }].sort((a, b) => {
-      const aTarget = nodes.find((node) => node.id === a.target);
-      const bTarget = nodes.find((node) => node.id === b.target);
-      const ay = a.id === id ? currentTargetY : (aTarget?.position.y ?? 0);
-      const by = b.id === id ? currentTargetY : (bTarget?.position.y ?? 0);
-      if (Math.abs(ay - by) > 0.1) {
-        return ay - by;
-      }
-      return a.id.localeCompare(b.id);
-    });
-    const laneIndex = Math.max(
-      0,
-      laneOrder.findIndex((edge) => edge.id === id),
-    );
-    const obstacles = nodes
-      .filter((node) => node.id !== sourceNodeId && node.id !== targetNodeId)
-      .map((node) =>
-        buildObstacleRect(
-          node.position.x,
-          node.position.y,
-          typeof node.width === "number" && Number.isFinite(node.width) ? node.width : DEFAULT_NODE_WIDTH,
-          typeof node.height === "number" && Number.isFinite(node.height) ? node.height : DEFAULT_NODE_HEIGHT,
-        ),
-      );
-    const laneSpacing = 22;
-    const preferredMidX = isLeftToRight
-      ? sourceStubX + 40 + laneIndex * laneSpacing
-      : sourceStubX - 40 - laneIndex * laneSpacing;
-    const xRangesOverlap =
-      sourceRect && targetRect
-        ? Math.min(sourceRect.right, targetRect.right) >= Math.max(sourceRect.left, targetRect.left) - 8
-        : false;
-    const outerRight =
-      sourceRect && targetRect ? Math.max(sourceRect.right, targetRect.right) + 36 + laneIndex * laneSpacing : undefined;
-    const outerLeft =
-      sourceRect && targetRect ? Math.min(sourceRect.left, targetRect.left) - 36 - laneIndex * laneSpacing : undefined;
-    const baseMidX = xRangesOverlap
-      ? isLeftToRight
-        ? (outerRight ?? preferredMidX)
-        : (outerLeft ?? preferredMidX)
-      : isLeftToRight
-        ? Math.min(preferredMidX, targetStubX - 24)
-        : Math.max(preferredMidX, targetStubX + 24);
-    const midX = chooseRoutedMidX(baseMidX, sourceY, targetY, obstacles);
+    const baseMidX = (sourceStubX + targetStubX) / 2;
+    const span = Math.abs(targetStubX - sourceStubX);
+    const swayLimit = Math.max(12, Math.min(36, span * 0.16));
+    const sway = Math.max(-swayLimit, Math.min(swayLimit, stableEdgeSway));
+    const midX = baseMidX + sway;
     return buildRoundedOrthogonalPath(
       [
         { x: sourceX, y: sourceY },
@@ -281,7 +159,7 @@ export function LcaExchangeEdge({
       ],
       CORNER_RADIUS,
     );
-  }, [currentEdge?.sourceHandle, edges, id, nodes, sourceNodeId, sourceRect, sourceSide, sourceX, sourceY, targetNodeId, targetRect, targetSide, targetX, targetY]);
+  }, [sourceSide, sourceX, sourceY, stableEdgeSway, targetSide, targetX, targetY]);
   const classicCurvePath = buildClassicCurvePath(
     sourceX,
     sourceY,
@@ -289,8 +167,6 @@ export function LcaExchangeEdge({
     targetY,
     sourceSide,
     targetSide,
-    sourceRect,
-    targetRect,
     HORIZONTAL_OFFSET,
   );
   const path = edgeRoutingStyle === "classic_curve" ? classicCurvePath : orthogonalPath;
@@ -306,12 +182,16 @@ export function LcaExchangeEdge({
 
   const motionPathId = useMemo(() => `flow-motion-${id.replace(/[^a-zA-Z0-9_-]/g, "_")}`, [id]);
   const animationDurationSeconds = 13;
-  const phaseSeconds = ((Date.now() - flowAnimationEpoch) % (animationDurationSeconds * 1000)) / 1000;
-  const beginTime = `${-Math.max(0, phaseSeconds)}s`;
+  const beginTime = useMemo(() => {
+    const phaseSeconds = ((Date.now() - flowAnimationEpoch) % (animationDurationSeconds * 1000)) / 1000;
+    return `${-Math.max(0, phaseSeconds)}s`;
+  }, [flowAnimationEpoch, id]);
+  const heavyAnimationMode = totalEdgeCount >= HEAVY_EDGE_ANIMATION_THRESHOLD;
+  const effectiveFlowAnimationEnabled = flowAnimationEnabled && !heavyAnimationMode;
   return (
     <>
       <BaseEdge id={id} path={path} style={lineStyle} />
-      {flowAnimationEnabled && (
+      {effectiveFlowAnimationEnabled && (
         <g className="edge-flow-animation" style={{ pointerEvents: "none" }}>
           <path id={motionPathId} d={path} fill="none" stroke="none" />
           <circle r={selected ? 4.2 : 3.6} fill={pulseColor}>

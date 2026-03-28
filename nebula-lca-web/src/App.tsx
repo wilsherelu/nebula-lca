@@ -1608,6 +1608,7 @@ export default function App() {
   const [ptsPublishWarnings, setPtsPublishWarnings] = useState<PtsModelingWarning[]>([]);
   const [showPtsPublishWarnings, setShowPtsPublishWarnings] = useState(false);
   const [showTargetProductDialog, setShowTargetProductDialog] = useState(false);
+  const [canvasLoadKey, setCanvasLoadKey] = useState(0);
   const [selectedProductKey, setSelectedProductKey] = useState("");
   const [targetProductQuantityMode, setTargetProductQuantityMode] = useState<ProjectTargetQuantityMode>("custom");
   const [targetProductQuantity, setTargetProductQuantity] = useState("1");
@@ -1661,6 +1662,26 @@ export default function App() {
   const rootPtsProjectionHydrationRef = useRef<Record<string, string>>({});
   const ptsDraftInitInFlightRef = useRef<Record<string, true>>({});
   const ptsDraftInitializedRef = useRef<Record<string, true>>({});
+
+  const bumpCanvasLoadKey = useCallback(() => {
+    setCanvasLoadKey((prev) => prev + 1);
+  }, []);
+
+  const importGraphWithLoadKey = useCallback(
+    (graph: LcaGraphPayload) => {
+      bumpCanvasLoadKey();
+      importGraph(graph);
+    },
+    [bumpCanvasLoadKey, importGraph],
+  );
+
+  const replacePtsInternalCanvasGraphWithLoadKey = useCallback(
+    (ptsNodeId: string, graph: LcaGraphPayload, options?: { name?: string }) => {
+      bumpCanvasLoadKey();
+      replacePtsInternalCanvasGraph(ptsNodeId, graph, options);
+    },
+    [bumpCanvasLoadKey, replacePtsInternalCanvasGraph],
+  );
 
   const graphFingerprint = useMemo(
     () => JSON.stringify({ nodes, edges, fu: functionalUnit, viewport }),
@@ -2175,7 +2196,7 @@ export default function App() {
           });
           ptsResourceHydrationRef.current = "";
           rootPtsProjectionHydrationRef.current = {};
-          importGraph(normalizedLatestGraph);
+          importGraphWithLoadKey(normalizedLatestGraph);
           const latestHandleValidation = (latest as { handle_validation?: { issues?: Array<Record<string, unknown>> } }).handle_validation;
           if (Array.isArray(latestHandleValidation?.issues) && latestHandleValidation.issues.length > 0) {
             applyHandleValidationIssues(latestHandleValidation.issues as Array<{ edge_id?: string; suggested_source_port_id?: string; suggested_target_port_id?: string }>);
@@ -2213,7 +2234,7 @@ export default function App() {
           const draft = JSON.parse(currentDraftRaw) as LcaGraphPayload;
           ptsResourceHydrationRef.current = "";
           rootPtsProjectionHydrationRef.current = {};
-          importGraph(normalizeGraphPayload(draft));
+          importGraphWithLoadKey(normalizeGraphPayload(draft));
           try {
             setFlowNameSyncState(await fetchProjectFlowSyncState(targetProjectId));
           } catch {
@@ -2238,7 +2259,7 @@ export default function App() {
 
         ptsResourceHydrationRef.current = "";
         rootPtsProjectionHydrationRef.current = {};
-        importGraph({ functionalUnit: "1 kg 对二甲苯", nodes: [], exchanges: [], metadata: {} });
+        importGraphWithLoadKey({ functionalUnit: "1 kg 对二甲苯", nodes: [], exchanges: [], metadata: {} });
         setFlowNameSyncState({ needed: false, outdatedCount: 0, examples: [] });
         lastSavedFingerprintRef.current = "";
         setSelectedProductKey("");
@@ -2257,7 +2278,7 @@ export default function App() {
         }, 600);
       }
     },
-    [fetchProjectFlowSyncState, importGraph],
+    [fetchProjectFlowSyncState, importGraphWithLoadKey],
   );
 
   const loadProjectVersion = useCallback(
@@ -2290,7 +2311,7 @@ export default function App() {
           });
           ptsResourceHydrationRef.current = "";
           rootPtsProjectionHydrationRef.current = {};
-          importGraph(normalizedPayloadGraph);
+          importGraphWithLoadKey(normalizedPayloadGraph);
           const versionHandleValidation = (payload as { handle_validation?: { issues?: Array<Record<string, unknown>> } }).handle_validation;
           if (Array.isArray(versionHandleValidation?.issues) && versionHandleValidation.issues.length > 0) {
             applyHandleValidationIssues(versionHandleValidation.issues as Array<{ edge_id?: string; suggested_source_port_id?: string; suggested_target_port_id?: string }>);
@@ -2332,7 +2353,7 @@ export default function App() {
         setBusy(false);
       }
     },
-    [fetchProjectFlowSyncState, importGraph],
+    [fetchProjectFlowSyncState, importGraphWithLoadKey],
   );
   const navigateVersion = useCallback(
     (step: -1 | 1) => {
@@ -2784,7 +2805,7 @@ export default function App() {
           metadata: nextMetadata,
         });
 
-        importGraph(nextGraph);
+        importGraphWithLoadKey(nextGraph);
         autoConnectByUuid({ silentNoCandidate: true, silentSuccess: true });
         await persistRootModelSnapshot(targetProjectId);
         setStatusText("PTS 解封完成，已尝试自动连接并保存主图。未连上的边可后续手动补连。");
@@ -2794,7 +2815,7 @@ export default function App() {
         setBusy(false);
       }
     },
-    [autoConnectByUuid, exportGraph, importGraph, persistRootModelSnapshot, projectId],
+    [autoConnectByUuid, exportGraph, importGraphWithLoadKey, persistRootModelSnapshot, projectId],
   );
 
   const runModel = useCallback(async () => {
@@ -3566,7 +3587,7 @@ export default function App() {
               (edge) => String(edge.fromNode ?? "") !== activePtsNode.id && String(edge.toNode ?? "") !== activePtsNode.id,
             ),
           };
-          replacePtsInternalCanvasGraph(activePtsNode.id, sanitizedPtsGraph, {
+          replacePtsInternalCanvasGraphWithLoadKey(activePtsNode.id, sanitizedPtsGraph, {
             name: payload.name ?? activePtsNode.data.name,
           });
           ptsResourceHydrationRef.current = hydrationKey;
@@ -3590,7 +3611,7 @@ export default function App() {
     activePtsUuid,
     persistPtsResourceForNode,
     projectId,
-    replacePtsInternalCanvasGraph,
+    replacePtsInternalCanvasGraphWithLoadKey,
   ]);
 
   useEffect(() => {
@@ -5046,6 +5067,7 @@ export default function App() {
                 <div className="workspace-loading">{uiLanguage === "zh" ? "正在加载 PTS..." : "Loading PTS..."}</div>
               ) : (
                 <GraphCanvas
+                  canvasLoadKey={canvasLoadKey}
                   onOpenProjectTarget={openTargetProductDialog}
                   onRequestUnpackPts={handleUnpackPts}
                 />
