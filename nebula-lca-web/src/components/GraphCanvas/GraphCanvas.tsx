@@ -1,9 +1,11 @@
 ﻿import {
   Background,
   Controls,
+  type Node,
   ReactFlow,
   ReactFlowProvider,
   type Connection,
+  type NodeChange,
   type Viewport,
   useReactFlow,
 } from "@xyflow/react";
@@ -11,6 +13,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type React from "react";
 import { LcaExchangeEdge } from "./LcaExchangeEdge";
 import { LcaProcessNode } from "./LcaProcessNode";
+import type { LcaNodeData } from "../../model/node";
 import { useLcaGraphStore } from "../../store/lcaGraphStore";
 
 const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
@@ -32,21 +35,6 @@ type HandleValidationResponse = {
   issues?: HandleValidationIssue[];
 };
 
-type GraphCanvasPort = {
-  id: string;
-  legacyPortId?: string;
-  flowUuid: string;
-};
-
-const parseHandlePortId = (handleId: string | null | undefined, prefix: "in:" | "out:"): string | undefined => {
-  if (!handleId) {
-    return undefined;
-  }
-  const candidates = prefix === "in:" ? ["in:", "inl:", "inr:"] : ["out:", "outl:", "outr:"];
-  const matched = candidates.find((p) => handleId.startsWith(p));
-  return matched ? handleId.slice(matched.length) : undefined;
-};
-
 const buildHandleWithSameSide = (
   handleId: string | null | undefined,
   prefix: "in:" | "out:",
@@ -56,9 +44,6 @@ const buildHandleWithSameSide = (
   const matched = sidePrefixes.find((p) => Boolean(handleId && handleId.startsWith(p)));
   return `${matched ?? prefix}${portId}`;
 };
-
-const buildPortLookupKey = (nodeId: string, portId: string, flowUuid: string): string => `${nodeId}::${flowUuid}::${portId}`;
-const buildSingleFlowLookupKey = (nodeId: string, flowUuid: string): string => `${nodeId}::${flowUuid}`;
 
 const nodeTypes = {
   lcaProcess: LcaProcessNode,
@@ -78,6 +63,8 @@ function GraphCanvasInner(props: {
   const [isConnecting, setIsConnecting] = useState(false);
   const [hoverDropNodeId, setHoverDropNodeId] = useState<string | undefined>(undefined);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const pendingNodeChangesRef = useRef<NodeChange<Node<LcaNodeData>>[]>([]);
+  const pendingNodeChangesFrameRef = useRef<number | null>(null);
   const rf = useReactFlow();
   const {
     nodes,
@@ -120,6 +107,7 @@ function GraphCanvasInner(props: {
     deferredBalanceEdgeId,
     consumeDeferredBalanceEdge,
     activeCanvasId,
+    graphRelations,
   } = useLcaGraphStore();
   const [menu, setMenu] = useState<
     | {
@@ -150,6 +138,50 @@ function GraphCanvasInner(props: {
   const edgeRenderLimitByCanvasRef = useRef<Record<string, number>>({});
   const hiddenDisplayMetricsRef = useRef<{ width: number; height: number; dpr: number } | null>(null);
   const [edgeRenderLimit, setEdgeRenderLimit] = useState(0);
+
+  const flushBufferedNodeChanges = useCallback(() => {
+    if (pendingNodeChangesFrameRef.current !== null) {
+      window.cancelAnimationFrame(pendingNodeChangesFrameRef.current);
+      pendingNodeChangesFrameRef.current = null;
+    }
+    if (pendingNodeChangesRef.current.length === 0) {
+      return;
+    }
+    const changes = pendingNodeChangesRef.current;
+    pendingNodeChangesRef.current = [];
+    onNodesChange(changes);
+  }, [onNodesChange]);
+
+  const bufferedOnNodesChange = useCallback(
+    (changes: NodeChange<Node<LcaNodeData>>[]) => {
+      if (changes.length === 0) {
+        return;
+      }
+      pendingNodeChangesRef.current.push(...changes);
+      if (pendingNodeChangesFrameRef.current !== null) {
+        return;
+      }
+      pendingNodeChangesFrameRef.current = window.requestAnimationFrame(() => {
+        pendingNodeChangesFrameRef.current = null;
+        if (pendingNodeChangesRef.current.length === 0) {
+          return;
+        }
+        const nextChanges = pendingNodeChangesRef.current;
+        pendingNodeChangesRef.current = [];
+        onNodesChange(nextChanges);
+      });
+    },
+    [onNodesChange],
+  );
+
+  useEffect(
+    () => () => {
+      if (pendingNodeChangesFrameRef.current !== null) {
+        window.cancelAnimationFrame(pendingNodeChangesFrameRef.current);
+      }
+    },
+    [],
+  );
 
   const resolveNodeIdFromEvent = useCallback((event: MouseEvent | TouchEvent): string | undefined => {
     const target = event.target;
@@ -302,99 +334,14 @@ function GraphCanvasInner(props: {
     };
   }, [rf, viewport]);
 
-  const edgeLookup = useMemo(() => {
-    const nodeById = new Map(nodes.map((node) => [node.id, node]));
-    const outputPortByNodeAndPortId = new Map<string, GraphCanvasPort>();
-    const inputPortByNodeAndPortId = new Map<string, GraphCanvasPort>();
-    const singleOutputByNodeAndFlowUuid = new Map<string, GraphCanvasPort>();
-    const singleInputByNodeAndFlowUuid = new Map<string, GraphCanvasPort>();
-
-    for (const node of nodes) {
-      const outputCountByFlow = new Map<string, number>();
-      const inputCountByFlow = new Map<string, number>();
-      for (const port of node.data.outputs) {
-        const flowUuid = String(port.flowUuid ?? "").trim();
-        const portId = String(port.id ?? "").trim();
-        const legacyPortId = String(port.legacyPortId ?? "").trim();
-        if (portId && flowUuid) {
-          outputPortByNodeAndPortId.set(buildPortLookupKey(node.id, portId, flowUuid), port);
-        }
-        if (legacyPortId && flowUuid) {
-          outputPortByNodeAndPortId.set(buildPortLookupKey(node.id, legacyPortId, flowUuid), port);
-        }
-        if (flowUuid) {
-          outputCountByFlow.set(flowUuid, (outputCountByFlow.get(flowUuid) ?? 0) + 1);
-        }
-      }
-      for (const port of node.data.outputs) {
-        const flowUuid = String(port.flowUuid ?? "").trim();
-        if (flowUuid && outputCountByFlow.get(flowUuid) === 1) {
-          singleOutputByNodeAndFlowUuid.set(buildSingleFlowLookupKey(node.id, flowUuid), port);
-        }
-      }
-
-      for (const port of node.data.inputs) {
-        const flowUuid = String(port.flowUuid ?? "").trim();
-        const portId = String(port.id ?? "").trim();
-        const legacyPortId = String(port.legacyPortId ?? "").trim();
-        if (portId && flowUuid) {
-          inputPortByNodeAndPortId.set(buildPortLookupKey(node.id, portId, flowUuid), port);
-        }
-        if (legacyPortId && flowUuid) {
-          inputPortByNodeAndPortId.set(buildPortLookupKey(node.id, legacyPortId, flowUuid), port);
-        }
-        if (flowUuid) {
-          inputCountByFlow.set(flowUuid, (inputCountByFlow.get(flowUuid) ?? 0) + 1);
-        }
-      }
-      for (const port of node.data.inputs) {
-        const flowUuid = String(port.flowUuid ?? "").trim();
-        if (flowUuid && inputCountByFlow.get(flowUuid) === 1) {
-          singleInputByNodeAndFlowUuid.set(buildSingleFlowLookupKey(node.id, flowUuid), port);
-        }
-      }
-    }
-
-    return {
-      nodeById,
-      outputPortByNodeAndPortId,
-      inputPortByNodeAndPortId,
-      singleOutputByNodeAndFlowUuid,
-      singleInputByNodeAndFlowUuid,
-    };
-  }, [nodes]);
-
   const renderedEdges = useMemo((): typeof edges => {
-    const {
-      nodeById,
-      outputPortByNodeAndPortId,
-      inputPortByNodeAndPortId,
-      singleOutputByNodeAndFlowUuid,
-      singleInputByNodeAndFlowUuid,
-    } = edgeLookup;
     const next: typeof edges = [];
     for (const edge of edges) {
-      const sourceNode = nodeById.get(edge.source);
-      const targetNode = nodeById.get(edge.target);
-      const flowUuid = edge.data?.flowUuid ?? "";
-      if (!sourceNode || !targetNode || !flowUuid) {
-        continue;
-      }
-
-      const sourcePortId = parseHandlePortId(edge.sourceHandle, "out:");
-      const sourcePort =
-        (sourcePortId
-          ? outputPortByNodeAndPortId.get(buildPortLookupKey(edge.source, sourcePortId, flowUuid))
-          : undefined) ?? singleOutputByNodeAndFlowUuid.get(buildSingleFlowLookupKey(edge.source, flowUuid));
+      const sourcePort = graphRelations.sourcePortByEdgeId.get(edge.id);
       if (!sourcePort) {
         continue;
       }
-
-      const targetPortId = parseHandlePortId(edge.targetHandle, "in:");
-      const targetPort =
-        (targetPortId
-          ? inputPortByNodeAndPortId.get(buildPortLookupKey(edge.target, targetPortId, flowUuid))
-          : undefined) ?? singleInputByNodeAndFlowUuid.get(buildSingleFlowLookupKey(edge.target, flowUuid));
+      const targetPort = graphRelations.targetPortByEdgeId.get(edge.id);
       if (!targetPort) {
         continue;
       }
@@ -406,7 +353,7 @@ function GraphCanvasInner(props: {
       });
     }
     return next;
-  }, [edgeLookup, edges]);
+  }, [edges, graphRelations.sourcePortByEdgeId, graphRelations.targetPortByEdgeId]);
 
   const largeGraphMode =
     ENABLE_LARGE_GRAPH_EDGE_STAGING &&
@@ -593,8 +540,10 @@ function GraphCanvasInner(props: {
         nodesDraggable
         elementsSelectable
         onConnect={onConnect}
-        onNodesChange={onNodesChange}
+        onNodesChange={bufferedOnNodesChange}
         onEdgesChange={onEdgesChange}
+        onNodeDragStop={() => flushBufferedNodeChanges()}
+        onSelectionDragStop={() => flushBufferedNodeChanges()}
         onSelectionChange={({ nodes: sNodes, edges: sEdges }) =>
           {
             const now = Date.now();

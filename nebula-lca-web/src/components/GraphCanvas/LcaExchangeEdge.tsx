@@ -131,8 +131,8 @@ export function LcaExchangeEdge({
   const flowAnimationEnabled = useLcaGraphStore((state) => state.flowAnimationEnabled);
   const flowAnimationEpoch = useLcaGraphStore((state) => state.flowAnimationEpoch);
   const edgeRoutingStyle = useLcaGraphStore((state) => state.edgeRoutingStyle);
-  const totalEdgeCount = useLcaGraphStore((state) => state.edges.length);
-  const currentEdge = useLcaGraphStore((state) => state.edges.find((edge) => edge.id === id));
+  const totalEdgeCount = useLcaGraphStore((state) => state.graphRelations.edgeById.size);
+  const currentEdge = useLcaGraphStore((state) => state.graphRelations.edgeById.get(id));
   const sourceSide = resolveSourceHorizontalSide(currentEdge?.sourceHandle ?? undefined, sourcePosition);
   const targetSide = resolveTargetHorizontalSide(currentEdge?.targetHandle ?? undefined, targetPosition);
   const edgeData = (data ?? {}) as Partial<LcaEdgeData>;

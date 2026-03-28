@@ -251,6 +251,7 @@ const AUTO_POPUP_KEY = "nebula:auto_popup_enabled";
 const UNIT_AUTOSCALE_KEY = "nebula:unit_autoscale_enabled";
 const UI_LANG_KEY = "nebula:ui_language";
 const AUTO_SAVE_DEBOUNCE_MS = 8000;
+const LOCAL_DRAFT_SAVE_DEBOUNCE_MS = 200;
 const INTERVAL_SAVE_MS = 60000;
 const draftKey = (projectId: string) => `nebula:${projectId}:draft`;
 const snapshotKey = (projectId: string) => `nebula:${projectId}:snapshot`;
@@ -1683,10 +1684,6 @@ export default function App() {
     [bumpCanvasLoadKey, replacePtsInternalCanvasGraph],
   );
 
-  const graphFingerprint = useMemo(
-    () => JSON.stringify({ nodes, edges, fu: functionalUnit, viewport }),
-    [nodes, edges, functionalUnit, viewport],
-  );
   const activeCanvas = useMemo(() => canvases[activeCanvasId], [activeCanvasId, canvases]);
   const activePtsNode = useMemo(() => {
     if (activeCanvasKind !== "pts_internal") {
@@ -3793,11 +3790,11 @@ export default function App() {
   }, [appMode, hydrated, projectId, syncProjectRoute]);
 
   useEffect(() => {
-    if (!hydrated) {
+    if (!hydrated || !projectId) {
       return;
     }
-    try {
-      if (projectId) {
+    const timer = window.setTimeout(() => {
+      try {
         localStorage.setItem(
           draftKey(projectId),
           JSON.stringify(
@@ -3814,11 +3811,23 @@ export default function App() {
             ),
           ),
         );
+      } catch {
+        // ignore
       }
-    } catch {
-      // ignore
-    }
-  }, [graphFingerprint, hydrated, exportGraph, projectId, selectedProductKey, targetProductQuantity, targetProductQuantityMode]);
+    }, LOCAL_DRAFT_SAVE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [
+    edges,
+    exportGraph,
+    functionalUnit,
+    hydrated,
+    nodes,
+    projectId,
+    selectedProductKey,
+    targetProductQuantity,
+    targetProductQuantityMode,
+    viewport,
+  ]);
 
   useEffect(() => {
     if (!hydrated || appMode !== "editor" || !projectId || activeCanvasKind === "pts_internal") {
@@ -3828,7 +3837,7 @@ export default function App() {
       void persistModel("auto");
     }, AUTO_SAVE_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
-  }, [activeCanvasKind, appMode, graphFingerprint, persistModel, hydrated, projectId]);
+  }, [activeCanvasKind, appMode, edges, functionalUnit, nodes, persistModel, hydrated, projectId, viewport]);
 
   useEffect(() => {
     if (!hydrated || appMode !== "editor" || !projectId || activeCanvasKind === "pts_internal") {
@@ -4334,11 +4343,15 @@ export default function App() {
       return resolveNodeMode(edge.source) !== "balanced" || resolveNodeMode(edge.target) !== "balanced";
     });
   }, [edges, nodes]);
+  const normalizedEdgeFixSignature = useMemo(
+    () => normalizedEdgeFixCandidates.map((edge) => edge.id).sort().join("|"),
+    [normalizedEdgeFixCandidates],
+  );
   const showNormalizedEdgeFixBanner =
     appMode === "editor" &&
     activeCanvasKind === "root" &&
     normalizedEdgeFixCandidates.length > 0 &&
-    dismissedNormalizedEdgeFixFingerprint !== graphFingerprint;
+    dismissedNormalizedEdgeFixFingerprint !== normalizedEdgeFixSignature;
   const firstFlowNameSyncEvidence = useMemo(() => {
     if (!flowNameSyncState.examples.length) {
       return "";
@@ -4612,7 +4625,7 @@ export default function App() {
             <button
               type="button"
               className="link-btn"
-              onClick={() => setDismissedNormalizedEdgeFixFingerprint(graphFingerprint)}
+              onClick={() => setDismissedNormalizedEdgeFixFingerprint(normalizedEdgeFixSignature)}
             >
               暂不处理
             </button>
