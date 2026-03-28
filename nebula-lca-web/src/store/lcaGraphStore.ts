@@ -15,6 +15,8 @@ import type { FlowPort, LcaNodeData, LcaProcessTemplate, LciRole, ProcessMode } 
 import {
   buildGraphRelations,
   createEmptyGraphRelations,
+  getAdjacentNodeIdsForNodeIds,
+  getAffectedEdgeIdsForNodeIds,
   type GraphRelations,
 } from "./graphRelations";
 
@@ -182,6 +184,10 @@ type LcaGraphState = {
   pendingEdges: PendingEdgeItem[];
   deferredBalanceEdgeId?: string;
   pendingAutoConnect: boolean;
+  isNodeDragging: boolean;
+  draggingNodeIds: ReadonlySet<string>;
+  dragAdjacentNodeIds: ReadonlySet<string>;
+  dragAffectedEdgeIds: ReadonlySet<string>;
   pendingPtsCompileNodeId?: string;
   unitProcessImportDialog: UnitProcessImportDialogState;
   setFlowAnimationEnabled: (enabled: boolean) => void;
@@ -189,6 +195,9 @@ type LcaGraphState = {
   setUiLanguage: (lang: "zh" | "en") => void;
   setAutoPopupEnabled: (enabled: boolean) => void;
   setUnitAutoScaleEnabled: (enabled: boolean) => void;
+  setNodeDragging: (dragging: boolean) => void;
+  setDraggingSubgraph: (nodeIds: string[]) => void;
+  clearDraggingSubgraph: () => void;
   onNodesChange: (changes: NodeChange<Node<LcaNodeData>>[]) => void;
   onEdgesChange: (changes: EdgeChange<Edge<LcaEdgeData>>[]) => void;
   onConnect: (connection: Connection) => void;
@@ -2247,6 +2256,10 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
   pendingEdges: [],
   deferredBalanceEdgeId: undefined,
   pendingAutoConnect: false,
+  isNodeDragging: false,
+  draggingNodeIds: new Set(),
+  dragAdjacentNodeIds: new Set(),
+  dragAffectedEdgeIds: new Set(),
   pendingPtsCompileNodeId: undefined,
   unitProcessImportDialog: { open: false, targetKind: "unit_process" },
   setUiLanguage: (lang) =>
@@ -2262,6 +2275,24 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
   setEdgeRoutingStyle: (style) => set(() => ({ edgeRoutingStyle: style })),
   setAutoPopupEnabled: (enabled) => set(() => ({ autoPopupEnabled: enabled })),
   setUnitAutoScaleEnabled: (enabled) => set(() => ({ unitAutoScaleEnabled: enabled })),
+  setNodeDragging: (dragging) => set((state) => (state.isNodeDragging === dragging ? state : { isNodeDragging: dragging })),
+  setDraggingSubgraph: (nodeIds) =>
+    set((state) => {
+      const draggingNodeIds = new Set(nodeIds.filter(Boolean));
+      const dragAdjacentNodeIds = getAdjacentNodeIdsForNodeIds(state.graphRelations, draggingNodeIds);
+      const dragAffectedEdgeIds = getAffectedEdgeIdsForNodeIds(state.graphRelations, draggingNodeIds);
+      return {
+        draggingNodeIds,
+        dragAdjacentNodeIds,
+        dragAffectedEdgeIds,
+      };
+    }),
+  clearDraggingSubgraph: () =>
+    set(() => ({
+      draggingNodeIds: new Set(),
+      dragAdjacentNodeIds: new Set(),
+      dragAffectedEdgeIds: new Set(),
+    })),
   setViewport: (viewport) =>
     set((state) => {
       const current = state.viewport;

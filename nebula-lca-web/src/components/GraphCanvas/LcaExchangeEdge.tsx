@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { BaseEdge, type EdgeProps } from "@xyflow/react";
 import type { LcaEdgeData } from "../../model/exchange";
 import { useLcaGraphStore } from "../../store/lcaGraphStore";
@@ -133,6 +133,8 @@ export function LcaExchangeEdge({
   const edgeRoutingStyle = useLcaGraphStore((state) => state.edgeRoutingStyle);
   const totalEdgeCount = useLcaGraphStore((state) => state.graphRelations.edgeById.size);
   const currentEdge = useLcaGraphStore((state) => state.graphRelations.edgeById.get(id));
+  const isNodeDragging = useLcaGraphStore((state) => state.isNodeDragging);
+  const dragAffectedEdgeIds = useLcaGraphStore((state) => state.dragAffectedEdgeIds);
   const sourceSide = resolveSourceHorizontalSide(currentEdge?.sourceHandle ?? undefined, sourcePosition);
   const targetSide = resolveTargetHorizontalSide(currentEdge?.targetHandle ?? undefined, targetPosition);
   const edgeData = (data ?? {}) as Partial<LcaEdgeData>;
@@ -169,7 +171,17 @@ export function LcaExchangeEdge({
     targetSide,
     HORIZONTAL_OFFSET,
   );
-  const path = edgeRoutingStyle === "classic_curve" ? classicCurvePath : orthogonalPath;
+  const livePath = edgeRoutingStyle === "classic_curve" ? classicCurvePath : orthogonalPath;
+  const stablePathRef = useRef(livePath);
+  const isDragAffected = !isNodeDragging || dragAffectedEdgeIds.has(id);
+
+  useEffect(() => {
+    if (isDragAffected) {
+      stablePathRef.current = livePath;
+    }
+  }, [isDragAffected, livePath]);
+
+  const path = isNodeDragging && !isDragAffected ? stablePathRef.current : livePath;
 
   const lineStyle =
     quantityMode === "single"
@@ -187,7 +199,7 @@ export function LcaExchangeEdge({
     return `${-Math.max(0, phaseSeconds)}s`;
   }, [flowAnimationEpoch, id]);
   const heavyAnimationMode = totalEdgeCount >= HEAVY_EDGE_ANIMATION_THRESHOLD;
-  const effectiveFlowAnimationEnabled = flowAnimationEnabled && !heavyAnimationMode;
+  const effectiveFlowAnimationEnabled = flowAnimationEnabled && !heavyAnimationMode && !isNodeDragging;
   return (
     <>
       <BaseEdge id={id} path={path} style={lineStyle} />
