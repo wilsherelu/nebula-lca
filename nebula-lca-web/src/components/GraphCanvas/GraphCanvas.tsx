@@ -99,6 +99,10 @@ function GraphCanvasInner(props: {
     setFlowAnimationEnabled,
     unitAutoScaleEnabled,
     setUnitAutoScaleEnabled,
+    isNodeDragging,
+    setNodeDragging,
+    setDraggingSubgraph,
+    clearDraggingSubgraph,
     uiLanguage,
     pendingEdges,
     flushPendingEdges,
@@ -538,12 +542,29 @@ function GraphCanvasInner(props: {
         selectionOnDrag={interactionMode === "cursor"}
         panOnDrag={interactionMode === "hand"}
         nodesDraggable
+        nodesConnectable={!isNodeDragging}
         elementsSelectable
         onConnect={onConnect}
         onNodesChange={bufferedOnNodesChange}
         onEdgesChange={onEdgesChange}
-        onNodeDragStop={() => flushBufferedNodeChanges()}
-        onSelectionDragStop={() => flushBufferedNodeChanges()}
+        onNodeDragStart={(_, node) => {
+          setNodeDragging(true);
+          setDraggingSubgraph([node.id]);
+        }}
+        onNodeDragStop={() => {
+          flushBufferedNodeChanges();
+          setNodeDragging(false);
+          clearDraggingSubgraph();
+        }}
+        onSelectionDragStart={(_, draggingNodes) => {
+          setNodeDragging(true);
+          setDraggingSubgraph(draggingNodes.map((node) => node.id));
+        }}
+        onSelectionDragStop={() => {
+          flushBufferedNodeChanges();
+          setNodeDragging(false);
+          clearDraggingSubgraph();
+        }}
         onSelectionChange={({ nodes: sNodes, edges: sEdges }) =>
           {
             const now = Date.now();

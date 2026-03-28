@@ -1,5 +1,5 @@
 ﻿import { Handle, Position, useUpdateNodeInternals, type NodeProps } from "@xyflow/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import type { FlowPort, LcaNodeData } from "../../model/node";
 import { useLcaGraphStore } from "../../store/lcaGraphStore";
@@ -48,10 +48,19 @@ export function LcaProcessNode(props: NodeProps) {
   );
   const uiLanguage = useLcaGraphStore((state) => state.uiLanguage);
   const activeCanvasKind = useLcaGraphStore((state) => state.activeCanvasKind);
+  const isNodeDragging = useLcaGraphStore((state) => state.isNodeDragging);
+  const draggingNodeIds = useLcaGraphStore((state) => state.draggingNodeIds);
+  const dragAdjacentNodeIds = useLcaGraphStore((state) => state.dragAdjacentNodeIds);
   const pendingPtsCompileNodeId = useLcaGraphStore((state) => state.pendingPtsCompileNodeId);
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState(data.name);
   const [flowNameEnByUuid, setFlowNameEnByUuid] = useState<Record<string, string>>({});
+  const stableIoSectionsRef = useRef<{
+    inputRows: React.ReactNode[];
+    outputRows: React.ReactNode[];
+    showEmptyInputs: boolean;
+    showEmptyOutputs: boolean;
+  } | null>(null);
 
   const isRootVisiblePort = (item: LcaNodeData["inputs"][number]) => {
     if (item.type === "biosphere") {
@@ -72,6 +81,9 @@ export function LcaProcessNode(props: NodeProps) {
     rawVisibleOutputs.some((port) => !String(port.flowNameEn ?? "").trim());
   const visibleInputs = rawVisibleInputs;
   const visibleOutputs = shouldDelayPtsOutputs ? [] : rawVisibleOutputs;
+  const isDragRelevant =
+    !isNodeDragging || draggingNodeIds.has(props.id) || dragAdjacentNodeIds.has(props.id);
+  const freezeNodeContent = isNodeDragging && !isDragRelevant;
   const outputFlowCount = rawVisibleOutputs.reduce<Map<string, number>>((acc, port) => {
     const key = String(port.flowUuid ?? "").trim();
     if (!key) {
@@ -81,9 +93,13 @@ export function LcaProcessNode(props: NodeProps) {
     return acc;
   }, new Map());
   const hiddenInputs =
-    data.nodeKind === "pts_module" ? [] : data.inputs.filter((item) => item.type !== "biosphere" && !isRootVisiblePort(item));
+    data.nodeKind === "pts_module" || isNodeDragging
+      ? []
+      : data.inputs.filter((item) => item.type !== "biosphere" && !isRootVisiblePort(item));
   const hiddenOutputs =
-    data.nodeKind === "pts_module" ? [] : data.outputs.filter((item) => item.type !== "biosphere" && !isRootVisiblePort(item));
+    data.nodeKind === "pts_module" || isNodeDragging
+      ? []
+      : data.outputs.filter((item) => item.type !== "biosphere" && !isRootVisiblePort(item));
   const visibleFlowUuids = useMemo(
     () =>
       Array.from(
@@ -168,6 +184,9 @@ export function LcaProcessNode(props: NodeProps) {
     ...inputLabelStyle,
     textAlign: "right",
   };
+  const activeHandleStyle: React.CSSProperties = isNodeDragging
+    ? { top: "50%", transform: "translateY(-50%)", width: 7, height: 7, pointerEvents: "none" }
+    : { top: "50%", transform: "translateY(-50%)", width: 7, height: 7 };
   const formatPtsOutputLabel = (port: FlowPort): string => {
     const rawName = String(port.name ?? "").trim();
     const displayNameEn = String(port.displayNameEn ?? "").trim();
@@ -359,6 +378,66 @@ export function LcaProcessNode(props: NodeProps) {
     setEditingName(false);
   };
 
+  const liveInputRows = useMemo(() => {
+    if (freezeNodeContent && stableIoSectionsRef.current) {
+      return stableIoSectionsRef.current.inputRows;
+    }
+    return visibleInputs.map((input) => {
+      const inputLabel = getDisplayFlowName(input.name, input.flowUuid, input);
+      return (
+        <div key={input.id} style={itemStyle}>
+          <Handle type="target" position={Position.Left} id={`in:${input.id}`} style={activeHandleStyle} />
+          <Handle type="target" position={Position.Left} id={`inl:${input.id}`} style={{ ...activeHandleStyle, opacity: 0 }} />
+          <Handle type="target" position={Position.Right} id={`inr:${input.id}`} style={activeHandleStyle} />
+          <span style={inputLabelStyle} title={inputLabel}>
+            {inputLabel}
+          </span>
+        </div>
+      );
+    });
+  }, [activeHandleStyle, freezeNodeContent, inputLabelStyle, itemStyle, visibleInputs]);
+
+  const liveOutputRows = useMemo(() => {
+    if (freezeNodeContent && stableIoSectionsRef.current) {
+      return stableIoSectionsRef.current.outputRows;
+    }
+    return visibleOutputs.map((output) => {
+      const outputLabel =
+        data.nodeKind === "pts_module" && (outputFlowCount.get(output.flowUuid) ?? 0) > 1
+          ? formatPtsOutputLabel(output)
+          : getDisplayFlowName(output.name, output.flowUuid, output);
+      return (
+        <div key={output.id} style={outputItemStyle}>
+          <Handle type="source" position={Position.Left} id={`outl:${output.id}`} style={activeHandleStyle} />
+          <span style={outputLabelStyle} title={outputLabel}>
+            {outputLabel}
+          </span>
+          <Handle type="source" position={Position.Right} id={`out:${output.id}`} style={activeHandleStyle} />
+          <Handle type="source" position={Position.Right} id={`outr:${output.id}`} style={{ ...activeHandleStyle, opacity: 0 }} />
+        </div>
+      );
+    });
+  }, [activeHandleStyle, data.nodeKind, freezeNodeContent, outputFlowCount, outputItemStyle, outputLabelStyle, visibleOutputs]);
+
+  const showEmptyInputs = freezeNodeContent && stableIoSectionsRef.current
+    ? stableIoSectionsRef.current.showEmptyInputs
+    : visibleInputs.length === 0;
+  const showEmptyOutputs = freezeNodeContent && stableIoSectionsRef.current
+    ? stableIoSectionsRef.current.showEmptyOutputs
+    : visibleOutputs.length === 0;
+
+  useEffect(() => {
+    if (freezeNodeContent) {
+      return;
+    }
+    stableIoSectionsRef.current = {
+      inputRows: liveInputRows,
+      outputRows: liveOutputRows,
+      showEmptyInputs: visibleInputs.length === 0,
+      showEmptyOutputs: visibleOutputs.length === 0,
+    };
+  }, [freezeNodeContent, liveInputRows, liveOutputRows, visibleInputs.length, visibleOutputs.length]);
+
   return (
     <div className={`lca-node lca-node-${data.nodeKind}${marketProcess ? " lca-node-market" : ""}`}>
       <div className="lca-node-title nodrag" onClick={(event) => event.stopPropagation()}>
@@ -395,67 +474,12 @@ export function LcaProcessNode(props: NodeProps) {
       )}
 
       <div style={sectionTitleStyle}>{ioLabels.inputs}</div>
-      {visibleInputs.map((input) => {
-        const inputLabel = getDisplayFlowName(input.name, input.flowUuid, input);
-        return (
-        <div key={input.id} style={itemStyle}>
-          <Handle
-            type="target"
-            position={Position.Left}
-            id={`in:${input.id}`}
-            style={{ top: "50%", transform: "translateY(-50%)", width: 7, height: 7 }}
-          />
-          <Handle
-            type="target"
-            position={Position.Left}
-            id={`inl:${input.id}`}
-            style={{ top: "50%", transform: "translateY(-50%)", width: 7, height: 7, opacity: 0, pointerEvents: "none" }}
-          />
-          <Handle
-            type="target"
-            position={Position.Right}
-            id={`inr:${input.id}`}
-            style={{ top: "50%", transform: "translateY(-50%)", width: 7, height: 7 }}
-          />
-          <span style={inputLabelStyle} title={inputLabel}>
-            {inputLabel}
-          </span>
-        </div>
-      )})}
-      {visibleInputs.length === 0 && <div style={itemStyle}>{ioLabels.none}</div>}
+      {liveInputRows}
+      {showEmptyInputs && <div style={itemStyle}>{ioLabels.none}</div>}
 
       <div style={sectionTitleStyle}>{ioLabels.outputs}</div>
-      {visibleOutputs.map((output) => {
-        const outputLabel =
-          data.nodeKind === "pts_module" && (outputFlowCount.get(output.flowUuid) ?? 0) > 1
-            ? formatPtsOutputLabel(output)
-            : getDisplayFlowName(output.name, output.flowUuid, output);
-        return (
-        <div key={output.id} style={outputItemStyle}>
-          <Handle
-            type="source"
-            position={Position.Left}
-            id={`outl:${output.id}`}
-            style={{ top: "50%", transform: "translateY(-50%)", width: 7, height: 7 }}
-          />
-          <span style={outputLabelStyle} title={outputLabel}>
-            {outputLabel}
-          </span>
-          <Handle
-            type="source"
-            position={Position.Right}
-            id={`out:${output.id}`}
-            style={{ top: "50%", transform: "translateY(-50%)", width: 7, height: 7 }}
-          />
-          <Handle
-            type="source"
-            position={Position.Right}
-            id={`outr:${output.id}`}
-            style={{ top: "50%", transform: "translateY(-50%)", width: 7, height: 7, opacity: 0, pointerEvents: "none" }}
-          />
-        </div>
-      )})}
-      {visibleOutputs.length === 0 && <div style={itemStyle}>{ioLabels.none}</div>}
+      {liveOutputRows}
+      {showEmptyOutputs && <div style={itemStyle}>{ioLabels.none}</div>}
       <div style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}>
         {hiddenInputs.map((input, index) => {
           const top = getHiddenHandleTop("inputs", index, hiddenInputs.length);

@@ -329,3 +329,19 @@ export const getAffectedEdgeIdsForNodeIds = (
   });
   return affected;
 };
+
+export const getAdjacentNodeIdsForNodeIds = (
+  relations: GraphRelations,
+  nodeIds: ReadonlySet<string>,
+): ReadonlySet<string> => {
+  const adjacent = new Set<string>();
+  nodeIds.forEach((nodeId) => {
+    const related = relations.adjacentNodeIdsByNodeId.get(nodeId) ?? EMPTY_NODE_ID_LIST;
+    related.forEach((adjacentNodeId) => {
+      if (!nodeIds.has(adjacentNodeId)) {
+        adjacent.add(adjacentNodeId);
+      }
+    });
+  });
+  return adjacent;
+};
