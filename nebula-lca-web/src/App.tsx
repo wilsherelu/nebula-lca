@@ -1,5 +1,6 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GraphCanvas } from "./components/GraphCanvas/GraphCanvas";
+import { startTransition } from "react";
 import { FlowBalanceDialog } from "./components/Inspector/FlowBalanceDialog";
 import { InspectorPanel } from "./components/Inspector/InspectorPanel";
 import { PtsPortEditorDialog } from "./components/Inspector/PtsPortEditorDialog";
@@ -30,6 +31,10 @@ type ModelVersionResponse = {
   version: number;
   graph: LcaGraphPayload;
   created_at: string;
+  name?: string | null;
+  flow_name_sync_needed?: boolean;
+  outdated_flow_refs_count?: number;
+  outdated_flow_ref_examples?: Array<Record<string, unknown>>;
 };
 
 type PtsResourceResponse = {
@@ -144,12 +149,6 @@ type ProjectListPagedResponse = {
   page: number;
   page_size: number;
 };
-type ProjectDetailResponse = ProjectResponse & {
-  flow_name_sync_needed?: boolean;
-  outdated_flow_refs_count?: number;
-  outdated_flow_ref_examples?: Array<Record<string, unknown>>;
-};
-
 type RunResponse = {
   run_id: string;
   status: string;
@@ -255,6 +254,52 @@ const LOCAL_DRAFT_SAVE_DEBOUNCE_MS = 200;
 const INTERVAL_SAVE_MS = 60000;
 const draftKey = (projectId: string) => `nebula:${projectId}:draft`;
 const snapshotKey = (projectId: string) => `nebula:${projectId}:snapshot`;
+const latestProjectCacheKey = (projectId: string) => `nebula:${projectId}:latest`;
+
+type LatestProjectCacheEntry = {
+  etag: string;
+  payload: ModelVersionResponse;
+  cachedAt: number;
+};
+
+const readLatestProjectCache = (projectId: string): LatestProjectCacheEntry | null => {
+  try {
+    const raw = localStorage.getItem(latestProjectCacheKey(projectId));
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as Partial<LatestProjectCacheEntry> | null;
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    if (typeof parsed.etag !== "string" || !parsed.etag.trim() || !parsed.payload || typeof parsed.payload !== "object") {
+      return null;
+    }
+    return {
+      etag: parsed.etag,
+      payload: parsed.payload as ModelVersionResponse,
+      cachedAt: Number(parsed.cachedAt ?? Date.now()),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const writeLatestProjectCache = (projectId: string, entry: LatestProjectCacheEntry) => {
+  try {
+    localStorage.setItem(latestProjectCacheKey(projectId), JSON.stringify(entry));
+  } catch {
+    // ignore
+  }
+};
+
+const clearLatestProjectCache = (projectId: string) => {
+  try {
+    localStorage.removeItem(latestProjectCacheKey(projectId));
+  } catch {
+    // ignore
+  }
+};
 const PROJECT_ROUTE_PREFIX = "/projects/";
 
 const getProjectIdFromPathname = (pathname: string): string => {
@@ -1410,10 +1455,10 @@ const getPtsOutputSourceBindingIssues = (graph: LcaGraphPayload): string[] => {
 
 const toFlowNameSyncState = (
   payload:
-    | Partial<ProjectDetailResponse>
     | {
         flow_name_sync_needed?: boolean;
         outdated_flow_refs_count?: number;
+        outdated_flow_ref_examples?: Array<Record<string, unknown>>;
         evidence?: Array<Record<string, unknown>>;
       }
     | null
@@ -1663,6 +1708,76 @@ export default function App() {
   const rootPtsProjectionHydrationRef = useRef<Record<string, string>>({});
   const ptsDraftInitInFlightRef = useRef<Record<string, true>>({});
   const ptsDraftInitializedRef = useRef<Record<string, true>>({});
+  const loadPerformanceSpanCounterRef = useRef(0);
+  const activeProjectLoadTokenRef = useRef(0);
+
+  const startLoadPerformanceSpan = useCallback((label: string) => {
+    if (typeof performance === "undefined" || typeof performance.mark !== "function") {
+      return () => {};
+    }
+    const spanId = `${label}:${Date.now()}:${++loadPerformanceSpanCounterRef.current}`;
+    const startMark = `${spanId}:start`;
+    const endMark = `${spanId}:end`;
+    performance.mark(startMark);
+    return () => {
+      performance.mark(endMark);
+      performance.measure(label, startMark, endMark);
+      performance.clearMarks(startMark);
+      performance.clearMarks(endMark);
+    };
+  }, []);
+
+  const measureLoadPerformanceSync = useCallback(
+    <T,>(label: string, fn: () => T): T => {
+      const endSpan = startLoadPerformanceSpan(label);
+      try {
+        return fn();
+      } finally {
+        endSpan();
+      }
+    },
+    [startLoadPerformanceSpan],
+  );
+
+  const measureLoadPerformanceAsync = useCallback(
+    async <T,>(label: string, fn: () => Promise<T>): Promise<T> => {
+      const endSpan = startLoadPerformanceSpan(label);
+      try {
+        return await fn();
+      } finally {
+        endSpan();
+      }
+    },
+    [startLoadPerformanceSpan],
+  );
+
+  const scheduleAfterNextPaint = useCallback((task: () => void) => {
+    if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
+      setTimeout(task, 0);
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(task);
+    });
+  }, []);
+
+  const schedulePostLoadUiTask = useCallback((task: () => void) => {
+    const runTask = () => {
+      startTransition(() => {
+        task();
+      });
+    };
+    const idleCapableWindow = window as Window & {
+      requestIdleCallback?: (callback: () => void) => number;
+    };
+    if (typeof idleCapableWindow.requestIdleCallback === "function") {
+      idleCapableWindow.requestIdleCallback(() => {
+        runTask();
+      });
+      return;
+    }
+    setTimeout(runTask, 0);
+  }, []);
 
   const bumpCanvasLoadKey = useCallback(() => {
     setCanvasLoadKey((prev) => prev + 1);
@@ -2140,35 +2255,88 @@ export default function App() {
     [uiLanguage],
   );
 
-  const fetchProjectFlowSyncState = useCallback(async (targetProjectId: string): Promise<FlowNameSyncState> => {
-    const response = await fetch(`${API_BASE}/projects/${encodeURIComponent(targetProjectId)}`);
-    if (!response.ok) {
-      throw new Error(await response.text());
-    }
-    const payload = (await response.json()) as ProjectDetailResponse;
-    return toFlowNameSyncState(payload);
+  const applyTargetProductDraft = useCallback((graph: LcaGraphPayload) => {
+    const targetProductConfig = readProjectTargetProductConfig(graph);
+    setSelectedProductKey(
+      targetProductConfig ? buildProjectTargetMatchKey(targetProductConfig.processUuid, targetProductConfig.flowUuid) : "",
+    );
+    setTargetProductQuantityMode(targetProductConfig?.quantityMode ?? "custom");
+    setTargetProductQuantity(String(targetProductConfig?.quantity ?? 1));
   }, []);
+
+  const fetchLatestProjectGraph = useCallback(
+    async (
+      targetProjectId: string,
+    ): Promise<
+      | { kind: "fresh"; payload: ModelVersionResponse }
+      | { kind: "not_modified"; payload: ModelVersionResponse }
+      | { kind: "miss"; status: number }
+    > => {
+      const cached = readLatestProjectCache(targetProjectId);
+      const response = await fetch(`${API_BASE}/projects/${encodeURIComponent(targetProjectId)}/latest`, {
+        headers: cached?.etag ? { "If-None-Match": cached.etag } : undefined,
+      });
+      if (response.status === 304 && cached?.payload) {
+        return { kind: "not_modified", payload: cached.payload };
+      }
+      if (!response.ok) {
+        return { kind: "miss", status: response.status };
+      }
+      const payload = (await response.json()) as ModelVersionResponse;
+      const etag = response.headers.get("ETag");
+      if (etag) {
+        writeLatestProjectCache(targetProjectId, {
+          etag,
+          payload,
+          cachedAt: Date.now(),
+        });
+      } else {
+        clearLatestProjectCache(targetProjectId);
+      }
+      return { kind: "fresh", payload };
+    },
+    [],
+  );
 
   const loadProjectGraph = useCallback(
     async (targetProjectId: string, targetProjectName?: string) => {
+      const loadToken = ++activeProjectLoadTokenRef.current;
       setStatusText("项目读取中...");
+      const endFirstPaintReadySpan = startLoadPerformanceSpan("project-load:first-paint-ready");
+      let firstPaintReadyClosed = false;
+      const closeFirstPaintReadySpan = () => {
+        if (firstPaintReadyClosed) {
+          return;
+        }
+        firstPaintReadyClosed = true;
+        endFirstPaintReadySpan();
+      };
       try {
-        const latestResp = await fetch(`${API_BASE}/projects/${encodeURIComponent(targetProjectId)}/latest`);
-        if (latestResp.ok) {
-        const latest = (await latestResp.json()) as ModelVersionResponse;
-        debugPts("loadProjectGraph:latest:raw", {
-          projectId: latest.project_id,
-          version: latest.version,
-          ptsNodeIds: ((latest.graph?.nodes ?? []) as Array<Record<string, unknown>>)
-            .filter((node) => String(node.node_kind ?? "") === "pts_module")
-            .map((node) => ({
-              id: node.id,
-              ptsUuid: node.pts_uuid,
-              inputs: summarizeRawPtsPortsForDebug(node.inputs),
-              outputs: summarizeRawPtsPortsForDebug(node.outputs),
-            })),
-        });
-        const normalizedLatestGraph = normalizeGraphPayload(latest.graph);
+        const latestResult = await measureLoadPerformanceAsync("project-load:fetch-latest", async () =>
+          fetchLatestProjectGraph(targetProjectId),
+        );
+        if (loadToken !== activeProjectLoadTokenRef.current) {
+          closeFirstPaintReadySpan();
+          return;
+        }
+        if (latestResult.kind === "fresh" || latestResult.kind === "not_modified") {
+          const latest = latestResult.payload;
+          const resolvedProjectName = String(targetProjectName ?? latest.name ?? latest.project_id).trim() || latest.project_id;
+          debugPts("loadProjectGraph:latest:raw", {
+            projectId: latest.project_id,
+            version: latest.version,
+            ptsNodeIds: ((latest.graph?.nodes ?? []) as Array<Record<string, unknown>>)
+              .filter((node) => String(node.node_kind ?? "") === "pts_module")
+              .map((node) => ({
+                id: node.id,
+                ptsUuid: node.pts_uuid,
+                inputs: summarizeRawPtsPortsForDebug(node.inputs),
+                outputs: summarizeRawPtsPortsForDebug(node.outputs),
+              })),
+          });
+          const normalizedLatestGraph = measureLoadPerformanceSync("project-load:normalize", () =>
+            normalizeGraphPayload(latest.graph),
+          );
           debugPts("loadProjectGraph:latest", {
             projectId: latest.project_id,
             version: latest.version,
@@ -2193,37 +2361,57 @@ export default function App() {
           });
           ptsResourceHydrationRef.current = "";
           rootPtsProjectionHydrationRef.current = {};
-          importGraphWithLoadKey(normalizedLatestGraph);
-          const latestHandleValidation = (latest as { handle_validation?: { issues?: Array<Record<string, unknown>> } }).handle_validation;
-          if (Array.isArray(latestHandleValidation?.issues) && latestHandleValidation.issues.length > 0) {
-            applyHandleValidationIssues(latestHandleValidation.issues as Array<{ edge_id?: string; suggested_source_port_id?: string; suggested_target_port_id?: string }>);
-          }
-          try {
-            setFlowNameSyncState(await fetchProjectFlowSyncState(targetProjectId));
-          } catch {
-            setFlowNameSyncState({ needed: false, outdatedCount: 0, examples: [] });
-          }
-          lastSavedFingerprintRef.current = JSON.stringify(normalizedLatestGraph);
+          measureLoadPerformanceSync("project-load:import-root", () => {
+            importGraphWithLoadKey(normalizedLatestGraph);
+          });
           suppressAutoSaveUntilRef.current = Date.now() + 30000;
-          {
-            const targetProductConfig = readProjectTargetProductConfig(normalizedLatestGraph);
-            setSelectedProductKey(
-              targetProductConfig ? buildProjectTargetMatchKey(targetProductConfig.processUuid, targetProductConfig.flowUuid) : "",
-            );
-            setTargetProductQuantityMode(targetProductConfig?.quantityMode ?? "custom");
-            setTargetProductQuantity(String(targetProductConfig?.quantity ?? 1));
-          }
+          lastSavedFingerprintRef.current = "";
+          setFlowNameSyncState(toFlowNameSyncState(latest));
+          setSelectedProductKey("");
+          setTargetProductQuantityMode("custom");
+          setTargetProductQuantity("1");
           setProjectId(latest.project_id);
-          setProjectName(targetProjectName ?? latest.project_id);
+          setProjectName(resolvedProjectName);
           setVersion(String(latest.version));
-          localStorage.setItem(CURRENT_PROJECT_KEY, latest.project_id);
-          localStorage.setItem(
-            snapshotKey(latest.project_id),
-            JSON.stringify({ project_id: latest.project_id, version: latest.version }),
-          );
           setVersionTraveling(false);
-          setStatusText(`已恢复项目: ${targetProjectName ?? latest.project_id} (version=${latest.version})`);
+          setStatusText(`已恢复项目: ${resolvedProjectName} (version=${latest.version})`);
+          scheduleAfterNextPaint(() => {
+            closeFirstPaintReadySpan();
+          });
+          const endPostLoadUiSpan = startLoadPerformanceSpan("project-load:post-load-ui");
+          schedulePostLoadUiTask(() => {
+            if (loadToken !== activeProjectLoadTokenRef.current) {
+              endPostLoadUiSpan();
+              return;
+            }
+            try {
+              const latestHandleValidation = (latest as { handle_validation?: { issues?: Array<Record<string, unknown>> } }).handle_validation;
+              if (Array.isArray(latestHandleValidation?.issues) && latestHandleValidation.issues.length > 0) {
+                applyHandleValidationIssues(
+                  latestHandleValidation.issues as Array<{
+                    edge_id?: string;
+                    suggested_source_port_id?: string;
+                    suggested_target_port_id?: string;
+                  }>,
+                );
+              }
+              applyTargetProductDraft(normalizedLatestGraph);
+              lastSavedFingerprintRef.current = JSON.stringify(normalizedLatestGraph);
+              localStorage.setItem(CURRENT_PROJECT_KEY, latest.project_id);
+              localStorage.setItem(
+                snapshotKey(latest.project_id),
+                JSON.stringify({ project_id: latest.project_id, version: latest.version }),
+              );
+              endPostLoadUiSpan();
+            } catch {
+              endPostLoadUiSpan();
+            }
+          });
           return;
+        }
+
+        if (latestResult.status !== 404) {
+          throw new Error(`load latest failed: ${latestResult.status}`);
         }
 
         const currentDraftRaw = localStorage.getItem(draftKey(targetProjectId));
@@ -2231,32 +2419,44 @@ export default function App() {
           const draft = JSON.parse(currentDraftRaw) as LcaGraphPayload;
           ptsResourceHydrationRef.current = "";
           rootPtsProjectionHydrationRef.current = {};
-          importGraphWithLoadKey(normalizeGraphPayload(draft));
-          try {
-            setFlowNameSyncState(await fetchProjectFlowSyncState(targetProjectId));
-          } catch {
-            setFlowNameSyncState({ needed: false, outdatedCount: 0, examples: [] });
-          }
+          const normalizedDraft = measureLoadPerformanceSync("project-load:normalize", () => normalizeGraphPayload(draft));
+          measureLoadPerformanceSync("project-load:import-root", () => {
+            importGraphWithLoadKey(normalizedDraft);
+          });
+          setFlowNameSyncState({ needed: false, outdatedCount: 0, examples: [] });
           lastSavedFingerprintRef.current = "";
-          {
-            const targetProductConfig = readProjectTargetProductConfig(draft);
-            setSelectedProductKey(
-              targetProductConfig ? buildProjectTargetMatchKey(targetProductConfig.processUuid, targetProductConfig.flowUuid) : "",
-            );
-            setTargetProductQuantityMode(targetProductConfig?.quantityMode ?? "custom");
-            setTargetProductQuantity(String(targetProductConfig?.quantity ?? 1));
-          }
+          setSelectedProductKey("");
+          setTargetProductQuantityMode("custom");
+          setTargetProductQuantity("1");
           setProjectId(targetProjectId);
           setProjectName(targetProjectName ?? targetProjectId);
           setVersion("0");
           setVersionTraveling(false);
           setStatusText(`已恢复草稿: ${targetProjectName ?? targetProjectId}`);
+          scheduleAfterNextPaint(() => {
+            closeFirstPaintReadySpan();
+          });
+          const endPostLoadUiSpan = startLoadPerformanceSpan("project-load:post-load-ui");
+          schedulePostLoadUiTask(() => {
+            if (loadToken !== activeProjectLoadTokenRef.current) {
+              endPostLoadUiSpan();
+              return;
+            }
+            try {
+              applyTargetProductDraft(normalizedDraft);
+              endPostLoadUiSpan();
+            } catch {
+              endPostLoadUiSpan();
+            }
+          });
           return;
         }
 
         ptsResourceHydrationRef.current = "";
         rootPtsProjectionHydrationRef.current = {};
-        importGraphWithLoadKey({ functionalUnit: "1 kg 对二甲苯", nodes: [], exchanges: [], metadata: {} });
+        measureLoadPerformanceSync("project-load:import-root", () => {
+          importGraphWithLoadKey({ functionalUnit: "1 kg 对二甲苯", nodes: [], exchanges: [], metadata: {} });
+        });
         setFlowNameSyncState({ needed: false, outdatedCount: 0, examples: [] });
         lastSavedFingerprintRef.current = "";
         setSelectedProductKey("");
@@ -2267,19 +2467,44 @@ export default function App() {
         setVersion("0");
         setVersionTraveling(false);
         setStatusText(`项目为空: ${targetProjectName ?? targetProjectId}`);
+        const endPostLoadUiSpan = startLoadPerformanceSpan("project-load:post-load-ui");
+        scheduleAfterNextPaint(() => {
+          closeFirstPaintReadySpan();
+        });
+        schedulePostLoadUiTask(() => {
+          if (loadToken !== activeProjectLoadTokenRef.current) {
+            endPostLoadUiSpan();
+            return;
+          }
+          endPostLoadUiSpan();
+        });
       } catch {
-        setStatusText("项目读取失败，已保留当前草稿。");
+        closeFirstPaintReadySpan();
+        if (loadToken === activeProjectLoadTokenRef.current) {
+          setStatusText("项目读取失败，已保留当前草稿。");
+        }
       } finally {
         setTimeout(() => {
-          setStatusText((prev) => (prev === "项目读取中..." ? "" : prev));
+          if (loadToken === activeProjectLoadTokenRef.current) {
+            setStatusText((prev) => (prev === "项目读取中..." ? "" : prev));
+          }
         }, 600);
       }
     },
-    [fetchProjectFlowSyncState, importGraphWithLoadKey],
+    [
+      applyTargetProductDraft,
+      importGraphWithLoadKey,
+      measureLoadPerformanceAsync,
+      measureLoadPerformanceSync,
+      scheduleAfterNextPaint,
+      schedulePostLoadUiTask,
+      startLoadPerformanceSpan,
+    ],
   );
 
   const loadProjectVersion = useCallback(
     async (targetProjectId: string, targetVersion: number, targetProjectName?: string) => {
+      const loadToken = ++activeProjectLoadTokenRef.current;
       if (!targetProjectId || !Number.isFinite(targetVersion) || targetVersion < 1) {
         return;
       }
@@ -2291,6 +2516,9 @@ export default function App() {
         );
         if (resp.ok) {
           const payload = (await resp.json()) as ModelVersionResponse;
+          if (loadToken !== activeProjectLoadTokenRef.current) {
+            return;
+          }
           const normalizedPayloadGraph = normalizeGraphPayload(payload.graph);
           debugPts("loadProjectVersion:payload", {
             projectId: payload.project_id,
@@ -2313,11 +2541,7 @@ export default function App() {
           if (Array.isArray(versionHandleValidation?.issues) && versionHandleValidation.issues.length > 0) {
             applyHandleValidationIssues(versionHandleValidation.issues as Array<{ edge_id?: string; suggested_source_port_id?: string; suggested_target_port_id?: string }>);
           }
-          try {
-            setFlowNameSyncState(await fetchProjectFlowSyncState(targetProjectId));
-          } catch {
-            setFlowNameSyncState({ needed: false, outdatedCount: 0, examples: [] });
-          }
+          setFlowNameSyncState(toFlowNameSyncState(payload));
           lastSavedFingerprintRef.current = JSON.stringify(normalizedPayloadGraph);
           suppressAutoSaveUntilRef.current = Date.now() + 30000;
           {
@@ -2340,17 +2564,23 @@ export default function App() {
           return;
         }
         if (resp.status === 404) {
-          setStatusText(`版本 ${targetVersion} 不存在（可能已到最早/最新边界）。`);
+          if (loadToken === activeProjectLoadTokenRef.current) {
+            setStatusText(`版本 ${targetVersion} 不存在（可能已到最早/最新边界）。`);
+          }
           return;
         }
         throw new Error(await resp.text());
       } catch (error) {
-        setStatusText(`历史版本读取失败: ${formatApiError(error)}`);
+        if (loadToken === activeProjectLoadTokenRef.current) {
+          setStatusText(`历史版本读取失败: ${formatApiError(error)}`);
+        }
       } finally {
-        setBusy(false);
+        if (loadToken === activeProjectLoadTokenRef.current) {
+          setBusy(false);
+        }
       }
     },
-    [fetchProjectFlowSyncState, importGraphWithLoadKey],
+    [importGraphWithLoadKey],
   );
   const navigateVersion = useCallback(
     (step: -1 | 1) => {
@@ -2588,6 +2818,7 @@ export default function App() {
         const payload = (await response.json()) as ModelCreateResponse;
         setProjectId(payload.project_id);
         setVersion(String(payload.version));
+        clearLatestProjectCache(payload.project_id);
         const projectNameForMessage =
           projects.find((item) => item.project_id === payload.project_id)?.name ?? projectName;
         localStorage.setItem(
@@ -2693,6 +2924,7 @@ export default function App() {
       });
       setProjectId(payload.project_id);
       setVersion(String(payload.version));
+      clearLatestProjectCache(payload.project_id);
       try {
         localStorage.setItem(
           snapshotKey(payload.project_id),
@@ -3037,6 +3269,7 @@ export default function App() {
           defaultVisiblePortIds,
         });
         suppressAutoSaveRef.current = true;
+        clearLatestProjectCache(projectId);
         applySingleRootPtsProjection(ptsNode.id, shellNode as Record<string, unknown>, projectedShellInputs, projectedShellOutputs, {
           rebindEdges: true,
           publishedVersion: finalized.active_published_version ?? finalized.published_version,

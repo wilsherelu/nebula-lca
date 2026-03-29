@@ -494,6 +494,9 @@ class ModelVersionOut(BaseModel):
     created_at: datetime
     graph: HybridGraph
     handle_validation: dict | None = None
+    flow_name_sync_needed: bool = False
+    outdated_flow_refs_count: int = 0
+    outdated_flow_ref_examples: list[dict] = Field(default_factory=list)
 
 
 class DeleteProjectResponse(BaseModel):
@@ -702,6 +705,7 @@ class TidasImportReportResponse(BaseModel):
     unresolved: list[dict] = Field(default_factory=list)
     unresolved_items: list[dict] = Field(default_factory=list)
     model_topology_empty_count: int = 0
+    created_projects: list[dict] = Field(default_factory=list)
     created_at: datetime
 
 

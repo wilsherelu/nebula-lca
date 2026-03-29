@@ -264,6 +264,10 @@ type FlowCategoryItem = {
 };
 
 type TidasImportKind = "flows" | "processes" | "models";
+type ImportedProjectSummary = {
+  projectId: string;
+  name: string;
+};
 type TidasImportResult = {
   importedCount: number;
   insertedCount: number;
@@ -276,7 +280,9 @@ type TidasImportResult = {
   importedProcessCount: number;
   importedExchangeCount: number;
   topMissingFlowUuids: string[];
+  errors: string[];
   jobId?: string;
+  createdProjects: ImportedProjectSummary[];
 };
 const inferFlowBusinessType = (
   type: "intermediate_flow" | "elementary_flow" | "product_flow" | "waste_flow" | string,
@@ -611,7 +617,7 @@ function TidasImportModal(props: {
   importKind: TidasImportKind;
   fixedKind?: boolean;
   onClose: () => void;
-  onImported: (kind: TidasImportKind) => void;
+  onImported: (kind: TidasImportKind, result: TidasImportResult) => void;
   onStatus?: (text: string) => void;
 }) {
   const { open, uiLanguage, importKind, fixedKind = false, onClose, onImported, onStatus } = props;
@@ -685,6 +691,25 @@ function TidasImportModal(props: {
     const topMissing = Array.isArray(payload.top_missing_flow_uuids)
       ? payload.top_missing_flow_uuids.map((item) => String(item))
       : [];
+    const errors = Array.isArray(payload.errors) ? payload.errors.map((item) => String(item)) : [];
+    const createdProjects = Array.isArray(payload.created_projects)
+      ? payload.created_projects
+          .map((item) => {
+            if (!item || typeof item !== "object") {
+              return null;
+            }
+            const row = item as Record<string, unknown>;
+            const projectId = String(row.project_id ?? "").trim();
+            if (!projectId) {
+              return null;
+            }
+            return {
+              projectId,
+              name: String(row.name ?? projectId).trim() || projectId,
+            } satisfies ImportedProjectSummary;
+          })
+          .filter((item): item is ImportedProjectSummary => Boolean(item))
+      : [];
     return {
       importedCount: Number.isFinite(Number(importedRaw)) ? Number(importedRaw) : 0,
       insertedCount: Number.isFinite(Number(insertedRaw)) ? Number(insertedRaw) : 0,
@@ -697,11 +722,27 @@ function TidasImportModal(props: {
       importedProcessCount: Number.isFinite(Number(importedProcessRaw)) ? Number(importedProcessRaw) : 0,
       importedExchangeCount: Number.isFinite(Number(importedExchangeRaw)) ? Number(importedExchangeRaw) : 0,
       topMissingFlowUuids: topMissing,
+      errors,
       jobId: typeof payload.job_id === "string" ? payload.job_id : undefined,
+      createdProjects,
     };
   };
 
+  const isModelImportPackageMismatch = (kind: TidasImportKind, next: TidasImportResult): boolean =>
+    kind === "models" &&
+    next.createdProjects.length === 0 &&
+    next.failedCount > 0 &&
+    next.errors.some((message) => /model_file|no model json found/i.test(message));
+
+  const buildModelImportPackageMismatchText = (): string =>
+    zh
+      ? "导入部分失败：ZIP 包中未找到模型文件，未创建项目。这个包更像过程包，请使用“导入过程”。"
+      : 'Import partially failed: no model found in bundle. No project was created. This package looks like a process package. Please use "Import Process".';
+
   const buildImportStatusText = (kind: TidasImportKind, next: TidasImportResult): string => {
+    if (isModelImportPackageMismatch(kind, next)) {
+      return buildModelImportPackageMismatchText();
+    }
     const label = zh
       ? kind === "models"
         ? "模型导入"
@@ -754,9 +795,6 @@ function TidasImportModal(props: {
         if (tab === "models") {
           body.append("display_lang", uiLanguage);
         }
-        if (tab !== "models") {
-          body.append("upsert_mode", "skip");
-        }
       const endpoint =
         tab === "models" && selectedFile.name.toLowerCase().endsWith(".zip")
           ? `${API_BASE}/import/tidas/bundle`
@@ -772,8 +810,13 @@ function TidasImportModal(props: {
       const payload = (await resp.json()) as Record<string, unknown>;
       const nextResult = parseResult(payload);
       setResult(nextResult);
-      onStatus?.(buildImportStatusText(tab, nextResult));
-      onImported(tab);
+      const statusText = buildImportStatusText(tab, nextResult);
+      onStatus?.(statusText);
+      if (isModelImportPackageMismatch(tab, nextResult)) {
+        setErrorText(statusText);
+        return;
+      }
+      onImported(tab, nextResult);
     } catch (error) {
       const message = error instanceof Error ? error.message : zh ? "导入失败" : "Import failed";
       setErrorText(message);
@@ -975,7 +1018,7 @@ export function ProjectManagement(props: Props) {
     setTidasImportKind(kind);
     setTidasImportOpen(true);
   };
-  const handleTidasImported = async (kind: TidasImportKind) => {
+  const handleTidasImported = async (kind: TidasImportKind, result: TidasImportResult) => {
     if (kind === "processes") {
       clearPmCacheByPrefix("pm:processes:");
       clearPmCacheByPrefix("pm:flows:");
@@ -998,18 +1041,9 @@ export function ProjectManagement(props: Props) {
     if (kind !== "models") {
       return;
     }
-    try {
-      const params = new URLSearchParams({ recent: "true", limit: "1", page: "1", page_size: "1" });
-      const resp = await fetch(`${API_BASE}/projects?${params.toString()}`);
-      if (!resp.ok) return;
-      const payload = (await resp.json()) as PagedResponse<ProjectApiItem> | ProjectApiItem[];
-      const items = Array.isArray(payload) ? payload : payload.items ?? [];
-      const first = items[0];
-      if (first?.project_id) {
-        onOpenProject(first.project_id, first.name);
-      }
-    } catch {
-      // ignore auto-open failures to keep import flow uninterrupted
+    const createdProject = result.createdProjects[0];
+    if (createdProject?.projectId) {
+      onOpenProject(createdProject.projectId, createdProject.name);
     }
   };
 
@@ -1839,9 +1873,9 @@ type FlowApiRow = {
         fixedKind
         onClose={() => setTidasImportOpen(false)}
         onStatus={onStatus}
-        onImported={(kind) => {
+        onImported={(kind, result) => {
           setTidasImportOpen(false);
-          void handleTidasImported(kind);
+          void handleTidasImported(kind, result);
         }}
       />
       <CreateProjectModal
