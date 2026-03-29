@@ -3663,6 +3663,7 @@ def _build_tidas_base_report(*, import_type: str, payload: object) -> dict:
         "unresolved": [],
         "unresolved_items": [],
         "model_topology_empty_count": 0,
+        "created_projects": [],
         "created_at": datetime.utcnow(),
     }
 
@@ -3696,6 +3697,7 @@ def _finalize_tidas_report(report: dict) -> dict:
         "warning_count": warning_count,
         "failed_count": failed_count,
         "unresolved_count": unresolved_count,
+        "created_projects": list(report.get("created_projects") or []),
     }
     return report
 
@@ -5024,6 +5026,14 @@ def _build_project_out(model: Model, latest: ModelVersion | None = None) -> Proj
         outdated_flow_refs_count=outdated_flow_refs_count,
         outdated_flow_ref_examples=outdated_flow_ref_examples[:5],
     )
+
+
+def _build_flow_sync_state_for_graph_json(*, db: Session, graph_json: dict) -> tuple[bool, int, list[dict]]:
+    outdated_flow_refs_count, outdated_flow_ref_examples = _detect_project_flow_name_outdated_refs(
+        db=db,
+        graph_json=graph_json,
+    )
+    return outdated_flow_refs_count > 0, outdated_flow_refs_count, outdated_flow_ref_examples[:5]
 
 
 def _latest_graphs_with_project_meta(db: Session) -> list[tuple[Model, ModelVersion]]:
@@ -8143,12 +8153,15 @@ async def import_tidas_models(
             report["inserted"] += 1
             if payload.dry_run:
                 continue
+            now = datetime.utcnow()
             model_row = Model(
                 name=str(model_record.get("model_name") or model_uuid),
                 description=f"Imported from TIDAS lifecycle model JSON (source_model_uuid={model_uuid})",
+                updated_at=now,
             )
             db.add(model_row)
             db.flush()
+            report["created_projects"].append({"project_id": str(model_row.id), "name": str(model_row.name)})
             graph_json, graph_unresolved = _build_tidas_graph_from_model_record(
                 db=db,
                 model_record=model_record,
@@ -8409,12 +8422,15 @@ async def import_tidas_bundle(
             report["inserted"] += 1
             if payload.dry_run:
                 continue
+            now = datetime.utcnow()
             model_row = Model(
                 name=str(model_record.get("model_name") or model_uuid),
                 description=f"Imported from TIDAS bundle ZIP (source_model_uuid={model_uuid})",
+                updated_at=now,
             )
             db.add(model_row)
             db.flush()
+            report["created_projects"].append({"project_id": str(model_row.id), "name": str(model_row.name)})
             graph_json, graph_unresolved = _build_tidas_graph_from_model_record(
                 db=db,
                 model_record=model_record,
@@ -11467,40 +11483,76 @@ def get_project_version(project_id: str, version: int, db: Session = Depends(get
     _project_pts_external_ports_into_graph(db=db, project_id=model.id, graph=graph)
     graph_json = graph.model_dump(mode="python")
     _enrich_graph_flow_name_en(graph_json, db=db)
+    flow_name_sync_needed, outdated_flow_refs_count, outdated_flow_ref_examples = _build_flow_sync_state_for_graph_json(
+        db=db,
+        graph_json=graph_json,
+    )
     return ModelVersionOut(
         project_id=model.id,
         version=record.version,
         created_at=record.created_at,
         graph=graph_json,
         handle_validation=safe_handle_validation_from_graph_json(graph_json),
+        flow_name_sync_needed=flow_name_sync_needed,
+        outdated_flow_refs_count=outdated_flow_refs_count,
+        outdated_flow_ref_examples=outdated_flow_ref_examples,
     )
 
 
 @app.get("/api/projects/{project_id}/latest", response_model=ModelVersionOut)
 @app.get("/projects/{project_id}/latest", response_model=ModelVersionOut)
-def get_project_latest_by_id(project_id: str, db: Session = Depends(get_db)) -> ModelVersionOut:
+def get_project_latest_by_id(
+    project_id: str,
+    if_none_match: str | None = Header(default=None, alias="If-None-Match"),
+    db: Session = Depends(get_db),
+) -> ModelVersionOut | Response:
     model = get_model_or_404(db, project_id)
-    versions = (
+    latest_row = (
         db.query(ModelVersion)
         .filter(ModelVersion.model_id == model.id)
         .order_by(ModelVersion.version.desc(), ModelVersion.created_at.desc())
-        .all()
+        .first()
     )
-    if not versions:
+    if latest_row is None:
         raise HTTPException(status_code=404, detail="No model version found")
-    chosen = next((v for v in versions if is_graph_non_empty(v.hybrid_graph_json)), versions[0])
-    graph = HybridGraph.model_validate(chosen.hybrid_graph_json)
+    cache_key = (
+        f"project_latest:v1:rev={_cache_revision('projects')}:project_id={model.id}:"
+        f"version={latest_row.version}:graph_hash={str(latest_row.graph_hash or '')}"
+    )
+    cached = _cache_get(cache_key, ttl_seconds=_CACHE_TTL_PROJECTS_SECONDS)
+    if isinstance(cached, dict):
+        payload = cached.get("payload")
+        etag = cached.get("etag")
+        if isinstance(payload, dict) and isinstance(etag, str):
+            if _is_if_none_match_hit(if_none_match, etag):
+                return Response(status_code=304, headers={"ETag": etag})
+            return JSONResponse(content=payload, headers={"ETag": etag})
+
+    graph = HybridGraph.model_validate(latest_row.hybrid_graph_json)
     normalize_graph_product_flags(graph)
     _project_pts_external_ports_into_graph(db=db, project_id=model.id, graph=graph)
     graph_json = graph.model_dump(mode="python")
     _enrich_graph_flow_name_en(graph_json, db=db)
-    return ModelVersionOut(
+    flow_name_sync_needed, outdated_flow_refs_count, outdated_flow_ref_examples = _build_flow_sync_state_for_graph_json(
+        db=db,
+        graph_json=graph_json,
+    )
+    payload = ModelVersionOut(
         project_id=model.id,
-        version=chosen.version,
-        created_at=chosen.created_at,
+        version=latest_row.version,
+        created_at=latest_row.created_at,
         graph=graph_json,
         handle_validation=safe_handle_validation_from_graph_json(graph_json),
+        flow_name_sync_needed=flow_name_sync_needed,
+        outdated_flow_refs_count=outdated_flow_refs_count,
+        outdated_flow_ref_examples=outdated_flow_ref_examples,
     )
+    payload_json = payload.model_dump(mode="json")
+    etag = _build_etag_for_payload(payload_json)
+    _cache_set(cache_key, {"payload": payload_json, "etag": etag})
+    if _is_if_none_match_hit(if_none_match, etag):
+        return Response(status_code=304, headers={"ETag": etag})
+    return JSONResponse(content=payload_json, headers={"ETag": etag})
 
 
 def get_model_version(project_id: str, version: int, db: Session = Depends(get_db)) -> dict:

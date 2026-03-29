@@ -53,6 +53,22 @@ const debugPts = (scope: string, payload?: unknown) => {
   console.info(`[PTS_DEBUG] ${scope}`, payload);
 };
 const DEBUG_FLOW_TYPE_NODE_ID = "node_4d85c6b9-0ca0-4136-be15-fa501edd296f";
+let importGraphPerfSpanCounter = 0;
+const startImportGraphPerfSpan = (label: string) => {
+  if (typeof performance === "undefined" || typeof performance.mark !== "function") {
+    return () => {};
+  }
+  const spanId = `${label}:${++importGraphPerfSpanCounter}`;
+  const startMark = `${spanId}:start`;
+  const endMark = `${spanId}:end`;
+  performance.mark(startMark);
+  return () => {
+    performance.mark(endMark);
+    performance.measure(label, startMark, endMark);
+    performance.clearMarks(startMark);
+    performance.clearMarks(endMark);
+  };
+};
 const debugFlowTypesForNode = (scope: string, node: Node<LcaNodeData> | undefined) => {
   if (!DEV_PTS_DEBUG || !node || node.id !== DEBUG_FLOW_TYPE_NODE_ID) {
     return;
@@ -6312,6 +6328,8 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
   },
   importGraph: (graph) =>
     set((state) => {
+      const endImportGraphSpan = startImportGraphPerfSpan("project-load:import-root:store");
+      const endDeserializeSpan = startImportGraphPerfSpan("project-load:import-root:deserialize");
       const nodePositionsRaw = (graph.metadata as { node_positions?: Record<string, unknown> } | undefined)?.node_positions;
       const viewportRaw = (graph.metadata as { viewport?: unknown } | undefined)?.viewport;
       const deserializeNode = (
@@ -6506,13 +6524,15 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
           [ROOT_CANVAS_ID]: nextRoot,
         };
       }
+      endDeserializeSpan();
 
       debugFlowTypesForNode(
         "importGraph:root",
         nextCanvases[ROOT_CANVAS_ID]?.nodes.find((node) => node.id === DEBUG_FLOW_TYPE_NODE_ID),
       );
 
-      return {
+      const endApplyStateSpan = startImportGraphPerfSpan("project-load:import-root:apply-state");
+      const nextState = {
         ...setActiveCanvas(state, nextCanvases, ROOT_CANVAS_ID, false),
         functionalUnit: graph.functionalUnit || state.functionalUnit,
         viewport: isValidViewport(viewportRaw) ? viewportRaw : state.viewport,
@@ -6523,6 +6543,9 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         pendingPtsCompileNodeId: undefined,
         deferredBalanceEdgeId: undefined,
       };
+      endApplyStateSpan();
+      endImportGraphSpan();
+      return nextState;
     }),
   getBalancedWarnings: () => {
     const state = get();
