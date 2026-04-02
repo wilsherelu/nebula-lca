@@ -303,6 +303,41 @@ class ModelCreateResponse(BaseModel):
     pts_failed_items: list[dict] = Field(default_factory=list)
 
 
+class PtsValidationItem(BaseModel):
+    node_id: str
+    node_name: str | None = None
+    pts_uuid: str
+    reason: str
+    has_resource: bool = False
+    active_published_version: int | None = None
+    latest_published_version: int | None = None
+    has_active_artifact: bool = False
+    auto_repairable: bool = False
+
+
+class PtsValidationSummary(BaseModel):
+    ok: bool = True
+    invalid_count: int = 0
+    auto_repairable: bool = False
+    items: list[PtsValidationItem] = Field(default_factory=list)
+
+
+class ProjectIntegrityIssue(BaseModel):
+    kind: Literal["pts_publication", "flow_name_sync"]
+    severity: Literal["warning", "error"] = "warning"
+    code: str
+    message: str
+    auto_repairable: bool = False
+    details: dict = Field(default_factory=dict)
+
+
+class ProjectIntegritySummary(BaseModel):
+    ok: bool = True
+    issue_count: int = 0
+    auto_repairable: bool = False
+    issues: list[ProjectIntegrityIssue] = Field(default_factory=list)
+
+
 class ProjectCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     reference_product: str | None = None
@@ -497,6 +532,24 @@ class ModelVersionOut(BaseModel):
     flow_name_sync_needed: bool = False
     outdated_flow_refs_count: int = 0
     outdated_flow_ref_examples: list[dict] = Field(default_factory=list)
+    pts_validation: PtsValidationSummary = Field(default_factory=PtsValidationSummary)
+    project_integrity: ProjectIntegritySummary = Field(default_factory=ProjectIntegritySummary)
+
+
+class RepairPtsPublicationsResponse(BaseModel):
+    project_id: str
+    repaired_count: int = 0
+    skipped_count: int = 0
+    failed_count: int = 0
+    items: list[dict] = Field(default_factory=list)
+
+
+class RepairProjectIntegrityResponse(BaseModel):
+    project_id: str
+    repaired_count: int = 0
+    skipped_count: int = 0
+    failed_count: int = 0
+    items: list[dict] = Field(default_factory=list)
 
 
 class DeleteProjectResponse(BaseModel):
@@ -592,6 +645,8 @@ class ImportedProcessPortItem(BaseModel):
     flow_uuid: str | None = None
     flow_name: str | None = None
     unit: str | None = None
+    unit_group: str | None = None
+    type: ExchangeType = "technosphere"
     amount: float = 0.0
     direction: str
     is_product: bool = False
@@ -608,7 +663,6 @@ class ImportedProcessDetail(BaseModel):
     reference_flow_internal_id: str | None = None
     inputs: list[ImportedProcessPortItem] = Field(default_factory=list)
     outputs: list[ImportedProcessPortItem] = Field(default_factory=list)
-    emissions: list[ImportedProcessPortItem] = Field(default_factory=list)
 
     @field_validator("process_kind", mode="before")
     @classmethod
