@@ -35,6 +35,7 @@ type ModelVersionResponse = {
   flow_name_sync_needed?: boolean;
   outdated_flow_refs_count?: number;
   outdated_flow_ref_examples?: Array<Record<string, unknown>>;
+  project_integrity?: Record<string, unknown> | null;
 };
 
 type PtsResourceResponse = {
@@ -218,6 +219,31 @@ type FlowNameSyncState = {
   needed: boolean;
   outdatedCount: number;
   examples: Array<Record<string, unknown>>;
+};
+type ProjectIntegrityIssue = {
+  kind: string;
+  reason: string;
+  nodeId?: string;
+  nodeName?: string;
+  ptsUuid?: string;
+  autoRepairable: boolean;
+};
+type ProjectIntegritySummary = {
+  ok: boolean;
+  issueCount: number;
+  autoRepairable: boolean;
+  issues: ProjectIntegrityIssue[];
+};
+
+const isPtsPublishedArtifactRaceError = (errorText: string): boolean => {
+  const normalized = String(errorText ?? "").toLowerCase();
+  return (
+    normalized.includes("pts_published_artifact_required_for_main_graph_save") ||
+    normalized.includes("pts_published_artifact_not_found") ||
+    normalized.includes("published artifact") ||
+    normalized.includes("存在未发布的 pts") ||
+    normalized.includes("请先在 pts 编辑界面完成发布")
+  );
 };
 
 type ProjectTargetQuantityMode = "functional_unit" | "custom";
@@ -1473,6 +1499,70 @@ const toFlowNameSyncState = (
       : [],
 });
 
+const EMPTY_PROJECT_INTEGRITY: ProjectIntegritySummary = {
+  ok: true,
+  issueCount: 0,
+  autoRepairable: false,
+  issues: [],
+};
+
+const toProjectIntegritySummary = (payload: { project_integrity?: Record<string, unknown> | null } | null | undefined): ProjectIntegritySummary => {
+  const raw = payload?.project_integrity;
+  if (!raw || typeof raw !== "object") {
+    return EMPTY_PROJECT_INTEGRITY;
+  }
+  const issuesRaw = Array.isArray((raw as { issues?: unknown[] }).issues) ? ((raw as { issues?: unknown[] }).issues ?? []) : [];
+  const issues: ProjectIntegrityIssue[] = issuesRaw.flatMap((item) => {
+      if (!item || typeof item !== "object") {
+        return [];
+      }
+      const obj = item as Record<string, unknown>;
+      return [{
+        kind: String(obj.kind ?? "").trim(),
+        reason: String(obj.reason ?? "").trim(),
+        nodeId: String(obj.node_id ?? obj.nodeId ?? "").trim() || undefined,
+        nodeName: String(obj.node_name ?? obj.nodeName ?? "").trim() || undefined,
+        ptsUuid: String(obj.pts_uuid ?? obj.ptsUuid ?? "").trim() || undefined,
+        autoRepairable: Boolean(obj.auto_repairable ?? obj.autoRepairable),
+      } satisfies ProjectIntegrityIssue];
+    });
+  return {
+    ok: Boolean((raw as { ok?: unknown }).ok),
+    issueCount: Number((raw as { issue_count?: unknown }).issue_count ?? issues.length),
+    autoRepairable: Boolean((raw as { auto_repairable?: unknown }).auto_repairable) || issues.some((item) => item.autoRepairable),
+    issues,
+  };
+};
+
+const formatPtsPublishedArtifactEvidence = (payload: unknown): string => {
+  const parsedPayload = payload as
+    | {
+        evidence?: Array<Record<string, unknown>>;
+        detail?: { evidence?: Array<Record<string, unknown>> };
+      }
+    | null
+    | undefined;
+  const evidence = Array.isArray(parsedPayload?.detail?.evidence)
+    ? parsedPayload?.detail?.evidence ?? []
+    : Array.isArray(parsedPayload?.evidence)
+      ? parsedPayload?.evidence ?? []
+      : [];
+  const first = evidence[0];
+  if (!first || typeof first !== "object") {
+    return "";
+  }
+  const ptsUuid = String(first.pts_uuid ?? first.ptsUuid ?? "").trim();
+  const ptsNodeId = String(first.pts_node_id ?? first.ptsNodeId ?? "").trim();
+  const parts: string[] = [];
+  if (ptsUuid) {
+    parts.push(`pts_uuid=${ptsUuid}`);
+  }
+  if (ptsNodeId) {
+    parts.push(`pts_node_id=${ptsNodeId}`);
+  }
+  return parts.length > 0 ? `（${parts.join("，")}）` : "";
+};
+
 
 const getLciaGroupLabel = (method: string): string => {
   const text = String(method ?? "").trim();
@@ -1513,7 +1603,8 @@ const formatApiError = (raw: unknown): string => {
       return "非产品输入端口不允许多个产品来源：请改用市场过程进行汇聚。";
     }
     if (payload.code === "PTS_PUBLISHED_ARTIFACT_REQUIRED_FOR_MAIN_GRAPH_SAVE") {
-      return "主图保存失败：存在未发布的 PTS，请先在 PTS 编辑界面完成发布。";
+      const evidenceText = formatPtsPublishedArtifactEvidence(parsed);
+      return `主图保存失败：存在未发布的 PTS，请先在 PTS 编辑界面完成发布。${evidenceText}`;
     }
     if (payload.code === "PTS_DRAFT_EMPTY_NOT_RUNNABLE") {
       return "主图暂时不能运行：存在一个空白草稿 PTS。请双击进入该 PTS，补充内部节点和连线并发布后，再回到主图运行。";
@@ -1677,6 +1768,8 @@ export default function App() {
     outdatedCount: 0,
     examples: [],
   });
+  const [projectIntegrity, setProjectIntegrity] = useState<ProjectIntegritySummary>(EMPTY_PROJECT_INTEGRITY);
+  const [showProjectIntegrityDialog, setShowProjectIntegrityDialog] = useState(false);
   const [dismissedNormalizedEdgeFixFingerprint, setDismissedNormalizedEdgeFixFingerprint] = useState("");
   const hydratedRef = useRef(false);
   const routeSyncRef = useRef("");
@@ -2367,6 +2460,11 @@ export default function App() {
           suppressAutoSaveUntilRef.current = Date.now() + 30000;
           lastSavedFingerprintRef.current = "";
           setFlowNameSyncState(toFlowNameSyncState(latest));
+          {
+            const nextProjectIntegrity = toProjectIntegritySummary(latest);
+            setProjectIntegrity(nextProjectIntegrity);
+            setShowProjectIntegrityDialog(!nextProjectIntegrity.ok);
+          }
           setSelectedProductKey("");
           setTargetProductQuantityMode("custom");
           setTargetProductQuantity("1");
@@ -2424,6 +2522,8 @@ export default function App() {
             importGraphWithLoadKey(normalizedDraft);
           });
           setFlowNameSyncState({ needed: false, outdatedCount: 0, examples: [] });
+          setProjectIntegrity(EMPTY_PROJECT_INTEGRITY);
+          setShowProjectIntegrityDialog(false);
           lastSavedFingerprintRef.current = "";
           setSelectedProductKey("");
           setTargetProductQuantityMode("custom");
@@ -2458,6 +2558,8 @@ export default function App() {
           importGraphWithLoadKey({ functionalUnit: "1 kg 对二甲苯", nodes: [], exchanges: [], metadata: {} });
         });
         setFlowNameSyncState({ needed: false, outdatedCount: 0, examples: [] });
+        setProjectIntegrity(EMPTY_PROJECT_INTEGRITY);
+        setShowProjectIntegrityDialog(false);
         lastSavedFingerprintRef.current = "";
         setSelectedProductKey("");
         setTargetProductQuantityMode("custom");
@@ -2542,6 +2644,11 @@ export default function App() {
             applyHandleValidationIssues(versionHandleValidation.issues as Array<{ edge_id?: string; suggested_source_port_id?: string; suggested_target_port_id?: string }>);
           }
           setFlowNameSyncState(toFlowNameSyncState(payload));
+          {
+            const nextProjectIntegrity = toProjectIntegritySummary(payload);
+            setProjectIntegrity(nextProjectIntegrity);
+            setShowProjectIntegrityDialog(!nextProjectIntegrity.ok);
+          }
           lastSavedFingerprintRef.current = JSON.stringify(normalizedPayloadGraph);
           suppressAutoSaveUntilRef.current = Date.now() + 30000;
           {
@@ -2617,13 +2724,13 @@ export default function App() {
     return rows;
   }, []);
 
-  const syncProjectFlowNames = useCallback(async () => {
+  const repairProjectIntegrity = useCallback(async () => {
     if (!projectId) {
       return;
     }
     setBusy(true);
     try {
-      const response = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/sync-flow-names`, {
+      const response = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/repair-integrity`, {
         method: "POST",
       });
       if (!response.ok) {
@@ -2631,13 +2738,16 @@ export default function App() {
       }
       const target = projects.find((item) => item.project_id === projectId);
       await loadProjectGraph(projectId, target?.name ?? projectName);
-      setStatusText("已同步当前项目的 flow 名称。");
+      setShowProjectIntegrityDialog(false);
+      setStatusText(uiLanguage === "zh" ? "项目完整性问题已自动修复并重新加载。" : "Project integrity issues were auto-repaired and reloaded.");
     } catch (error) {
-      setStatusText(`同步 flow 信息失败: ${formatApiError(error)}`);
+      setStatusText(
+        `${uiLanguage === "zh" ? "项目自动修复失败" : "Project auto-repair failed"}: ${formatApiError(error)}`,
+      );
     } finally {
       setBusy(false);
     }
-  }, [loadProjectGraph, projectId, projectName, projects]);
+  }, [loadProjectGraph, projectId, projectName, projects, uiLanguage]);
 
   const hydrate = useCallback(async () => {
     try {
@@ -2683,16 +2793,17 @@ export default function App() {
       if (mode === "manual" && versionTraveling) {
         setVersionTraveling(false);
       }
-        if (flowNameSyncState.needed) {
+        if (!projectIntegrity.ok) {
           const warningText =
             mode === "manual"
               ? uiLanguage === "zh"
-                ? `未保存：当前项目有 ${flowNameSyncState.outdatedCount || "部分"} 个流名称与流库不一致，请先同步 flow 信息。`
-                : `Not saved: the current project has ${flowNameSyncState.outdatedCount || "some"} flow name mismatches. Please sync flow info first.`
+                ? `未保存：当前项目存在 ${projectIntegrity.issueCount || "部分"} 项完整性问题，请先修复。`
+                : `Not saved: the current project has ${projectIntegrity.issueCount || "some"} integrity issues. Please repair them first.`
               : uiLanguage === "zh"
-                ? "自动保存已跳过：当前项目存在未同步的 flow 名称，请先同步 flow 信息。"
-                : "Autosave skipped: the current project has unsynced flow names. Please sync flow info first.";
+                ? "自动保存已跳过：当前项目存在待修复的完整性问题。"
+                : "Autosave skipped: the current project has integrity issues that need repair.";
           setStatusText(warningText);
+          setShowProjectIntegrityDialog(true);
           return;
         }
       if (strictValidation && activeCanvasKind === "pts_internal") {
@@ -2909,13 +3020,29 @@ export default function App() {
       if (isEmptyGraph(graph)) {
         return null;
       }
-      const response = await fetch(`${API_BASE}/projects/${encodeURIComponent(targetProjectId)}/versions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ graph }),
-      });
-      if (!response.ok) {
-        throw new Error((await response.text()) || `save failed: ${response.status}`);
+      const saveBody = JSON.stringify({ graph });
+      let response: Response | null = null;
+      let lastErrorText = "";
+      const retryDelaysMs = [0, 180, 320];
+      for (const retryDelayMs of retryDelaysMs) {
+        if (retryDelayMs > 0) {
+          await new Promise((resolve) => window.setTimeout(resolve, retryDelayMs));
+        }
+        response = await fetch(`${API_BASE}/projects/${encodeURIComponent(targetProjectId)}/versions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: saveBody,
+        });
+        if (response.ok) {
+          break;
+        }
+        lastErrorText = (await response.text()) || `save failed: ${response.status}`;
+        if (!(response.status === 409 && isPtsPublishedArtifactRaceError(lastErrorText))) {
+          throw new Error(lastErrorText);
+        }
+      }
+      if (!response || !response.ok) {
+        throw new Error(lastErrorText || "save failed");
       }
       const payload = (await response.json()) as ModelCreateResponse;
       debugPts("persistRootModelSnapshot:saved", {
@@ -4585,29 +4712,42 @@ export default function App() {
     activeCanvasKind === "root" &&
     normalizedEdgeFixCandidates.length > 0 &&
     dismissedNormalizedEdgeFixFingerprint !== normalizedEdgeFixSignature;
-  const firstFlowNameSyncEvidence = useMemo(() => {
-    if (!flowNameSyncState.examples.length) {
+  const formatProjectIntegrityIssue = useCallback(
+    (issue: ProjectIntegrityIssue) => {
+      if (issue.kind === "pts_publication") {
+        const nodeLabel = issue.nodeName || issue.ptsUuid || issue.nodeId || "PTS";
+        return uiLanguage === "zh"
+          ? `${nodeLabel} 的发布态异常（${issue.reason || "published artifact missing"}）`
+          : `${nodeLabel} has a broken publication state (${issue.reason || "published artifact missing"})`;
+      }
+      if (issue.kind === "flow_name_sync") {
+        const first = flowNameSyncState.examples[0] ?? {};
+        const expected = String(first.expected_flow_name ?? "");
+        const actual = String(first.actual_port_name ?? "");
+        if (expected && actual) {
+          return uiLanguage === "zh"
+            ? `流名称未同步：当前为“${actual}”，标准流名应为“${expected}”`
+            : `Flow name mismatch: current is "${actual}", standard flow name should be "${expected}"`;
+        }
+        return uiLanguage === "zh" ? "存在 flow 名称未同步问题" : "Flow names are out of sync";
+      }
+      return issue.reason || (uiLanguage === "zh" ? "存在项目完整性问题" : "Project integrity issue detected");
+    },
+    [flowNameSyncState.examples, uiLanguage],
+  );
+
+  const projectIntegrityBannerText = useMemo(() => {
+    if (projectIntegrity.ok) {
       return "";
     }
-    const first = flowNameSyncState.examples[0] ?? {};
-    const expected = String(first.expected_flow_name ?? "");
-    const actual = String(first.actual_port_name ?? "");
-    if (expected && actual) {
-      return uiLanguage === "zh"
-        ? `示例：当前为“${actual}”，标准流名应为“${expected}”`
-        : `Example: current is "${actual}", standard flow name should be "${expected}"`;
-    }
-    return "";
-  }, [flowNameSyncState.examples, uiLanguage]);
-
-  const flowNameSyncBannerText = useMemo(() => {
-    const countLabel = flowNameSyncState.outdatedCount || (uiLanguage === "zh" ? "部分" : "some");
+    const countLabel = projectIntegrity.issueCount || (uiLanguage === "zh" ? "部分" : "some");
     const base =
       uiLanguage === "zh"
-        ? `检测到当前项目有 ${countLabel} 个流名称与流库不一致，请先同步 flow 信息后再保存。`
-        : `Detected ${countLabel} flow name mismatches between the current project and the flow catalog. Please sync flow info before saving.`;
-    return firstFlowNameSyncEvidence ? `${base} ${firstFlowNameSyncEvidence}` : base;
-  }, [firstFlowNameSyncEvidence, flowNameSyncState.outdatedCount, uiLanguage]);
+        ? `检测到当前项目存在 ${countLabel} 项完整性问题，当前保存可能失败。`
+        : `Detected ${countLabel} project integrity issues. Saving may fail until they are repaired.`;
+    const firstIssue = projectIntegrity.issues[0];
+    return firstIssue ? `${base} ${formatProjectIntegrityIssue(firstIssue)}` : base;
+  }, [formatProjectIntegrityIssue, projectIntegrity, uiLanguage]);
 
   const autoFixNormalizedEdges = useCallback(() => {
     if (!normalizedEdgeFixCandidates.length) {
@@ -4838,16 +4978,21 @@ export default function App() {
         </div>
       </header>
       {displayedStatusText && <div className={`status-toast status-bar--${statusLevel}`}>{displayedStatusText}</div>}
-        {flowNameSyncState.needed && (
-          <div className="inline-banner inline-banner--warning inline-banner--action">
-            <span>{flowNameSyncBannerText}</span>
-            <div className="inline-banner-actions">
-              <button type="button" className="link-btn" onClick={() => void syncProjectFlowNames()} disabled={busy}>
-                {uiLanguage === "zh" ? "同步 flow 信息" : "Sync flow info"}
+      {!projectIntegrity.ok && (
+        <div className="inline-banner inline-banner--warning inline-banner--action">
+          <span>{projectIntegrityBannerText}</span>
+          <div className="inline-banner-actions">
+            {projectIntegrity.autoRepairable && (
+              <button type="button" className="link-btn" onClick={() => void repairProjectIntegrity()} disabled={busy}>
+                {uiLanguage === "zh" ? "自动修复" : "Auto Repair"}
               </button>
-            </div>
+            )}
+            <button type="button" className="link-btn" onClick={() => setShowProjectIntegrityDialog(true)}>
+              {uiLanguage === "zh" ? "查看详情" : "Review"}
+            </button>
           </div>
-        )}
+        </div>
+      )}
       {showNormalizedEdgeFixBanner && (
         <div className="inline-banner inline-banner--warning inline-banner--action">
           <span>{`检测到 ${normalizedEdgeFixCandidates.length} 条归一化连线仍为实线，是否自动修复为虚线？`}</span>
@@ -5188,6 +5333,53 @@ export default function App() {
             </div>
           )}
         </section>
+        </div>
+      )}
+      {showProjectIntegrityDialog && (
+        <div className="overlay-modal" onClick={() => setShowProjectIntegrityDialog(false)}>
+          <section className="pm-modal target-product-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="pm-modal-head">
+              <strong>{uiLanguage === "zh" ? "项目完整性检查" : "Project Integrity"}</strong>
+              <button type="button" className="drawer-close-btn" onClick={() => setShowProjectIntegrityDialog(false)}>
+                {i18n.close}
+              </button>
+            </div>
+            <div className="target-product-form">
+              <div className="target-product-preview span-2">
+                <span className="target-product-preview-label">
+                  {uiLanguage === "zh" ? "当前状态" : "Current status"}
+                </span>
+                <strong>{projectIntegrityBannerText}</strong>
+                <span>
+                  {uiLanguage === "zh"
+                    ? "这些问题来自项目读取时的后端完整性校验，修复后会重新加载当前项目。"
+                    : "These issues come from the backend integrity check during project load. The project will be reloaded after repair."}
+                </span>
+              </div>
+              <div className="target-product-preview span-2">
+                <span className="target-product-preview-label">{uiLanguage === "zh" ? "问题列表" : "Issues"}</span>
+                {projectIntegrity.issues.length > 0 ? (
+                  projectIntegrity.issues.map((issue, index) => (
+                    <span key={`${issue.kind}:${issue.nodeId ?? issue.ptsUuid ?? index}`}>
+                      {index + 1}. {formatProjectIntegrityIssue(issue)}
+                    </span>
+                  ))
+                ) : (
+                  <span>{uiLanguage === "zh" ? "暂无明细。" : "No issue details."}</span>
+                )}
+              </div>
+            </div>
+            <div className="pm-modal-actions">
+              <button type="button" className="pm-ghost-btn" onClick={() => setShowProjectIntegrityDialog(false)}>
+                {uiLanguage === "zh" ? "稍后处理" : "Later"}
+              </button>
+              {projectIntegrity.autoRepairable && (
+                <button type="button" onClick={() => void repairProjectIntegrity()} disabled={busy}>
+                  {uiLanguage === "zh" ? "自动修复" : "Auto Repair"}
+                </button>
+              )}
+            </div>
+          </section>
         </div>
       )}
       {showTargetProductDialog && (
