@@ -35,3 +35,15 @@ exports/
 
 # internal docs not intended for public release
 docs/
+agent-memory/
+
+# local connector credentials, import caches, and external data packages
+local-connectors/
+local-imports/
+import-cache/
+connector-secrets.*
+*.spold
+*.spold2
+
+# per-repo Qwen Code agent settings (non-deterministic, dev-only)
+.qwen/
