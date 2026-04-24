@@ -39,6 +39,9 @@ class FlowRecord(Base):
     unit_group: Mapped[str] = mapped_column(String(64), nullable=False)
     compartment: Mapped[str | None] = mapped_column(String(255), nullable=True)
     source_updated_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Stage 1 custom-flow metadata — columns added at startup via _ensure_custom_flow_columns()
+    source: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    is_custom: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class UnitGroup(Base):

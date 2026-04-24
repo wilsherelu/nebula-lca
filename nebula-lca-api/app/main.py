@@ -124,6 +124,10 @@ from .schemas import (
     HybridNode,
     HandleValidationRequest,
     HandleValidationResponse,
+    CreateFlowRequest,
+    FlowOutExtended,
+    CreateFlowResponse,
+    FlowCandidate,
 )
 from .ingest import convert_unit_value, import_flows_from_file, import_unit_groups_from_excel, load_ef31_flow_uuid_set
 from .ingest import import_processes_from_json
@@ -2800,6 +2804,62 @@ def _ensure_reference_processes_schema() -> dict:
         "index_created": created_indexes,
         "status": "ok",
     }
+
+
+# ---------------------------------------------------------------------------
+# Custom flow creation (Stage 1 — open-source)
+# ---------------------------------------------------------------------------
+
+def _ensure_custom_flow_columns() -> dict:
+    """Ensure ``source`` / ``is_custom`` columns exist on flow_catalog.
+
+    Runs at startup so ordinary FlowRecord queries never hit missing-columns
+    errors before POST /api/flows is ever called.
+
+    Uses ``engine.begin()`` which runs in autocommit mode for DDL.
+    - On PostgreSQL: uses ``ADD COLUMN IF NOT EXISTS`` (PG >= 9.2) which never
+      aborts the transaction.
+    - On SQLite: does not support ``IF NOT EXISTS`` on ``ADD COLUMN``, so
+      pre-inspects columns and only emits ALTER when needed.
+    - Unknown dialects: fail fast with a clear error — only SQLite and
+      PostgreSQL are supported.
+    """
+    added_columns: list[str] = []
+    table_exists = False
+
+    with engine.begin() as conn:
+        inspector = inspect(conn)
+        table_exists = inspector.has_table("flow_catalog")
+        if not table_exists:
+            return {"table": "flow_catalog", "added_columns": added_columns, "status": "skipped_table_missing"}
+
+        columns = {col["name"] for col in inspector.get_columns("flow_catalog")}
+        dialect_name = conn.engine.dialect.name
+
+        for col_name, col_type in [
+            ("source", "VARCHAR(64)"),
+            ("is_custom", "BOOLEAN NOT NULL DEFAULT false"),
+        ]:
+            if col_name in columns:
+                continue
+            # Dialect-specific safe-add strategy
+            if dialect_name == "postgresql":
+                conn.execute(text(f"ALTER TABLE flow_catalog ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
+            elif dialect_name == "sqlite":
+                conn.execute(text(f"ALTER TABLE flow_catalog ADD COLUMN {col_name} {col_type}"))
+            else:
+                # Fail fast for unknown dialects — only SQLite and PostgreSQL are supported.
+                raise RuntimeError(
+                    f"Unsupported database dialect '{dialect_name}'. "
+                    "Nebula LCA supports only SQLite and PostgreSQL."
+                )
+            added_columns.append(col_name)
+
+    if not added_columns:
+        status = "already_complete"
+    else:
+        status = "ok" if table_exists else "skipped_table_missing"
+    return {"table": "flow_catalog", "added_columns": added_columns, "status": status}
 
 
 def _bootstrap_reference_data_if_needed(*, db: Session) -> None:
@@ -7992,6 +8052,7 @@ def on_startup() -> None:
     _ensure_projects_management_schema()
     _ensure_pts_uuid_schema()
     _ensure_pts_resources_schema()
+    _ensure_custom_flow_columns()
     db = SessionLocal()
     try:
         if should_bootstrap_reference_data:
@@ -8766,6 +8827,182 @@ def get_flow(flow_uuid: str, db: Session = Depends(get_db)) -> FlowRecord:
     if item is None:
         raise HTTPException(status_code=404, detail="Flow not found")
     return item
+
+
+# ---------------------------------------------------------------------------
+# Custom flow creation (Stage 1 — open-source)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/flows", response_model=CreateFlowResponse, status_code=201)
+def create_flow(payload: CreateFlowRequest, db: Session = Depends(get_db)) -> CreateFlowResponse:
+    """Create a custom non-elementary flow (product / waste / intermediate).
+
+    Backend is the sole authority for flow_uuid, canonical flow_type, unit_group, and default_unit.
+    Schema migration for ``source`` / ``is_custom`` columns runs at startup;
+    this handler assumes the columns exist.
+
+    Behavior:
+        - If duplicate names (flow_name OR flow_name_en) exist and confirm_create=false:
+          return 409 FLOW_REUSE_RECOMMENDED with candidates.
+        - If confirm_create=true or no duplicates: create flow and return 201.
+
+    Returns:
+        - 201: flow created successfully (may include warnings/candidates)
+        - 409: duplicate names found, reuse recommended (candidates included)
+    """
+    # --- Validate inputs ---------------------------------------------------
+    # 1. Normalise flow_type to canonical DB form
+    # Existing DB stores values like "Product flow", "Waste flow", "Elementary flow"
+    normalized_semantic = normalize_flow_semantic(payload.flow_type)
+    # Map from normalized semantic to DB-stored flow_type literal
+    _SEMANTIC_TO_DB_TYPE: dict[str, str] = {
+        "product_flow": "Product flow",
+        "waste_flow": "Waste flow",
+        "intermediate_flow": "Product flow",  # intermediate flows are stored as Product flow in current catalog
+    }
+    db_flow_type = _SEMANTIC_TO_DB_TYPE.get(normalized_semantic, "Product flow")
+
+    # 2. Validate unit_group exists
+    unit_group = db.query(UnitGroup).filter(UnitGroup.name == payload.unit_group_uuid).first()
+    if not unit_group:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "INVALID_UNIT_GROUP",
+                "message": f"Unit group '{payload.unit_group_uuid}' does not exist.",
+            },
+        )
+
+    # 3. Validate default_unit belongs to this unit_group
+    unit_def = (
+        db.query(UnitDefinition)
+        .filter(
+            UnitDefinition.unit_group == payload.unit_group_uuid,
+            UnitDefinition.unit_name == payload.default_unit,
+        )
+        .first()
+    )
+    if not unit_def:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "INVALID_DEFAULT_UNIT",
+                "message": (
+                    f"Default unit '{payload.default_unit}' is not a member of unit group '{payload.unit_group_uuid}'."
+                ),
+            },
+        )
+
+    # 4. Find duplicate candidates by name (flow_name OR flow_name_en) + type
+    # Do not require unit_group match; unit differences are just candidate info for user to judge.
+    name_conditions = [func.lower(FlowRecord.flow_name) == payload.flow_name.strip().lower()]
+    if payload.flow_name_en:
+        name_conditions.append(
+            func.lower(FlowRecord.flow_name_en) == payload.flow_name_en.strip().lower()
+        )
+
+    name_filter = name_conditions[0] if len(name_conditions) == 1 else (name_conditions[0] | name_conditions[1])
+
+    candidate_flows = (
+        db.query(FlowRecord)
+        .filter(
+            name_filter,
+            FlowRecord.flow_type == db_flow_type,
+        )
+        .limit(10)
+        .all()
+    )
+
+    # 5. If duplicates found and user has not confirmed creation, return 409
+    if candidate_flows and not payload.confirm_create:
+        candidates = [
+            {
+                "flow_uuid": f.flow_uuid,
+                "flow_name": f.flow_name,
+                "flow_name_en": f.flow_name_en,
+                "flow_type": f.flow_type,
+                "unit_group": f.unit_group,
+                "default_unit": f.default_unit,
+                "source": f.source,
+                "is_custom": f.is_custom,
+            }
+            for f in candidate_flows
+        ]
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "FLOW_REUSE_RECOMMENDED",
+                "message": (
+                    "Existing flows with the same name or English name were found. "
+                    "We recommend reusing an existing flow to avoid confusion in model connections, "
+                    "imports/exports, and statistics. If you still need to create a new flow, "
+                    "please add distinguishing information such as specification, source, grade, "
+                    "boundary, or purpose to the name, or confirm creation."
+                ),
+                "candidates": candidates,
+            },
+        )
+
+    # 6. Generate UUID & persist (either no duplicates, or user confirmed)
+    flow_uuid = str(uuid.uuid4())
+
+    flow_record = FlowRecord(
+        flow_uuid=flow_uuid,
+        flow_name=payload.flow_name.strip(),
+        flow_name_en=payload.flow_name_en.strip() if payload.flow_name_en else None,
+        flow_type=db_flow_type,
+        default_unit=payload.default_unit.strip(),
+        unit_group=payload.unit_group_uuid.strip(),
+        compartment=payload.category.strip() if payload.category else None,
+        source_updated_at=None,
+        source="user_custom",
+        is_custom=True,
+    )
+    db.add(flow_record)
+    db.commit()
+    db.refresh(flow_record)
+
+    # Invalidate flow caches so this flow appears in GET /api/flows immediately
+    _invalidate_management_caches(flows=True, stats=True)
+
+    # Build response with optional warnings/candidates
+    flow_out = FlowOutExtended(
+        flow_uuid=flow_record.flow_uuid,
+        flow_name=flow_record.flow_name,
+        flow_name_en=flow_record.flow_name_en,
+        flow_type=flow_record.flow_type,
+        default_unit=flow_record.default_unit,
+        unit_group=flow_record.unit_group,
+        compartment=flow_record.compartment,
+        source_updated_at=flow_record.source_updated_at,
+        source=flow_record.source,
+        is_custom=flow_record.is_custom,
+    )
+
+    warnings = []
+    reuse_candidates = []
+    if candidate_flows:
+        warnings.append(
+            "Existing flows with the same name or English name were found. "
+            "We recommend reusing an existing flow to avoid confusion in model connections, "
+            "imports/exports, and statistics. This new flow was created per user confirmation."
+        )
+        reuse_candidates = [
+            {
+                "flow_uuid": f.flow_uuid,
+                "flow_name": f.flow_name,
+                "flow_name_en": f.flow_name_en,
+                "flow_type": f.flow_type,
+                "unit_group": f.unit_group,
+                "default_unit": f.default_unit,
+                "source": f.source,
+                "is_custom": f.is_custom,
+            }
+            for f in candidate_flows
+        ]
+
+    return CreateFlowResponse(flow=flow_out, warnings=warnings, reuse_candidates=reuse_candidates)
 
 
 def import_elementary_flows(payload: ImportFlowsRequest, db: Session = Depends(get_db)) -> ImportFlowsResponse:

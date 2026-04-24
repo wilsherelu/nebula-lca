@@ -1067,3 +1067,79 @@ class HandleValidationResponse(BaseModel):
     issues: list[dict]
 
 
+# ---------------------------------------------------------------------------
+# Custom flow creation (Stage 1 — open-source)
+# ---------------------------------------------------------------------------
+
+_ALLOWED_CREATE_FLOW_TYPES: set[str] = frozenset(
+    {
+        "product_flow",
+        "waste_flow",
+        "intermediate_flow",
+        # Accept common user-facing aliases and let backend normalize
+        "Product flow",
+        "Waste flow",
+        "Intermediate flow",
+    }
+)
+
+
+class CreateFlowRequest(BaseModel):
+    """Minimal client request for creating a custom intermediate/product/waste flow."""
+
+    flow_name: str = Field(min_length=1, max_length=255, description="Display name of the flow")
+    flow_name_en: str | None = Field(default=None, max_length=255, description="English display name")
+    flow_type: str = Field(description="Semantic flow type; accepted values: product_flow, waste_flow, intermediate_flow (and compatible aliases)")
+    unit_group_uuid: str = Field(alias="unitGroupUuid", min_length=1, description="UUID / name of an existing unit group")
+    default_unit: str = Field(min_length=1, max_length=64, description="Unit name belonging to unit_group_uuid")
+    category: str | None = Field(default=None, max_length=255, description="Compartment / category path (e.g. 'Emission; Air; GHG')")
+    confirm_create: bool = Field(default=False, alias="confirmCreate", description="If true, allow creation even when duplicate names exist")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    @field_validator("flow_type", mode="before")
+    @classmethod
+    def validate_flow_type(cls, value: object) -> str:
+        normalized = normalize_flow_semantic(value)
+        if normalized not in {"product_flow", "waste_flow", "intermediate_flow"}:
+            raise ValueError(
+                f"Unsupported flow_type '{value}'. Allowed: product_flow, waste_flow, intermediate_flow (and compatible aliases)"
+            )
+        return str(value)  # keep original string; DB stores canonical form like "Product flow"
+
+
+class FlowOutExtended(FlowOut):
+    """FlowOut with added custom-flow metadata fields."""
+
+    source: str | None = None
+    is_custom: bool = False
+
+
+class FlowCandidate(BaseModel):
+    """Candidate flow details returned for duplicate checks."""
+
+    flow_uuid: str
+    flow_name: str
+    flow_name_en: str | None = None
+    flow_type: str
+    unit_group: str
+    default_unit: str
+    source: str | None = None
+    is_custom: bool = False
+
+
+class CreateFlowResponse(BaseModel):
+    """Unified response for custom flow creation.
+
+    - ``flow``: the newly created or reused flow record
+    - ``warnings``: optional warnings for weak duplicates
+    - ``reuse_candidates``: existing flows with same name+type but different unit
+    """
+
+    flow: FlowOutExtended
+    warnings: list[str] = Field(default_factory=list)
+    reuse_candidates: list[dict] = Field(default_factory=list, alias="reuseCandidates")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
