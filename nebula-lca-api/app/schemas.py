@@ -1075,21 +1075,19 @@ _ALLOWED_CREATE_FLOW_TYPES: set[str] = frozenset(
     {
         "product_flow",
         "waste_flow",
-        "intermediate_flow",
         # Accept common user-facing aliases and let backend normalize
         "Product flow",
         "Waste flow",
-        "Intermediate flow",
     }
 )
 
 
 class CreateFlowRequest(BaseModel):
-    """Minimal client request for creating a custom intermediate/product/waste flow."""
+    """Minimal client request for creating a custom product/waste flow."""
 
     flow_name: str = Field(min_length=1, max_length=255, description="Display name of the flow")
     flow_name_en: str | None = Field(default=None, max_length=255, description="English display name")
-    flow_type: str = Field(description="Semantic flow type; accepted values: product_flow, waste_flow, intermediate_flow (and compatible aliases)")
+    flow_type: str = Field(description="Semantic flow type; accepted values: product_flow, waste_flow (and compatible aliases)")
     unit_group_uuid: str = Field(alias="unitGroupUuid", min_length=1, description="UUID / name of an existing unit group")
     default_unit: str = Field(min_length=1, max_length=64, description="Unit name belonging to unit_group_uuid")
     category: str | None = Field(default=None, max_length=255, description="Compartment / category path (e.g. 'Emission; Air; GHG')")
@@ -1101,9 +1099,9 @@ class CreateFlowRequest(BaseModel):
     @classmethod
     def validate_flow_type(cls, value: object) -> str:
         normalized = normalize_flow_semantic(value)
-        if normalized not in {"product_flow", "waste_flow", "intermediate_flow"}:
+        if normalized not in {"product_flow", "waste_flow"}:
             raise ValueError(
-                f"Unsupported flow_type '{value}'. Allowed: product_flow, waste_flow, intermediate_flow (and compatible aliases)"
+                f"Unsupported flow_type '{value}'. Allowed: product_flow, waste_flow (and compatible aliases)"
             )
         return str(value)  # keep original string; DB stores canonical form like "Product flow"
 
@@ -1141,5 +1139,4 @@ class CreateFlowResponse(BaseModel):
     reuse_candidates: list[dict] = Field(default_factory=list, alias="reuseCandidates")
 
     model_config = ConfigDict(populate_by_name=True)
-
 

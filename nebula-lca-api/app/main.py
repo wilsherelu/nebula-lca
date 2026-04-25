@@ -8836,7 +8836,7 @@ def get_flow(flow_uuid: str, db: Session = Depends(get_db)) -> FlowRecord:
 
 @app.post("/api/flows", response_model=CreateFlowResponse, status_code=201)
 def create_flow(payload: CreateFlowRequest, db: Session = Depends(get_db)) -> CreateFlowResponse:
-    """Create a custom non-elementary flow (product / waste / intermediate).
+    """Create a custom non-elementary flow (product / waste).
 
     Backend is the sole authority for flow_uuid, canonical flow_type, unit_group, and default_unit.
     Schema migration for ``source`` / ``is_custom`` columns runs at startup;
@@ -8859,7 +8859,6 @@ def create_flow(payload: CreateFlowRequest, db: Session = Depends(get_db)) -> Cr
     _SEMANTIC_TO_DB_TYPE: dict[str, str] = {
         "product_flow": "Product flow",
         "waste_flow": "Waste flow",
-        "intermediate_flow": "Product flow",  # intermediate flows are stored as Product flow in current catalog
     }
     db_flow_type = _SEMANTIC_TO_DB_TYPE.get(normalized_semantic, "Product flow")
 
