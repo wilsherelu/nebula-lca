@@ -4927,7 +4927,6 @@ export default function App() {
             void handleDeleteProjectById(targetProjectId);
           }}
           onCreateProcess={() => setStatusText("New Process 将在下一步接入。")}
-          onCreateFlow={() => setStatusText("New Flow 将在下一步接入。")}
         />
       </>
     );

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { FlowPort, LcaNodeData, ProcessMode } from "../../model/node";
 import { useLcaGraphStore } from "../../store/lcaGraphStore";
+import { CreateFlowDialog } from "../CreateFlowDialog";
 
 const DEV_NODE_DEBUG = Boolean(import.meta.env.DEV);
 const debugNode = (scope: string, payload?: unknown) => {
@@ -224,14 +225,14 @@ function FlowSection({
           {hasExtra ? <div className="extra-column-cell">{renderExtraCell?.(port, idx)}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
           {hasExtra2 ? <div className="extra-column-cell">{renderExtraCell2?.(port, idx)}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
           {showNodeColumn ? (
-              <label className="inline-checkbox">
-                <input
-                  type="checkbox"
-                  checked={port.showOnNode}
-                  disabled={showOnNodeLocked}
-                  onChange={(event) => onChange(updatePortValue(ports, port.id, "showOnNode", event.target.checked))}
-                />
-              </label>
+            <label className="inline-checkbox">
+              <input
+                type="checkbox"
+                checked={port.showOnNode}
+                disabled={showOnNodeLocked}
+                onChange={(event) => onChange(updatePortValue(ports, port.id, "showOnNode", event.target.checked))}
+              />
+            </label>
           ) : <div className="inventory-grid-spacer" aria-hidden="true" />}
           <button
             type="button"
@@ -251,6 +252,7 @@ function FlowSection({
 export function NodeInspector({ node }: Props) {
   const [tab, setTab] = useState<TabKey>("external_in");
   const [flowPicker, setFlowPicker] = useState<{ open: boolean; target: FlowTarget | null }>({ open: false, target: null });
+  const [createFlowDialog, setCreateFlowDialog] = useState<{ open: boolean; target: FlowTarget | null }>({ open: false, target: null });
   const [flowSearchInput, setFlowSearchInput] = useState("");
   const [flowSearchQuery, setFlowSearchQuery] = useState("");
   const [flowCategoryLevel1, setFlowCategoryLevel1] = useState("");
@@ -428,10 +430,10 @@ export function NodeInspector({ node }: Props) {
               item.type === "biosphere"
                 ? item
                 : {
-                    ...item,
-                    unit: nextUnit,
-                    unitGroup: item.unitGroup || canonicalGroup,
-                  },
+                  ...item,
+                  unit: nextUnit,
+                  unitGroup: item.unitGroup || canonicalGroup,
+                },
             ),
             outputs: current.data.outputs.map((item) => ({
               ...item,
@@ -465,11 +467,11 @@ export function NodeInspector({ node }: Props) {
             item.type === "biosphere"
               ? item
               : {
-                  ...item,
-                  unit: nextUnit,
-                  unitGroup: item.unitGroup || canonicalGroup,
-                  amount: inputAmountById.get(item.id) ?? item.amount,
-                },
+                ...item,
+                unit: nextUnit,
+                unitGroup: item.unitGroup || canonicalGroup,
+                amount: inputAmountById.get(item.id) ?? item.amount,
+              },
           ),
           outputs: current.data.outputs.map((item) => ({
             ...item,
@@ -489,10 +491,10 @@ export function NodeInspector({ node }: Props) {
         const nextList = list.map((item) =>
           item.id === port.id
             ? {
-                ...item,
-                unit: nextUnit,
-                unitGroup: item.unitGroup || unitGroup,
-              }
+              ...item,
+              unit: nextUnit,
+              unitGroup: item.unitGroup || unitGroup,
+            }
             : item,
         );
         return {
@@ -517,12 +519,12 @@ export function NodeInspector({ node }: Props) {
       const nextList = list.map((item) =>
         item.id === port.id
           ? {
-              ...item,
-              unit: nextUnit,
-              unitGroup: item.unitGroup || unitGroup,
-              amount: nextAmount,
-              externalSaleAmount: section === "outputs" ? nextExternalSale : item.externalSaleAmount,
-            }
+            ...item,
+            unit: nextUnit,
+            unitGroup: item.unitGroup || unitGroup,
+            amount: nextAmount,
+            externalSaleAmount: section === "outputs" ? nextExternalSale : item.externalSaleAmount,
+          }
           : item,
       );
       const dataPatch: Partial<LcaNodeData> = {
@@ -612,9 +614,9 @@ export function NodeInspector({ node }: Props) {
   }, [externalInIntermediate, marketOutput, marketProcess, resolvePortUnitGroup, resolveUnitGroupKey, unitOptionsByGroup, unitOptionsByPort]);
   const marketOutputOk = Boolean(
     marketOutput &&
-      externalOutIntermediate.length === 1 &&
-      Math.abs((marketOutput.amount ?? 0) - 1) <= 1e-9 &&
-      marketOutput.isProduct,
+    externalOutIntermediate.length === 1 &&
+    Math.abs((marketOutput.amount ?? 0) - 1) <= 1e-9 &&
+    marketOutput.isProduct,
   );
   const settingCandidates = nodes.filter((candidate) => candidate.id !== node.id);
   const canAutoNormalizeMarketInputs = marketProcess && externalInIntermediate.length > 0 && marketInputShareTotal > 0;
@@ -680,23 +682,23 @@ export function NodeInspector({ node }: Props) {
         return resp.json() as Promise<
           | CatalogFlow[]
           | {
-              items?: Array<{
-                flow_id?: string;
-                flow_uuid?: string;
-                flow_name?: string;
-                flow_name_en?: string | null;
-                type?: string;
-                flow_type?: string;
-                unit?: string;
-                default_unit?: string;
-                unit_group?: string;
-                category?: string | null;
-                compartment?: string | null;
-              }>;
-              total?: number;
-              page?: number;
-              page_size?: number;
-            }
+            items?: Array<{
+              flow_id?: string;
+              flow_uuid?: string;
+              flow_name?: string;
+              flow_name_en?: string | null;
+              type?: string;
+              flow_type?: string;
+              unit?: string;
+              default_unit?: string;
+              unit_group?: string;
+              category?: string | null;
+              compartment?: string | null;
+            }>;
+            total?: number;
+            page?: number;
+            page_size?: number;
+          }
         >;
       })
       .then((payload) => {
@@ -917,11 +919,7 @@ export function NodeInspector({ node }: Props) {
     return rawType || "-";
   };
 
-  const addCatalogFlow = (flow: CatalogFlow) => {
-    if (!flowPicker.target) {
-      return;
-    }
-
+  const addCatalogFlowForTarget = (flow: CatalogFlow, target: FlowTarget) => {
     if (flow.flow_uuid) {
       if (flow.unit_group) {
         setFlowUnitGroupByUuid((prev) => ({ ...prev, [flow.flow_uuid]: flow.unit_group }));
@@ -931,8 +929,8 @@ export function NodeInspector({ node }: Props) {
       }
     }
 
-    const isInput = flowPicker.target.startsWith("in_");
-    const isElementary = flowPicker.target.endsWith("elementary");
+    const isInput = target.startsWith("in_");
+    const isElementary = target.endsWith("elementary");
     const direction = isInput ? "input" : "output";
     const type = isElementary ? "biosphere" : "technosphere";
     const newPort = toPortFromReference(flow, direction, type);
@@ -945,7 +943,6 @@ export function NodeInspector({ node }: Props) {
         type: newPort.type,
       });
       setPendingMarketOutputSelection(false);
-      setFlowPicker({ open: false, target: null });
       return;
     }
 
@@ -1002,9 +999,9 @@ export function NodeInspector({ node }: Props) {
               ...current.data.inputs,
               marketProcess && marketOutputUnit
                 ? {
-                    ...newPort,
-                    unit: marketOutputUnit,
-                  }
+                  ...newPort,
+                  unit: marketOutputUnit,
+                }
                 : newPort,
             ],
           },
@@ -1072,7 +1069,13 @@ export function NodeInspector({ node }: Props) {
         },
       };
     });
+  };
 
+  const addCatalogFlow = (flow: CatalogFlow) => {
+    if (!flowPicker.target) {
+      return;
+    }
+    addCatalogFlowForTarget(flow, flowPicker.target);
     setFlowPicker({ open: false, target: null });
   };
 
@@ -1156,9 +1159,9 @@ export function NodeInspector({ node }: Props) {
     setLinkedDialog((prev) =>
       prev.open && prev.flowUuid === linkedDialog.flowUuid
         ? {
-            ...prev,
-            title: englishName,
-          }
+          ...prev,
+          title: englishName,
+        }
         : prev,
     );
   }, [flowNameEnByUuid, linkedDialog.flowUuid, linkedDialog.open, linkedDialog.title, uiLanguage]);
@@ -1258,22 +1261,22 @@ export function NodeInspector({ node }: Props) {
         <div className="mode-switch-row">
           <span>{t("过程模式", "Process Mode")}</span>
           <div className="mode-toggle-group">
-              <button
-                type="button"
-                className={mode === "balanced" ? "active" : ""}
-                disabled={node.data.nodeKind !== "unit_process" || marketProcess}
-                onClick={() => setNodeMode(node.id, "balanced")}
-              >
-                {t("守恒（balanced）", "Balanced")}
-              </button>
-              <button
-                type="button"
-                className={mode === "normalized" ? "active" : ""}
-                disabled={false}
-                onClick={() => setNodeMode(node.id, "normalized")}
-              >
-                {t("归一化（normalized）", "Normalized")}
-              </button>
+            <button
+              type="button"
+              className={mode === "balanced" ? "active" : ""}
+              disabled={node.data.nodeKind !== "unit_process" || marketProcess}
+              onClick={() => setNodeMode(node.id, "balanced")}
+            >
+              {t("守恒（balanced）", "Balanced")}
+            </button>
+            <button
+              type="button"
+              className={mode === "normalized" ? "active" : ""}
+              disabled={false}
+              onClick={() => setNodeMode(node.id, "normalized")}
+            >
+              {t("归一化（normalized）", "Normalized")}
+            </button>
           </div>
           <label className="inline-checkbox">
             <input
@@ -1302,9 +1305,9 @@ export function NodeInspector({ node }: Props) {
         <div className="mode-lock-hint">
           {lciNode
             ? t(
-                "LCI 节点固定为归一化，只能定义一条输入或输出中间流（默认定义为产品）。",
-                "LCI nodes are fixed to normalized mode and allow only one input or output intermediate flow, which is treated as the default product.",
-              )
+              "LCI 节点固定为归一化，只能定义一条输入或输出中间流（默认定义为产品）。",
+              "LCI nodes are fixed to normalized mode and allow only one input or output intermediate flow, which is treated as the default product.",
+            )
             : t("PTS 节点固定为归一化。", "PTS nodes are fixed to normalized mode.")}
         </div>
       )}
@@ -1337,9 +1340,9 @@ export function NodeInspector({ node }: Props) {
                         port.type === "biosphere"
                           ? port
                           : {
-                              ...port,
-                              amount: (Number.isFinite(port.amount) ? port.amount : 0) / total,
-                            },
+                            ...port,
+                            amount: (Number.isFinite(port.amount) ? port.amount : 0) / total,
+                          },
                       ),
                     },
                   };
@@ -1388,128 +1391,128 @@ export function NodeInspector({ node }: Props) {
               onChange={() => undefined}
             />
           ) : (
-          <>
-          <FlowSection
-            title={t("中间流", "Intermediate Flows")}
-            uiLanguage={uiLanguage}
-            lockFields={importedLocked}
-            allowShowOnNodeToggle={importedLocked}
-            ports={externalInIntermediate}
-            getDisplayName={getPortDisplayName}
-            unitOptionsByPort={marketInputUnitOptionsByPort}
-            onUnitChange={(port, nextUnit) => {
-              void updatePortUnitWithConversion("inputs", port, nextUnit);
-            }}
-            extraHeader={t("关联", "Link")}
-            extraHeader2={t("定义产品", "Product Def.")}
-            renderExtraCell={(port) => (
-              <div className="row-setting-cell">
-                {(() => {
-                  const linkedItems = linkedInputNames(port);
-                  const linkedLabel =
-                    linkedItems.length > 0
-                      ? `${t("已连接", "Linked")} (${linkedItems.length})`
-                      : t("未关联", "Not linked");
-                  return (
-                    <button
-                      type="button"
-                      className="linked-summary-btn"
-                      onClick={() => {
-                        void ensureEnglishFlowName(port);
-                        openLinkedDialog(port, linkedItems);
-                      }}
-                    >
-                      {linkedLabel}
-                    </button>
-                  );
-                })()}
-                {!marketProcess && (
-                  <button type="button" className="link-btn" disabled={importedLocked} onClick={() => openAssociationDialog("input", port)}>
-                    {t("关联", "Link")}
-                  </button>
+            <>
+              <FlowSection
+                title={t("中间流", "Intermediate Flows")}
+                uiLanguage={uiLanguage}
+                lockFields={importedLocked}
+                allowShowOnNodeToggle={importedLocked}
+                ports={externalInIntermediate}
+                getDisplayName={getPortDisplayName}
+                unitOptionsByPort={marketInputUnitOptionsByPort}
+                onUnitChange={(port, nextUnit) => {
+                  void updatePortUnitWithConversion("inputs", port, nextUnit);
+                }}
+                extraHeader={t("关联", "Link")}
+                extraHeader2={t("定义产品", "Product Def.")}
+                renderExtraCell={(port) => (
+                  <div className="row-setting-cell">
+                    {(() => {
+                      const linkedItems = linkedInputNames(port);
+                      const linkedLabel =
+                        linkedItems.length > 0
+                          ? `${t("已连接", "Linked")} (${linkedItems.length})`
+                          : t("未关联", "Not linked");
+                      return (
+                        <button
+                          type="button"
+                          className="linked-summary-btn"
+                          onClick={() => {
+                            void ensureEnglishFlowName(port);
+                            openLinkedDialog(port, linkedItems);
+                          }}
+                        >
+                          {linkedLabel}
+                        </button>
+                      );
+                    })()}
+                    {!marketProcess && (
+                      <button type="button" className="link-btn" disabled={importedLocked} onClick={() => openAssociationDialog("input", port)}>
+                        {t("关联", "Link")}
+                      </button>
+                    )}
+                  </div>
                 )}
-              </div>
-            )}
-            renderExtraCell2={(port) => (
-              <label className="inline-checkbox">
-                <input
-                  type="checkbox"
-                  checked={isReferenceProductPort(port, "input")}
-                  disabled={importedLocked || lciNode || marketProcess}
-                  onChange={(event) => applyProductToggle("input", port.id, event.target.checked)}
+                renderExtraCell2={(port) => (
+                  <label className="inline-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={isReferenceProductPort(port, "input")}
+                      disabled={importedLocked || lciNode || marketProcess}
+                      onChange={(event) => applyProductToggle("input", port.id, event.target.checked)}
+                    />
+                  </label>
+                )}
+                onChange={(next) =>
+                  updateNode(node.id, (current) => {
+                    const marketUnit = marketProcess ? current.data.outputs[0]?.unit : undefined;
+                    const patchedNext =
+                      marketProcess && marketUnit
+                        ? next.map((port) => ({
+                          ...port,
+                          unit: marketUnit,
+                        }))
+                        : next;
+                    return {
+                      ...current,
+                      data: {
+                        ...current.data,
+                        inputs: [
+                          ...patchedNext,
+                          ...current.data.inputs.filter((port) => port.type === "biosphere"),
+                        ],
+                      },
+                    };
+                  })
+                }
+                onAdd={() => setFlowPicker({ open: true, target: "in_intermediate" })}
+                onDelete={(id) =>
+                  updateNode(node.id, (current) => ({
+                    ...current,
+                    data: {
+                      ...current.data,
+                      inputs: current.data.inputs.filter((p) => p.id !== id),
+                    },
+                  }))
+                }
+              />
+              {!marketProcess && !ptsNode && (
+                <FlowSection
+                  title={t("基本流", "Elementary Flows")}
+                  uiLanguage={uiLanguage}
+                  lockFields={importedLocked}
+                  showNodeColumn={false}
+                  ports={externalInElementary}
+                  getDisplayName={getPortDisplayName}
+                  unitOptionsByPort={unitOptionsByPort}
+                  onUnitChange={(port, nextUnit) => {
+                    void updatePortUnitWithConversion("inputs", port, nextUnit);
+                  }}
+                  onChange={(next) =>
+                    updateNode(node.id, (current) => ({
+                      ...current,
+                      data: {
+                        ...current.data,
+                        inputs: [
+                          ...current.data.inputs.filter((port) => port.type !== "biosphere"),
+                          ...next,
+                        ],
+                      },
+                    }))
+                  }
+                  onAdd={() => setFlowPicker({ open: true, target: "in_elementary" })}
+                  onDelete={(id) =>
+                    updateNode(node.id, (current) => ({
+                      ...current,
+                      data: {
+                        ...current.data,
+                        inputs: current.data.inputs.filter((p) => p.id !== id),
+                      },
+                    }))
+                  }
                 />
-              </label>
-            )}
-            onChange={(next) =>
-              updateNode(node.id, (current) => {
-                const marketUnit = marketProcess ? current.data.outputs[0]?.unit : undefined;
-                const patchedNext =
-                  marketProcess && marketUnit
-                    ? next.map((port) => ({
-                        ...port,
-                        unit: marketUnit,
-                      }))
-                    : next;
-                return {
-                  ...current,
-                  data: {
-                    ...current.data,
-                    inputs: [
-                      ...patchedNext,
-                      ...current.data.inputs.filter((port) => port.type === "biosphere"),
-                    ],
-                  },
-                };
-              })
-            }
-            onAdd={() => setFlowPicker({ open: true, target: "in_intermediate" })}
-            onDelete={(id) =>
-              updateNode(node.id, (current) => ({
-                ...current,
-                data: {
-                  ...current.data,
-                  inputs: current.data.inputs.filter((p) => p.id !== id),
-                },
-              }))
-            }
-          />
-          {!marketProcess && !ptsNode && (
-            <FlowSection
-              title={t("基本流", "Elementary Flows")}
-              uiLanguage={uiLanguage}
-              lockFields={importedLocked}
-              showNodeColumn={false}
-              ports={externalInElementary}
-              getDisplayName={getPortDisplayName}
-              unitOptionsByPort={unitOptionsByPort}
-              onUnitChange={(port, nextUnit) => {
-                void updatePortUnitWithConversion("inputs", port, nextUnit);
-              }}
-              onChange={(next) =>
-                updateNode(node.id, (current) => ({
-                  ...current,
-                  data: {
-                    ...current.data,
-                    inputs: [
-                      ...current.data.inputs.filter((port) => port.type !== "biosphere"),
-                      ...next,
-                    ],
-                  },
-                }))
-              }
-              onAdd={() => setFlowPicker({ open: true, target: "in_elementary" })}
-              onDelete={(id) =>
-                updateNode(node.id, (current) => ({
-                  ...current,
-                  data: {
-                    ...current.data,
-                    inputs: current.data.inputs.filter((p) => p.id !== id),
-                  },
-                }))
-              }
-            />
-          )}
-          </>
+              )}
+            </>
           )}
         </>
       )}
@@ -1528,169 +1531,169 @@ export function NodeInspector({ node }: Props) {
               onChange={() => undefined}
             />
           ) : (
-          <>
-          <FlowSection
-            title={t("中间流", "Intermediate Flows")}
-            uiLanguage={uiLanguage}
-            readOnly={false}
-            lockFields={importedLocked}
-            allowShowOnNodeToggle={importedLocked}
-            ports={externalOutIntermediate}
-            getDisplayName={getPortDisplayName}
-            unitOptionsByPort={unitOptionsByPort}
-            onUnitChange={(port, nextUnit) => {
-              void updatePortUnitWithConversion("outputs", port, nextUnit);
-            }}
-            extraHeader={t("关联", "Link")}
-            extraHeader2={t("定义产品", "Product Def.")}
-            renderExtraCell={(port) => (
-              <div className="row-setting-cell">
-                {(() => {
-                  const linkedItems = linkedOutputNames(port);
-                  const linkedLabel =
-                    linkedItems.length > 0
-                      ? `${t("已连接", "Linked")} (${linkedItems.length})`
-                      : t("未关联", "Not linked");
-                  return (
-                    <button
-                      type="button"
-                      className="linked-summary-btn"
-                      onClick={() => {
-                        void ensureEnglishFlowName(port);
-                        openLinkedDialog(port, linkedItems);
-                      }}
-                    >
-                      {linkedLabel}
+            <>
+              <FlowSection
+                title={t("中间流", "Intermediate Flows")}
+                uiLanguage={uiLanguage}
+                readOnly={false}
+                lockFields={importedLocked}
+                allowShowOnNodeToggle={importedLocked}
+                ports={externalOutIntermediate}
+                getDisplayName={getPortDisplayName}
+                unitOptionsByPort={unitOptionsByPort}
+                onUnitChange={(port, nextUnit) => {
+                  void updatePortUnitWithConversion("outputs", port, nextUnit);
+                }}
+                extraHeader={t("关联", "Link")}
+                extraHeader2={t("定义产品", "Product Def.")}
+                renderExtraCell={(port) => (
+                  <div className="row-setting-cell">
+                    {(() => {
+                      const linkedItems = linkedOutputNames(port);
+                      const linkedLabel =
+                        linkedItems.length > 0
+                          ? `${t("已连接", "Linked")} (${linkedItems.length})`
+                          : t("未关联", "Not linked");
+                      return (
+                        <button
+                          type="button"
+                          className="linked-summary-btn"
+                          onClick={() => {
+                            void ensureEnglishFlowName(port);
+                            openLinkedDialog(port, linkedItems);
+                          }}
+                        >
+                          {linkedLabel}
+                        </button>
+                      );
+                    })()}
+                    <button type="button" className="link-btn" disabled={importedLocked} onClick={() => openAssociationDialog("output", port)}>
+                      {t("关联", "Link")}
                     </button>
-                  );
-                })()}
-                <button type="button" className="link-btn" disabled={importedLocked} onClick={() => openAssociationDialog("output", port)}>
-                  {t("关联", "Link")}
-                </button>
-              </div>
-            )}
-            renderExtraCell2={(port) => {
-              if (marketProcess) {
-                return <span className="market-fixed-product">{t("固定产品", "Fixed Product")}</span>;
-              }
-              const checked = isReferenceProductPort(port, "output");
-              return (
-                <div className="product-sale-cell">
-                  <label className="inline-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      disabled={importedLocked || lciNode}
-                      onChange={(event) => applyProductToggle("output", port.id, event.target.checked)}
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    className="sale-link-btn"
-                    disabled={importedLocked || !checked}
-                    onClick={() =>
-                      setSaleDialog({
-                        open: true,
-                        portId: port.id,
-                        value: Number.isFinite(port.externalSaleAmount ?? 0) ? (port.externalSaleAmount ?? 0) : 0,
-                      })
-                    }
-                  >
-                    {checked ? `${t("外售", "External Sale")}: ${port.externalSaleAmount ?? 0}` : `${t("外售", "External Sale")}: -`}
-                  </button>
-                </div>
-              );
-            }}
-            onChange={(next) =>
-              updateNode(node.id, (current) => ({
-                ...current,
-                data: {
-                  ...current.data,
-                  outputs: [
-                    ...next.map((port, idx) =>
-                      marketProcess
-                        ? {
-                            ...port,
-                            amount: idx === 0 ? 1 : port.amount,
-                            isProduct: idx === 0 ? true : Boolean(port.isProduct),
-                          }
-                        : port,
-                    ),
-                    ...current.data.outputs.filter((port) => port.type === "biosphere"),
-                  ],
-                },
-              }))
-            }
-            onAdd={
-              marketProcess
-                ? () => {
-                    setPendingMarketOutputSelection(true);
-                    setFlowPicker({ open: true, target: "out_intermediate" });
+                  </div>
+                )}
+                renderExtraCell2={(port) => {
+                  if (marketProcess) {
+                    return <span className="market-fixed-product">{t("固定产品", "Fixed Product")}</span>;
                   }
-                : () => setFlowPicker({ open: true, target: "out_intermediate" })
-            }
-            onDelete={(id) => {
-              if (marketProcess) {
-                setPendingMarketOutputSelection(true);
-                updateNode(node.id, (current) => ({
-                  ...current,
-                  data: {
-                    ...current.data,
-                    outputs: current.data.outputs.filter((p) => p.id !== id),
-                    referenceProduct: "",
-                    referenceProductFlowUuid: undefined,
-                    referenceProductDirection: undefined,
-                  },
-                }));
-                setFlowPicker({ open: true, target: "out_intermediate" });
-                return;
-              }
-              updateNode(node.id, (current) => ({
-                ...current,
-                data: {
-                  ...current.data,
-                  outputs: current.data.outputs.filter((p) => p.id !== id),
-                },
-              }));
-            }}
-          />
-          {!marketProcess && !ptsNode && (
-            <FlowSection
-              title={t("基本流", "Elementary Flows")}
-              uiLanguage={uiLanguage}
-              lockFields={importedLocked}
-              showNodeColumn={false}
-              ports={externalOutElementary}
-              getDisplayName={getPortDisplayName}
-              unitOptionsByPort={unitOptionsByPort}
-              onUnitChange={(port, nextUnit) => {
-                void updatePortUnitWithConversion("outputs", port, nextUnit);
-              }}
-              onChange={(next) =>
-                updateNode(node.id, (current) => ({
-                  ...current,
-                  data: {
-                    ...current.data,
-                    outputs: [
-                      ...current.data.outputs.filter((port) => port.type !== "biosphere"),
-                      ...next,
-                    ],
-                  },
-                }))
-              }
-              onAdd={() => setFlowPicker({ open: true, target: "out_elementary" })}
-              onDelete={(id) =>
-                updateNode(node.id, (current) => ({
-                  ...current,
-                  data: {
-                    ...current.data,
-                    outputs: current.data.outputs.filter((p) => p.id !== id),
-                  },
-                }))
-              }
-            />
-          )}
-          </>
+                  const checked = isReferenceProductPort(port, "output");
+                  return (
+                    <div className="product-sale-cell">
+                      <label className="inline-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={importedLocked || lciNode}
+                          onChange={(event) => applyProductToggle("output", port.id, event.target.checked)}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="sale-link-btn"
+                        disabled={importedLocked || !checked}
+                        onClick={() =>
+                          setSaleDialog({
+                            open: true,
+                            portId: port.id,
+                            value: Number.isFinite(port.externalSaleAmount ?? 0) ? (port.externalSaleAmount ?? 0) : 0,
+                          })
+                        }
+                      >
+                        {checked ? `${t("外售", "External Sale")}: ${port.externalSaleAmount ?? 0}` : `${t("外售", "External Sale")}: -`}
+                      </button>
+                    </div>
+                  );
+                }}
+                onChange={(next) =>
+                  updateNode(node.id, (current) => ({
+                    ...current,
+                    data: {
+                      ...current.data,
+                      outputs: [
+                        ...next.map((port, idx) =>
+                          marketProcess
+                            ? {
+                              ...port,
+                              amount: idx === 0 ? 1 : port.amount,
+                              isProduct: idx === 0 ? true : Boolean(port.isProduct),
+                            }
+                            : port,
+                        ),
+                        ...current.data.outputs.filter((port) => port.type === "biosphere"),
+                      ],
+                    },
+                  }))
+                }
+                onAdd={
+                  marketProcess
+                    ? () => {
+                      setPendingMarketOutputSelection(true);
+                      setFlowPicker({ open: true, target: "out_intermediate" });
+                    }
+                    : () => setFlowPicker({ open: true, target: "out_intermediate" })
+                }
+                onDelete={(id) => {
+                  if (marketProcess) {
+                    setPendingMarketOutputSelection(true);
+                    updateNode(node.id, (current) => ({
+                      ...current,
+                      data: {
+                        ...current.data,
+                        outputs: current.data.outputs.filter((p) => p.id !== id),
+                        referenceProduct: "",
+                        referenceProductFlowUuid: undefined,
+                        referenceProductDirection: undefined,
+                      },
+                    }));
+                    setFlowPicker({ open: true, target: "out_intermediate" });
+                    return;
+                  }
+                  updateNode(node.id, (current) => ({
+                    ...current,
+                    data: {
+                      ...current.data,
+                      outputs: current.data.outputs.filter((p) => p.id !== id),
+                    },
+                  }));
+                }}
+              />
+              {!marketProcess && !ptsNode && (
+                <FlowSection
+                  title={t("基本流", "Elementary Flows")}
+                  uiLanguage={uiLanguage}
+                  lockFields={importedLocked}
+                  showNodeColumn={false}
+                  ports={externalOutElementary}
+                  getDisplayName={getPortDisplayName}
+                  unitOptionsByPort={unitOptionsByPort}
+                  onUnitChange={(port, nextUnit) => {
+                    void updatePortUnitWithConversion("outputs", port, nextUnit);
+                  }}
+                  onChange={(next) =>
+                    updateNode(node.id, (current) => ({
+                      ...current,
+                      data: {
+                        ...current.data,
+                        outputs: [
+                          ...current.data.outputs.filter((port) => port.type !== "biosphere"),
+                          ...next,
+                        ],
+                      },
+                    }))
+                  }
+                  onAdd={() => setFlowPicker({ open: true, target: "out_elementary" })}
+                  onDelete={(id) =>
+                    updateNode(node.id, (current) => ({
+                      ...current,
+                      data: {
+                        ...current.data,
+                        outputs: current.data.outputs.filter((p) => p.id !== id),
+                      },
+                    }))
+                  }
+                />
+              )}
+            </>
           )}
         </>
       )}
@@ -1734,6 +1737,18 @@ export function NodeInspector({ node }: Props) {
                 <button type="button" className="search-btn" onClick={applyFlowSearch}>
                   {t("检索", "Search")}
                 </button>
+                {!flowPicker.target?.includes("elementary") && (
+                  <button
+                    type="button"
+                    className="search-btn"
+                    onClick={() => {
+                      setFlowPicker({ open: false, target: null });
+                      setCreateFlowDialog({ open: true, target: flowPicker.target });
+                    }}
+                  >
+                    {t("+ 新建自定义流", "+ Create Custom Flow")}
+                  </button>
+                )}
               </div>
             </div>
             <div className="overlay-table">
@@ -1917,6 +1932,36 @@ export function NodeInspector({ node }: Props) {
             </div>
           </div>
         </div>
+      )}
+
+      {createFlowDialog.open && (
+        <CreateFlowDialog
+          open={createFlowDialog.open}
+          uiLanguage={uiLanguage}
+          defaultFlowType={createFlowDialog.target?.includes("out") ? "product_flow" : "product_flow"}
+          defaultCategory={flowCategoryLevel1}
+          onSuccess={(flow) => {
+            // 将后端返回的 flow 映射成 CatalogFlow，使用保存的 target 加入节点
+            const catalogFlow: CatalogFlow = {
+              flow_uuid: flow.flow_uuid,
+              flow_name: flow.flow_name,
+              flow_name_en: flow.flow_name_en,
+              flow_type: flow.flow_type,
+              default_unit: flow.default_unit,
+              unit_group: flow.unit_group,
+              compartment: flow.category ?? flow.compartment,
+            };
+            if (createFlowDialog.target) {
+              addCatalogFlowForTarget(catalogFlow, createFlowDialog.target);
+              setCreateFlowDialog({ open: false, target: null });
+              setFlowPicker({ open: false, target: null });
+            }
+          }}
+          onClose={() => setCreateFlowDialog({ open: false, target: null })}
+          onStatus={(text) => {
+            setConnectionHint(text);
+          }}
+        />
       )}
     </div>
   );

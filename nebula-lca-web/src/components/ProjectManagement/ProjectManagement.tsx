@@ -1,4 +1,5 @@
-﻿import { useEffect, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
+import { CreateFlowDialog } from "../CreateFlowDialog";
 
 export type ProjectListItem = {
   project_id: string;
@@ -150,7 +151,6 @@ type Props = {
   onCreateProject: (form: CreateProjectForm) => Promise<void>;
   onDeleteProject: (projectId: string) => void;
   onCreateProcess?: () => void;
-  onCreateFlow?: () => void;
 };
 
 const defaultForm: CreateProjectForm = {
@@ -543,9 +543,9 @@ function ProcessDetailModal(props: {
   const displayReferenceFlowName = zh
     ? process.referenceFlowName || detail?.reference_flow_name || ""
     : String(detail?.reference_flow_name_en ?? "").trim() ||
-      process.referenceFlowName ||
-      detail?.reference_flow_name ||
-      "";
+    process.referenceFlowName ||
+    detail?.reference_flow_name ||
+    "";
   const displayReferenceFlowIdentity =
     displayReferenceFlowName ||
     detail?.reference_flow_uuid ||
@@ -694,21 +694,21 @@ function TidasImportModal(props: {
     const errors = Array.isArray(payload.errors) ? payload.errors.map((item) => String(item)) : [];
     const createdProjects = Array.isArray(payload.created_projects)
       ? payload.created_projects
-          .map((item) => {
-            if (!item || typeof item !== "object") {
-              return null;
-            }
-            const row = item as Record<string, unknown>;
-            const projectId = String(row.project_id ?? "").trim();
-            if (!projectId) {
-              return null;
-            }
-            return {
-              projectId,
-              name: String(row.name ?? projectId).trim() || projectId,
-            } satisfies ImportedProjectSummary;
-          })
-          .filter((item): item is ImportedProjectSummary => Boolean(item))
+        .map((item) => {
+          if (!item || typeof item !== "object") {
+            return null;
+          }
+          const row = item as Record<string, unknown>;
+          const projectId = String(row.project_id ?? "").trim();
+          if (!projectId) {
+            return null;
+          }
+          return {
+            projectId,
+            name: String(row.name ?? projectId).trim() || projectId,
+          } satisfies ImportedProjectSummary;
+        })
+        .filter((item): item is ImportedProjectSummary => Boolean(item))
       : [];
     return {
       importedCount: Number.isFinite(Number(importedRaw)) ? Number(importedRaw) : 0,
@@ -787,14 +787,14 @@ function TidasImportModal(props: {
     setErrorText("");
     setResult(null);
     setReportPayload(null);
-      try {
-        const body = new FormData();
-        body.append("file", selectedFile);
-        body.append("dry_run", "false");
-        body.append("strict_mode", "false");
-        if (tab === "models") {
-          body.append("display_lang", uiLanguage);
-        }
+    try {
+      const body = new FormData();
+      body.append("file", selectedFile);
+      body.append("dry_run", "false");
+      body.append("strict_mode", "false");
+      if (tab === "models") {
+        body.append("display_lang", uiLanguage);
+      }
       const endpoint =
         tab === "models" && selectedFile.name.toLowerCase().endsWith(".zip")
           ? `${API_BASE}/import/tidas/bundle`
@@ -911,20 +911,20 @@ function TidasImportModal(props: {
             </div>
           </label>
         </div>
-          {tab === "models" && (
-            <div className="pm-help-text">
-              {zh
-                ? "优先选择天工 ZIP 包；也兼容单个 model JSON 文件。ZIP 会按 manifest 顺序导入 flow / process / model。"
-                : "Prefer a Tiangong ZIP bundle; a single model JSON file is also supported. ZIP imports flow / process / model in manifest order."}
-            </div>
-          )}
-          {tab === "processes" && (
-            <div className="pm-help-text">
-              {zh
-                ? "支持单个 process JSON，也支持包含 manifest.json + flow/ + process/ 的 ZIP。ZIP 会先导入 flow，再导入 process。"
-                : "Supports a single process JSON and ZIP bundles with manifest.json + flow/ + process/. ZIP imports flows first, then processes."}
-            </div>
-          )}
+        {tab === "models" && (
+          <div className="pm-help-text">
+            {zh
+              ? "优先选择天工 ZIP 包；也兼容单个 model JSON 文件。ZIP 会按 manifest 顺序导入 flow / process / model。"
+              : "Prefer a Tiangong ZIP bundle; a single model JSON file is also supported. ZIP imports flow / process / model in manifest order."}
+          </div>
+        )}
+        {tab === "processes" && (
+          <div className="pm-help-text">
+            {zh
+              ? "支持单个 process JSON，也支持包含 manifest.json + flow/ + process/ 的 ZIP。ZIP 会先导入 flow，再导入 process。"
+              : "Supports a single process JSON and ZIP bundles with manifest.json + flow/ + process/. ZIP imports flows first, then processes."}
+          </div>
+        )}
         {errorText && <div className="pm-error">{errorText}</div>}
         {result && (
           <div className="pm-tidas-result">
@@ -957,19 +957,19 @@ function TidasImportModal(props: {
           </button>
           <button type="button" onClick={() => void runImport()} disabled={busy}>
             {busy
-                ? (zh ? "导入中..." : "Importing...")
-                : tab === "models"
-                  ? (zh ? "从 ZIP / 模型 JSON 新建项目" : "Create Project from ZIP / Model JSON")
-                  : (zh ? "开始导入" : "Start Import")}
-            </button>
-          </div>
+              ? (zh ? "导入中..." : "Importing...")
+              : tab === "models"
+                ? (zh ? "从 ZIP / 模型 JSON 新建项目" : "Create Project from ZIP / Model JSON")
+                : (zh ? "开始导入" : "Start Import")}
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
 export function ProjectManagement(props: Props) {
-  const { projects, busy, uiLanguage = "zh", onChangeLanguage, onStatus, onOpenProject, onCreateProject, onDeleteProject, onCreateFlow, onCreateProcess } = props;
+  const { projects, busy, uiLanguage = "zh", onChangeLanguage, onStatus, onOpenProject, onCreateProject, onDeleteProject, onCreateProcess } = props;
   const zh = uiLanguage === "zh";
   const [activeModule, setActiveModule] = useState<NavModule>("project");
   const [activeItem, setActiveItem] = useState<NavItem>("recent_projects");
@@ -1004,6 +1004,7 @@ export function ProjectManagement(props: Props) {
   const [forceProcessRefresh, setForceProcessRefresh] = useState(false);
   const [forceFlowRefresh, setForceFlowRefresh] = useState(false);
   const [forceStatsRefresh, setForceStatsRefresh] = useState(false);
+  const [createFlowDialogOpen, setCreateFlowDialogOpen] = useState(false);
   const projectPageSize = 20;
   const processPageSize = 20;
   const flowPageSize = 20;
@@ -1159,9 +1160,9 @@ export function ProjectManagement(props: Props) {
         const filtered = !keyword
           ? fallback
           : fallback.filter(
-              (row) =>
-                row.projectName.toLowerCase().includes(keyword) || row.projectId.toLowerCase().includes(keyword),
-            );
+            (row) =>
+              row.projectName.toLowerCase().includes(keyword) || row.projectId.toLowerCase().includes(keyword),
+          );
         const start = (projectPage - 1) * projectPageSize;
         setServerProjectRows(filtered.slice(start, start + projectPageSize));
         setProjectTotal(filtered.length);
@@ -1198,20 +1199,20 @@ export function ProjectManagement(props: Props) {
         const items = Array.isArray(payload) ? payload : payload.items ?? [];
         const total = Array.isArray(payload) ? items.length : Number(payload.total ?? items.length);
         const mappedRows = items.map((item) => ({
-            processId: String(item.process_uuid ?? ""),
-            processUuid: String(item.process_uuid ?? ""),
-            processName: String(item.process_name ?? "未命名过程"),
-            processNameEn: String(item.process_name_en ?? "").trim() || undefined,
-            type: (item.type as "unit_process" | "market_process") ?? "unit_process",
-            referenceFlowUuid: String(item.reference_flow_uuid ?? ""),
-            referenceFlowName: String(item.reference_flow_name ?? ""),
-            referenceFlowInternalId: String(item.reference_flow_internal_id ?? "").trim() || undefined,
-            inputs: Number(item.input_count ?? 0),
-            outputs: Number(item.output_count ?? 0),
-            usedInProjects: Number(item.used_in_projects ?? 0),
-            balanceStatus: (item.balance_status as "balanced" | "unchecked" | "error") ?? "unchecked",
-            lastModified: formatTime(String(item.last_modified ?? "")),
-          }));
+          processId: String(item.process_uuid ?? ""),
+          processUuid: String(item.process_uuid ?? ""),
+          processName: String(item.process_name ?? "未命名过程"),
+          processNameEn: String(item.process_name_en ?? "").trim() || undefined,
+          type: (item.type as "unit_process" | "market_process") ?? "unit_process",
+          referenceFlowUuid: String(item.reference_flow_uuid ?? ""),
+          referenceFlowName: String(item.reference_flow_name ?? ""),
+          referenceFlowInternalId: String(item.reference_flow_internal_id ?? "").trim() || undefined,
+          inputs: Number(item.input_count ?? 0),
+          outputs: Number(item.output_count ?? 0),
+          usedInProjects: Number(item.used_in_projects ?? 0),
+          balanceStatus: (item.balance_status as "balanced" | "unchecked" | "error") ?? "unchecked",
+          lastModified: formatTime(String(item.last_modified ?? "")),
+        }));
         setServerProcessRows(mappedRows);
         setProcessTotal(total);
         writePmCache(cacheKey, { rows: mappedRows, total }, resp.headers.get("ETag") ?? undefined);
@@ -1229,14 +1230,14 @@ export function ProjectManagement(props: Props) {
   useEffect(() => {
     const loadFlows = async () => {
       try {
-type FlowApiRow = {
-  flow_id?: string;
-  flow_name?: string;
-  flow_name_en?: string | null;
-  type?: "intermediate_flow" | "elementary_flow" | "product_flow" | "waste_flow";
-  unit?: string;
-  category?: string;
-  used_in_processes?: number;
+        type FlowApiRow = {
+          flow_id?: string;
+          flow_name?: string;
+          flow_name_en?: string | null;
+          type?: "intermediate_flow" | "elementary_flow" | "product_flow" | "waste_flow";
+          unit?: string;
+          category?: string;
+          used_in_processes?: number;
           last_modified?: string;
         };
         const params = new URLSearchParams({
@@ -1274,15 +1275,15 @@ type FlowApiRow = {
         const items = Array.isArray(payload) ? payload : payload.items ?? [];
         const total = Array.isArray(payload) ? items.length : Number(payload.total ?? items.length);
         const mappedRows = items.map((item) => ({
-            id: String(item.flow_id ?? ""),
-            flowName: String(item.flow_name ?? "未命名流"),
-            flowNameEn: String(item.flow_name_en ?? "").trim() || undefined,
-            type: (item.type as "intermediate_flow" | "elementary_flow" | "product_flow" | "waste_flow") ?? "intermediate_flow",
-            unit: String(item.unit ?? "-"),
-            category: String(item.category ?? "-"),
-            usedInProcesses: Number(item.used_in_processes ?? 0),
-            lastModified: formatTime(String(item.last_modified ?? "")),
-          }));
+          id: String(item.flow_id ?? ""),
+          flowName: String(item.flow_name ?? "未命名流"),
+          flowNameEn: String(item.flow_name_en ?? "").trim() || undefined,
+          type: (item.type as "intermediate_flow" | "elementary_flow" | "product_flow" | "waste_flow") ?? "intermediate_flow",
+          unit: String(item.unit ?? "-"),
+          category: String(item.category ?? "-"),
+          usedInProcesses: Number(item.used_in_processes ?? 0),
+          lastModified: formatTime(String(item.last_modified ?? "")),
+        }));
         setServerFlowRows(mappedRows);
         setFlowTotal(total);
         writePmCache(cacheKey, { rows: mappedRows, total }, resp.headers.get("ETag") ?? undefined);
@@ -1347,9 +1348,9 @@ type FlowApiRow = {
       const ports = Array.isArray(src.exchanges)
         ? (src.exchanges as Array<Record<string, unknown>>)
         : [
-            ...(Array.isArray(src.inputs) ? (src.inputs as Array<Record<string, unknown>>) : []),
-            ...(Array.isArray(src.outputs) ? (src.outputs as Array<Record<string, unknown>>) : []),
-          ];
+          ...(Array.isArray(src.inputs) ? (src.inputs as Array<Record<string, unknown>>) : []),
+          ...(Array.isArray(src.outputs) ? (src.outputs as Array<Record<string, unknown>>) : []),
+        ];
       const uuids = Array.from(
         new Set(
           ports
@@ -1373,11 +1374,11 @@ type FlowApiRow = {
               if (listResp.ok) {
                 const listPayload = (await listResp.json()) as
                   | PagedResponse<{
-                      flow_id?: string;
-                      flow_name?: string;
-                      type?: string;
-                      unit?: string;
-                    }>
+                    flow_id?: string;
+                    flow_name?: string;
+                    type?: string;
+                    unit?: string;
+                  }>
                   | Array<Record<string, unknown>>;
                 const listItems = Array.isArray(listPayload) ? listPayload : listPayload.items ?? [];
                 const matched = listItems.find((x) => String((x as { flow_id?: string }).flow_id ?? "") === uuid);
@@ -1704,15 +1705,15 @@ type FlowApiRow = {
                 </div>
               </div>
               <div className="pm-head-tools pm-head-tools--process">
-                  <input
-                    className="pm-page-search"
-                    placeholder={zh ? "搜索过程名称" : "Search process name"}
-                    value={processSearch}
-                    onChange={(event) => {
-                      setProcessSearch(event.target.value);
-                      setProcessPage(1);
-                    }}
-                  />
+                <input
+                  className="pm-page-search"
+                  placeholder={zh ? "搜索过程名称" : "Search process name"}
+                  value={processSearch}
+                  onChange={(event) => {
+                    setProcessSearch(event.target.value);
+                    setProcessPage(1);
+                  }}
+                />
               </div>
               <div className="pm-table-wrap">
                 <table className="pm-table">
@@ -1774,50 +1775,50 @@ type FlowApiRow = {
                     type="button"
                     className="pm-primary-btn"
                     title={zh ? "新建流" : "Create flow"}
-                    onClick={() => (onCreateFlow ? onCreateFlow() : undefined)}
+                    onClick={() => setCreateFlowDialogOpen(true)}
                   >
                     {zh ? "新建" : "Create"}
                   </button>
                 </div>
               </div>
               <div className="pm-head-tools pm-head-tools--flow">
-                  <input
-                    className="pm-page-search"
-                    placeholder={zh ? "搜索流名称" : "Search flow name"}
-                    value={flowSearch}
-                    onChange={(event) => {
-                      setFlowSearch(event.target.value);
-                      setFlowPage(1);
-                    }}
-                  />
-                  <select
-                    className="pm-page-select"
-                    value={flowTypeFilter}
-                    onChange={(event) => {
-                      setFlowTypeFilter(event.target.value as "all" | FlowBusinessType);
-                      setFlowPage(1);
-                    }}
-                  >
-                    <option value="all">{zh ? "全部类型" : "All Types"}</option>
-                    <option value="basic">{mapFlowTypeLabel("basic", zh)}</option>
-                    <option value="product">{mapFlowTypeLabel("product", zh)}</option>
-                    <option value="waste">{mapFlowTypeLabel("waste", zh)}</option>
-                  </select>
-                  <select
-                    className="pm-page-select"
-                    value={flowCategoryFilter}
-                    onChange={(event) => {
-                      setFlowCategoryFilter(event.target.value);
-                      setFlowPage(1);
-                    }}
-                  >
-                      <option value="">{zh ? "全部一级分类" : "All Level-1 Categories"}</option>
-                      {flowCategories.map((item) => (
-                        <option key={item.category} value={item.category}>
-                          {`${item.category} (${item.count})`}
-                        </option>
-                      ))}
-                    </select>
+                <input
+                  className="pm-page-search"
+                  placeholder={zh ? "搜索流名称" : "Search flow name"}
+                  value={flowSearch}
+                  onChange={(event) => {
+                    setFlowSearch(event.target.value);
+                    setFlowPage(1);
+                  }}
+                />
+                <select
+                  className="pm-page-select"
+                  value={flowTypeFilter}
+                  onChange={(event) => {
+                    setFlowTypeFilter(event.target.value as "all" | FlowBusinessType);
+                    setFlowPage(1);
+                  }}
+                >
+                  <option value="all">{zh ? "全部类型" : "All Types"}</option>
+                  <option value="basic">{mapFlowTypeLabel("basic", zh)}</option>
+                  <option value="product">{mapFlowTypeLabel("product", zh)}</option>
+                  <option value="waste">{mapFlowTypeLabel("waste", zh)}</option>
+                </select>
+                <select
+                  className="pm-page-select"
+                  value={flowCategoryFilter}
+                  onChange={(event) => {
+                    setFlowCategoryFilter(event.target.value);
+                    setFlowPage(1);
+                  }}
+                >
+                  <option value="">{zh ? "全部一级分类" : "All Level-1 Categories"}</option>
+                  {flowCategories.map((item) => (
+                    <option key={item.category} value={item.category}>
+                      {`${item.category} (${item.count})`}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="pm-table-wrap">
                 <table className="pm-table">
@@ -1887,12 +1888,25 @@ type FlowApiRow = {
           await onCreateProject(form);
         }}
       />
+      <CreateFlowDialog
+        open={createFlowDialogOpen}
+        uiLanguage={uiLanguage}
+        defaultFlowType="product_flow"
+        onSuccess={(flow) => {
+          // Clear cache and refresh flow list
+          clearPmCacheByPrefix("pm:flows:");
+          setForceFlowRefresh(true);
+          onStatus?.(zh ? `Flow 创建成功：${flow.flow_name}` : `Flow created successfully: ${flow.flow_name}`);
+        }}
+        onReuse={(flow) => {
+          // Reuse existing flow - just refresh the list
+          clearPmCacheByPrefix("pm:flows:");
+          setForceFlowRefresh(true);
+          onStatus?.(zh ? `已复用已有 Flow：${flow.flow_name}` : `Reused existing flow: ${flow.flow_name}`);
+        }}
+        onClose={() => setCreateFlowDialogOpen(false)}
+        onStatus={onStatus}
+      />
     </div>
   );
 }
-
-
-
-
-
-import { useRef } from "react";
