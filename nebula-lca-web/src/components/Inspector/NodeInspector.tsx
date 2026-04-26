@@ -1700,7 +1700,7 @@ export function NodeInspector({ node }: Props) {
 
       {flowPicker.open && (
         <div className="overlay-modal">
-          <div className="overlay-panel">
+          <div className="overlay-panel flow-picker-panel">
             <div className="overlay-head">
               <strong>{flowPicker.target?.includes("elementary") ? t("引用基本流", "Use Elementary Flow") : t("引用中间流", "Use Intermediate Flow")}</strong>
               <button type="button" className="drawer-close-btn" onClick={() => setFlowPicker({ open: false, target: null })}>
@@ -1708,7 +1708,7 @@ export function NodeInspector({ node }: Props) {
               </button>
             </div>
             <div className="overlay-filters">
-              <div className="search-row">
+              <div className="search-row flow-picker-search-row">
                 <input
                   value={flowSearchInput}
                   onChange={(e) => setFlowSearchInput(e.target.value)}
@@ -1740,7 +1740,7 @@ export function NodeInspector({ node }: Props) {
                 {!flowPicker.target?.includes("elementary") && (
                   <button
                     type="button"
-                    className="search-btn"
+                    className="search-btn flow-picker-create-btn"
                     onClick={() => {
                       setFlowPicker({ open: false, target: null });
                       setCreateFlowDialog({ open: true, target: flowPicker.target });
@@ -1758,22 +1758,26 @@ export function NodeInspector({ node }: Props) {
                 <table>
                   <thead>
                     <tr>
-                      <th>{t("类型", "Type")}</th>
-                      <th>{t("流名称", "Flow Name")}</th>
-                      <th>{t("单位", "Unit")}</th>
-                      <th>{t("分类", "Category")}</th>
-                      <th>{t("操作", "Action")}</th>
+                      <th className="flow-picker-type-col">{t("类型", "Type")}</th>
+                      <th className="flow-picker-name-col">{t("流名称", "Flow Name")}</th>
+                      <th className="flow-picker-unit-col">{t("单位", "Unit")}</th>
+                      <th className="flow-picker-category-col">{t("分类", "Category")}</th>
+                      <th className="flow-picker-action-col">{t("操作", "Action")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredFlows.map((flow) => (
                       <tr key={flow.flow_uuid}>
-                        <td>{displayFlowType(flow.flow_type)}</td>
-                        <td>{getCatalogFlowDisplayName(flow, uiLanguage)}</td>
+                        <td className="flow-picker-type-cell">{displayFlowType(flow.flow_type)}</td>
+                        <td className="flow-picker-name-cell" title={getCatalogFlowDisplayName(flow, uiLanguage)}>
+                          {getCatalogFlowDisplayName(flow, uiLanguage)}
+                        </td>
                         <td>{flow.default_unit}</td>
-                        <td>{flow.compartment || "-"}</td>
-                        <td>
-                          <button type="button" className="link-btn" onClick={() => addCatalogFlow(flow)}>
+                        <td className="flow-picker-category-cell" title={flow.compartment || "-"}>
+                          {flow.compartment || "-"}
+                        </td>
+                        <td className="flow-picker-action-cell">
+                          <button type="button" className="flow-picker-use-btn" onClick={() => addCatalogFlow(flow)}>
                             {t("引用", "Use")}
                           </button>
                         </td>
@@ -1966,5 +1970,4 @@ export function NodeInspector({ node }: Props) {
     </div>
   );
 }
-
 
