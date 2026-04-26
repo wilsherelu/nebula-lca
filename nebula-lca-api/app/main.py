@@ -128,6 +128,9 @@ from .schemas import (
     FlowOutExtended,
     CreateFlowResponse,
     FlowCandidate,
+    TidasExportPreviewRequest,
+    TidasExportPreviewResponse,
+    TidasExportRequest,
 )
 from .ingest import convert_unit_value, import_flows_from_file, import_unit_groups_from_excel, load_ef31_flow_uuid_set
 from .ingest import import_processes_from_json
@@ -136,6 +139,7 @@ from .solver import to_tiangong_like
 from .solver_adapter import run_tiangong_lcia
 from .pts_validate import validate_pts_compile
 from .pts_compile import PTS_COMPILE_SCHEMA_VERSION, compile_pts, compute_pts_graph_hash
+from .tidas_export import preview_export, export_bundle, ExportError
 
 app = FastAPI(title=settings.app_name, version="0.1.0")
 
@@ -3531,6 +3535,14 @@ def _extract_ilcd_flow_compartment(classification_obj: object) -> str | None:
 
 
 def _infer_unit_defaults_from_flow_dataset(flow_dataset: dict) -> tuple[str, str]:
+    # Priority 1: Read from flowInformation.referenceUnit/unitGroup if present
+    flow_info = flow_dataset.get("flowInformation") if isinstance(flow_dataset.get("flowInformation"), dict) else {}
+    ref_unit = _safe_str(flow_info.get("referenceUnit"))
+    unit_group = _safe_str(flow_info.get("unitGroup"))
+    if ref_unit and unit_group:
+        return ref_unit, unit_group
+
+    # Priority 2: Infer from flowProperties
     flow_props = flow_dataset.get("flowProperties") if isinstance(flow_dataset.get("flowProperties"), dict) else {}
     flow_prop = flow_props.get("flowProperty") if isinstance(flow_props, dict) else {}
     rows = _as_list(flow_prop)
@@ -3565,8 +3577,7 @@ def _parse_tidas_json_payload(*, source_name: str, raw_text: str) -> tuple[list[
         return [], [f"{source_name}: invalid JSON ({exc})"]
     if isinstance(payload, list):
         rows = [item for item in payload if isinstance(item, dict)]
-        if not rows:
-            errors.append(f"{source_name}: root list contains no object records")
+        # Allow empty lists for optional datasets (processes/flows may be empty in some exports)
         return rows, errors
     if isinstance(payload, dict):
         return [payload], errors
@@ -3698,9 +3709,14 @@ def _parse_tidas_bundle_zip(
         process_items = [_read_rows(name) for name in _collect_json_entries(process_dir)]
         flow_items = [_read_rows(name) for name in _collect_json_entries(flow_dir)]
 
-        if not process_items:
+        # Check for process/flow files - but allow empty datasets (processDataSet.json with [])
+        # Only error if no files found AND no processDataSet.json exists
+        process_dataset_path = _resolve_bundle_path("processes/processDataSet.json")
+        flow_dataset_path = _resolve_bundle_path("flows/flowDataSet.json")
+
+        if not process_items and process_dataset_path not in names:
             errors.append(f"{source_name}: no process json found under {process_dir}/")
-        if not flow_items:
+        if not flow_items and flow_dataset_path not in names:
             errors.append(f"{source_name}: no flow json found under {flow_dir}/")
         if require_model_file and not model_items:
             errors.append(f"{source_name}: no model json found")
@@ -3819,7 +3835,27 @@ def _persist_tidas_import_report(db: Session, report_payload: dict) -> TidasImpo
 
 
 def _extract_tidas_process_record(raw: dict) -> tuple[dict | None, str | None]:
-    process_dataset = raw.get("processDataSet") if isinstance(raw.get("processDataSet"), dict) else None
+    # Unwrap processDataSet root if present (TIDAS/ILCD format)
+    if "processDataSet" in raw and isinstance(raw["processDataSet"], dict):
+        raw = raw["processDataSet"]
+
+    # Try simplified format first (direct fields)
+    if "process_uuid" in raw:
+        return {
+            "process_uuid": raw["process_uuid"],
+            "process_name": raw["process_name"],
+            "process_name_zh": raw.get("process_name_zh"),
+            "process_name_en": raw.get("process_name_en"),
+            "location": raw.get("location", "GLO"),
+            "reference_flow_internal_id": raw.get("reference_flow_internal_id"),
+            "reference_flow_source_uuid": raw.get("reference_flow_source_uuid"),
+            "reference_flow_source_name": raw.get("reference_flow_source_name"),
+            "exchanges": raw.get("exchanges", []),
+            "process_type": raw.get("process_type", "unit_process"),
+        }, None
+
+    # Try ILCD format
+    process_dataset = raw if "processInformation" in raw else None
     if process_dataset is None:
         return None, "missing processDataSet"
     process_info = process_dataset.get("processInformation") if isinstance(process_dataset.get("processInformation"), dict) else {}
@@ -3906,7 +3942,25 @@ def _extract_tidas_process_record(raw: dict) -> tuple[dict | None, str | None]:
 
 
 def _extract_tidas_flow_record(raw: dict) -> tuple[dict | None, str | None]:
-    flow_dataset = raw.get("flowDataSet") if isinstance(raw.get("flowDataSet"), dict) else None
+    # Unwrap flowDataSet root if present (TIDAS/ILCD format)
+    if "flowDataSet" in raw and isinstance(raw["flowDataSet"], dict):
+        raw = raw["flowDataSet"]
+
+    # Try simplified format first (direct fields)
+    if "flow_uuid" in raw:
+        return {
+            "flow_uuid": raw["flow_uuid"],
+            "flow_name": raw["flow_name"],
+            "flow_name_en": raw.get("flow_name_en"),
+            "flow_type": raw.get("flow_type", "Product flow"),
+            "default_unit": raw["default_unit"],
+            "unit_group": raw["unit_group"],
+            "compartment": raw.get("compartment"),
+            "source_updated_at": raw.get("source_updated_at"),
+        }, None
+
+    # Try ILCD format
+    flow_dataset = raw if "flowInformation" in raw else None
     if flow_dataset is None:
         return None, "missing flowDataSet"
     flow_info = flow_dataset.get("flowInformation") if isinstance(flow_dataset.get("flowInformation"), dict) else {}
@@ -3916,9 +3970,16 @@ def _extract_tidas_flow_record(raw: dict) -> tuple[dict | None, str | None]:
         return None, "missing flow UUID (flowInformation.dataSetInformation.common:UUID)"
     name_zh, name_en = _extract_ilcd_name(dsi.get("name"))
     flow_name = name_zh or name_en or flow_uuid
-    flow_type = _safe_str(
-        (((flow_dataset.get("modellingAndValidation") or {}).get("LCIMethod") or {}).get("typeOfDataSet"))
-    ) or "Product flow"
+
+    # Priority 1: Read from flowInformation.flowType (our export format)
+    # Priority 2: Read from modellingAndValidation.LCIMethod.typeOfDataSet (TianGong format)
+    # Priority 3: Default to "Product flow"
+    flow_type = _safe_str(flow_info.get("flowType"))
+    if not flow_type:
+        flow_type = _safe_str(
+            (((flow_dataset.get("modellingAndValidation") or {}).get("LCIMethod") or {}).get("typeOfDataSet"))
+        ) or "Product flow"
+
     default_unit, unit_group = _infer_unit_defaults_from_flow_dataset(flow_dataset)
     classification = dsi.get("classificationInformation") if isinstance(dsi.get("classificationInformation"), dict) else {}
     compartment = _extract_ilcd_flow_compartment(classification)
@@ -3935,6 +3996,38 @@ def _extract_tidas_flow_record(raw: dict) -> tuple[dict | None, str | None]:
 
 
 def _extract_tidas_model_record(raw: dict) -> tuple[dict | None, str | None]:
+    # Try simplified format first (direct fields)
+    if "model_uuid" in raw:
+        model_data = {
+            "model_uuid": raw["model_uuid"],
+            "model_name": raw["model_name"],
+            "reference_product": raw.get("reference_product"),
+            "functional_unit": raw.get("functional_unit"),
+            "system_boundary": raw.get("system_boundary"),
+            "time_representativeness": raw.get("time_representativeness"),
+            "geography": raw.get("geography"),
+            "description": raw.get("description"),
+            "process_refs": raw.get("process_refs", []),
+            "topology_empty": not bool(raw.get("process_refs")),
+        }
+        # Support xflow_nodes/xflow_edges/process_instances for graph reconstruction
+        if "xflow_nodes" in raw:
+            model_data["xflow_nodes"] = raw["xflow_nodes"]
+        if "xflow_edges" in raw:
+            model_data["xflow_edges"] = raw["xflow_edges"]
+        if "process_instances" in raw:
+            model_data["process_instances"] = raw["process_instances"]
+        # Preserve json_tg extension for exact graph reconstruction
+        if "json_tg" in raw and isinstance(raw["json_tg"], dict):
+            model_data["json_tg"] = raw["json_tg"]
+        # Legacy flat field (also write to json_tg.xflow for compatibility)
+        if "json_tg.xflow" in raw:
+            model_data["json_tg.xflow"] = raw["json_tg.xflow"]
+            if "json_tg" not in model_data:
+                model_data["json_tg"] = {"xflow": raw["json_tg.xflow"]}
+        return model_data, None
+
+    # Try ILCD format
     model_dataset = raw.get("lifeCycleModelDataSet") if isinstance(raw.get("lifeCycleModelDataSet"), dict) else None
     if model_dataset is None:
         return None, "missing lifeCycleModelDataSet"
@@ -4352,6 +4445,12 @@ def _build_tidas_graph_from_model_record(
     process_json_by_uuid: dict[str, dict] | None = None,
     display_lang: str = "zh",
 ) -> tuple[dict | None, list[dict]]:
+    # Priority 1: Use preserved json_tg.xflow if available (exact graph reconstruction)
+    json_tg_xflow = model_record.get("json_tg", {}).get("xflow") if isinstance(model_record.get("json_tg"), dict) else None
+    if json_tg_xflow and isinstance(json_tg_xflow, dict):
+        return json_tg_xflow, []
+
+    # Priority 2: Reconstruct from xflow_nodes/xflow_edges
     xflow_nodes = [item for item in list(model_record.get("xflow_nodes") or []) if isinstance(item, dict)]
     xflow_edges = [item for item in list(model_record.get("xflow_edges") or []) if isinstance(item, dict)]
     if xflow_nodes:
@@ -4364,6 +4463,7 @@ def _build_tidas_graph_from_model_record(
             display_lang=display_lang,
         )
 
+    # Priority 3: Reconstruct from process_instances (simple flat format)
     instances = [item for item in list(model_record.get("process_instances") or []) if isinstance(item, dict)]
     if not instances:
         return None, []
@@ -4536,9 +4636,11 @@ def _build_tidas_graph_from_xflow(
     seen_process_uuids_in_graph: set[str] = set()
     seen_process_names_in_graph: dict[str, int] = {}
     for idx, xnode in enumerate(xflow_nodes):
+        # Support both XFlow format (data.id) and flat format (process_uuid at root)
         node_id = _safe_str(xnode.get("id")) or f"node_tidas_xflow_{idx}"
         data = xnode.get("data") if isinstance(xnode.get("data"), dict) else {}
-        process_uuid = _safe_str(data.get("id"))
+        process_uuid = _safe_str(data.get("id")) or _safe_str(xnode.get("process_uuid"))
+
         if process_uuid and process_uuid in seen_process_uuids_in_graph:
             continue
         source_json = process_cache.get(process_uuid)
@@ -4580,7 +4682,7 @@ def _build_tidas_graph_from_xflow(
         )
 
         xflow_qref = _safe_str(data.get("quantitativeReference"))
-        if xflow_qref.isdigit():
+        if xflow_qref and xflow_qref.isdigit():
             qref_index = int(xflow_qref)
             if 0 <= qref_index < len(outputs):
                 outputs[qref_index]["isProduct"] = True
@@ -8798,6 +8900,71 @@ def get_tidas_import_report(job_id: str, db: Session = Depends(get_db)) -> Tidas
         raise HTTPException(status_code=404, detail={"code": "IMPORT_REPORT_NOT_FOUND", "message": f"report not found: {job_id}"})
     result_json = row.result_json if isinstance(row.result_json, dict) else {}
     return TidasImportReportResponse.model_validate(result_json)
+
+
+# ==================== TIDAS Export Endpoints ====================
+
+
+@app.post("/api/export/tidas/bundle/preview", response_model=TidasExportPreviewResponse)
+@app.post("/export/tidas/bundle/preview", response_model=TidasExportPreviewResponse)
+def preview_tidas_bundle_export(
+    payload: TidasExportPreviewRequest,
+    db: Session = Depends(get_db),
+) -> TidasExportPreviewResponse:
+    """Preview TIDAS bundle export.
+
+    Returns export feasibility report without generating ZIP.
+    Use this to check for missing flows/processes before actual export.
+    """
+    result = preview_export(db=db, project_id=payload.project_id, version=payload.version)
+    return TidasExportPreviewResponse(**result)
+
+
+@app.post("/api/export/tidas/bundle")
+@app.post("/export/tidas/bundle")
+def export_tidas_bundle(
+    payload: TidasExportRequest,
+    db: Session = Depends(get_db),
+):
+    """Export project to TIDAS bundle ZIP.
+
+    Returns a ZIP file containing:
+    - manifest.json (v2 package format)
+    - flows/{flow_uuid}.json
+    - processes/{process_uuid}.json
+    - models/{model_uuid}.json
+    - export_report.json
+
+    The exported ZIP is compatible with existing /api/import/tidas/bundle endpoint.
+    """
+    from fastapi.responses import StreamingResponse
+
+    try:
+        zip_bytes, report = export_bundle(
+            db=db,
+            project_id=payload.project_id,
+            version=payload.version,
+            display_lang=payload.display_lang,
+        )
+    except ExportError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "EXPORT_FAILED",
+                "message": str(exc),
+            },
+        )
+
+    # Generate filename
+    project_name_safe = "".join(c for c in payload.project_id if c.isalnum() or c in "-_")[:50]
+    version_suffix = f"_v{payload.version}" if payload.version else "_latest"
+    filename = f"tidas_export_{project_name_safe}{version_suffix}.zip"
+
+    return StreamingResponse(
+        io.BytesIO(zip_bytes),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 def list_elementary_flows(db: Session = Depends(get_db)) -> list[FlowRecord]:

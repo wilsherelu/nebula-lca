@@ -1140,3 +1140,40 @@ class CreateFlowResponse(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
+
+# ==================== TIDAS Export Schemas ====================
+
+
+class TidasExportPreviewRequest(BaseModel):
+    """Request for TIDAS bundle export preview."""
+
+    project_id: str = Field(..., description="Project/model ID to export")
+    version: int | None = Field(default=None, description="Version number (None = latest)")
+
+
+class TidasExportPreviewResponse(BaseModel):
+    """Response for TIDAS bundle export preview."""
+
+    can_export: bool = Field(..., description="Whether export can proceed")
+    flow_count: int = Field(default=0, description="Number of flows to be exported")
+    process_count: int = Field(default=0, description="Number of processes to be exported")
+    exported_model_count: int = Field(default=0, description="Number of models to be exported")
+    multi_product_process_count: int = Field(default=0, description="Number of multi-product processes")
+    allocation_warnings: list[dict] = Field(default_factory=list, description="Allocation-related warnings")
+    manual_allocation_required_processes: list[str] = Field(default_factory=list, description="Processes requiring manual allocation")
+    reference_flow_by_process: dict[str, str] = Field(default_factory=dict, description="Reference flow by process UUID")
+    warnings: list[dict] = Field(default_factory=list, description="Non-blocking warnings")
+    errors: list[str] = Field(default_factory=list, description="Blocking errors")
+    missing_flows: list[str] = Field(default_factory=list, description="List of missing flow UUIDs")
+    missing_processes: list[str] = Field(default_factory=list, description="List of missing process UUIDs")
+
+    model_config = ConfigDict(protected_namespaces=())
+
+
+class TidasExportRequest(BaseModel):
+    """Request for TIDAS bundle export."""
+
+    project_id: str = Field(..., description="Project/model ID to export")
+    version: int | None = Field(default=None, description="Version number (None = latest)")
+    display_lang: str = Field(default="zh", description="Display language preference (zh/en)")
+
