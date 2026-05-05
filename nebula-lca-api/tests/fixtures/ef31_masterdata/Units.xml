@@ -1,0 +1,18 @@
+<units>
+    <unit id="unit_kg" unitType="mass">
+        <name>kilogram</name>
+        <conversionFactor>1.0</conversionFactor>
+    </unit>
+    <unit id="unit_g" unitType="mass">
+        <name>gram</name>
+        <conversionFactor>0.001</conversionFactor>
+    </unit>
+    <unit id="unit_joule" unitType="energy">
+        <name>joule</name>
+        <conversionFactor>1.0</conversionFactor>
+    </unit>
+    <unit id="unit_m3" unitType="volume">
+        <name>cubic meter</name>
+        <conversionFactor>1.0</conversionFactor>
+    </unit>
+</units>
