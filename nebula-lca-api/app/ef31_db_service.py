@@ -370,11 +370,15 @@ def commit_lci_import(
     intermediate_flows: list[IntermediateFlow] | None = None,
     units: dict[str, UnitRecord] | None = None,
     limit: int | None = None,
+    db: Session | None = None,
 ) -> DbCommitResult:
     """Commit LCI import to DB.
 
     P1 fix: missing elementary flow refs now block the dataset (not just warn).
     P2 fix: FlowRecord insert now uses MasterData ElementaryFlow for full fields.
+    Stage 1: accepts optional db session so the API layer can control the
+    session lifecycle (DI from FastAPI).  If db=None, opens SessionLocal
+    automatically (for tests / CLI usage).
 
     Args:
         datasets: LCI dataset list from parse_spold_file.
@@ -383,6 +387,7 @@ def commit_lci_import(
         intermediate_flows: MasterData IntermediateExchanges records (optional).
         units: MasterData units (optional).
         limit: Max datasets to commit (None = all).
+        db: Optional Session. If None, opens SessionLocal automatically.
 
     Returns:
         DbCommitResult with actual write counts.
@@ -393,7 +398,11 @@ def commit_lci_import(
     if units is None:
         units = {}
 
-    db = SessionLocal()
+    close_on_exit = False
+    if db is None:
+        db = SessionLocal()
+        close_on_exit = True
+
     try:
         # Build MasterData lookup for full flow data
         elem_flow_lookup = {f.flow_uuid: f for f in elementary_flows}
@@ -435,9 +444,9 @@ def commit_lci_import(
                     )
                 continue
 
-            # All refs found — proceed with FlowRecord insertion
-            # P2 fix: use the complete MasterData ElementaryFlow
-            flow_insert_failed = False
+            # All refs found — proceed with FlowRecord insertion.
+            # P2 fix: use the complete MasterData ElementaryFlow.
+            flow_ok = True
             for exc in file_exchanges:
                 try:
                     full_flow = elem_flow_lookup[exc.exchange_id]
@@ -451,15 +460,12 @@ def commit_lci_import(
                     result.errors.append(
                         f"FlowRecord insert error for {exc.exchange_id}: {e}"
                     )
-                    flow_insert_failed = True
+                    flow_ok = False
+                    # Skip this dataset but continue with next datasets
+                    break
 
-            if flow_insert_failed:
-                # DB write errors are transactional failures; abort the import instead
-                # of rolling back earlier uncommitted datasets and continuing with
-                # misleading counters.
-                raise RuntimeError(
-                    f"Dataset {dataset.filename} failed during FlowRecord insert"
-                )
+            if not flow_ok:
+                continue
 
             # Ensure units exist (conservative: only known base units)
             seen_units = set()
@@ -483,7 +489,7 @@ def commit_lci_import(
                 file_exchanges, elementary_flows
             )
             process_json = {
-                "reference_flow_uuid": None,
+                "reference_flow_uuid": dataset.reference_product_id or None,
                 "reference_flow_internal_id": None,
                 "reference_product": dataset.reference_product_name,
                 "reference_product_unit": dataset.reference_product_unit,
@@ -492,6 +498,7 @@ def commit_lci_import(
                 "activity_id": dataset.activity_id,
                 "activity_name": dataset.activity_name,
                 "reference_product_id": dataset.reference_product_id,
+                "exchanges": exchanges_json,
                 "elementary_exchanges": exchanges_json,
                 "exchange_count": len(file_exchanges),
                 "source": "ecoinvent",
@@ -505,7 +512,7 @@ def commit_lci_import(
                 process_name=dataset.activity_name,
                 process_name_en=dataset.activity_name,
                 process_type="lci_dataset",
-                reference_flow_uuid=None,
+                reference_flow_uuid=dataset.reference_product_id or None,
                 process_json=process_json,
                 source_file=dataset.filename,
                 source_process_uuid=proc_uuid,
@@ -537,6 +544,7 @@ def commit_lci_import(
         result.errors.append(f"Transaction error: {e}")
         raise
     finally:
-        db.close()
+        if close_on_exit:
+            db.close()
 
     return result

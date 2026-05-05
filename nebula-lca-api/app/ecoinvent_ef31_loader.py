@@ -276,11 +276,12 @@ def parse_elementary_exchanges(data_dir: Path, units: Dict[str, UnitRecord]) -> 
     context = ET.iterparse(str(file_path), events=['end'])
     
     for event, elem in context:
-        if elem.tag.endswith('elementaryExchange'):
-            flow_uuid = elem.get('id', '')
+        elem_tag = elem.tag.split('}')[-1]
+        if elem_tag in ('elementaryExchange', 'ElementaryFlow'):
+            flow_uuid = elem.get('id', '') or child_text(elem, 'uuid')
             unit_id = elem.get('unitId', '')
-            cas_number = elem.get('casNumber')
-            formula = elem.get('formula')
+            cas_number = elem.get('casNumber') or child_text(elem, 'CAS') or None
+            formula = elem.get('formula') or child_text(elem, 'formula') or None
             
             flow_name = ""
             flow_name_en = ""
@@ -292,15 +293,25 @@ def parse_elementary_exchanges(data_dir: Path, units: Dict[str, UnitRecord]) -> 
                 if tag == 'name':
                     flow_name_en = (child.text or '').strip()
                     flow_name = flow_name_en
+                elif tag in ('shortNameEN', 'nameEN'):
+                    if not flow_name_en:
+                        flow_name_en = (child.text or '').strip()
+                    if not flow_name:
+                        flow_name = flow_name_en
+                elif tag == 'unit' and not unit_id:
+                    unit_id = (child.text or '').strip()
                 elif tag == 'compartment':
-                    for sub in child:
-                        sub_tag = sub.tag.split('}')[-1]
-                        if sub_tag == 'compartment':
-                            compartment = (sub.text or '').strip()
-                        elif sub_tag == 'subcompartment':
-                            subcompartment = (sub.text or '').strip()
+                    if list(child):
+                        for sub in child:
+                            sub_tag = sub.tag.split('}')[-1]
+                            if sub_tag == 'compartment':
+                                compartment = (sub.text or '').strip()
+                            elif sub_tag == 'subcompartment':
+                                subcompartment = (sub.text or '').strip()
+                    else:
+                        compartment = (child.text or '').strip()
             
-            unit_name = units.get(unit_id, UnitRecord("", "")).name if unit_id else ""
+            unit_name = units.get(unit_id, UnitRecord(unit_id, unit_id)).name if unit_id else ""
             
             flow = ElementaryFlow(
                 flow_uuid=flow_uuid,
@@ -630,7 +641,7 @@ def parse_spold_exchanges(spold_path: Path) -> List[LCIElementaryExchange]:
         # First try: parse elementaryExchange elements directly (ecoSpold02 LCI)
         for elem_exc in root.findall('.//es:elementaryExchange', ns):
             # Use elementaryExchangeId as the flow UUID (links to MasterData)
-            exc_id = elem_exc.get('elementaryExchangeId', '')
+            exc_id = elem_exc.get('elementaryExchangeId', '') or elem_exc.get('id', '')
             amount_str = elem_exc.get('amount', '0')
             try:
                 amount = float(amount_str)
@@ -641,6 +652,12 @@ def parse_spold_exchanges(spold_path: Path) -> List[LCIElementaryExchange]:
             exc_name = ""
             unit_name = ""
             output_group = 0
+            raw_output_group = elem_exc.get('outputGroup', '')
+            if raw_output_group:
+                try:
+                    output_group = int(raw_output_group)
+                except ValueError:
+                    output_group = 0
             
             for child in elem_exc:
                 tag = child.tag.split('}')[-1]
@@ -1036,20 +1053,22 @@ def selective_extract_7z(archive_path: Path, dest_dir: Path,
         filename_lookup_path = None
         
         for member in all_members:
+            # Normalize backslashes (Windows py7zr may return \)
+            m = member.replace('\\', '/')
             # MasterData/*.xml
-            if 'MasterData/' in member and member.endswith('.xml'):
+            if 'MasterData/' in m and m.endswith('.xml'):
                 master_data_files.append(member)
             # LCIA Excel
-            elif 'LCIA Implementation' in member and member.endswith('.xlsx'):
+            elif 'LCIA Implementation' in m and m.endswith('.xlsx'):
                 lcia_excel_path = member
             # FilenameToActivityLookup.csv
-            elif 'FilenameToActivityLookup.csv' in member:
+            elif 'FilenameToActivityLookup.csv' in m:
                 filename_lookup_path = member
             # datasets/*.spold
-            elif '/datasets/' in member and member.endswith('.spold'):
+            elif '/datasets/' in m and m.endswith('.spold'):
                 spold_files.append(member)
             # Also check for datasets at root level
-            elif member.startswith('datasets/') and member.endswith('.spold'):
+            elif m.startswith('datasets/') and m.endswith('.spold'):
                 spold_files.append(member)
         
         # Limit spold files
@@ -1077,7 +1096,7 @@ def selective_extract_7z(archive_path: Path, dest_dir: Path,
         
         # Extract selected files
         with py7zr.SevenZipFile(str(archive_path), mode='r') as z:
-            z.extractall(path=str(dest_dir), targets=extract_list)
+            z.extract(path=str(dest_dir), targets=extract_list)
         
         result['spold_count'] = len(spold_files)
         
