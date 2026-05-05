@@ -396,6 +396,7 @@ def import_flows_from_file(
     replace_existing: bool = False,
     default_flow_type: str | None = None,
     ef31_flow_index_path: str | None = None,
+    default_source: str | None = None,
 ) -> dict:
     path = Path(file_path)
     if not path.exists():
@@ -498,6 +499,7 @@ def import_flows_from_file(
                 item.unit_group = unit_group or item.unit_group
                 item.compartment = compartment or item.compartment
                 item.source_updated_at = source_updated_at or item.source_updated_at
+                item.source = default_source or item.source
                 updated += 1
             else:
                 db.add(
@@ -510,6 +512,7 @@ def import_flows_from_file(
                         unit_group=unit_group or "mass",
                         compartment=compartment or None,
                         source_updated_at=source_updated_at or None,
+                        source=default_source,
                     )
                 )
                 existing_uuids.add(flow_uuid)
