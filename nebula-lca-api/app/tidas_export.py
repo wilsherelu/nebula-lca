@@ -78,6 +78,154 @@ class ExportReport:
         }
 
 
+PTS_TIDAS_EXPORT_ERROR_CODE = "PTS_MODULE_NOT_SUPPORTED_FOR_TIDAS_EXPORT"
+PTS_TIDAS_EXPORT_MESSAGE = (
+    "Current TIDAS export does not support PTS modules. "
+    "Please unpack PTS in the modeling canvas before exporting unit process, market process, or LCI data."
+)
+
+
+SOURCE_SPACE_TIDAS_BLOCKED_CODE = "TIANGONG_TIDAS_BLOCKED_BY_SOURCE_SPACE"
+SOURCE_SPACE_TIDAS_BLOCKED_MESSAGE = (
+    "开源版不支持 EF / ecoinvent 基本流的自动转换。模型中包含 ecoinvent 或其他非 EF/Tiangong 来源的基本流，不能导出天工 TIDAS。"
+)
+
+# Source-space classification constants
+SOURCE_SPACE_EF_TIANGONG = "ef_tiangong"
+SOURCE_SPACE_ECOSPREAD = "ecoinvent"  # legacy naming preserved
+SOURCE_SPACE_UNKNOWN = "unknown"
+
+# Tokens that explicitly indicate EF / TianGong source space.
+# These are checked as whole-word matches against the lower-cased source string
+# to avoid false positives like "reference" → "ef".
+EF_TIANGONG_TOKENS = ("tiangong", "ef3.1", "ef31", "official")
+# EF is matched as a stand-alone token, not as a substring:
+#   "ef"        → match
+#   "reference" → no match (no "ef" token boundary)
+#   "ef3.1"     → also matched above, but "ef" won't catch it anyway
+EF_TOKEN = "ef"
+
+
+def _classify_source_space(source: str | None) -> str:
+    """Classify a flow's source space from its FlowRecord.source field.
+
+    Returns one of:
+        SOURCE_SPACE_EF_TIANGONG  – matches EF / TianGong tokens (case-insensitive)
+        SOURCE_SPACE_ECOSPREAD    – contains "ecoinvent"
+        SOURCE_SPACE_UNKNOWN      – empty / unclassifiable
+
+    Token matching rules (avoid "reference"/"undefined" false positives):
+        - Multi-char tokens (tiangong, ef3.1, ef31, official): word-boundary match
+          using split() + set containment.
+        - "ef" (stand-alone only): split() + set containment.
+          "reference" → "reference" in split set → no "ef" token found.
+          "ef3.1.104" → tokens: ["ef3.1.104"] → matches "ef3.1" as sub-token.
+    """
+    if not source:
+        return SOURCE_SPACE_UNKNOWN
+
+    src_lower = source.lower()
+    src_tokens = set(src_lower.split())
+
+    # ecoinvent check (no false-positive risk since EF/TG tokens don't contain it)
+    if "ecoinvent" in src_lower:
+        return SOURCE_SPACE_ECOSPREAD
+
+    # Check each token for EF/TianGong prefixes.
+    # "ef3.1.104".split() → {"ef3.1.104"} → startswith("ef3.1") → match
+    # "reference".split() → {"reference"} → no match (safe)
+    # "undefined".split() → {"undefined"} → no match (safe)
+    for token in src_tokens:
+        for match_token in EF_TIANGONG_TOKENS:
+            if token == match_token or token.startswith(match_token + ".") or token.startswith(match_token + "-"):
+                return SOURCE_SPACE_EF_TIANGONG
+        # Stand-alone "ef" check: exact match only (already excluded by ef3.1/ef31 above)
+        if token == EF_TOKEN:
+            return SOURCE_SPACE_EF_TIANGONG
+
+    return SOURCE_SPACE_UNKNOWN
+
+
+def _scan_source_space(
+    db: Session, flow_uuids: set[str], report: ExportReport
+) -> bool:
+    """Scan elementary flows in the graph for unsupported source spaces.
+
+    Logic:
+    - Only elementary flows are subject to source-space blocking.
+    - Product / waste flows are allowed regardless of source.
+    - If ANY elementary flow has source space != ef_tiangong, block export.
+
+    Returns:
+        True if source-space check passed (no blocking issues).
+        False if blocking issues were found (errors/warnings already added to report).
+    """
+    # Collect elementary flows grouped by source space
+    blocked_by_space: dict[str, list[str]] = {}  # space -> [flow_uuids]
+
+    for flow_uuid in flow_uuids:
+        flow_record = db.get(FlowRecord, flow_uuid)
+        if flow_record is None:
+            continue  # already reported as missing
+
+        # Only elementary flows are subject to source-space check.
+        # Normalize common DB variations: "Elementary flow", "elementary_flow",
+        # "Elementary_flow", "elementary flow", etc.
+        ft = (flow_record.flow_type or "").replace("_", " ").strip().lower()
+        if ft != "elementary flow":
+            continue
+
+        source = str(flow_record.source or "").strip()
+        space = _classify_source_space(source)
+
+        if space == SOURCE_SPACE_EF_TIANGONG:
+            # Allowed – no action needed
+            continue
+
+        blocked_by_space.setdefault(space, []).append(flow_uuid)
+
+    # If no blocked elementary flows, everything is fine
+    if not blocked_by_space:
+        return True
+
+    # Report blocking errors per source space
+    all_blocked_uuids: list[str] = []
+    for space, uuids in blocked_by_space.items():
+        all_blocked_uuids.extend(uuids)
+        count = len(uuids)
+        preview_uuids = uuids[:10]  # first 10 for the warning context
+
+        if space == SOURCE_SPACE_UNKNOWN:
+            detail = f"basic flow source unknown: {', '.join(preview_uuids)}"
+            if count > 10:
+                detail = f"{detail}, ..."
+            msg = f"{SOURCE_SPACE_TIDAS_BLOCKED_MESSAGE} (source-space unknown, {count} flow(s))"
+        elif space == SOURCE_SPACE_ECOSPREAD:
+            detail = f"ecoinvent basic flows: {', '.join(preview_uuids)}"
+            if count > 10:
+                detail = f"{detail}, ..."
+            msg = f"{SOURCE_SPACE_TIDAS_BLOCKED_MESSAGE} (ecoinvent basic flows, {count} flow(s))"
+        else:
+            detail = f"unsupported source '{space}': {', '.join(preview_uuids)}"
+            if count > 10:
+                detail = f"{detail}, ..."
+            msg = f"{SOURCE_SPACE_TIDAS_BLOCKED_MESSAGE} (unsupported source '{space}', {count} flow(s))"
+
+        error_code = f"{SOURCE_SPACE_TIDAS_BLOCKED_CODE}: {space}"
+        report.add_error(f"{error_code}: {msg}")
+        report.add_warning(
+            "unsupported_source_space",
+            msg,
+            {
+                "source_space": space,
+                "blocked_count": count,
+                "flow_uuids": preview_uuids,
+            },
+        )
+
+    return False
+
+
 def _get_model_version(db: Session, project_id: str, version: int | None = None) -> ModelVersion | None:
     """Fetch model version by project_id and optional version number.
 
@@ -91,6 +239,35 @@ def _get_model_version(db: Session, project_id: str, version: int | None = None)
     # Latest version
     latest = query.order_by(ModelVersion.version.desc()).first()
     return latest
+
+
+def _find_pts_nodes(graph_json: dict) -> list[dict]:
+    """Return PTS nodes from a graph JSON payload."""
+    pts_nodes: list[dict] = []
+    for node in graph_json.get("nodes", []):
+        if isinstance(node, dict) and str(node.get("node_kind") or "").strip() == "pts_module":
+            pts_nodes.append(node)
+    return pts_nodes
+
+
+def _add_pts_export_blocker(report: ExportReport, pts_nodes: list[dict]) -> None:
+    """Record a blocking export error for graphs that still contain PTS modules."""
+    pts_refs = [
+        str(node.get("process_uuid") or node.get("pts_uuid") or node.get("id") or "").strip()
+        for node in pts_nodes
+    ]
+    pts_refs = [ref for ref in pts_refs if ref]
+    detail = PTS_TIDAS_EXPORT_MESSAGE
+    if pts_refs:
+        detail = f"{detail} PTS nodes: {', '.join(pts_refs[:5])}"
+        if len(pts_refs) > 5:
+            detail = f"{detail}, ..."
+    report.add_error(f"{PTS_TIDAS_EXPORT_ERROR_CODE}: {detail}")
+    report.add_warning(
+        "unsupported_pts_export",
+        PTS_TIDAS_EXPORT_MESSAGE,
+        {"pts_nodes": pts_refs},
+    )
 
 
 def _build_flow_type_map(db: Session, flow_uuids: set[str]) -> dict[str, str]:
@@ -963,7 +1140,28 @@ def preview_export(
             "missing_processes": [],
         }
 
+    pts_nodes = _find_pts_nodes(graph_json)
+    if pts_nodes:
+        _add_pts_export_blocker(report, pts_nodes)
+        return {
+            "can_export": False,
+            "flow_count": 0,
+            "process_count": 0,
+            "exported_model_count": 0,
+            "multi_product_process_count": 0,
+            "allocation_warnings": [w.to_dict() for w in report.allocation_warnings],
+            "manual_allocation_required_processes": report.manual_allocation_required_processes,
+            "reference_flow_by_process": report.reference_flow_by_process,
+            "warnings": [w.to_dict() for w in report.warnings],
+            "errors": report.errors,
+            "missing_flows": [],
+            "missing_processes": [],
+        }
+
     flow_uuids, process_uuids = _extract_graph_data(graph_json)
+
+    # Source-space check: block if unsupported elementary flow sources are found
+    _scan_source_space(db, flow_uuids, report)
 
     # Validate flows exist
     missing_flows: list[str] = []
@@ -1061,7 +1259,16 @@ def export_bundle(
     if not graph_json:
         raise ExportError(f"Empty graph for project {project_id}")
 
+    pts_nodes = _find_pts_nodes(graph_json)
+    if pts_nodes:
+        _add_pts_export_blocker(report, pts_nodes)
+        raise ExportError(report.errors[-1])
+
     flow_uuids, process_uuids = _extract_graph_data(graph_json)
+
+    # Source-space check: same logic as preview — block if unsupported sources found
+    if not _scan_source_space(db, flow_uuids, report):
+        raise ExportError(report.errors[-1])
 
     # Validate flows
     missing_flows: list[str] = []

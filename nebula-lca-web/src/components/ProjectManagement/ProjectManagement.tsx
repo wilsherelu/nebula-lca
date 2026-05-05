@@ -17,6 +17,7 @@ type ProjectApiItem = {
   geography?: string | null;
   process_count?: number | null;
   flow_count?: number | null;
+  latest_version?: number | null;
   latest_version_created_at?: string | null;
   created_at?: string | null;
   status?: string | null;
@@ -56,6 +57,7 @@ type ProjectRow = {
   flowCount: number;
   lastModified: string;
   status: string;
+  latestVersion: number | null;
 };
 type ProcessRow = {
   processId: string;
@@ -263,6 +265,51 @@ type FlowCategoryItem = {
   count: number;
 };
 
+// TIDAS Export types
+type TidasExportWarning = {
+  message?: string;
+  code?: string;
+  severity?: "warning" | "error";
+  category?: string;
+  context?: Record<string, unknown>;
+};
+type TidasExportPreviewResponse = {
+  can_export: boolean;
+  flow_count: number;
+  process_count: number;
+  exported_model_count: number;
+  multi_product_process_count: number;
+  allocation_warnings: Array<string | TidasExportWarning>;
+  manual_allocation_required_processes: string[];
+  reference_flow_by_process: Record<string, string>;
+  warnings: Array<string | TidasExportWarning>;
+  errors: string[];
+  missing_flows: string[];
+  missing_processes: string[];
+};
+
+const PTS_TIDAS_EXPORT_ERROR_CODE = "PTS_MODULE_NOT_SUPPORTED_FOR_TIDAS_EXPORT";
+const SOURCE_SPACE_TIDAS_BLOCKED_CODE = "TIANGONG_TIDAS_BLOCKED_BY_SOURCE_SPACE";
+
+const formatTidasWarning = (warning: string | TidasExportWarning): string => {
+  if (typeof warning === "string") return warning;
+  return warning.message ?? warning.code ?? warning.category ?? JSON.stringify(warning);
+};
+
+const formatTidasExportError = (message: string, zh: boolean): string => {
+  if (message.includes(PTS_TIDAS_EXPORT_ERROR_CODE)) {
+    return zh
+      ? "当前 TIDAS 导出不支持 PTS 模块。请先在建模界面解封 PTS，再导出单元过程、市场过程或 LCI 数据。"
+      : "Current TIDAS export does not support PTS modules. Please unpack PTS in the modeling canvas before exporting unit process, market process, or LCI data.";
+  }
+  if (message.includes(SOURCE_SPACE_TIDAS_BLOCKED_CODE)) {
+    return zh
+      ? "当前模型包含非 EF/Tiangong 基本流。开源版不支持 EF 与 ecoinvent 基本流自动转换，不能导出天工 TIDAS。请替换为 EF 基本流后再导出。"
+      : "This model contains non-EF/Tiangong elementary flows. The open-source edition does not convert EF and ecoinvent elementary flows automatically, so Tiangong TIDAS export is blocked. Please replace them with EF elementary flows before exporting.";
+  }
+  return message;
+};
+
 type TidasImportKind = "flows" | "processes" | "models";
 type ImportedProjectSummary = {
   projectId: string;
@@ -326,6 +373,7 @@ const toProjectRows = (projects: ProjectListItem[]): ProjectRow[] =>
     flowCount: 28 + (index % 11) * 9,
     lastModified: formatTime(item.latest_version_created_at ?? item.created_at),
     status: item.latest_version ? "启用" : "草稿",
+    latestVersion: item.latest_version,
   }));
 
 function CreateProjectModal(props: {
@@ -968,6 +1016,118 @@ function TidasImportModal(props: {
   );
 }
 
+function TidasExportModal(props: {
+  open: boolean;
+  uiLanguage: "zh" | "en";
+  busy: boolean;
+  previewBusy: boolean;
+  preview: TidasExportPreviewResponse | null;
+  targetProject: { projectId: string; projectName: string; latestVersion: number | null } | null;
+  onClose: () => void;
+  onExport: () => void;
+}) {
+  const { open, uiLanguage, busy, previewBusy, preview, targetProject, onClose, onExport } = props;
+  const zh = uiLanguage === "zh";
+
+  if (!open || !targetProject) return null;
+
+  const hasErrors = preview ? preview.errors.length > 0 || !preview.can_export : false;
+  const hasManualAllocation = preview ? preview.manual_allocation_required_processes.length > 0 : false;
+  const hasWarnings = preview ? preview.warnings.length > 0 || preview.allocation_warnings.length > 0 : false;
+
+  return (
+    <div className="pm-modal-mask" onClick={onClose}>
+      <div className="pm-modal pm-tidas-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="pm-modal-head">
+          <strong>{zh ? "导出 TIDAS/ILCD 风格 Bundle" : "Export TIDAS/ILCD-style Bundle"}</strong>
+          <button type="button" className="pm-link-btn" onClick={onClose}>
+            {zh ? "关闭" : "Close"}
+          </button>
+        </div>
+        <div className="pm-tidas-export-info">
+          <div><b>{zh ? "项目" : "Project"}:</b> {targetProject.projectName}</div>
+          <div><b>ID:</b> {targetProject.projectId}</div>
+          {targetProject.latestVersion && <div><b>{zh ? "版本" : "Version"}:</b> {targetProject.latestVersion}</div>}
+        </div>
+        {previewBusy && <div className="pm-empty-note">{zh ? "预览加载中..." : "Loading preview..."}</div>}
+        {!previewBusy && preview && (
+          <div className="pm-tidas-result">
+            <div className="pm-tidas-export-counts">
+              <div>{zh ? "流数量" : "Flows"}: {preview.flow_count}</div>
+              <div>{zh ? "过程数量" : "Processes"}: {preview.process_count}</div>
+              <div>{zh ? "导出模型数量" : "Exported Models"}: {preview.exported_model_count}</div>
+              {preview.multi_product_process_count > 0 && (
+                <div>{zh ? "多产品过程" : "Multi-product Processes"}: {preview.multi_product_process_count}</div>
+              )}
+            </div>
+            {hasErrors && (
+              <div className="pm-tidas-errors">
+                <h4>{zh ? "错误" : "Errors"}</h4>
+                <ul>
+                  {preview.errors.map((err, i) => <li key={i}>{formatTidasExportError(err, zh)}</li>)}
+                </ul>
+              </div>
+            )}
+            {preview.missing_flows.length > 0 && (
+              <div className="pm-tidas-warnings">
+                <h4>{zh ? "缺失的流" : "Missing Flows"}</h4>
+                <ul>
+                  {preview.missing_flows.slice(0, 10).map((f, i) => <li key={i}>{f}</li>)}
+                </ul>
+                {preview.missing_flows.length > 10 && <div>({zh ? "显示前 10 条" : "Showing first 10"})</div>}
+              </div>
+            )}
+            {preview.missing_processes.length > 0 && (
+              <div className="pm-tidas-warnings">
+                <h4>{zh ? "缺失的过程" : "Missing Processes"}</h4>
+                <ul>
+                  {preview.missing_processes.slice(0, 10).map((p, i) => <li key={i}>{p}</li>)}
+                </ul>
+                {preview.missing_processes.length > 10 && <div>({zh ? "显示前 10 条" : "Showing first 10"})</div>}
+              </div>
+            )}
+            {hasWarnings && (
+              <div className="pm-tidas-warnings">
+                <h4>{zh ? "警告" : "Warnings"}</h4>
+                <ul>
+                  {preview.warnings.map((w, i) => <li key={`w-${i}`}>{formatTidasWarning(w)}</li>)}
+                  {preview.allocation_warnings.map((w, i) => <li key={`alloc-${i}`}>{formatTidasWarning(w)}</li>)}
+                </ul>
+              </div>
+            )}
+            {hasManualAllocation && (
+              <div className="pm-tidas-warnings pm-tidas-allocation-warning">
+                <h4>{zh ? "需要手动分配的多产品过程" : "Multi-product Processes Requiring Manual Allocation"}</h4>
+                <ul>
+                  {preview.manual_allocation_required_processes.map((p, i) => (
+                    <li key={i}>{p}</li>
+                  ))}
+                </ul>
+                <p className="pm-tidas-allocation-note">
+                  {zh ? "⚠ 部分多产品过程需要手动分配，导出不会写入伪分配比例。" : "⚠ Some multi-product processes require manual allocation. Export will not write pseudo-allocation ratios."}
+                </p>
+              </div>
+            )}
+            <p className="pm-tidas-disclaimer">
+              {zh ? "⚠ 天工平台导入需真实样包/API 验证，导出结果不保证完全兼容。" : "⚠ Tiangong platform import requires real sample bundle/API verification. Export result is not guaranteed to be fully compatible."}
+            </p>
+          </div>
+        )}
+        <div className="pm-modal-actions">
+          <button type="button" className="pm-ghost-btn" onClick={onClose}>
+            {zh ? "关闭" : "Close"}
+          </button>
+          <button type="button" className="pm-primary-btn" onClick={() => void onExport()} disabled={busy || hasErrors || previewBusy}>
+            {busy
+              ? (zh ? "导出中..." : "Exporting...")
+              : (zh ? "下载 ZIP" : "Download ZIP")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ProjectManagement(props: Props) {
   const { projects, busy, uiLanguage = "zh", onChangeLanguage, onStatus, onOpenProject, onCreateProject, onDeleteProject, onCreateProcess } = props;
   const zh = uiLanguage === "zh";
@@ -999,6 +1159,11 @@ export function ProjectManagement(props: Props) {
   const [statsLoading, setStatsLoading] = useState(false);
   const [tidasImportOpen, setTidasImportOpen] = useState(false);
   const [tidasImportKind, setTidasImportKind] = useState<TidasImportKind>("models");
+  const [tidasExportOpen, setTidasExportOpen] = useState(false);
+  const [exportTargetProject, setExportTargetProject] = useState<{ projectId: string; projectName: string; latestVersion: number | null } | null>(null);
+  const [exportPreviewBusy, setExportPreviewBusy] = useState(false);
+  const [exportPreview, setExportPreview] = useState<TidasExportPreviewResponse | null>(null);
+  const [exportBusy, setExportBusy] = useState(false);
   const [importRefreshTick, setImportRefreshTick] = useState(0);
   const [forceProjectRefresh, setForceProjectRefresh] = useState(false);
   const [forceProcessRefresh, setForceProcessRefresh] = useState(false);
@@ -1045,6 +1210,95 @@ export function ProjectManagement(props: Props) {
     const createdProject = result.createdProjects[0];
     if (createdProject?.projectId) {
       onOpenProject(createdProject.projectId, createdProject.name);
+    }
+  };
+
+  const openTidasExport = async (projectId: string, projectName: string, latestVersion: number | null) => {
+    setExportTargetProject({ projectId, projectName, latestVersion });
+    setExportPreview(null);
+    setExportPreviewBusy(true);
+    setTidasExportOpen(true);
+    try {
+      const resp = await fetch(`${API_BASE}/export/tidas/bundle/preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: projectId,
+          version: latestVersion ?? undefined,
+        }),
+      });
+      if (!resp.ok) {
+        const err = (await resp.json().catch(() => ({}))) as { detail?: { message?: string }; message?: string };
+        throw new Error(err.detail?.message ?? err.message ?? `HTTP ${resp.status}`);
+      }
+      const payload = (await resp.json()) as TidasExportPreviewResponse;
+      setExportPreview(payload);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : zh ? "预览失败" : "Preview failed";
+      onStatus?.(zh ? `TIDAS 导出预览失败: ${message}` : `TIDAS export preview failed: ${message}`);
+      setExportPreview({
+        can_export: false,
+        flow_count: 0,
+        process_count: 0,
+        exported_model_count: 0,
+        multi_product_process_count: 0,
+        allocation_warnings: [],
+        manual_allocation_required_processes: [],
+        reference_flow_by_process: {},
+        warnings: [],
+        errors: [message],
+        missing_flows: [],
+        missing_processes: [],
+      });
+    } finally {
+      setExportPreviewBusy(false);
+    }
+  };
+
+  const runTidasExport = async () => {
+    if (!exportTargetProject) return;
+    setExportBusy(true);
+    try {
+      const resp = await fetch(`${API_BASE}/export/tidas/bundle`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: exportTargetProject.projectId,
+          version: exportTargetProject.latestVersion ?? undefined,
+          display_lang: uiLanguage,
+        }),
+      });
+      if (!resp.ok) {
+        const err = (await resp.json().catch(() => ({}))) as { detail?: { message?: string }; message?: string };
+        throw new Error(err.detail?.message ?? err.message ?? `HTTP ${resp.status}`);
+      }
+      // Get filename from Content-Disposition header
+      const contentDisposition = resp.headers.get("Content-Disposition");
+      let filename = `nebula-tidas-${exportTargetProject.projectId}.zip`;
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename\*?=["']?(?:UTF-8'')?([^"';\n]+)/i);
+        if (filenameMatch && filenameMatch[1]) {
+          filename = decodeURIComponent(filenameMatch[1]);
+        }
+      }
+      const blob = await resp.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      onStatus?.(zh ? "已导出 TIDAS/ILCD 风格 Bundle" : "Exported TIDAS/ILCD-style Bundle");
+      setTidasExportOpen(false);
+      setExportTargetProject(null);
+      setExportPreview(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : zh ? "导出失败" : "Export failed";
+      onStatus?.(zh ? `TIDAS 导出失败: ${message}` : `TIDAS export failed: ${message}`);
+    } finally {
+      setExportBusy(false);
     }
   };
 
@@ -1149,6 +1403,7 @@ export function ProjectManagement(props: Props) {
           flowCount: Number(item.flow_count ?? 0),
           lastModified: formatTime(item.latest_version_created_at ?? item.created_at),
           status: mapProjectStatus(item.status, zh),
+          latestVersion: item.latest_version ?? null,
         }));
         setServerProjectRows(mapped);
         setProjectTotal(total);
@@ -1601,6 +1856,9 @@ export function ProjectManagement(props: Props) {
                           <button type="button" className="pm-link-btn primary" onClick={() => onOpenProject(row.projectId)}>
                             {zh ? "打开" : "Open"}
                           </button>
+                          <button type="button" className="pm-link-btn" onClick={() => void openTidasExport(row.projectId, row.projectName, row.latestVersion)} disabled={!row.latestVersion}>
+                            {zh ? "导出" : "Export"}
+                          </button>
                           <button type="button" className="pm-link-btn danger" onClick={() => onDeleteProject(row.projectId)}>
                             {zh ? "删除" : "Delete"}
                           </button>
@@ -1655,6 +1913,9 @@ export function ProjectManagement(props: Props) {
                               <div className="pm-row-actions">
                                 <button type="button" className="pm-link-btn primary" onClick={() => onOpenProject(row.projectId)}>
                                   {zh ? "打开" : "Open"}
+                                </button>
+                                <button type="button" className="pm-link-btn" onClick={() => void openTidasExport(row.projectId, row.projectName, row.latestVersion)} disabled={!row.latestVersion}>
+                                  {zh ? "导出" : "Export"}
                                 </button>
                                 <button type="button" className="pm-link-btn">{zh ? "编辑" : "Edit"}</button>
                                 <button type="button" className="pm-link-btn">{zh ? "复制" : "Duplicate"}</button>
@@ -1878,6 +2139,20 @@ export function ProjectManagement(props: Props) {
           setTidasImportOpen(false);
           void handleTidasImported(kind, result);
         }}
+      />
+      <TidasExportModal
+        open={tidasExportOpen}
+        uiLanguage={uiLanguage}
+        busy={exportBusy}
+        previewBusy={exportPreviewBusy}
+        preview={exportPreview}
+        targetProject={exportTargetProject}
+        onClose={() => {
+          setTidasExportOpen(false);
+          setExportTargetProject(null);
+          setExportPreview(null);
+        }}
+        onExport={() => void runTidasExport()}
       />
       <CreateProjectModal
         open={modalOpen}

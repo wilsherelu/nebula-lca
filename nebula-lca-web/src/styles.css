@@ -3571,6 +3571,93 @@ body,
   word-break: break-word;
 }
 
+.pm-tidas-export-info {
+  margin: 0 14px 8px;
+  padding: 8px 12px;
+  background: #f0f7ff;
+  border: 1px solid #d0e3f5;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #2e5161;
+  display: grid;
+  gap: 4px;
+}
+
+.pm-tidas-export-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 13px;
+  color: #2e5161;
+}
+
+.pm-tidas-errors {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: #fff0f0;
+  border: 1px solid #e8c8c8;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #a03030;
+}
+
+.pm-tidas-errors h4,
+.pm-tidas-warnings h4 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pm-tidas-errors ul,
+.pm-tidas-warnings ul {
+  margin: 0;
+  padding: 0 0 0 18px;
+}
+
+.pm-tidas-errors li,
+.pm-tidas-warnings li {
+  margin: 2px 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.pm-tidas-warnings {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: #fffbe6;
+  border: 1px solid #e8d8a0;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #7a6520;
+}
+
+.pm-tidas-allocation-warning {
+  background: #fff3e0;
+  border-color: #e8c890;
+  color: #8a5a10;
+}
+
+.pm-tidas-allocation-note {
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pm-tidas-disclaimer {
+  margin: 10px 0 0;
+  padding: 8px 12px;
+  background: #f5f5f5;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #666;
+  text-align: center;
+}
+
 .pm-help-text {
   padding: 0 14px 10px;
   font-size: 12px;
@@ -3814,6 +3901,7 @@ body,
 }
 
 @media (max-width: 1024px) {
+
   .pm-head-tools--process,
   .pm-head-tools--flow {
     grid-template-columns: 1fr;

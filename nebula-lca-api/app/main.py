@@ -2814,6 +2814,12 @@ def _ensure_reference_processes_schema() -> dict:
 # Custom flow creation (Stage 1 — open-source)
 # ---------------------------------------------------------------------------
 
+BUILTIN_ELEMENTARY_FLOW_SOURCE = "ef3.1"
+EXTERNAL_ELEMENTARY_FLOW_SOURCE = "external_import"
+TIDAS_FLOW_IMPORT_SOURCE = "tidas_import"
+TIDAS_BUNDLE_FLOW_IMPORT_SOURCE = "tidas_bundle_import"
+
+
 def _ensure_custom_flow_columns() -> dict:
     """Ensure ``source`` / ``is_custom`` columns exist on flow_catalog.
 
@@ -2900,7 +2906,8 @@ def _bootstrap_reference_data_if_needed(*, db: Session) -> None:
             mapping=None,
             replace_existing=False,
             default_flow_type="Elementary flow",
-        ef31_flow_index_path=settings.nebula_lca_ef31_dir,
+            ef31_flow_index_path=settings.nebula_lca_ef31_dir,
+            default_source=BUILTIN_ELEMENTARY_FLOW_SOURCE,
         )
         print(
             "[startup-bootstrap] imported elementary flows: "
@@ -3957,6 +3964,7 @@ def _extract_tidas_flow_record(raw: dict) -> tuple[dict | None, str | None]:
             "unit_group": raw["unit_group"],
             "compartment": raw.get("compartment"),
             "source_updated_at": raw.get("source_updated_at"),
+            "source": raw.get("source"),
         }, None
 
     # Try ILCD format
@@ -3992,7 +4000,13 @@ def _extract_tidas_flow_record(raw: dict) -> tuple[dict | None, str | None]:
         "unit_group": unit_group,
         "compartment": compartment,
         "source_updated_at": datetime.utcnow().isoformat(),
+        "source": TIDAS_FLOW_IMPORT_SOURCE,
     }, None
+
+
+def _label_imported_elementary_flow_source(flow_record: dict, source_label: str) -> None:
+    if is_elementary_flow_semantic(flow_record.get("flow_type")):
+        flow_record["source"] = source_label
 
 
 def _extract_tidas_model_record(raw: dict) -> tuple[dict | None, str | None]:
@@ -8244,6 +8258,7 @@ async def import_tidas_flows(
                 report["failed"] += 1
                 report["errors"].append(f"{source_name}: {err}")
                 continue
+            _label_imported_elementary_flow_source(flow_record, TIDAS_FLOW_IMPORT_SOURCE)
             flow_uuid = str(flow_record["flow_uuid"])
             existing = db.get(FlowRecord, flow_uuid)
             if existing is not None and payload.upsert_mode == "skip":
@@ -8269,6 +8284,7 @@ async def import_tidas_flows(
             if new_compartment and new_compartment != "[]":
                 existing.compartment = new_compartment
             existing.source_updated_at = _safe_str(flow_record.get("source_updated_at"))
+            existing.source = _safe_str(flow_record.get("source")) or existing.source
 
     if payload.strict_mode and report["failed"] > 0:
         db.rollback()
@@ -8350,6 +8366,7 @@ async def import_tidas_processes(
                     report["failed"] += 1
                     report["errors"].append(f"{source_entry}: {err}")
                     continue
+                _label_imported_elementary_flow_source(flow_record, TIDAS_BUNDLE_FLOW_IMPORT_SOURCE)
                 flow_uuid = str(flow_record["flow_uuid"])
                 if flow_uuid in seen_flow_uuids_in_batch:
                     report["skipped"] += 1
@@ -8377,6 +8394,7 @@ async def import_tidas_processes(
                 if new_compartment and new_compartment != "[]":
                     existing.compartment = new_compartment
                 existing.source_updated_at = _safe_str(flow_record.get("source_updated_at"))
+                existing.source = _safe_str(flow_record.get("source")) or existing.source
 
         valid_flow_uuids = _flow_uuid_set_cached(db).union(bundle_flow_uuids)
         if not payload.dry_run:
@@ -8676,6 +8694,7 @@ async def import_tidas_bundle(
                 report["failed"] += 1
                 report["errors"].append(f"{source_entry}: {err}")
                 continue
+            _label_imported_elementary_flow_source(flow_record, TIDAS_BUNDLE_FLOW_IMPORT_SOURCE)
             flow_uuid = str(flow_record["flow_uuid"])
             if flow_uuid in seen_flow_uuids_in_batch:
                 report["skipped"] += 1
@@ -8703,6 +8722,7 @@ async def import_tidas_bundle(
             if new_compartment and new_compartment != "[]":
                 existing.compartment = new_compartment
             existing.source_updated_at = _safe_str(flow_record.get("source_updated_at"))
+            existing.source = _safe_str(flow_record.get("source")) or existing.source
 
     valid_flow_uuids = _flow_uuid_set_cached(db).union(bundle_flow_uuids)
     if not payload.dry_run:
@@ -9180,6 +9200,7 @@ def import_elementary_flows(payload: ImportFlowsRequest, db: Session = Depends(g
         replace_existing=payload.replace_existing,
         default_flow_type=payload.default_flow_type or "Elementary flow",
         ef31_flow_index_path=payload.ef31_flow_index_path,
+        default_source=EXTERNAL_ELEMENTARY_FLOW_SOURCE,
     )
     return ImportFlowsResponse(**result)
 
