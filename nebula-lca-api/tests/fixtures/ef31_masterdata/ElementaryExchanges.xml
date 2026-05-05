@@ -1,0 +1,30 @@
+<elementaryExchanges>
+    <elementaryExchange id="elem_uuid_co2_air" unitId="unit_kg" casNumber="124-38-9" formula="CO2">
+        <name>carbon dioxide</name>
+        <compartment>
+            <compartment>air</compartment>
+            <subcompartment>non-urban air</subcompartment>
+        </compartment>
+    </elementaryExchange>
+    <elementaryExchange id="elem_uuid_ch4_air" unitId="unit_kg" casNumber="74-82-8" formula="CH4">
+        <name>Methane</name>
+        <compartment>
+            <compartment>air</compartment>
+            <subcompartment>non-urban air</subcompartment>
+        </compartment>
+    </elementaryExchange>
+    <elementaryExchange id="elem_uuid_natgas_ingest" unitId="unit_joule">
+        <name>Natural gas, upstream</name>
+        <compartment>
+            <compartment>resources</compartment>
+            <subcompartment>fossil</subcompartment>
+        </compartment>
+    </elementaryExchange>
+    <elementaryExchange id="elem_uuid_water_withdraw" unitId="unit_kg">
+        <name>Water, withdrawal</name>
+        <compartment>
+            <compartment>resources</compartment>
+            <subcompartment>water</subcompartment>
+        </compartment>
+    </elementaryExchange>
+</elementaryExchanges>
