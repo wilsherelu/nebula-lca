@@ -1177,3 +1177,39 @@ class TidasExportRequest(BaseModel):
     version: int | None = Field(default=None, description="Version number (None = latest)")
     display_lang: str = Field(default="zh", description="Display language preference (zh/en)")
 
+
+# ==================== EF 3.1 Import Schemas ====================
+
+_EF31_DIAGNOSTIC_TYPE = "ef31.import.report.v1"
+
+
+class Ef31ImportPreviewResponse(BaseModel):
+    """Response from EF 3.1 LCI preview import.
+
+    Contains preview counts, dry-run summary, warnings, and missing refs.
+    """
+    job_id: str = Field(..., description="Unique job ID for subsequent commit/report calls")
+    can_commit: bool = Field(..., description="True if preview has no blocking errors")
+    limit: int = Field(..., description="Max datasets parsed in this preview")
+    counts: dict = Field(..., description="Parsed counts: datasets, flows, exchanges, missing_refs")
+    dry_run_summary: dict = Field(default_factory=dict, description="DbDryRunResult summary dict")
+    warnings: list[str] = Field(default_factory=list, description="Non-blocking warnings from preview")
+    errors: list[str] = Field(default_factory=list, description="Blocking errors (missing refs, parse failures)")
+    expires_at: str = Field(..., description="ISO-8601 timestamp when job artifacts expire (default 24h)")
+
+
+class Ef31ImportCommitRequest(BaseModel):
+    """Request to commit a previewed EF 3.1 LCI import job."""
+    job_id: str = Field(..., description="Job ID from a successful preview")
+    confirm: Literal[True] = Field(..., description="Must be true to allow commit")
+
+
+class Ef31ImportCommitResponse(BaseModel):
+    """Response after committing an EF 3.1 LCI import job."""
+    job_id: str = Field(..., description="Job ID of the committed import")
+    committed: bool = Field(..., description="True if commit succeeded")
+    counts: dict = Field(default_factory=dict, description="Commit counts: flows_new, units_new, processes_new, skips, errors")
+    warnings: list[str] = Field(default_factory=list, description="Non-blocking warnings from commit")
+    errors: list[str] = Field(default_factory=list, description="Blocking errors from commit")
+    catalog_target_kind: Literal["lci_dataset"] = Field(default="lci_dataset", description="Catalog target kind")
+

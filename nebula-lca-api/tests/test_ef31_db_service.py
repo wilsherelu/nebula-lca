@@ -1,5 +1,10 @@
 """Tests for EF 3.1 DB dry-run/commit service."""
 
+import os
+import tempfile
+import uuid
+from pathlib import Path
+
 import pytest
 from app.ecoinvent_ef31_loader import (
     LCIDataset,
@@ -8,12 +13,34 @@ from app.ecoinvent_ef31_loader import (
     IntermediateFlow,
     UnitRecord,
 )
+
+# Keep service tests isolated when a helper uses SessionLocal internally.
+_TEST_DB = Path(tempfile.gettempdir()) / f"nebula_ef31_db_service_{uuid.uuid4().hex}.db"
+os.environ.setdefault("DATABASE_URL", f"sqlite:///{_TEST_DB.as_posix()}")
+
 from app.ef31_db_service import (
     DbDryRunResult,
+    commit_lci_import,
     dry_run_lci_import,
     _generate_lci_process_uuid,
     _build_elementary_exchanges_json,
 )
+
+
+class EmptyDb:
+    """Tiny read-only DB stub for dry-run tests."""
+
+    def execute(self, sql):
+        class EmptyResult:
+            @staticmethod
+            def all():
+                return []
+
+            @staticmethod
+            def first():
+                return None
+
+        return EmptyResult()
 
 
 class TestGenerateLciProcessUuid:
@@ -260,6 +287,7 @@ class TestDryRunLciImport:
             datasets=datasets,
             exchanges_map=exchanges_map,
             elementary_flows=elem_flows,
+            db=EmptyDb(),
         )
         # Both datasets are new processes (DB is empty)
         assert result.processes_new == 2
@@ -340,8 +368,257 @@ class TestDryRunLciImport:
             datasets=datasets,
             exchanges_map=exchanges_map,
             elementary_flows=elem_flows,
+            db=EmptyDb(),
         )
         # Flow is missing from MasterData
         assert result.flows_error >= 1
         assert any("unknown_flow_id" in e for e in result.errors)
         assert any("Missing elementary flow ref" in e for e in result.errors)
+
+
+class TestCommitWithDbSession:
+    """Test commit_lci_import with actual DB session (SQLite)."""
+
+    def _make_dataset(self, **kwargs) -> LCIDataset:
+        defaults = {
+            "filename": "test.spold",
+            "activity_id": "act-001",
+            "activity_name": "Test Activity",
+            "location": "CH",
+            "reference_product_name": "market for test",
+            "reference_product_unit": "kg",
+            "reference_product_amount": 1.0,
+            "reference_product_id": "rp-001",
+        }
+        defaults.update(kwargs)
+        return LCIDataset(**defaults)
+
+    def _make_elem_exchange(self, **kwargs) -> LCIElementaryExchange:
+        defaults = {
+            "dataset_filename": "test.spold",
+            "exchange_id": "flow-001",
+            "exchange_name": "CO2",
+            "unit": "kg",
+            "direction": "output",
+            "amount": 0.5,
+        }
+        defaults.update(kwargs)
+        return LCIElementaryExchange(**defaults)
+
+    def _make_elem_flow(self, **kwargs) -> ElementaryFlow:
+        defaults = {
+            "flow_uuid": "flow-001",
+            "flow_name": "CO2",
+            "flow_name_en": "Carbon dioxide",
+            "flow_type": "Elementary flow",
+            "default_unit": "kg",
+            "unit_group": "default",
+            "compartment": "air",
+            "subcompartment": None,
+            "cas_number": None,
+            "formula": "CO2",
+            "source": "ef3.1",
+        }
+        defaults.update(kwargs)
+        return ElementaryFlow(**defaults)
+
+    def test_commit_creates_reference_process(self):
+        """Commit should create ReferenceProcess with correct fields."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from app.database import Base
+        from app.models import FlowRecord, UnitDefinition, ReferenceProcess
+
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+        db = Session()
+
+        try:
+            dataset = self._make_dataset()
+            exchange = self._make_elem_exchange()
+            elem_flow = self._make_elem_flow()
+
+            commit_lci_import(
+                datasets=[dataset],
+                exchanges_map={"test.spold": [exchange]},
+                elementary_flows=[elem_flow],
+                db=db,
+            )
+            db.commit()
+
+            # Check ReferenceProcess was created
+            proc = db.execute(
+                ReferenceProcess.__table__.select()
+            ).first()
+            assert proc is not None
+            assert proc.process_type == "lci_dataset"
+            assert proc.import_mode == "ecoinvent_ef31_lci"
+            assert proc.reference_flow_uuid == "rp-001"
+            assert proc.process_uuid == "act-001:rp-001"
+
+            # Check process_json
+            pj = proc.process_json
+            assert isinstance(pj, dict)
+            assert "exchanges" in pj
+            assert "elementary_exchanges" in pj
+            assert len(pj["exchanges"]) == 1
+            assert pj["reference_flow_uuid"] == "rp-001"
+        finally:
+            db.close()
+
+    def test_commit_skips_existing_process(self):
+        """Second commit of same dataset should skip existing process."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from app.database import Base
+        from app.models import FlowRecord, ReferenceProcess
+
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+        db = Session()
+
+        try:
+            dataset = self._make_dataset()
+            exchange = self._make_elem_exchange()
+            elem_flow = self._make_elem_flow()
+
+            # First commit
+            r1 = commit_lci_import(
+                datasets=[dataset],
+                exchanges_map={"test.spold": [exchange]},
+                elementary_flows=[elem_flow],
+                db=db,
+            )
+            db.commit()
+            assert r1.processes_new == 1
+
+            # Second commit — same dataset
+            r2 = commit_lci_import(
+                datasets=[dataset],
+                exchanges_map={"test.spold": [exchange]},
+                elementary_flows=[elem_flow],
+                db=db,
+            )
+            db.commit()
+            assert r2.processes_skipped == 1
+            assert r2.processes_new == 0
+
+            # Only one ReferenceProcess in DB
+            count = db.execute(ReferenceProcess.__table__.select()).first()
+            procs = db.execute(ReferenceProcess.__table__.select()).all()
+            assert len(procs) == 1
+        finally:
+            db.close()
+
+    def test_commit_multiple_different_rps(self):
+        """Same activity, different RP ids should create separate processes."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from app.database import Base
+        from app.models import ReferenceProcess
+
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+        db = Session()
+
+        try:
+            dataset1 = self._make_dataset(
+                reference_product_id="rp-A",
+                reference_product_name="market for A",
+            )
+            dataset2 = self._make_dataset(
+                reference_product_id="rp-B",
+                reference_product_name="market for B",
+            )
+            exchange = self._make_elem_exchange()
+            elem_flow = self._make_elem_flow()
+
+            r = commit_lci_import(
+                datasets=[dataset1, dataset2],
+                exchanges_map={"test.spold": [exchange]},
+                elementary_flows=[elem_flow],
+                db=db,
+            )
+            db.commit()
+
+            # Both should be created (different rp_id → different composite key)
+            assert r.processes_new == 2
+
+            procs = db.execute(ReferenceProcess.__table__.select()).all()
+            assert len(procs) == 2
+        finally:
+            db.close()
+
+    def test_commit_block_on_missing_ref(self):
+        """Dataset with missing MasterData ref should be skipped."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from app.database import Base
+        from app.models import ReferenceProcess
+
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+        db = Session()
+
+        try:
+            dataset = self._make_dataset()
+            # Exchange references a flow that does NOT exist in MasterData
+            exchange = self._make_elem_exchange(exchange_id="nonexistent-flow-001")
+            elem_flows = []  # Empty — no MasterData flows
+
+            r = commit_lci_import(
+                datasets=[dataset],
+                exchanges_map={"test.spold": [exchange]},
+                elementary_flows=elem_flows,
+                db=db,
+            )
+            db.commit()
+
+            # Dataset should be skipped, not created
+            assert r.processes_skipped == 1
+            assert r.processes_new == 0
+            assert any("Missing elementary flow ref" in e for e in r.errors)
+
+            # No ReferenceProcess created
+            procs = db.execute(ReferenceProcess.__table__.select()).all()
+            assert len(procs) == 0
+        finally:
+            db.close()
+
+    def test_commit_uses_masterdata_flow_fields(self):
+        """FlowRecord should use MasterData fields (compartment, etc.)."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from app.database import Base
+        from app.models import FlowRecord
+
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+        db = Session()
+
+        try:
+            dataset = self._make_dataset()
+            exchange = self._make_elem_exchange()
+            elem_flow = self._make_elem_flow(compartment="air", formula="CO2")
+
+            commit_lci_import(
+                datasets=[dataset],
+                exchanges_map={"test.spold": [exchange]},
+                elementary_flows=[elem_flow],
+                db=db,
+            )
+            db.commit()
+
+            # FlowRecord should have compartment from MasterData
+            flows = db.execute(FlowRecord.__table__.select()).all()
+            assert len(flows) >= 1
+            flow = flows[0]
+            assert flow.compartment == "air"
+            assert flow.source == "ef3.1"
+        finally:
+            db.close()
