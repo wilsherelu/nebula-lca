@@ -6,6 +6,7 @@ and /import/ef31/reports/{job_id}.
 Uses dynamic .7z generation from fixture SPOLD + MasterData XML.
 """
 
+import io
 import json
 import os
 import tempfile
@@ -98,9 +99,9 @@ def _make_elementary_exchanges_xml(flows: list[dict]) -> str:
 
 
 def _make_units_xml(units: list[str]) -> str:
-    """Build MasterData/Units.xml."""
+    """Build MasterData/Units.xml (real ecoinvent uses lowercase <unit>)."""
     unit_xml = "".join(
-        f'    <Unit><name>{u}</name></Unit>' for u in units
+        f'    <unit id="unit-{i}"><name>{u}</name></unit>' for i, u in enumerate(units)
     )
     return f'''<?xml version="1.0" encoding="UTF-8"?>
 <Units>
@@ -331,3 +332,375 @@ class TestEf31ReportEndpoint:
         """Report for non-existent job returns 404."""
         resp = client.get("/import/ef31/reports/nonexistent-job-id")
         assert resp.status_code == 404
+
+
+# ============================================================================
+# Stage 1.2: Preview report enrichment
+# ============================================================================
+
+
+def _make_fake_7z_with_lcia(
+    tmp_path: Path,
+    spold_files: list[dict],
+    include_lcia: bool = True,
+) -> Path:
+    """Create a minimal .7z archive with LCI + optional LCIA Excel."""
+    import openpyxl
+
+    archive_path = tmp_path / "fake_lci_lcia.7z"
+
+    # Build masterdata from the shared functions
+    elem_xml, units_xml, _ = _make_masterdata_xmls()
+    masterdata_xmls = [
+        ("MasterData/ElementaryExchanges.xml", elem_xml),
+        ("MasterData/Units.xml", units_xml),
+    ]
+
+    # Create LCIA Excel with Indicators + CFs sheets
+    lcia_excel_content = None
+    if include_lcia:
+        wb = openpyxl.Workbook()
+
+        # Indicators sheet
+        ind_ws = wb.active
+        ind_ws.title = "Indicators"
+        ind_ws.append(["Method", "Category", "Indicator", "Indicator Unit"])
+        ind_ws.append(["EF v3.1", "Climate change", "Global warming potential 100a", "kg CO2 eq"])
+        ind_ws.append(["EF v3.1", "Resource, abiotic", "Abiotic depletion potential", "kg Sb eq"])
+
+        # CFs sheet
+        cf_ws = wb.create_sheet("CFs")
+        cf_ws.append(["Method", "Category", "Indicator", "Name", "Compartment", "Subcompartment", "CF"])
+        cf_ws.append(["EF v3.1", "Climate change", "Global warming potential 100a", "CO2", "air", None, 1.0])
+        cf_ws.append(["EF v3.1", "Climate change", "Global warming potential 100a", "Methane", "air", None, 27.0])
+        # Unsupported method CF (non-EF)
+        cf_ws.append(["ReCiPe 2016 Midpoint (H)", "Climate change", "GWP 100a", "Unknown", "air", None, 0.5])
+
+        lcia_xlsx_path = tmp_path / "LCIA Implementation 3.11.xlsx"
+        wb.save(str(lcia_xlsx_path))
+        lcia_excel_content = lcia_xlsx_path.read_bytes()
+
+    with py7zr.SevenZipFile(str(archive_path), mode='w') as archive:
+        # MasterData
+        for name, content in masterdata_xmls:
+            archive.writestr(content, f"ecoinventLCI311/{name}")
+
+        # FilenameToActivityLookup.csv
+        csv_content = "activityId,datasetId,filename\n"
+        for sf in spold_files:
+            csv_content += f"{sf['activity_id']},{uuid.uuid4()},{sf['filename']}\n"
+        archive.writestr(csv_content, "ecoinventLCI311/FilenameToActivityLookup.csv")
+
+        # SPOLD files
+        for sf in spold_files:
+            xml = _make_spold_xml(
+                activity_id=sf["activity_id"],
+                rp_id=sf["rp_id"],
+                activity_name=sf["activity_name"],
+                location=sf["location"],
+                ref_product_name=sf["ref_product_name"],
+                exchanges=sf.get("exchanges", []),
+            )
+            archive.writestr(xml, f"ecoinventLCI311/datasets/{sf['filename']}")
+
+        # LCIA Excel
+        if lcia_excel_content:
+            archive.writestr(lcia_excel_content, "LCIA Implementation 3.11.xlsx")
+
+    return archive_path
+
+
+class TestEf31PreviewEnrichment:
+    """Stage 1.2 tests: preview report should include archive/foundation info."""
+
+    def test_preview_returns_archive_name(self, client, tmp_path):
+        """Preview should return archive_name field."""
+        spold_files = [
+            {
+                "activity_id": "act-001",
+                "rp_id": "rp-001",
+                "activity_name": "Test",
+                "location": "CH",
+                "ref_product_name": "market for test",
+                "filename": "test.spold",
+                "exchanges": [
+                    {"exchange_id": "flow-co2-001", "name": "CO2",
+                     "unit": "kg", "compartment": "air"},
+                ],
+            },
+        ]
+        archive = _make_fake_7z(tmp_path, spold_files)
+
+        with open(archive, "rb") as f:
+            resp = client.post(
+                "/import/ef31/preview",
+                files={"lci_archive": ("test_lci.7z", f, "application/x-7z-compressed")},
+                params={"limit": 10},
+            )
+
+        assert resp.status_code == 200, resp.json()
+        data = resp.json()
+        # archive_name includes UUID prefix prepended by the endpoint
+        assert "_test_lci.7z" in data["archive_name"]
+        assert data["archive_file_discovery"] is not None
+        assert data["archive_file_discovery"]["datasets_spold_files_selected"] >= 1
+        assert "datasets_spold_files_total" in data["archive_file_discovery"]
+
+    def test_preview_returns_foundation_data(self, client, tmp_path):
+        """Preview should include foundation: units, elementary_flows, intermediate_flows."""
+        spold_files = [
+            {
+                "activity_id": "act-001",
+                "rp_id": "rp-001",
+                "activity_name": "Test",
+                "location": "CH",
+                "ref_product_name": "market for test",
+                "filename": "test.spold",
+                "exchanges": [
+                    {"exchange_id": "flow-co2-001", "name": "CO2",
+                     "unit": "kg", "compartment": "air"},
+                ],
+            },
+        ]
+        archive = _make_fake_7z(tmp_path, spold_files)
+
+        with open(archive, "rb") as f:
+            resp = client.post(
+                "/import/ef31/preview",
+                files={"lci_archive": ("test_lci.7z", f, "application/x-7z-compressed")},
+                params={"limit": 10},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["foundation"] is not None
+        assert data["foundation"]["units"] >= 1
+        assert data["foundation"]["elementary_flows"] >= 1
+        assert data["foundation"]["intermediate_flows"] == 0
+
+    def test_preview_with_lcia_returns_indicators_and_cfs(self, client, tmp_path):
+        """When LCIA Excel is present, preview should include indicator/CF counts."""
+        spold_files = [
+            {
+                "activity_id": "act-001",
+                "rp_id": "rp-001",
+                "activity_name": "Test",
+                "location": "CH",
+                "ref_product_name": "market for test",
+                "filename": "test.spold",
+                "exchanges": [
+                    {"exchange_id": "flow-co2-001", "name": "CO2",
+                     "unit": "kg", "compartment": "air"},
+                ],
+            },
+        ]
+        archive = _make_fake_7z_with_lcia(tmp_path, spold_files, include_lcia=True)
+
+        with open(archive, "rb") as f:
+            resp = client.post(
+                "/import/ef31/preview",
+                files={"lci_archive": ("test_lci_lcia.7z", f, "application/x-7z-compressed")},
+                params={"limit": 10},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["foundation"] is not None
+        assert data["foundation"]["indicators_total"] >= 2
+        assert data["foundation"]["cf_rows_total"] >= 3
+        # EF 3.1 filtered
+        assert data["foundation"]["cf_rows_ef31"] == 2  # CO2 and Methane are EF v3.1
+        # Counts should include indicators/cfs
+        assert data["counts"]["indicators_total"] >= 2
+        assert data["counts"]["cf_rows_total"] >= 3
+
+    def test_preview_with_limited_spold(self, client, tmp_path):
+        """limit=1 should only parse 1 SPOLD dataset."""
+        spold_files = [
+            {
+                "activity_id": f"act-{i:03d}",
+                "rp_id": f"rp-{i:03d}",
+                "activity_name": f"Activity {i}",
+                "location": "CH",
+                "ref_product_name": f"market for {i}",
+                "filename": f"test_{i}.spold",
+                "exchanges": [
+                    {"exchange_id": "flow-co2-001", "name": "CO2",
+                     "unit": "kg", "compartment": "air"},
+                ],
+            }
+            for i in range(5)
+        ]
+        archive = _make_fake_7z(tmp_path, spold_files)
+
+        with open(archive, "rb") as f:
+            resp = client.post(
+                "/import/ef31/preview",
+                files={"lci_archive": ("test_lci.7z", f, "application/x-7z-compressed")},
+                params={"limit": 1},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        # limit=1 means only 1 dataset is parsed, spold_count reflects limit
+        assert data["counts"]["datasets"] == 1
+        assert data["preview_counts"]["spold_count"] == 1  # limited
+        assert data["limit"] == 1
+
+
+class TestEf31ReportEnrichment:
+    """Stage 1.2: report endpoint should include all new fields."""
+
+    def test_report_after_preview_includes_enriched_fields(self, client, tmp_path):
+        """Report endpoint should return archive/file discovery and foundation."""
+        spold_files = [
+            {
+                "activity_id": "act-001",
+                "rp_id": "rp-001",
+                "activity_name": "Test",
+                "location": "CH",
+                "ref_product_name": "market for test",
+                "filename": "test.spold",
+                "exchanges": [
+                    {"exchange_id": "flow-co2-001", "name": "CO2",
+                     "unit": "kg", "compartment": "air"},
+                ],
+            },
+        ]
+        archive = _make_fake_7z(tmp_path, spold_files)
+
+        with open(archive, "rb") as f:
+            resp = client.post(
+                "/import/ef31/preview",
+                files={"lci_archive": ("test_lci.7z", f, "application/x-7z-compressed")},
+                params={"limit": 10},
+            )
+        job_id = resp.json()["job_id"]
+
+        resp = client.get(f"/import/ef31/reports/{job_id}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["archive_name"] is not None
+        assert data["archive_file_discovery"] is not None
+        assert data["foundation"] is not None
+        assert data["preview_counts"] is not None
+        assert data["counts"]["datasets"] == 1
+
+
+# ============================================================================
+# Stage 1.2: Separate LCIA upload tests
+# ============================================================================
+
+
+class TestEf31SeparateLciaUpload:
+    """Tests for separately uploading LCIA .xlsx and .7z archives."""
+
+    def _build_lcia_xlsx(self, tmp_path: Path) -> bytes:
+        import openpyxl
+
+        wb = openpyxl.Workbook()
+        ind_ws = wb.active
+        ind_ws.title = "Indicators"
+        ind_ws.append(["Method", "Category", "Indicator", "Indicator Unit"])
+        ind_ws.append(["EF v3.1", "Climate change", "GWP 100a", "kg CO2 eq"])
+
+        cf_ws = wb.create_sheet("CFs")
+        cf_ws.append(["Method", "Category", "Indicator", "Name", "Compartment", "Subcompartment", "CF"])
+        cf_ws.append(["EF v3.1", "Climate change", "GWP 100a", "CO2", "air", None, 1.0])
+        cf_ws.append(["ReCiPe 2016 Midpoint (H)", "Climate change", "GWP 100a", "Unknown", "air", None, 0.5])
+
+        xlsx_path = tmp_path / "LCIA Implementation 3.11.xlsx"
+        wb.save(str(xlsx_path))
+        return xlsx_path.read_bytes()
+
+    def _build_lcia_7z(self, tmp_path: Path) -> Path:
+        """Create a .7z containing LCIA Implementation 3.11.xlsx."""
+        import openpyxl
+
+        wb = openpyxl.Workbook()
+        ind_ws = wb.active
+        ind_ws.title = "Indicators"
+        ind_ws.append(["Method", "Category", "Indicator", "Indicator Unit"])
+        ind_ws.append(["EF v3.1", "Climate change", "GWP 100a", "kg CO2 eq"])
+
+        cf_ws = wb.create_sheet("CFs")
+        cf_ws.append(["Method", "Category", "Indicator", "Name", "Compartment", "Subcompartment", "CF"])
+        cf_ws.append(["EF v3.1", "Climate change", "GWP 100a", "CO2", "air", None, 1.0])
+
+        xlsx_path = tmp_path / "LCIA Implementation 3.11.xlsx"
+        wb.save(str(xlsx_path))
+
+        # Build a .7z containing the xlsx
+        lcia_7z = tmp_path / "lcia.7z"
+        with py7zr.SevenZipFile(str(lcia_7z), 'w') as z:
+            z.writestr(xlsx_path.read_bytes(), "LCIA Implementation 3.11.xlsx")
+
+        return lcia_7z
+
+    def test_separate_lcia_xlsx(self, client, tmp_path):
+        """Separately uploaded LCIA .xlsx should produce cf_rows_ef31 > 0."""
+        spold_files = [
+            {
+                "activity_id": "act-001",
+                "rp_id": "rp-001",
+                "activity_name": "Test",
+                "location": "CH",
+                "ref_product_name": "market for test",
+                "filename": "test.spold",
+                "exchanges": [
+                    {"exchange_id": "flow-co2-001", "name": "CO2",
+                     "unit": "kg", "compartment": "air"},
+                ],
+            },
+        ]
+        lci_archive = _make_fake_7z(tmp_path, spold_files)
+        lcia_bytes = self._build_lcia_xlsx(tmp_path)
+
+        with open(lci_archive, "rb") as lci_f:
+            resp = client.post(
+                "/import/ef31/preview",
+                files=[
+                    ("lci_archive", ("test_lci.7z", lci_f, "application/x-7z-compressed")),
+                    ("lcia_archive", ("LCIA Implementation 3.11.xlsx", io.BytesIO(lcia_bytes), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+                ],
+                params={"limit": 10},
+            )
+
+        assert resp.status_code == 200, resp.json()
+        data = resp.json()
+        assert data["foundation"] is not None
+        assert data["foundation"]["cf_rows_ef31"] > 0
+
+    def test_separate_lcia_7z(self, client, tmp_path):
+        """Separately uploaded LCIA .7z should produce cf_rows_ef31 > 0."""
+        spold_files = [
+            {
+                "activity_id": "act-001",
+                "rp_id": "rp-001",
+                "activity_name": "Test",
+                "location": "CH",
+                "ref_product_name": "market for test",
+                "filename": "test.spold",
+                "exchanges": [
+                    {"exchange_id": "flow-co2-001", "name": "CO2",
+                     "unit": "kg", "compartment": "air"},
+                ],
+            },
+        ]
+        lci_archive = _make_fake_7z(tmp_path, spold_files)
+        lcia_7z = self._build_lcia_7z(tmp_path)
+
+        with open(lci_archive, "rb") as lci_f, open(lcia_7z, "rb") as lcia_f:
+            resp = client.post(
+                "/import/ef31/preview",
+                files=[
+                    ("lci_archive", ("test_lci.7z", lci_f, "application/x-7z-compressed")),
+                    ("lcia_archive", ("lcia.7z", lcia_f, "application/x-7z-compressed")),
+                ],
+                params={"limit": 10},
+            )
+
+        assert resp.status_code == 200, resp.json()
+        data = resp.json()
+        assert data["foundation"] is not None
+        assert data["foundation"]["cf_rows_ef31"] > 0
