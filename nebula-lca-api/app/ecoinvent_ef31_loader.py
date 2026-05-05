@@ -1039,7 +1039,9 @@ def selective_extract_7z(archive_path: Path, dest_dir: Path,
         'master_dir': None,
         'datasets_dir': None,
         'lcia_excel': None,
-        'spold_count': 0,
+        'spold_count': 0,          # selected (after limit)
+        'spold_count_total': 0,     # total found in archive (before limit)
+        'master_data_count': 0,
     }
     
     logger.info(f"Scanning archive: {archive_path}")
@@ -1071,6 +1073,9 @@ def selective_extract_7z(archive_path: Path, dest_dir: Path,
             elif m.startswith('datasets/') and m.endswith('.spold'):
                 spold_files.append(member)
         
+        # Record total before applying limit
+        result['spold_count_total'] = len(spold_files)
+
         # Limit spold files
         if spold_limit and spold_limit > 0:
             spold_files = spold_files[:spold_limit]
@@ -1099,7 +1104,8 @@ def selective_extract_7z(archive_path: Path, dest_dir: Path,
             z.extract(path=str(dest_dir), targets=extract_list)
         
         result['spold_count'] = len(spold_files)
-        
+        result['master_data_count'] = len(master_data_files)
+
         # Find extracted directories
         for item in dest_dir.rglob("MasterData"):
             if item.is_dir():

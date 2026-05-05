@@ -20,13 +20,19 @@ from app.ecoinvent_ef31_loader import (
     parse_spold_file,
     parse_spold_exchanges,
     parse_units,
+    parse_unit_conversions,
     parse_elementary_exchanges,
     parse_intermediate_exchanges,
+    parse_lcia_excel,
+    filter_cf_ef31,
+    FoundationReport,
     LCIDataset,
     LCIElementaryExchange,
     ElementaryFlow,
     IntermediateFlow,
     UnitRecord,
+    Indicator,
+    CharacterizationFactor,
 )
 from app.ef31_db_service import (
     dry_run_lci_import,
@@ -152,7 +158,7 @@ def preview_ef31_import(
         lcia_dest = uploads_dir / lcia_archive_path.name
         shutil.copy2(lcia_archive_path, lcia_dest)
 
-    # Selective extract
+    # ---- Selective extract LCI archive ----
     extract_result = selective_extract_7z(
         lci_dest, extract_dir, spold_limit=limit
     )
@@ -160,9 +166,35 @@ def preview_ef31_import(
     master_dir = extract_result.get("master_dir")
     datasets_dir = extract_result.get("datasets_dir")
     lcia_excel = extract_result.get("lcia_excel")
+    spold_count = extract_result.get("spold_count", 0)
+    spold_count_total = extract_result.get("spold_count_total", 0)
+
+    # ---- Handle optional LCIA archive/workbook ----
+    # lcia_excel from LCI archive scanning is already set above.
+    # If user separately uploaded LCIA archive, process it now.
+    if lcia_archive_path and lcia_archive_path.exists() and not lcia_excel:
+        ext = lcia_archive_path.name.lower()
+        if ext.endswith('.xlsx'):
+            # Direct xlsx — use it directly
+            lcia_excel = lcia_archive_path
+        elif ext.endswith('.7z'):
+            # Selective extract LCIA archive (only LCIA Excel, no spold limit)
+            lcia_extract_dir = job_dir / "lcia_extracted"
+            lcia_extract_result = selective_extract_7z(
+                lcia_archive_path, lcia_extract_dir, spold_limit=0
+            )
+            lcia_excel = lcia_extract_result.get("lcia_excel")
 
     warnings: list[str] = []
     errors: list[str] = []
+
+    # ---- Build archive_file_discovery ----
+    archive_file_discovery = {
+        "master_data_files": extract_result.get("master_data_count", 0),
+        "datasets_spold_files_selected": spold_count,
+        "datasets_spold_files_total": spold_count_total,
+        "lcia_excel_found": 1 if lcia_excel else 0,
+    }
 
     # Parse units
     units_map: dict[str, UnitRecord] = {}
@@ -186,8 +218,38 @@ def preview_ef31_import(
         except Exception as e:
             errors.append(f"Failed to parse intermediate exchanges: {e}")
 
-    # Parse foundation (placeholder — not used in preview yet)
-    foundation_report: Optional[dict] = {}
+    # Parse unit conversions
+    unit_conversions: list = []
+    if master_dir:
+        try:
+            unit_conversions = parse_unit_conversions(master_dir)
+        except Exception as e:
+            warnings.append(f"Failed to parse unit conversions: {e}")
+
+    # Parse LCIA Excel (Indicators + CFs)
+    indicators: list[Indicator] = []
+    all_cfs: list[CharacterizationFactor] = []
+    ef31_cfs: list[CharacterizationFactor] = []
+    if lcia_excel and lcia_excel.exists():
+        try:
+            indicators, all_cfs = parse_lcia_excel(lcia_excel)
+            ef31_cfs = filter_cf_ef31(all_cfs)
+        except Exception as e:
+            warnings.append(f"Failed to parse LCIA Excel: {e}")
+
+    # Build foundation report
+    foundation_report: dict | None = None
+    if master_dir or lcia_excel:
+        foundation_report = {
+            "units": len(units_map),
+            "elementary_flows": len(elementary_flows),
+            "intermediate_flows": len(intermediate_flows),
+            "unit_conversions": len(unit_conversions),
+            "indicators_total": len(indicators),
+            "indicators_ef31": len([i for i in indicators if i.method in ('EF v3.1', 'EF v3.1 no LT')]),
+            "cf_rows_total": len(all_cfs),
+            "cf_rows_ef31": len(ef31_cfs),
+        }
 
     # Parse LCI datasets
     datasets: list[LCIDataset] = []
@@ -210,7 +272,7 @@ def preview_ef31_import(
         "job_id": job_id,
         "lci_archive": str(lci_dest.name),
         "lcia_archive": str(lcia_dest.name) if lcia_dest else None,
-        "spold_count": extract_result.get("spold_count", 0),
+        "spold_count": spold_count,
         "parsed_datasets": len(datasets),
         "master_data": {
             "elementary_flows": len(elementary_flows),
@@ -249,6 +311,11 @@ def preview_ef31_import(
         "intermediate_flows": len(intermediate_flows),
         "exchanges": sum(len(v) for v in exchanges_map.values()),
         "missing_refs": missing_refs_count,
+        "units": len(units_map),
+        "indicators_total": len(indicators),
+        "indicators_ef31": len([i for i in indicators if i.method in ('EF v3.1', 'EF v3.1 no LT')]),
+        "cf_rows_total": len(all_cfs),
+        "cf_rows_ef31": len(ef31_cfs),
     }
 
     expires_at = (
@@ -264,6 +331,18 @@ def preview_ef31_import(
         "warnings": combined_warnings,
         "errors": combined_errors,
         "expires_at": expires_at,
+        "archive_name": lci_dest.name,
+        "archive_file_discovery": archive_file_discovery,
+        "foundation": foundation_report,
+        "preview_counts": {
+            "spold_count": spold_count,
+            "parsed_datasets": len(datasets),
+            "master_data": {
+                "elementary_flows": len(elementary_flows),
+                "intermediate_flows": len(intermediate_flows),
+                "units": len(units_map),
+            },
+        },
     }
 
     # Persist report via DebugDiagnostic-compatible payload

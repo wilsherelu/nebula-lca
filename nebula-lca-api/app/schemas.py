@@ -1186,16 +1186,24 @@ _EF31_DIAGNOSTIC_TYPE = "ef31.import.report.v1"
 class Ef31ImportPreviewResponse(BaseModel):
     """Response from EF 3.1 LCI preview import.
 
-    Contains preview counts, dry-run summary, warnings, and missing refs.
+    Contains archive discovery info, parsed counts, foundation data,
+    dry-run summary, warnings, and missing refs.
     """
     job_id: str = Field(..., description="Unique job ID for subsequent commit/report calls")
     can_commit: bool = Field(..., description="True if preview has no blocking errors")
     limit: int = Field(..., description="Max datasets parsed in this preview")
-    counts: dict = Field(..., description="Parsed counts: datasets, flows, exchanges, missing_refs")
+    counts: dict = Field(..., description="Parsed counts: datasets, flows, exchanges, missing_refs, units, indicators, cfs")
     dry_run_summary: dict = Field(default_factory=dict, description="DbDryRunResult summary dict")
     warnings: list[str] = Field(default_factory=list, description="Non-blocking warnings from preview")
     errors: list[str] = Field(default_factory=list, description="Blocking errors (missing refs, parse failures)")
     expires_at: str = Field(..., description="ISO-8601 timestamp when job artifacts expire (default 24h)")
+    # Archive / file discovery
+    archive_name: str | None = Field(default=None, description="Original uploaded LCI archive filename")
+    archive_file_discovery: dict | None = Field(default=None, description="Counts of MasterData XMLs, datasets/ SPOLDs, LCIA Excel found in archive")
+    # Foundation data
+    foundation: dict | None = Field(default=None, description="Parsed MasterData + LCIA Excel foundation (units, flows, indicators, CFs)")
+    # Preview counts
+    preview_counts: dict | None = Field(default=None, description="Detailed preview counts: spold_count, parsed_datasets, master_data fields")
 
 
 class Ef31ImportCommitRequest(BaseModel):
