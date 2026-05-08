@@ -19,6 +19,7 @@ const debugNode = (scope: string, payload?: unknown) => {
 
 type Props = {
   node: Node<LcaNodeData>;
+  onStatus?: (text: string) => void;
 };
 
 type TabKey = "external_in" | "external_out";
@@ -249,7 +250,7 @@ function FlowSection({
   );
 }
 
-export function NodeInspector({ node }: Props) {
+export function NodeInspector({ node, onStatus }: Props) {
   const [tab, setTab] = useState<TabKey>("external_in");
   const [flowPicker, setFlowPicker] = useState<{ open: boolean; target: FlowTarget | null }>({ open: false, target: null });
   const [createFlowDialog, setCreateFlowDialog] = useState<{ open: boolean; target: FlowTarget | null }>({ open: false, target: null });
@@ -1963,11 +1964,10 @@ export function NodeInspector({ node }: Props) {
           }}
           onClose={() => setCreateFlowDialog({ open: false, target: null })}
           onStatus={(text) => {
-            setConnectionHint(text);
+            onStatus?.(text);
           }}
         />
       )}
     </div>
   );
 }
-

@@ -5584,7 +5584,7 @@ export default function App() {
                   </section>
                 </div>
               )}
-              <InspectorPanel />
+              <InspectorPanel onStatus={setStatusText} />
               <FlowBalanceDialog />
               <PtsPortEditorDialog />
               <PtsVersionHistoryDialog
@@ -5606,5 +5606,4 @@ export default function App() {
     </div>
   );
 }
-
 

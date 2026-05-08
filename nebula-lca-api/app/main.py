@@ -2818,9 +2818,18 @@ def _ensure_reference_processes_schema() -> dict:
 # ---------------------------------------------------------------------------
 
 BUILTIN_ELEMENTARY_FLOW_SOURCE = "ef3.1"
+BUILTIN_INTERMEDIATE_FLOW_SOURCE = "tiangong"
 EXTERNAL_ELEMENTARY_FLOW_SOURCE = "external_import"
 TIDAS_FLOW_IMPORT_SOURCE = "tidas_import"
 TIDAS_BUNDLE_FLOW_IMPORT_SOURCE = "tidas_bundle_import"
+PROTECTED_BUILTIN_FLOW_SOURCES = {
+    BUILTIN_ELEMENTARY_FLOW_SOURCE,
+    BUILTIN_INTERMEDIATE_FLOW_SOURCE,
+}
+
+
+def _is_protected_builtin_flow(row: FlowRecord) -> bool:
+    return not bool(row.is_custom) and _safe_str(row.source) in PROTECTED_BUILTIN_FLOW_SOURCES
 
 
 def _ensure_custom_flow_columns() -> dict:
@@ -2925,9 +2934,10 @@ def _bootstrap_reference_data_if_needed(*, db: Session) -> None:
             file_path=str(intermediate_flows_path),
             sheet_name=None,
             mapping=None,
-            replace_existing=False,
+            replace_existing=True,
             default_flow_type="Product flow",
             ef31_flow_index_path=None,
+            default_source=BUILTIN_INTERMEDIATE_FLOW_SOURCE,
         )
         print(
             "[startup-bootstrap] imported intermediate flows: "
@@ -8267,6 +8277,12 @@ async def import_tidas_flows(
             if existing is not None and payload.upsert_mode == "skip":
                 report["skipped"] += 1
                 continue
+            if existing is not None and _is_protected_builtin_flow(existing):
+                report["skipped"] += 1
+                report["warnings"].append(
+                    f"{flow_uuid}: built-in flow source={existing.source}; skipped overwrite from TIDAS flow import"
+                )
+                continue
 
             if existing is None:
                 report["inserted"] += 1
@@ -8379,6 +8395,12 @@ async def import_tidas_processes(
                 existing = db.get(FlowRecord, flow_uuid)
                 if existing is not None and payload.upsert_mode == "skip":
                     report["skipped"] += 1
+                    continue
+                if existing is not None and _is_protected_builtin_flow(existing):
+                    report["skipped"] += 1
+                    report["warnings"].append(
+                        f"{flow_uuid}: built-in flow source={existing.source}; skipped overwrite from TIDAS bundle import"
+                    )
                     continue
                 if existing is None:
                     report["inserted"] += 1
@@ -11483,9 +11505,6 @@ def import_reference_processes(
         exchanges = [ex for ex in raw_exchanges if isinstance(ex, dict)] if isinstance(raw_exchanges, list) else []
 
         if payload.import_mode == "locked":
-            if not payload.replace_existing:
-                warning_by_process[source_process_uuid].append("replace_existing=false in locked mode; skipped")
-                continue
             target_uuid = source_process_uuid
         else:
             target_uuid = str(uuid.uuid4())
@@ -11507,10 +11526,8 @@ def import_reference_processes(
         cloned_json["process_type"] = target_kind
         cloned_json["exchanges"] = kept_exchanges
 
-        target_row: ReferenceProcess
-        if payload.import_mode == "locked":
-            target_row = source_row
-        else:
+        target_row: ReferenceProcess | None = None
+        if payload.import_mode != "locked":
             target_row = ReferenceProcess(
                 process_uuid=target_uuid,
                 process_name=process_name,
@@ -11525,17 +11542,6 @@ def import_reference_processes(
                 import_mode=payload.import_mode,
             )
             db.add(target_row)
-
-        if payload.import_mode == "locked":
-            target_row.process_name = process_name
-            target_row.process_name_zh = process_name_zh
-            target_row.process_name_en = process_name_en
-            target_row.process_type = target_kind
-            target_row.reference_flow_uuid = reference_flow_uuid
-            target_row.reference_flow_internal_id = reference_flow_internal_id
-            target_row.process_json = cloned_json
-            target_row.source_process_uuid = None
-            target_row.import_mode = payload.import_mode
 
         process_warnings = warning_by_process.get(target_uuid, [])
         report = ProcessImportReportResponse(
@@ -11552,7 +11558,8 @@ def import_reference_processes(
             ),
             updated_at=datetime.utcnow(),
         )
-        target_row.import_report_json = report.model_dump(mode="json")
+        if target_row is not None:
+            target_row.import_report_json = report.model_dump(mode="json")
         inputs, outputs = _build_imported_process_ports(
             exchanges=kept_exchanges,
             flow_meta_by_uuid=flow_meta_by_uuid,
