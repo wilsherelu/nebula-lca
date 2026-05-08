@@ -1,5 +1,6 @@
 ﻿import { useEffect, useRef, useState } from "react";
 import { CreateFlowDialog } from "../CreateFlowDialog";
+import Ef31ImportDialog from "../Ef31ImportDialog";
 
 export type ProjectListItem = {
   project_id: string;
@@ -408,7 +409,7 @@ function CreateProjectModal(props: {
   };
 
   return (
-    <div className="pm-modal-mask" onClick={onClose}>
+    <div className="pm-modal-mask">
       <div className="pm-modal" onClick={(event) => event.stopPropagation()}>
         <div className="pm-modal-head">
           <strong>{zh ? "新建项目" : "Create Project"}</strong>
@@ -1170,6 +1171,7 @@ export function ProjectManagement(props: Props) {
   const [forceFlowRefresh, setForceFlowRefresh] = useState(false);
   const [forceStatsRefresh, setForceStatsRefresh] = useState(false);
   const [createFlowDialogOpen, setCreateFlowDialogOpen] = useState(false);
+  const [ef31ImportOpen, setEf31ImportOpen] = useState(false);
   const projectPageSize = 20;
   const processPageSize = 20;
   const flowPageSize = 20;
@@ -1787,6 +1789,17 @@ export function ProjectManagement(props: Props) {
               {zh ? "全部流" : "All Flows"}
             </button>
           </div>
+
+          <div className="pm-sidebar-section">
+            <div className="pm-sidebar-title">{zh ? "LCI 导入" : "LCI Import"}</div>
+            <button
+              type="button"
+              className="pm-nav-item"
+              onClick={() => setEf31ImportOpen(true)}
+            >
+              {zh ? "ecoinvent 3.11" : "ecoinvent 3.11"}
+            </button>
+          </div>
         </aside>
 
         <main className="pm-main">
@@ -2181,6 +2194,11 @@ export function ProjectManagement(props: Props) {
         }}
         onClose={() => setCreateFlowDialogOpen(false)}
         onStatus={onStatus}
+      />
+      <Ef31ImportDialog
+        open={ef31ImportOpen}
+        uiLanguage={uiLanguage}
+        onClose={() => setEf31ImportOpen(false)}
       />
     </div>
   );

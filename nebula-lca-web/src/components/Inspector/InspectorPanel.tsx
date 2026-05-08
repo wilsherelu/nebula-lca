@@ -2,7 +2,11 @@
 import { NodeInspector } from "./NodeInspector";
 import { useLcaGraphStore } from "../../store/lcaGraphStore";
 
-export function InspectorPanel() {
+type InspectorPanelProps = {
+  onStatus?: (text: string) => void;
+};
+
+export function InspectorPanel({ onStatus }: InspectorPanelProps) {
   const selection = useLcaGraphStore((state) => state.selection);
   const nodes = useLcaGraphStore((state) => state.nodes);
   const edges = useLcaGraphStore((state) => state.edges);
@@ -44,7 +48,7 @@ export function InspectorPanel() {
         <div>{t("清单分析", "Inventory Analysis")}</div>
         <button className="drawer-close-btn" onClick={() => closeInspector({ requireProductConfirm: true })}>{t("关闭", "Close")}</button>
       </div>
-      {node && <NodeInspector node={node} />}
+      {node && <NodeInspector node={node} onStatus={onStatus} />}
       {edge && <EdgeInspector edge={edge} />}
     </aside>
   );

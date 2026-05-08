@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 
 # Keep API tests isolated from the developer's real lca_demo.db.
 _TEST_DB = Path(tempfile.gettempdir()) / f"nebula_ef31_import_api_{uuid.uuid4().hex}.db"
-os.environ.setdefault("DATABASE_URL", f"sqlite:///{_TEST_DB.as_posix()}")
+os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DB.as_posix()}"
 
 # Ensure app imports work
 from app.main import app
@@ -32,6 +32,12 @@ def setup_db():
     """Create tables for each test, clean up after."""
     Base.metadata.create_all(bind=engine)
     yield
+    engine_db_path = Path(str(engine.url.database or "")).resolve()
+    expected_db_path = _TEST_DB.resolve()
+    if engine_db_path != expected_db_path:
+        raise RuntimeError(
+            f"Refusing to clean EF31 API test tables outside temp DB: {engine_db_path}"
+        )
     # Cleanup using Session
     db = SessionLocal()
     try:
