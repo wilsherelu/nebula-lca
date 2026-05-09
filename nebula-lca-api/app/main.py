@@ -2884,6 +2884,63 @@ def _ensure_custom_flow_columns() -> dict:
     return {"table": "flow_catalog", "added_columns": added_columns, "status": status}
 
 
+def _ensure_flow_catalog_fts_triggers(*, db: Session | None = None) -> dict:
+    """Ensure SQLite triggers exist to keep flow_catalog_fts in sync with flow_catalog.
+
+    Triggers fire after INSERT/UPDATE/DELETE on flow_catalog and maintain
+    the FTS5 virtual table automatically. This means new custom flows
+    created via POST /api/flows will immediately appear in search results.
+
+    Safe to call at startup — idempotent (IF NOT EXISTS on triggers).
+    """
+    from sqlalchemy import text as sa_text
+
+    url = settings.database_url
+    if not url.strip().lower().startswith("sqlite"):
+        return {"executed": False, "reason": "not sqlite"}
+
+    try:
+        with engine.begin() as conn:
+            fts_exists = conn.execute(sa_text(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='flow_catalog_fts'"
+            )).fetchone() is not None
+            if not fts_exists:
+                return {"executed": False, "reason": "flow_catalog_fts_missing"}
+
+            # Create triggers only if they don't exist
+            # SQLite doesn't support IF NOT EXISTS for triggers, so we check first
+            cursor = conn.execute(sa_text(
+                "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'fts_flow_catalog%'"
+            ))
+            existing = {row[0] for row in cursor.fetchall()}
+
+            needed = {
+                "fts_flow_catalog_ai": "CREATE TRIGGER fts_flow_catalog_ai AFTER INSERT ON flow_catalog BEGIN "
+                    "INSERT INTO flow_catalog_fts(rowid, flow_name, flow_name_en, flow_uuid) "
+                    "VALUES (new.rowid, new.flow_name, new.flow_name_en, new.flow_uuid); END",
+                "fts_flow_catalog_ad": "CREATE TRIGGER fts_flow_catalog_ad AFTER DELETE ON flow_catalog BEGIN "
+                    "DELETE FROM flow_catalog_fts WHERE rowid = old.rowid; END",
+                "fts_flow_catalog_au": "CREATE TRIGGER fts_flow_catalog_au AFTER UPDATE ON flow_catalog BEGIN "
+                    "DELETE FROM flow_catalog_fts WHERE rowid = old.rowid; "
+                    "INSERT INTO flow_catalog_fts(rowid, flow_name, flow_name_en, flow_uuid) "
+                    "VALUES (new.rowid, new.flow_name, new.flow_name_en, new.flow_uuid); END",
+            }
+
+            created = []
+            for name, sql in needed.items():
+                if name not in existing:
+                    conn.execute(sa_text(sql))
+                    created.append(name)
+
+            return {
+                "executed": True,
+                "created_triggers": created,
+                "total_triggers": len(needed),
+            }
+    except Exception as exc:
+        return {"executed": False, "error": str(exc)}
+
+
 def _bootstrap_reference_data_if_needed(*, db: Session) -> None:
     if not settings.auto_bootstrap_reference_data_on_startup:
         return
@@ -5548,6 +5605,88 @@ def _resolve_model_version_graph_hash(row: ModelVersion, *, assign_if_missing: b
     return resolved
 
 
+def _fts5_flow_search_query(db: Session, normalized_search: str):
+    """Return (query, used_fts) tuple for flow_catalog search.
+
+    When FTS5 is available and search is non-empty, returns an FTS5-filtered
+    query (filtered by flow_uuid from FTS results) with `used_fts=True`.
+    Otherwise returns unfiltered query with `used_fts=False` so the caller
+    falls back to LIKE.
+    """
+    if not normalized_search:
+        return (db.query(FlowRecord), False)
+
+    fts_available = False
+    try:
+        conn = db.connection().connection
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='flow_catalog_fts' AND sql LIKE '%fts5%'"
+        )
+        fts_available = cursor.fetchone() is not None
+    except Exception:
+        pass
+
+    if not fts_available:
+        return (db.query(FlowRecord), False)
+
+    # Use FTS5 MATCH to get matching flow_uuids
+    safe_query = normalized_search.replace("'", "''")
+    try:
+        raw_conn = db.connection().connection
+        cursor = raw_conn.cursor()
+        cursor.execute(
+            "SELECT flow_uuid FROM flow_catalog_fts WHERE flow_catalog_fts MATCH ?",
+            (safe_query,),
+        )
+        matched_uuids = {row[0] for row in cursor.fetchall()}
+        if matched_uuids:
+            return (
+                db.query(FlowRecord).filter(FlowRecord.flow_uuid.in_(matched_uuids)),
+                True,
+            )
+        else:
+            # FTS5 matched nothing
+            return (db.query(FlowRecord).filter(FlowRecord.flow_uuid == ""), True)
+    except Exception:
+        return (db.query(FlowRecord), False)
+
+
+def _build_flow_used_in_processes_map_cached(db: Session) -> dict[str, int]:
+    """Build flow->process usage map, cached on the session via a static attr."""
+    cache_key = "_flow_used_in_processes_map"
+    result = getattr(db, cache_key, None)
+    if result is not None:
+        return result
+    latest_rows = _latest_graphs_with_project_meta(db)
+    used_by_flow: dict[str, set[str]] = defaultdict(set)
+    for _, version in latest_rows:
+        graph_json = version.hybrid_graph_json if isinstance(version.hybrid_graph_json, dict) else {}
+        nodes = graph_json.get("nodes")
+        if not isinstance(nodes, list):
+            continue
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            process_key = _safe_str(node.get("process_uuid")) or _safe_str(node.get("id"))
+            if not process_key:
+                continue
+            for bucket in ("inputs", "outputs"):
+                ports = node.get(bucket)
+                if not isinstance(ports, list):
+                    continue
+                for port in ports:
+                    if not isinstance(port, dict):
+                        continue
+                    flow_uuid = _safe_str(port.get("flowUuid") or port.get("flow_uuid"))
+                    if flow_uuid:
+                        used_by_flow[flow_uuid].add(process_key)
+    result = {flow_uuid: len(processes) for flow_uuid, processes in used_by_flow.items()}
+    setattr(db, cache_key, result)
+    return result
+
+
 def _is_sqlite_database() -> bool:
     return settings.database_url.strip().lower().startswith("sqlite")
 
@@ -5565,6 +5704,70 @@ def _run_sqlite_vacuum() -> dict:
         return {"executed": True, "checkpoint": checkpoint}
     finally:
         raw_conn.close()
+
+
+
+
+def _auto_prune_versions(*, db: Session, model_id: str) -> None:
+    """Auto-prune model versions after a new one is saved.
+
+    Keeps at most KEEP_LATEST_VERSIONS_PER_PROJECT (default 20) versions per model.
+    Always preserves versions referenced by RunJobs, the current latest, or draft pointer.
+    """
+    keep = max(1, int(settings.keep_latest_versions_per_project))
+    # We only prune for the new version (created_new_version=True path),
+    # but since we call this after every version creation, just prune unconditionally.
+    # We pass dry_run=False because this is the real prune.
+    # Reuse the existing pruning logic but limit to a single model.
+    _prune_model_versions_retention(
+        db=db,
+        keep_latest=keep,
+        dry_run=False,
+        project_id=model_id,
+        vacuum_after_cleanup=False,
+    )
+
+
+def _build_run_job_request_json(payload) -> dict:
+    """Build a lightweight request_json for RunJob storage.
+
+    By default stores only metadata (model_version_id, graph_hash, node/edge counts,
+    functional unit, key parameters) instead of the full graph with all nodes/edges.
+
+    Set env NEBULA_DEBUG_STORE_RUN_GRAPH=1 to restore full graph storage temporarily.
+    """
+    import os
+    if os.getenv("NEBULA_DEBUG_STORE_RUN_GRAPH", "0").lower() in ("1", "true", "yes"):
+        return payload.graph.model_dump()
+
+    graph = payload.graph
+    nodes = graph.nodes if hasattr(graph, "nodes") else []
+    edges = graph.edges if hasattr(graph, "edges") else []
+
+    # Extract functional unit from node metadata
+    functional_unit = None
+    reference_product = None
+    for node in nodes:
+        meta = getattr(node, "metadata", None)
+        if meta and isinstance(meta, dict):
+            if meta.get("functionalUnit") and not functional_unit:
+                functional_unit = meta["functionalUnit"]
+            if meta.get("referenceProduct") and not reference_product:
+                reference_product = meta["referenceProduct"]
+            break
+
+    return {
+        "model_version_id": payload.model_version_id,
+        "project_id": getattr(payload, "project_id", None),
+        "force_recompile": getattr(payload, "force_recompile", False),
+        "node_count": len(nodes),
+        "edge_count": len(edges),
+        "functional_unit": functional_unit,
+        "reference_product": reference_product,
+        "graph_hash": getattr(graph, "graph_hash", None)
+            if hasattr(graph, "graph_hash") and graph.graph_hash
+            else None,
+    }
 
 
 def _prune_model_versions_retention(
@@ -5945,10 +6148,11 @@ def run_solver_and_persist(
     }
     tiangong_like = adapter_result["tiangong_like_input"]
 
+    request_json = _build_run_job_request_json(payload)
     run_job = RunJob(
         model_version_id=payload.model_version_id,
         status=status,
-        request_json=payload.graph.model_dump(),
+        request_json=request_json,
         result_json=solved,
         message=message,
         created_at=datetime.utcnow(),
@@ -8182,6 +8386,10 @@ def on_startup() -> None:
     _ensure_pts_uuid_schema()
     _ensure_pts_resources_schema()
     _ensure_custom_flow_columns()
+    try:
+        _ensure_flow_catalog_fts_triggers()
+    except Exception:
+        pass
     db = SessionLocal()
     try:
         if should_bootstrap_reference_data:
@@ -11796,25 +12004,37 @@ def list_processes_api(
         .all()
     )
 
-    flow_names = {
-        row.flow_uuid: row.flow_name
-        for row in db.query(FlowRecord.flow_uuid, FlowRecord.flow_name).all()
-    }
+    # Optimized: only query reference flows needed by current page (not full 90k catalog)
+    page_flow_uuids = set()
+    for row in rows:
+        rfu = _safe_str(row.reference_flow_uuid)
+        if rfu:
+            page_flow_uuids.add(rfu)
+    flow_names = {}
+    if page_flow_uuids:
+        for row in db.query(FlowRecord.flow_uuid, FlowRecord.flow_name).filter(
+            FlowRecord.flow_uuid.in_(sorted(page_flow_uuids))
+        ).all():
+            flow_names[row.flow_uuid] = row.flow_name
 
-    used_in_projects_by_process: dict[str, int] = defaultdict(int)
-    project_usage: dict[str, set[str]] = defaultdict(set)
-    for model, latest in _latest_graphs_with_project_meta(db):
-        graph_json = latest.hybrid_graph_json if isinstance(latest.hybrid_graph_json, dict) else {}
-        nodes = graph_json.get("nodes")
-        if not isinstance(nodes, list):
-            continue
-        for node in nodes:
-            if not isinstance(node, dict):
+    # Cache used_in_projects computation per-request via static attr
+    projects_cache_key = "_used_in_projects_by_process"
+    used_in_projects_by_process = getattr(db, projects_cache_key, None)
+    if used_in_projects_by_process is None:
+        project_usage: dict[str, set[str]] = defaultdict(set)
+        for model, latest in _latest_graphs_with_project_meta(db):
+            graph_json = latest.hybrid_graph_json if isinstance(latest.hybrid_graph_json, dict) else {}
+            nodes = graph_json.get("nodes")
+            if not isinstance(nodes, list):
                 continue
-            pid = _safe_str(node.get("process_uuid"))
-            if pid:
-                project_usage[pid].add(str(model.id))
-    used_in_projects_by_process = {pid: len(projects) for pid, projects in project_usage.items()}
+            for node in nodes:
+                if not isinstance(node, dict):
+                    continue
+                pid = _safe_str(node.get("process_uuid"))
+                if pid:
+                    project_usage[pid].add(str(model.id))
+        used_in_projects_by_process = {pid: len(projs) for pid, projs in project_usage.items()}
+        setattr(db, projects_cache_key, used_in_projects_by_process)
 
     items: list[ProcessListItem] = []
     for row in rows:
@@ -11972,20 +12192,29 @@ def list_flows_api(
     if type is not None and type not in type_map:
         raise HTTPException(status_code=400, detail={"code": "INVALID_REQUEST", "message": "Invalid flow type"})
 
-    query = db.query(FlowRecord)
-    if type:
-        query = query.filter(FlowRecord.flow_type.in_(sorted(type_map[type])))
     flow_name_expr = func.lower(func.coalesce(FlowRecord.flow_name, ""))
     flow_name_en_expr = func.lower(func.coalesce(FlowRecord.flow_name_en, ""))
     flow_uuid_expr = func.lower(func.coalesce(FlowRecord.flow_uuid, ""))
+    query = db.query(FlowRecord)
     if search and search.strip():
         normalized_search = search.strip().lower()
-        token = f"%{normalized_search}%"
-        query = query.filter(
-            flow_name_expr.like(token)
-            | flow_name_en_expr.like(token)
-            | flow_uuid_expr.like(token)
-        )
+        # Prefer FTS5 MATCH for speed; falls back to LIKE
+        fts_query, used_fts = _fts5_flow_search_query(db, normalized_search)
+        if used_fts:
+            query = fts_query
+        else:
+            # FTS5 unavailable — use LIKE
+            token = f"%{normalized_search}%"
+            query = db.query(FlowRecord).filter(
+                flow_name_expr.like(token)
+                | flow_name_en_expr.like(token)
+                | flow_uuid_expr.like(token)
+            )
+
+    if type:
+        query = query.filter(FlowRecord.flow_type.in_(sorted(type_map[type])))
+
+    # Apply category filters (for both FTS5 and LIKE paths)
     if category and category.strip():
         category_token = f"%{category.strip().lower()}%"
         query = query.filter(func.lower(func.coalesce(FlowRecord.compartment, "")).like(category_token))
@@ -12053,7 +12282,7 @@ def list_flows_api(
             .limit(page_size)
             .all()
         )
-    used_in_processes = _build_flow_used_in_processes_map(db)
+    used_in_processes = _build_flow_used_in_processes_map_cached(db)
     items: list[FlowListItem] = []
     for row in rows:
         normalized_type = normalize_flow_semantic(row.flow_type) or "intermediate_flow"
@@ -12240,6 +12469,11 @@ def create_project_version(
         graph=payload.graph,
         compile_on_save=compile_pts_on_save,
     )
+    # Auto-prune versions: keep only the latest N versions per model
+    try:
+        _auto_prune_versions(db=db, model_id=model.id)
+    except Exception:
+        pass
     _invalidate_management_caches(projects=True, stats=True)
     return ModelCreateResponse(
         project_id=model.id,
