@@ -2448,6 +2448,161 @@ def _normalize_graph_json_for_storage(graph_json: dict) -> dict:
     return _restore_graph_node_positions(source_graph_json=graph_json, normalized_graph_json=normalized)
 
 
+# ── Graph Storage Slim v1 ──────────────────────────────────────────────
+
+_STORAGE_SLIM_VERSION = "graph_slim_v1"
+
+# Fields that can be recomputed from flow_catalog / source_process at read time.
+_FLOWPORT_DERIVED_KEYS: set[str] = {
+    # Pure display fields - recomputed from flow_catalog at read time.
+    "flow_name_en",
+    "display_name_en",
+    "unitGroup",
+}
+
+
+def _slim_flowport_for_storage(port: dict) -> dict:
+    """Strip derived FlowPort fields, keep only core modelling data."""
+    slim: dict = {}
+    for key, val in port.items():
+        if key in _FLOWPORT_DERIVED_KEYS:
+            continue
+        slim[key] = val
+    return slim
+
+
+def _slim_node_for_storage(node: dict) -> dict:
+    """Strip derived FlowPort fields from nested port lists."""
+    slim: dict = {}
+    for key, val in node.items():
+        slim[key] = val
+    for bucket in ("inputs", "outputs", "emissions"):
+        bucket_data = slim.get(bucket)
+        if not isinstance(bucket_data, list):
+            continue
+        slim[bucket] = [_slim_flowport_for_storage(p) for p in bucket_data]
+    return slim
+
+
+def _slim_pts_node_for_storage(node: dict) -> dict:
+    """PTS nodes: save only the shell - never ship compile artifacts."""
+    allowed_pts_keys = {
+        "id", "node_kind", "mode", "lci_role", "pts_uuid",
+        "pts_published_version", "pts_published_artifact_id",
+        "process_uuid", "name", "location", "reference_product",
+        "allocation_method", "inputs", "outputs", "emissions",
+        "metadata",
+    }
+    slim: dict = {}
+    for key, val in node.items():
+        if key not in allowed_pts_keys:
+            continue
+        if key in ("inputs", "outputs", "emissions") and isinstance(val, list):
+            slim[key] = [_slim_flowport_for_storage(p) for p in val]
+        else:
+            slim[key] = val
+    return slim
+
+
+def _slim_graph_for_storage(graph_json: dict) -> dict:
+    """Return a slim copy of the graph ready for persistent storage.
+
+    - FlowPort: drops pure display fields (flow_name_en, display_name_en, unitGroup).
+    - PTS nodes: keep only shell fields; no compile artifacts.
+    - Writes storage_schema_version into metadata.
+    """
+    slim = {
+        "functionalUnit": graph_json.get("functionalUnit"),
+        "nodes": [],
+        "exchanges": graph_json.get("exchanges", []),
+        "metadata": dict(graph_json.get("metadata") or {}),
+    }
+    nodes = graph_json.get("nodes") if isinstance(graph_json.get("nodes"), list) else []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        node_kind = str(node.get("node_kind", "unit_process"))
+        if node_kind == "pts_module":
+            slim["nodes"].append(_slim_pts_node_for_storage(node))
+        else:
+            slim["nodes"].append(_slim_node_for_storage(node))
+
+    md = slim["metadata"]
+    md["storage_schema_version"] = _STORAGE_SLIM_VERSION
+    slim["metadata"] = md
+    return slim
+
+
+def _hydrate_graph_for_api(graph_json: dict, db) -> dict:
+    """Restore display fields into a slim-stored graph for API responses."""
+    if not isinstance(graph_json, dict):
+        return graph_json
+
+    md = graph_json.get("metadata") or {}
+    if md.get("storage_schema_version") == _STORAGE_SLIM_VERSION:
+        nodes = graph_json.get("nodes") if isinstance(graph_json.get("nodes"), list) else []
+        flow_uuids: list[str] = []
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            for bucket in ("inputs", "outputs", "emissions"):
+                ports = node.get(bucket)
+                if not isinstance(ports, list):
+                    continue
+                for port in ports:
+                    fu = str(port.get("flowUuid", "") or "").strip()
+                    if fu and fu not in flow_uuids:
+                        flow_uuids.append(fu)
+
+        flow_meta: dict[str, tuple] = {}
+        if flow_uuids:
+            batch_size = 500
+            for i in range(0, len(flow_uuids), batch_size):
+                batch = flow_uuids[i:i + batch_size]
+                try:
+                    rows = (
+                        db.query(FlowRecord.flow_uuid, FlowRecord.flow_name_en, FlowRecord.unit_group)
+                        .filter(FlowRecord.flow_uuid.in_(batch))
+                        .all()
+                    )
+                    for r in rows:
+                        flow_meta[str(r.flow_uuid)] = (r.flow_name_en, r.unit_group)
+                except Exception:
+                    pass
+
+        def _hydrate_flowport(port: dict) -> dict:
+            if not isinstance(port, dict):
+                return port
+            result = dict(port)
+            fu = str(port.get("flowUuid", "") or "").strip()
+            if fu and fu in flow_meta:
+                fn_en, ug = flow_meta[fu]
+                if not result.get("flow_name_en"):
+                    result["flow_name_en"] = fn_en
+                if not result.get("unitGroup"):
+                    result["unitGroup"] = ug
+            return result
+
+        def _hydrate_node(node: dict) -> dict:
+            if not isinstance(node, dict):
+                return node
+            result = dict(node)
+            for bucket in ("inputs", "outputs", "emissions"):
+                ports = result.get(bucket)
+                if isinstance(ports, list):
+                    result[bucket] = [_hydrate_flowport(p) for p in ports]
+            return result
+
+        slim_nodes = graph_json.get("nodes")
+        if isinstance(slim_nodes, list):
+            slim_nodes = [_hydrate_node(n) for n in slim_nodes]
+            result = dict(graph_json)
+            result["nodes"] = slim_nodes
+            return result
+
+    return graph_json
+
+
 
 _UI_HASH_NOISE_KEYS: set[str] = {
     "selected",
@@ -2626,6 +2781,13 @@ def _canonicalize_value_for_hash(value: object) -> object:
 def _compute_graph_hash_from_graph_json(graph_json: dict) -> str:
     normalized = _normalize_graph_json_for_storage(graph_json)
     canonical_value = _canonicalize_value_for_hash(normalized)
+    canonical_json = _canonical_json(canonical_value)
+    return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+
+
+def _compute_graph_hash_from_slim_graph(slim_graph_json: dict) -> str:
+    """Compute hash directly on already-slimmed graph (bypass normalize again)."""
+    canonical_value = _canonicalize_value_for_hash(slim_graph_json)
     canonical_json = _canonical_json(canonical_value)
     return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
 
@@ -4902,11 +5064,12 @@ def _create_project_version_from_graph_json(*, db: Session, project_id: str, gra
     persisted_graph_json = graph.model_dump(mode="python")
     _enrich_graph_flow_name_en(persisted_graph_json, db=db)
     normalized_graph_json = _normalize_graph_json_for_storage(persisted_graph_json)
+    slim_graph_json = _slim_graph_for_storage(normalized_graph_json)
     version = ModelVersion(
         model_id=project_id,
         version=next_version,
-        graph_hash=_compute_graph_hash_from_graph_json(normalized_graph_json),
-        hybrid_graph_json=normalized_graph_json,
+        graph_hash=_compute_graph_hash_from_slim_graph(slim_graph_json),
+        hybrid_graph_json=slim_graph_json,
     )
     db.add(version)
     _sync_pts_resources_from_graph(db=db, project_id=project_id, graph=graph)
@@ -11197,7 +11360,9 @@ def create_model(payload: ModelCreateRequest, db: Session = Depends(get_db)) -> 
     validate_graph_flow_type_contract(payload.graph, db=db, stage="save_model")
     validate_graph_port_names_against_flow_catalog(payload.graph, db=db, stage="save_model")
 
-    graph_hash = _compute_graph_hash_from_graph(payload.graph)
+    normalized_graph = _normalize_graph_json_for_storage(payload.graph.model_dump(mode="python"))
+    slim_graph = _slim_graph_for_storage(normalized_graph)
+    graph_hash = _compute_graph_hash_from_slim_graph(slim_graph)
     latest_row = (
         db.query(ModelVersion)
         .filter(ModelVersion.model_id == model.id)
@@ -11236,11 +11401,12 @@ def create_model(payload: ModelCreateRequest, db: Session = Depends(get_db)) -> 
     persisted_graph_json = payload.graph.model_dump(mode="python")
     _enrich_graph_flow_name_en(persisted_graph_json, db=db)
     normalized_graph_json = _normalize_graph_json_for_storage(persisted_graph_json)
+    slim_graph_json = _slim_graph_for_storage(normalized_graph_json)
     version = ModelVersion(
         model_id=model.id,
         version=next_version,
         graph_hash=graph_hash,
-        hybrid_graph_json=normalized_graph_json,
+        hybrid_graph_json=slim_graph_json,
     )
     model.updated_at = datetime.utcnow()
     db.add(version)
@@ -12415,7 +12581,9 @@ def create_project_version(
     validate_graph_port_names_against_flow_catalog(payload.graph, db=db, stage="save_version")
 
     model = get_model_or_404(db, project_id)
-    graph_hash = _compute_graph_hash_from_graph(payload.graph)
+    normalized_graph = _normalize_graph_json_for_storage(payload.graph.model_dump(mode="python"))
+    slim_graph = _slim_graph_for_storage(normalized_graph)
+    graph_hash = _compute_graph_hash_from_slim_graph(slim_graph)
 
     latest_row = (
         db.query(ModelVersion)
@@ -12452,12 +12620,11 @@ def create_project_version(
     )
     next_version = (latest_version or 0) + 1
 
-    normalized_graph_json = _normalize_graph_json_for_storage(payload.graph.model_dump(mode="python"))
     version = ModelVersion(
         model_id=model.id,
         version=next_version,
         graph_hash=graph_hash,
-        hybrid_graph_json=normalized_graph_json,
+        hybrid_graph_json=slim_graph,
     )
     model.updated_at = datetime.utcnow()
     db.add(version)
@@ -12531,7 +12698,8 @@ def get_project_version(project_id: str, version: int, db: Session = Depends(get
     )
     if not record:
         raise HTTPException(status_code=404, detail="Model version not found")
-    graph = HybridGraph.model_validate(record.hybrid_graph_json)
+    raw_graph = _hydrate_graph_for_api(record.hybrid_graph_json if isinstance(record.hybrid_graph_json, dict) else {}, db=db)
+    graph = HybridGraph.model_validate(raw_graph)
     normalize_graph_product_flags(graph)
     _project_pts_external_ports_into_graph(db=db, project_id=model.id, graph=graph)
     pts_validation = _build_pts_validation_summary(db=db, project_id=model.id, graph=graph)
@@ -12590,7 +12758,8 @@ def get_project_latest_by_id(
                 return Response(status_code=304, headers={"ETag": etag})
             return JSONResponse(content=payload, headers={"ETag": etag})
 
-    graph = HybridGraph.model_validate(latest_row.hybrid_graph_json)
+    raw_graph = _hydrate_graph_for_api(latest_row.hybrid_graph_json if isinstance(latest_row.hybrid_graph_json, dict) else {}, db=db)
+    graph = HybridGraph.model_validate(raw_graph)
     normalize_graph_product_flags(graph)
     _project_pts_external_ports_into_graph(db=db, project_id=model.id, graph=graph)
     pts_validation = _build_pts_validation_summary(db=db, project_id=model.id, graph=graph)
@@ -12638,7 +12807,8 @@ def repair_pts_publications_for_project(project_id: str, db: Session = Depends(g
     )
     if latest_row is None:
         raise HTTPException(status_code=404, detail="No model version found")
-    graph = HybridGraph.model_validate(latest_row.hybrid_graph_json)
+    raw_graph = _hydrate_graph_for_api(latest_row.hybrid_graph_json if isinstance(latest_row.hybrid_graph_json, dict) else {}, db=db)
+    graph = HybridGraph.model_validate(raw_graph)
     normalize_graph_product_flags(graph)
     _project_pts_external_ports_into_graph(db=db, project_id=model.id, graph=graph)
     validation = _build_pts_validation_summary(db=db, project_id=model.id, graph=graph)
@@ -12736,7 +12906,8 @@ def repair_project_integrity(project_id: str, db: Session = Depends(get_db)) -> 
     if latest_row is None:
         raise HTTPException(status_code=404, detail="No model version found")
 
-    graph = HybridGraph.model_validate(latest_row.hybrid_graph_json)
+    raw_graph = _hydrate_graph_for_api(latest_row.hybrid_graph_json if isinstance(latest_row.hybrid_graph_json, dict) else {}, db=db)
+    graph = HybridGraph.model_validate(raw_graph)
     normalize_graph_product_flags(graph)
     _project_pts_external_ports_into_graph(db=db, project_id=model.id, graph=graph)
     graph_json = graph.model_dump(mode="python")
@@ -12886,7 +13057,8 @@ def get_model_version(project_id: str, version: int, db: Session = Depends(get_d
     )
     if not record:
         raise HTTPException(status_code=404, detail="Model version not found")
-    graph = HybridGraph.model_validate(record.hybrid_graph_json)
+    raw_graph = _hydrate_graph_for_api(record.hybrid_graph_json if isinstance(record.hybrid_graph_json, dict) else {}, db=db)
+    graph = HybridGraph.model_validate(raw_graph)
     normalize_graph_product_flags(graph)
     _project_pts_external_ports_into_graph(db=db, project_id=project_id, graph=graph)
     graph_json = graph.model_dump(mode="python")
@@ -12915,7 +13087,8 @@ def get_project_latest(project_name: str, db: Session = Depends(get_db)) -> dict
         raise HTTPException(status_code=404, detail="Project not found")
 
     version, model = record
-    graph = HybridGraph.model_validate(version.hybrid_graph_json)
+    raw_graph = _hydrate_graph_for_api(version.hybrid_graph_json if isinstance(version.hybrid_graph_json, dict) else {}, db=db)
+    graph = HybridGraph.model_validate(raw_graph)
     normalize_graph_product_flags(graph)
     _project_pts_external_ports_into_graph(db=db, project_id=model.id, graph=graph)
     graph_json = graph.model_dump(mode="python")
@@ -12940,7 +13113,8 @@ def get_fixed_project_latest(db: Session = Depends(get_db)) -> dict:
     if not latest:
         raise HTTPException(status_code=404, detail="No project version found")
     version, model = latest
-    graph = HybridGraph.model_validate(version.hybrid_graph_json)
+    raw_graph = _hydrate_graph_for_api(version.hybrid_graph_json if isinstance(version.hybrid_graph_json, dict) else {}, db=db)
+    graph = HybridGraph.model_validate(raw_graph)
     normalize_graph_product_flags(graph)
     _project_pts_external_ports_into_graph(db=db, project_id=model.id, graph=graph)
     graph_json = graph.model_dump(mode="python")
