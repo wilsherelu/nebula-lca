@@ -9,7 +9,9 @@ Scenarios covered:
 """
 
 import ast
+import io
 import json
+import zipfile
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -491,7 +493,62 @@ class TestExportBundle:
 
 
 # ---------------------------------------------------------------------------
-# Test 7: syntax check
+# Test 7: exported dataset skeleton
+# ---------------------------------------------------------------------------
+
+class TestExportBundleSchemaSkeleton:
+    def test_export_bundle_contains_tidas_dataset_skeleton(self):
+        """Exported datasets should include Tiangong/ILCD required skeleton fields."""
+        flow_uuid = "08a91e70-3ddc-11dd-9c14-0050c2490048"
+        flows = {
+            flow_uuid: _make_flow_mock_with_meta(
+                flow_uuid,
+                "Elementary flow",
+                "EF3.1",
+                compartment="air",
+            ),
+        }
+        graph = _make_graph(elementary_flow_uuids=[flow_uuid])
+        db = _build_fake_db("proj-schema", flows, graph)
+
+        zip_bytes, report = export_bundle(db, "proj-schema")
+        assert report.has_errors() is False
+
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            flow_name = next(n for n in zf.namelist() if n.startswith("flows/"))
+            process_name = next(n for n in zf.namelist() if n.startswith("processes/"))
+            model_name = next(n for n in zf.namelist() if n.startswith("lifecyclemodels/"))
+
+            flow = json.loads(zf.read(flow_name).decode("utf-8"))["flowDataSet"]
+            process = json.loads(zf.read(process_name).decode("utf-8"))["processDataSet"]
+            model = json.loads(zf.read(model_name).decode("utf-8"))["lifeCycleModelDataSet"]
+
+        for key in ("@xmlns", "@xmlns:common", "@xmlns:xsi", "@version", "@locations", "@xsi:schemaLocation"):
+            assert key in flow
+            assert key in process
+            assert key in model
+
+        assert "@xmlns:ecn" in flow
+        assert "classificationInformation" in flow["flowInformation"]["dataSetInformation"]
+        assert "quantitativeReference" in flow["flowInformation"]
+        assert "administrativeInformation" in flow
+        assert "modellingAndValidation" in flow
+
+        assert "classificationInformation" in process["processInformation"]["dataSetInformation"]
+        assert "common:generalComment" in process["processInformation"]["dataSetInformation"]
+        assert "time" in process["processInformation"]
+        assert "geography" in process["processInformation"]
+        assert process["processInformation"]["quantitativeReference"]["@type"] == "Reference flow(s)"
+        assert isinstance(process["exchanges"]["exchange"], list)
+
+        model_info = model["lifeCycleModelInformation"]
+        assert "classificationInformation" in model_info["dataSetInformation"]
+        assert "quantitativeReference" in model_info
+        assert "technology" in model_info
+
+
+# ---------------------------------------------------------------------------
+# Test 8: syntax check
 # ---------------------------------------------------------------------------
 
 class TestSyntax:
