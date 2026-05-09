@@ -36,8 +36,8 @@ class Settings(BaseModel):
     nebula_lca_solver_api_url: str = os.getenv("NEBULA_LCA_SOLVER_API_URL", "http://127.0.0.1:8000")
     debug: bool = _env_bool("DEBUG", False)
     admin_token: str = os.getenv("ADMIN_TOKEN", "")
-    keep_latest_versions_per_project: int = int(os.getenv("KEEP_LATEST_VERSIONS_PER_PROJECT", "1000"))
-    auto_prune_on_startup: bool = _env_bool("AUTO_PRUNE_ON_STARTUP", True)
+    keep_latest_versions_per_project: int = int(os.getenv("KEEP_LATEST_VERSIONS_PER_PROJECT", "20"))
+    auto_prune_on_startup: bool = _env_bool("AUTO_PRUNE_ON_STARTUP", False)
     auto_vacuum_after_prune_on_startup: bool = _env_bool("AUTO_VACUUM_AFTER_PRUNE_ON_STARTUP", False)
     auto_bootstrap_reference_data_on_startup: bool = _env_bool("AUTO_BOOTSTRAP_REFERENCE_DATA_ON_STARTUP", True)
 
