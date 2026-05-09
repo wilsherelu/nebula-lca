@@ -13,9 +13,11 @@ type ProjectApiItem = {
   project_id: string;
   name: string;
   reference_product?: string | null;
+  functional_unit?: string | null;
   system_boundary?: string | null;
   time_representativeness?: string | null;
   geography?: string | null;
+  description?: string | null;
   process_count?: number | null;
   flow_count?: number | null;
   latest_version?: number | null;
@@ -51,9 +53,11 @@ type ProjectRow = {
   projectId: string;
   projectName: string;
   referenceProduct: string;
+  functionalUnit: string;
   systemBoundary: string;
   timeRepresentativeness: string;
   geography: string;
+  description: string;
   processCount: number;
   flowCount: number;
   lastModified: string;
@@ -367,9 +371,11 @@ const toProjectRows = (projects: ProjectListItem[]): ProjectRow[] =>
     projectId: item.project_id,
     projectName: item.name,
     referenceProduct: ["柴油", "电力", "蒸汽", "乙烯"][index % 4],
+    functionalUnit: "",
     systemBoundary: ["从摇篮到工厂", "从工厂到工厂"][index % 2],
     timeRepresentativeness: ["2025", "2024", "2023"][index % 3],
     geography: ["中国", "全球", "亚太"][index % 3],
+    description: "",
     processCount: 12 + (index % 9) * 7,
     flowCount: 28 + (index % 11) * 9,
     lastModified: formatTime(item.latest_version_created_at ?? item.created_at),
@@ -381,13 +387,22 @@ function CreateProjectModal(props: {
   open: boolean;
   busy?: boolean;
   uiLanguage: "zh" | "en";
+  mode?: "create" | "edit";
+  initialForm?: CreateProjectForm;
   onClose: () => void;
   onSubmit: (form: CreateProjectForm) => Promise<void>;
 }) {
-  const { open, busy, uiLanguage, onClose, onSubmit } = props;
+  const { open, busy, uiLanguage, mode = "create", initialForm, onClose, onSubmit } = props;
   const [form, setForm] = useState<CreateProjectForm>(defaultForm);
   const [errorText, setErrorText] = useState("");
   const zh = uiLanguage === "zh";
+
+  useEffect(() => {
+    if (open) {
+      setForm(initialForm ?? defaultForm);
+      setErrorText("");
+    }
+  }, [open, initialForm]);
 
   if (!open) {
     return null;
@@ -412,7 +427,7 @@ function CreateProjectModal(props: {
     <div className="pm-modal-mask">
       <div className="pm-modal" onClick={(event) => event.stopPropagation()}>
         <div className="pm-modal-head">
-          <strong>{zh ? "新建项目" : "Create Project"}</strong>
+          <strong>{mode === "edit" ? (zh ? "编辑项目" : "Edit Project") : (zh ? "新建项目" : "Create Project")}</strong>
           <button type="button" className="pm-link-btn" onClick={onClose}>
             {zh ? "关闭" : "Close"}
           </button>
@@ -453,7 +468,7 @@ function CreateProjectModal(props: {
             {zh ? "取消" : "Cancel"}
           </button>
           <button type="button" onClick={() => void submit()} disabled={busy}>
-            {zh ? "创建" : "Create"}
+            {mode === "edit" ? (zh ? "保存" : "Save") : (zh ? "创建" : "Create")}
           </button>
         </div>
       </div>
@@ -1140,6 +1155,8 @@ export function ProjectManagement(props: Props) {
   const [flowTypeFilter, setFlowTypeFilter] = useState<"all" | FlowBusinessType>("all");
   const [flowCategoryFilter, setFlowCategoryFilter] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
+  const [editingProject, setEditingProject] = useState<ProjectRow | null>(null);
+  const [projectEditBusy, setProjectEditBusy] = useState(false);
   const [processDetailOpen, setProcessDetailOpen] = useState(false);
   const [processDetailBusy, setProcessDetailBusy] = useState(false);
   const [processDetailError, setProcessDetailError] = useState("");
@@ -1212,6 +1229,48 @@ export function ProjectManagement(props: Props) {
     const createdProject = result.createdProjects[0];
     if (createdProject?.projectId) {
       onOpenProject(createdProject.projectId, createdProject.name);
+    }
+  };
+
+  const openProjectEdit = (row: ProjectRow) => {
+    setEditingProject(row);
+    setModalOpen(true);
+  };
+
+  const closeProjectModal = () => {
+    setModalOpen(false);
+    setEditingProject(null);
+  };
+
+  const updateProjectMetadata = async (projectId: string, form: CreateProjectForm) => {
+    setProjectEditBusy(true);
+    try {
+      const resp = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: form.projectName.trim(),
+          reference_product: form.referenceProduct.trim() || null,
+          functional_unit: form.functionalUnit.trim() || null,
+          system_boundary: form.systemBoundary.trim() || null,
+          time_representativeness: form.timeRepresentativeness.trim() || null,
+          geography: form.geography.trim() || null,
+          description: form.description.trim() || null,
+        }),
+      });
+      if (!resp.ok) {
+        const err = (await resp.json().catch(() => ({}))) as { detail?: { message?: string } | string; message?: string };
+        const detail = typeof err.detail === "string" ? err.detail : err.detail?.message;
+        throw new Error(detail ?? err.message ?? `HTTP ${resp.status}`);
+      }
+      clearPmCacheByPrefix("pm:projects:");
+      clearPmCacheByPrefix("pm:stats");
+      setForceProjectRefresh(true);
+      setForceStatsRefresh(true);
+      setImportRefreshTick((prev) => prev + 1);
+      onStatus?.(zh ? "项目信息已保存" : "Project metadata saved");
+    } finally {
+      setProjectEditBusy(false);
     }
   };
 
@@ -1394,13 +1453,15 @@ export function ProjectManagement(props: Props) {
         const payload = (await resp.json()) as PagedResponse<ProjectApiItem> | ProjectApiItem[];
         const items = Array.isArray(payload) ? payload : payload.items ?? [];
         const total = Array.isArray(payload) ? payload.length : Number(payload.total ?? items.length);
-        const mapped: ProjectRow[] = items.map((item, idx) => ({
+        const mapped: ProjectRow[] = items.map((item) => ({
           projectId: item.project_id,
           projectName: item.name,
-          referenceProduct: String(item.reference_product ?? ["柴油", "电力", "蒸汽", "乙烯"][idx % 4]),
+          referenceProduct: String(item.reference_product ?? ""),
+          functionalUnit: String(item.functional_unit ?? ""),
           systemBoundary: mapSystemBoundary(item.system_boundary, zh),
-          timeRepresentativeness: String(item.time_representativeness ?? "2025"),
-          geography: String(item.geography ?? "中国"),
+          timeRepresentativeness: String(item.time_representativeness ?? ""),
+          geography: String(item.geography ?? ""),
+          description: String(item.description ?? ""),
           processCount: Number(item.process_count ?? 0),
           flowCount: Number(item.flow_count ?? 0),
           lastModified: formatTime(item.latest_version_created_at ?? item.created_at),
@@ -1869,6 +1930,9 @@ export function ProjectManagement(props: Props) {
                           <button type="button" className="pm-link-btn primary" onClick={() => onOpenProject(row.projectId)}>
                             {zh ? "打开" : "Open"}
                           </button>
+                          <button type="button" className="pm-link-btn" onClick={() => openProjectEdit(row)}>
+                            {zh ? "编辑" : "Edit"}
+                          </button>
                           <button type="button" className="pm-link-btn" onClick={() => void openTidasExport(row.projectId, row.projectName, row.latestVersion)} disabled={!row.latestVersion}>
                             {zh ? "导出" : "Export"}
                           </button>
@@ -1930,7 +1994,7 @@ export function ProjectManagement(props: Props) {
                                 <button type="button" className="pm-link-btn" onClick={() => void openTidasExport(row.projectId, row.projectName, row.latestVersion)} disabled={!row.latestVersion}>
                                   {zh ? "导出" : "Export"}
                                 </button>
-                                <button type="button" className="pm-link-btn">{zh ? "编辑" : "Edit"}</button>
+                                <button type="button" className="pm-link-btn" onClick={() => openProjectEdit(row)}>{zh ? "编辑" : "Edit"}</button>
                                 <button type="button" className="pm-link-btn">{zh ? "复制" : "Duplicate"}</button>
                                 <button type="button" className="pm-link-btn danger" onClick={() => onDeleteProject(row.projectId)}>
                                   {zh ? "删除" : "Delete"}
@@ -2169,11 +2233,25 @@ export function ProjectManagement(props: Props) {
       />
       <CreateProjectModal
         open={modalOpen}
-        busy={busy}
+        busy={busy || projectEditBusy}
         uiLanguage={uiLanguage}
-        onClose={() => setModalOpen(false)}
+        mode={editingProject ? "edit" : "create"}
+        initialForm={editingProject ? {
+          projectName: editingProject.projectName,
+          referenceProduct: editingProject.referenceProduct,
+          functionalUnit: editingProject.functionalUnit,
+          systemBoundary: editingProject.systemBoundary,
+          timeRepresentativeness: editingProject.timeRepresentativeness,
+          geography: editingProject.geography,
+          description: editingProject.description,
+        } : undefined}
+        onClose={closeProjectModal}
         onSubmit={async (form) => {
-          await onCreateProject(form);
+          if (editingProject) {
+            await updateProjectMetadata(editingProject.projectId, form);
+          } else {
+            await onCreateProject(form);
+          }
         }}
       />
       <CreateFlowDialog
