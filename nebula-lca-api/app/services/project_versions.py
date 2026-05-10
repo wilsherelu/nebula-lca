@@ -55,8 +55,6 @@ def _ensure_main_helpers():
         _bind_pts_published_versions_for_graph,
         _sync_pts_resources_from_graph,
         _safe_str,
-        _normalize_project_status,
-        get_model_or_404,
     )
     # fmt: on
     globals().update({
@@ -67,8 +65,6 @@ def _ensure_main_helpers():
         "_bind_pts_published_versions_for_graph": _bind_pts_published_versions_for_graph,
         "_sync_pts_resources_from_graph": _sync_pts_resources_from_graph,
         "_safe_str": _safe_str,
-        "_normalize_project_status": _normalize_project_status,
-        "get_model_or_404": get_model_or_404,
     })
     _main_helpers_loaded = True
 
@@ -590,10 +586,10 @@ _FLOW_META_TTL: float = 30.0
 
 def _get_flow_meta_by_uuid_cached(db: Session) -> dict[str, tuple[str | None, str | None, str | None, str | None]]:
     """Flow metadata by UUID, cached per session (mirrors main.py logic)."""
-    from ..main import _cache_get, _cache_revision, _cache_set
+    from .catalog_cache import cache_get, cache_revision, cache_set
 
-    cache_key = f"flow_meta_by_uuid:v1:rev={_cache_revision('flow_meta')}"
-    cached = _cache_get(cache_key, ttl_seconds=_FLOW_META_TTL)
+    cache_key = f"flow_meta_by_uuid:v1:rev={cache_revision('flow_meta')}"
+    cached = cache_get(cache_key, ttl_seconds=_FLOW_META_TTL)
     if isinstance(cached, dict):
         return cached
     value = {
@@ -611,16 +607,16 @@ def _get_flow_meta_by_uuid_cached(db: Session) -> dict[str, tuple[str | None, st
             FlowRecord.unit_group,
         ).all()
     }
-    _cache_set(cache_key, value)
+    cache_set(cache_key, value)
     return value
 
 
 def _get_flow_name_en_by_uuid_cached(db: Session) -> dict[str, str]:
     """Flow name-en by UUID, cached per session."""
-    from ..main import _cache_get, _cache_revision, _cache_set
+    from .catalog_cache import cache_get, cache_revision, cache_set
 
-    cache_key = f"flow_name_en_by_uuid:v1:rev={_cache_revision('flow_meta')}"
-    cached = _cache_get(cache_key, ttl_seconds=_FLOW_META_TTL)
+    cache_key = f"flow_name_en_by_uuid:v1:rev={cache_revision('flow_meta')}"
+    cached = cache_get(cache_key, ttl_seconds=_FLOW_META_TTL)
     if isinstance(cached, dict):
         return cached
     value = {
@@ -628,5 +624,5 @@ def _get_flow_name_en_by_uuid_cached(db: Session) -> dict[str, str]:
         for row in db.query(FlowRecord.flow_uuid, FlowRecord.flow_name_en).all()
         if str(row.flow_uuid or "").strip() and _safe_str(row.flow_name_en)
     }
-    _cache_set(cache_key, value)
+    cache_set(cache_key, value)
     return value

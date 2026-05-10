@@ -17,7 +17,7 @@ from ..models import Model
 from ..schemas import PaginatedProjectsResponse, ProjectOut
 from ..services.project_versions import _build_project_out, _latest_version_by_project_id
 
-# Cache helpers: lazy import from main.py to avoid circular import
+# Cache helpers
 _cache_helpers = None
 
 
@@ -26,17 +26,17 @@ def _ensure_cache_helpers():
     if _cache_helpers is not None:
         return
     # fmt: off
-    from ..main import (
-        _cache_get, _cache_set, _cache_revision,
-        _build_etag_for_payload, _is_if_none_match_hit,
+    from ..services.catalog_cache import (
+        cache_get, cache_set, cache_revision,
+        build_etag_for_payload, is_if_none_match_hit,
     )
     # fmt: on
     _cache_helpers = {
-        "_cache_get": _cache_get,
-        "_cache_set": _cache_set,
-        "_cache_revision": _cache_revision,
-        "_build_etag_for_payload": _build_etag_for_payload,
-        "_is_if_none_match_hit": _is_if_none_match_hit,
+        "_cache_get": cache_get,
+        "_cache_set": cache_set,
+        "_cache_revision": cache_revision,
+        "_build_etag_for_payload": build_etag_for_payload,
+        "_is_if_none_match_hit": is_if_none_match_hit,
     }
 
 

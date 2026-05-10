@@ -32,6 +32,8 @@ from ..schemas import (
 )
 from ..services.project_versions import (
     _auto_prune_versions,
+    _build_flow_sync_state_for_graph_json,
+    _build_project_integrity_summary,
     _build_project_out,
     _latest_version_by_project_id,
     _resolve_model_version_graph_hash,
@@ -49,7 +51,7 @@ from ..services.graph_storage import (
 )
 from ..schemas import HybridGraph
 
-# ── Cache helpers: lazy import from main.py (circular avoidance) ──────────
+# ── Cache helpers ────────────────────────────────────────────────────────
 
 _cache_helpers = None
 
@@ -59,19 +61,19 @@ def _ensure_cache_helpers():
     if _cache_helpers is not None:
         return
     # fmt: off
-    from ..main import (
-        _cache_get, _cache_set, _cache_revision,
-        _build_etag_for_payload, _is_if_none_match_hit,
-        _invalidate_management_caches,
+    from ..services.catalog_cache import (
+        cache_get, cache_set, cache_revision,
+        build_etag_for_payload, is_if_none_match_hit,
+        invalidate_management_caches,
     )
     # fmt: on
     _cache_helpers = {
-        "_cache_get": _cache_get,
-        "_cache_set": _cache_set,
-        "_cache_revision": _cache_revision,
-        "_build_etag_for_payload": _build_etag_for_payload,
-        "_is_if_none_match_hit": _is_if_none_match_hit,
-        "_invalidate_management_caches": _invalidate_management_caches,
+        "_cache_get": cache_get,
+        "_cache_set": cache_set,
+        "_cache_revision": cache_revision,
+        "_build_etag_for_payload": build_etag_for_payload,
+        "_is_if_none_match_hit": is_if_none_match_hit,
+        "_invalidate_management_caches": invalidate_management_caches,
     }
 
 
@@ -178,8 +180,6 @@ def _ensure_pts_helpers():
         _project_pts_external_ports_into_graph,
         _build_pts_validation_summary,
         _enrich_graph_flow_name_en,
-        _build_flow_sync_state_for_graph_json,
-        _build_project_integrity_summary,
         _canonicalize_pts_nodes_for_main_graph_save,
         _repair_pts_publication_from_resource,
     )
