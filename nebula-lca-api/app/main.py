@@ -145,6 +145,8 @@ from .pts_compile import PTS_COMPILE_SCHEMA_VERSION, compile_pts, compute_pts_gr
 from .tidas_export import preview_export, export_bundle, ExportError
 from .services import graph_contract as _gc
 from .services import graph_storage as _gs
+from .api.projects import _base_router, _api_router as _api_projects_router
+from .api.paginated_projects import _router as _paginated_projects_router
 
 # Re-export graph contract functions (authoritative implementations live in
 # ``app.services.graph_contract``; keep aliases so the rest of main.py and
@@ -186,15 +188,27 @@ _slim_flowport_for_storage = _gs.slim_flowport_for_storage
 _slim_node_for_storage = _gs.slim_node_for_storage
 _slim_pts_node_for_storage = _gs.slim_pts_node_for_storage
 
+# Re-export project/version helpers from services
+from .services.project_versions import (
+    _build_project_out,
+    _create_project_version_from_graph_json,
+    _latest_version_by_project_id,
+    _resolve_model_version_graph_hash,
+    _auto_prune_versions,
+    _prune_model_versions_retention,
+)
 app = FastAPI(title=settings.app_name, version="0.1.0")
 
+# ── Include modular routers ──
+app.include_router(_base_router)
+app.include_router(_api_projects_router)
+app.include_router(_paginated_projects_router, prefix="/api/projects")
 
 def get_model_or_404(db: Session, model_id: str) -> Model:
     model = db.query(Model).filter(Model.id == model_id).first()
     if not model:
         raise HTTPException(status_code=404, detail="Project not found")
     return model
-
 
 def resolve_project_id_for_run(payload: RunRequest, db: Session) -> str:
     if payload.project_id:
@@ -210,7 +224,6 @@ def resolve_project_id_for_run(payload: RunRequest, db: Session) -> str:
             return version_row.model_id
 
     raise HTTPException(status_code=400, detail="project_id is required for PTS compile/save context")
-
 
 _CACHE_TTL_SECONDS = 30.0
 _CACHE_TTL_PROJECTS_SECONDS = 3600.0
@@ -281,7 +294,6 @@ def analyze_handle_consistency(graph: HybridGraph) -> dict:
         "issues": issues,
     }
 
-
 def analyze_handle_consistency_from_graph_json(graph_json: dict) -> dict:
     try:
         graph = HybridGraph.model_validate(graph_json)
@@ -293,7 +305,6 @@ def analyze_handle_consistency_from_graph_json(graph_json: dict) -> dict:
         }
     return analyze_handle_consistency(graph)
 
-
 def safe_handle_validation_from_graph_json(graph_json: dict) -> dict:
     try:
         return analyze_handle_consistency_from_graph_json(graph_json)
@@ -303,7 +314,6 @@ def safe_handle_validation_from_graph_json(graph_json: dict) -> dict:
             "issue_count": 1,
             "issues": [{"code": "HANDLE_VALIDATION_RUNTIME_ERROR", "message": str(exc)}],
         }
-
 
 def _port_id_from_handle(handle_id: str | None, prefix: str) -> str:
     if not handle_id:
@@ -315,7 +325,6 @@ def _port_id_from_handle(handle_id: str | None, prefix: str) -> str:
         return handle_id.split(":", 1)[1]
     return handle_id
 
-
 def _split_port_source_suffix(name: str | None) -> tuple[str, str]:
     text = str(name or "").strip()
     if "@" not in text:
@@ -323,14 +332,12 @@ def _split_port_source_suffix(name: str | None) -> tuple[str, str]:
     base, suffix = text.split("@", 1)
     return base.strip(), suffix.strip()
 
-
 def _market_input_display_name(flow_name: str | None, source_name: str | None) -> str:
     base_name, _ = _split_port_source_suffix(flow_name)
     source = str(source_name or "").strip()
     if not source:
         return base_name
     return f"{base_name}@{source}" if base_name else source
-
 
 def _enrich_market_process_input_sources_on_canvas(*, nodes: list[dict], exchanges: list[dict]) -> None:
     if not isinstance(nodes, list) or not isinstance(exchanges, list):
@@ -411,7 +418,6 @@ def _enrich_market_process_input_sources_on_canvas(*, nodes: list[dict], exchang
             if source_process_name and "@" not in current_name:
                 port["name"] = _market_input_display_name(current_name or flow_uuid, source_process_name)
 
-
 def _enrich_market_process_input_sources_in_graph_json(graph_json: dict) -> dict:
     if not isinstance(graph_json, dict):
         return graph_json
@@ -434,7 +440,6 @@ def _enrich_market_process_input_sources_in_graph_json(graph_json: dict) -> dict
 
     return graph_json
 
-
 def _raise_pts_compile_value_error_http(exc: ValueError, pts_node_id: str) -> None:
     raw = str(exc)
     code = "INVALID_PTS_EXPORT_PORTS"
@@ -454,7 +459,6 @@ def _raise_pts_compile_value_error_http(exc: ValueError, pts_node_id: str) -> No
             except Exception:
                 pass
     raise HTTPException(status_code=400, detail={"code": code, "message": message, "evidence": evidence}) from exc
-
 
 def _build_process_unit_map_from_snapshot(snapshot: dict) -> dict[str, dict]:
     processes = snapshot.get("processes") if isinstance(snapshot, dict) else []
@@ -481,7 +485,6 @@ def _build_process_unit_map_from_snapshot(snapshot: dict) -> dict[str, dict]:
         }
     return process_unit_map
 
-
 def _build_process_unit_map_from_graph(graph: HybridGraph) -> dict[str, dict]:
     process_unit_map: dict[str, dict] = {}
     for node in graph.nodes:
@@ -505,7 +508,6 @@ def _build_process_unit_map_from_graph(graph: HybridGraph) -> dict[str, dict]:
             "reference_unit_group": str(ref_port.unitGroup or ""),
         }
     return process_unit_map
-
 
 def _build_product_result_view_from_graph(
     *,
@@ -601,7 +603,6 @@ def _build_product_result_view_from_graph(
 
     return product_result_index, product_unit_map, product_values
 
-
 def _rescale_lci_values_to_inventory_units(
     *,
     values: object,
@@ -647,7 +648,6 @@ def _rescale_lci_values_to_inventory_units(
         return scaled
 
     return values
-
 
 def _compile_and_persist_pts_for_node(
     *,
@@ -721,7 +721,6 @@ def _compile_and_persist_pts_for_node(
 
     return compile_row
 
-
 def _compile_pts_on_save_if_needed(
     *,
     db: Session,
@@ -745,7 +744,6 @@ def _compile_pts_on_save_if_needed(
         "pts_failed_items": [],
     }
 
-
 def _find_pts_internal_canvas(graph: HybridGraph, pts_node_id: str) -> dict | None:
     metadata = graph.metadata if isinstance(graph.metadata, dict) else {}
     canvases = metadata.get("canvases")
@@ -767,7 +765,6 @@ def _find_pts_internal_canvas(graph: HybridGraph, pts_node_id: str) -> dict | No
         key=lambda c: (len(c.get("nodes") or []), len(c.get("edges") or [])),
         reverse=True,
     )[0]
-
 
 def _build_pts_ports_policy_from_node(pts_node: HybridNode) -> dict:
     return {
@@ -798,7 +795,6 @@ def _build_pts_ports_policy_from_node(pts_node: HybridNode) -> dict:
         ],
     }
 
-
 def _is_pts_port_exposed_like(port: object) -> bool:
     internal_exposed = getattr(port, "internalExposed", None)
     if internal_exposed is not None:
@@ -810,7 +806,6 @@ def _is_pts_port_exposed_like(port: object) -> bool:
     if show_on_node is not None:
         return bool(show_on_node)
     return False
-
 
 def _normalize_pts_ports_policy_from_graph(*, pts_graph: dict, fallback_policy: dict | None = None) -> dict:
     if not isinstance(pts_graph, dict):
@@ -986,7 +981,6 @@ def _normalize_pts_ports_policy_from_graph(*, pts_graph: dict, fallback_policy: 
         return {"inputs": inputs, "outputs": outputs}
     return dict(fallback_policy or {})
 
-
 def _sanitize_pts_ports_policy(*, ports_policy: dict | None, pts_graph: dict | None = None) -> dict:
     policy = dict(ports_policy or {})
     inputs = policy.get("inputs") if isinstance(policy.get("inputs"), list) else []
@@ -1074,7 +1068,6 @@ def _sanitize_pts_ports_policy(*, ports_policy: dict | None, pts_graph: dict | N
 
     return {"inputs": sanitized_inputs, "outputs": sanitized_outputs}
 
-
 def _get_pts_resource_ports_policy(
     *,
     db: Session,
@@ -1093,7 +1086,6 @@ def _get_pts_resource_ports_policy(
         pts_graph=dict(row.pts_graph_json or {}),
     )
 
-
 def _apply_pts_resource_policy_override(
     *,
     db: Session,
@@ -1108,7 +1100,6 @@ def _apply_pts_resource_policy_override(
         definition = dict(definition)
         definition["ports_policy"] = resource_policy
     return definition
-
 
 def _build_pts_shell_node_snapshot(pts_node: HybridNode) -> dict:
     return {
@@ -1128,7 +1119,6 @@ def _build_pts_shell_node_snapshot(pts_node: HybridNode) -> dict:
         "outputs": [port.model_dump(mode="python", by_alias=True) for port in pts_node.outputs],
         "emissions": [port.model_dump(mode="python", by_alias=True) for port in pts_node.emissions],
     }
-
 
 def _upsert_pts_resource_from_graph(*, db: Session, project_id: str, graph: HybridGraph, pts_node: HybridNode) -> PtsResource | None:
     internal_canvas = _find_pts_internal_canvas(graph, pts_node.id)
@@ -1197,7 +1187,6 @@ def _upsert_pts_resource_from_graph(*, db: Session, project_id: str, graph: Hybr
         resource.published_at = latest_external.updated_at or latest_external.created_at
     return resource
 
-
 def _next_pts_compile_version(*, db: Session, project_id: str, pts_uuid: str) -> int:
     current_max = (
         db.query(func.max(PtsCompileArtifact.compile_version))
@@ -1206,7 +1195,6 @@ def _next_pts_compile_version(*, db: Session, project_id: str, pts_uuid: str) ->
     )
     return int(current_max or 0) + 1
 
-
 def _next_pts_published_version(*, db: Session, project_id: str, pts_uuid: str) -> int:
     current_max = (
         db.query(func.max(PtsExternalArtifact.published_version))
@@ -1214,7 +1202,6 @@ def _next_pts_published_version(*, db: Session, project_id: str, pts_uuid: str) 
         .scalar()
     )
     return int(current_max or 0) + 1
-
 
 def _sync_pts_resources_from_graph(*, db: Session, project_id: str, graph: HybridGraph) -> list[str]:
     synced: list[str] = []
@@ -1225,7 +1212,6 @@ def _sync_pts_resources_from_graph(*, db: Session, project_id: str, graph: Hybri
         if resource is not None:
             synced.append(str(resource.pts_uuid))
     return synced
-
 
 def _migrate_pts_resources(
     *,
@@ -1315,7 +1301,6 @@ def _migrate_pts_resources(
         "items": items,
         "failures": failures[:50],
     }
-
 
 def _migrate_pts_published_version_bindings(
     *,
@@ -1445,10 +1430,8 @@ def _migrate_pts_published_version_bindings(
         "failures": failures[:50],
     }
 
-
 def _canonical_json(data: object) -> str:
     return json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
 
 def _normalize_node_json_for_storage(node_json: dict) -> dict:
     raw = dict(node_json or {})
@@ -1461,7 +1444,6 @@ def _normalize_node_json_for_storage(node_json: dict) -> dict:
     raw["process_uuid"] = normalized.get("process_uuid", raw.get("process_uuid"))
     raw["pts_uuid"] = normalized.get("pts_uuid", raw.get("pts_uuid"))
     return raw
-
 
 def _restore_canvas_node_positions(*, source_canvas: dict, normalized_canvas: dict) -> dict:
     if not isinstance(normalized_canvas, dict):
@@ -1499,7 +1481,6 @@ def _restore_canvas_node_positions(*, source_canvas: dict, normalized_canvas: di
             "node_positions": dict(source_positions),
         }
     return updated
-
 
 def _restore_graph_node_positions(*, source_graph_json: dict, normalized_graph_json: dict) -> dict:
     if not isinstance(source_graph_json, dict) or not isinstance(normalized_graph_json, dict):
@@ -1570,7 +1551,6 @@ def _restore_graph_node_positions(*, source_graph_json: dict, normalized_graph_j
 
     return updated
 
-
 def _build_default_graph_viewport(
     *,
     node_positions: dict[str, dict[str, float]] | None = None,
@@ -1625,7 +1605,6 @@ def _build_default_graph_viewport(
         "zoom": zoom,
     }
 
-
 def _normalize_graph_canvases_for_storage(graph_json: dict) -> dict:
     metadata = graph_json.get("metadata")
     if not isinstance(metadata, dict):
@@ -1659,9 +1638,7 @@ def _normalize_graph_canvases_for_storage(graph_json: dict) -> dict:
     graph_json["metadata"] = metadata_copy
     return graph_json
 
-
 _NON_PTS_UNIQUE_NAME_NODE_KINDS: set[str] = {"unit_process", "market_process", "lci_dataset"}
-
 
 def _process_name_uniqueness_group(node_kind: str) -> str | None:
     normalized = str(node_kind or "").strip()
@@ -1670,7 +1647,6 @@ def _process_name_uniqueness_group(node_kind: str) -> str | None:
     if normalized == "pts_module":
         return "pts_module"
     return None
-
 
 def _raise_if_duplicate_process_names_in_graph(*, graph: HybridGraph, scope_label: str) -> None:
     buckets: dict[tuple[str, str], list[HybridNode]] = defaultdict(list)
@@ -1712,7 +1688,6 @@ def _raise_if_duplicate_process_names_in_graph(*, graph: HybridGraph, scope_labe
         },
     )
 
-
 def _validate_process_name_uniqueness_for_graph_json(*, graph_json: dict, scope_label: str) -> None:
     graph = HybridGraph.model_validate(graph_json)
     _raise_if_duplicate_process_names_in_graph(graph=graph, scope_label=scope_label)
@@ -1736,7 +1711,6 @@ def _validate_process_name_uniqueness_for_graph_json(*, graph_json: dict, scope_
         canvas_label = str(canvas.get("name") or canvas.get("id") or f"canvas[{idx}]")
         _raise_if_duplicate_process_names_in_graph(graph=canvas_graph, scope_label=f"{scope_label}.{canvas_label}")
 
-
 def _normalize_graph_json_for_storage(graph_json: dict) -> dict:
     _enrich_market_process_input_sources_in_graph_json(graph_json)
     _validate_process_name_uniqueness_for_graph_json(graph_json=graph_json, scope_label="main_graph")
@@ -1749,11 +1723,9 @@ def _normalize_graph_json_for_storage(graph_json: dict) -> dict:
     normalized = _enrich_market_process_input_sources_in_graph_json(normalized)
     return _restore_graph_node_positions(source_graph_json=graph_json, normalized_graph_json=normalized)
 
-
 def _iter_chunks(values: list[str], size: int = 500):
     for idx in range(0, len(values), size):
         yield values[idx : idx + size]
-
 
 def _ensure_model_versions_hash_schema() -> dict:
     added_columns: list[str] = []
@@ -1788,7 +1760,6 @@ def _ensure_model_versions_hash_schema() -> dict:
         "status": "ok",
     }
 
-
 def _migrate_flow_catalog_table_name() -> dict:
     with engine.begin() as conn:
         inspector = inspect(conn)
@@ -1802,7 +1773,6 @@ def _migrate_flow_catalog_table_name() -> dict:
 
         conn.execute(text("ALTER TABLE reference_flows RENAME TO flow_catalog"))
         return {"from": "reference_flows", "to": "flow_catalog", "status": "renamed"}
-
 
 def _ensure_projects_management_schema() -> dict:
     added_columns: list[str] = []
@@ -1849,7 +1819,6 @@ def _ensure_projects_management_schema() -> dict:
         "index_created": created_indexes,
         "status": "ok",
     }
-
 
 def _ensure_reference_processes_schema() -> dict:
     added_columns: list[str] = []
@@ -1928,7 +1897,6 @@ def _ensure_reference_processes_schema() -> dict:
         "status": "ok",
     }
 
-
 # ---------------------------------------------------------------------------
 # Custom flow creation (Stage 1 — open-source)
 # ---------------------------------------------------------------------------
@@ -1943,10 +1911,8 @@ PROTECTED_BUILTIN_FLOW_SOURCES = {
     BUILTIN_INTERMEDIATE_FLOW_SOURCE,
 }
 
-
 def _is_protected_builtin_flow(row: FlowRecord) -> bool:
     return not bool(row.is_custom) and _safe_str(row.source) in PROTECTED_BUILTIN_FLOW_SOURCES
-
 
 def _ensure_custom_flow_columns() -> dict:
     """Ensure ``source`` / ``is_custom`` columns exist on flow_catalog.
@@ -1998,7 +1964,6 @@ def _ensure_custom_flow_columns() -> dict:
     else:
         status = "ok" if table_exists else "skipped_table_missing"
     return {"table": "flow_catalog", "added_columns": added_columns, "status": status}
-
 
 def _ensure_flow_catalog_fts_triggers(*, db: Session | None = None) -> dict:
     """Ensure SQLite triggers exist to keep flow_catalog_fts in sync with flow_catalog.
@@ -2055,7 +2020,6 @@ def _ensure_flow_catalog_fts_triggers(*, db: Session | None = None) -> dict:
             }
     except Exception as exc:
         return {"executed": False, "error": str(exc)}
-
 
 def _bootstrap_reference_data_if_needed(*, db: Session) -> None:
     if not settings.auto_bootstrap_reference_data_on_startup:
@@ -2133,7 +2097,6 @@ def _bootstrap_reference_data_if_needed(*, db: Session) -> None:
             f"failed={result.get('failed', 0)}"
         )
 
-
 def _ensure_pts_uuid_schema() -> dict:
     added_columns: list[str] = []
     created_indexes: list[str] = []
@@ -2195,7 +2158,6 @@ def _ensure_pts_uuid_schema() -> dict:
         "index_created": created_indexes,
         "status": "ok",
     }
-
 
 def _ensure_pts_resources_schema() -> dict:
     created_indexes: list[str] = []
@@ -2266,7 +2228,6 @@ def _ensure_pts_resources_schema() -> dict:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_pts_external_artifacts_source_compile_version ON pts_external_artifacts (source_compile_version)"))
         created_indexes.append("ix_pts_external_artifacts_source_compile_version")
     return {"table": "pts_resources", "column_added": added_columns, "index_created": created_indexes, "status": "ok"}
-
 
 def _backfill_pts_artifact_versions(*, db: Session, dry_run: bool = False) -> dict:
     compile_updated = 0
@@ -2346,28 +2307,23 @@ def _backfill_pts_artifact_versions(*, db: Session, dry_run: bool = False) -> di
         "dry_run": dry_run,
     }
 
-
 def _safe_str(value: object) -> str | None:
     if value is None:
         return None
     text_value = str(value).strip()
     return text_value or None
 
-
 def _is_output_direction(value: object) -> bool:
     return str(value or "").strip().lower() == "output"
 
-
 def _to_stripped(value: object) -> str:
     return str(value or "").strip()
-
 
 def _normalize_import_mode_value(value: object) -> str | None:
     mode = _to_stripped(value)
     if mode in {"locked", "editable_clone"}:
         return mode
     return None
-
 
 def _normalize_process_kind(value: object) -> str:
     raw = _to_stripped(value).lower()
@@ -2378,7 +2334,6 @@ def _normalize_process_kind(value: object) -> str:
     if raw == "pts":
         return "pts_module"
     return "unit_process"
-
 
 def _validate_target_kind_or_400(value: str | None) -> str | None:
     if value is None:
@@ -2395,10 +2350,8 @@ def _validate_target_kind_or_400(value: str | None) -> str | None:
         )
     return normalized
 
-
 def _flow_uuid_set(db: Session) -> set[str]:
     return {str(row.flow_uuid).strip() for row in db.query(FlowRecord.flow_uuid).all() if str(row.flow_uuid).strip()}
-
 
 def _flow_uuid_set_cached(db: Session) -> set[str]:
     cache_key = f"flow_uuid_set:v1:rev={_cache_revision('flow_meta')}"
@@ -2408,7 +2361,6 @@ def _flow_uuid_set_cached(db: Session) -> set[str]:
     value = _flow_uuid_set(db)
     _cache_set(cache_key, value)
     return value
-
 
 def _flow_meta_by_uuid_cached(db: Session) -> dict[str, tuple[str | None, str | None, str | None, str | None]]:
     cache_key = f"flow_meta_by_uuid:v1:rev={_cache_revision('flow_meta')}"
@@ -2433,7 +2385,6 @@ def _flow_meta_by_uuid_cached(db: Session) -> dict[str, tuple[str | None, str | 
     _cache_set(cache_key, value)
     return value
 
-
 def _flow_name_en_by_uuid_cached(db: Session) -> dict[str, str]:
     cache_key = f"flow_name_en_by_uuid:v1:rev={_cache_revision('flow_meta')}"
     cached = _cache_get(cache_key, ttl_seconds=_CACHE_TTL_FLOW_META_SECONDS)
@@ -2447,14 +2398,12 @@ def _flow_name_en_by_uuid_cached(db: Session) -> dict[str, str]:
     _cache_set(cache_key, value)
     return value
 
-
 def _solver_flow_type_by_uuid_cached(db: Session) -> dict[str, str]:
     return {
         flow_uuid: str(meta[2]).strip()
         for flow_uuid, meta in _flow_meta_by_uuid_cached(db).items()
         if flow_uuid and meta and str(meta[2] or "").strip()
     }
-
 
 def _filter_exchanges_with_evidence(
     *,
@@ -2500,7 +2449,6 @@ def _filter_exchanges_with_evidence(
         kept.append(ex)
     return kept, filtered
 
-
 def _mark_reference_product_exchange(
     *,
     process_uuid: str,
@@ -2543,7 +2491,6 @@ def _mark_reference_product_exchange(
         return None, warnings
     return flow_uuid, warnings
 
-
 def _derive_reference_flow_display(
     *,
     process_json: dict | None,
@@ -2578,7 +2525,6 @@ def _derive_reference_flow_display(
     if _safe_str(reference_flow_internal_id):
         return None, "Reference Flow Missing"
     return None, None
-
 
 def _build_imported_process_ports(
     *,
@@ -2627,9 +2573,7 @@ def _build_imported_process_ports(
 
     return inputs, outputs
 
-
 _TIDAS_IMPORT_DIAGNOSTIC_TYPE = "tidas.import.report.v1"
-
 
 def _as_list(value: object) -> list:
     if value is None:
@@ -2637,7 +2581,6 @@ def _as_list(value: object) -> list:
     if isinstance(value, list):
         return value
     return [value]
-
 
 def _pick_localized_text(value: object, *, preferred_langs: tuple[str, ...] = ("zh", "en")) -> str | None:
     rows = _as_list(value)
@@ -2665,7 +2608,6 @@ def _pick_localized_text(value: object, *, preferred_langs: tuple[str, ...] = ("
     candidates.sort(key=lambda item: item[0])
     return candidates[0][1]
 
-
 def _extract_ilcd_name(name_obj: object) -> tuple[str | None, str | None]:
     if not isinstance(name_obj, dict):
         return None, None
@@ -2676,7 +2618,6 @@ def _extract_ilcd_name(name_obj: object) -> tuple[str | None, str | None]:
     if not en:
         en = _pick_localized_text(name_obj.get("common:name"), preferred_langs=("en", "zh"))
     return zh, en
-
 
 def _extract_ilcd_process_name(name_obj: object) -> tuple[str | None, str | None]:
     if not isinstance(name_obj, dict):
@@ -2694,7 +2635,6 @@ def _extract_ilcd_process_name(name_obj: object) -> tuple[str | None, str | None
         return _pick_localized_text(name_obj.get("common:name"), preferred_langs=preferred_langs)
 
     return _compose(("zh", "en")), _compose(("en", "zh"))
-
 
 def _extract_ilcd_flow_compartment(classification_obj: object) -> str | None:
     if not isinstance(classification_obj, dict):
@@ -2726,7 +2666,6 @@ def _extract_ilcd_flow_compartment(classification_obj: object) -> str | None:
         return ";".join(parts)
     return None
 
-
 def _infer_unit_defaults_from_flow_dataset(flow_dataset: dict) -> tuple[str, str]:
     # Priority 1: Read from flowInformation.referenceUnit/unitGroup if present
     flow_info = flow_dataset.get("flowInformation") if isinstance(flow_dataset.get("flowInformation"), dict) else {}
@@ -2757,10 +2696,8 @@ def _infer_unit_defaults_from_flow_dataset(flow_dataset: dict) -> tuple[str, str
         return "item", "dimensionless"
     return "kg", "Units of mass"
 
-
 def _parse_tidas_json_documents(file_path: Path) -> tuple[list[dict], list[str]]:
     return _parse_tidas_json_payload(source_name=file_path.name, raw_text=file_path.read_text(encoding="utf-8"))
-
 
 def _parse_tidas_json_payload(*, source_name: str, raw_text: str) -> tuple[list[dict], list[str]]:
     errors: list[str] = []
@@ -2776,7 +2713,6 @@ def _parse_tidas_json_payload(*, source_name: str, raw_text: str) -> tuple[list[
         return [payload], errors
     return [], [f"{source_name}: unsupported root type {type(payload).__name__}"]
 
-
 async def _parse_tidas_uploaded_json(file: UploadFile) -> tuple[str, list[dict], list[str]]:
     source_name = str(file.filename or "upload.json")
     try:
@@ -2790,7 +2726,6 @@ async def _parse_tidas_uploaded_json(file: UploadFile) -> tuple[str, list[dict],
     rows, errors = _parse_tidas_json_payload(source_name=source_name, raw_text=raw_text)
     return source_name, rows, errors
 
-
 async def _read_uploaded_bytes(file: UploadFile) -> tuple[str, bytes]:
     source_name = str(file.filename or "upload.bin")
     try:
@@ -2798,7 +2733,6 @@ async def _read_uploaded_bytes(file: UploadFile) -> tuple[str, bytes]:
     finally:
         await file.close()
     return source_name, raw
-
 
 def _parse_tidas_bundle_zip(
     *,
@@ -2916,7 +2850,6 @@ def _parse_tidas_bundle_zip(
 
         return manifest, flow_items, process_items, model_items, errors
 
-
 def _coerce_form_bool(value: object, default: bool = False) -> bool:
     if value is None:
         return default
@@ -2928,7 +2861,6 @@ def _coerce_form_bool(value: object, default: bool = False) -> bool:
     if text in {"0", "false", "no", "off"}:
         return False
     return default
-
 
 def _build_tidas_base_report(*, import_type: str, payload: object) -> dict:
     upsert_mode_value = _safe_str(getattr(payload, "upsert_mode", None)) or "update"
@@ -2965,7 +2897,6 @@ def _build_tidas_base_report(*, import_type: str, payload: object) -> dict:
         "created_at": datetime.utcnow(),
     }
 
-
 def _finalize_tidas_report(report: dict) -> dict:
     imported_count = int(report.get("imported_process_count") or 0)
     if imported_count <= 0:
@@ -2999,7 +2930,6 @@ def _finalize_tidas_report(report: dict) -> dict:
     }
     return report
 
-
 def _persist_tidas_import_report(db: Session, report_payload: dict) -> TidasImportReportResponse:
     report_payload = _finalize_tidas_report(report_payload)
     report_model = TidasImportReportResponse.model_validate(report_payload)
@@ -3025,7 +2955,6 @@ def _persist_tidas_import_report(db: Session, report_payload: dict) -> TidasImpo
         row.result_json = report_json
     db.commit()
     return report_model
-
 
 def _extract_tidas_process_record(raw: dict) -> tuple[dict | None, str | None]:
     # Unwrap processDataSet root if present (TIDAS/ILCD format)
@@ -3133,7 +3062,6 @@ def _extract_tidas_process_record(raw: dict) -> tuple[dict | None, str | None]:
         "process_type": "unit_process",
     }, None
 
-
 def _extract_tidas_flow_record(raw: dict) -> tuple[dict | None, str | None]:
     # Unwrap flowDataSet root if present (TIDAS/ILCD format)
     if "flowDataSet" in raw and isinstance(raw["flowDataSet"], dict):
@@ -3189,11 +3117,9 @@ def _extract_tidas_flow_record(raw: dict) -> tuple[dict | None, str | None]:
         "source": TIDAS_FLOW_IMPORT_SOURCE,
     }, None
 
-
 def _label_imported_elementary_flow_source(flow_record: dict, source_label: str) -> None:
     if is_elementary_flow_semantic(flow_record.get("flow_type")):
         flow_record["source"] = source_label
-
 
 def _extract_tidas_model_record(raw: dict) -> tuple[dict | None, str | None]:
     # Try simplified format first (direct fields)
@@ -3309,7 +3235,6 @@ def _extract_tidas_model_record(raw: dict) -> tuple[dict | None, str | None]:
         "topology_connection_count": topology_connection_count,
     }, None
 
-
 def _top_missing_flow_uuids(filtered: list[FilteredExchangeEvidence], top_n: int = 10) -> list[str]:
     counter: Counter[str] = Counter()
     for row in filtered:
@@ -3319,7 +3244,6 @@ def _top_missing_flow_uuids(filtered: list[FilteredExchangeEvidence], top_n: int
         if flow_uuid:
             counter[flow_uuid] += 1
     return [flow_uuid for flow_uuid, _ in counter.most_common(top_n)]
-
 
 def _build_tidas_graph_port_lists(
     *,
@@ -3394,7 +3318,6 @@ def _build_tidas_graph_port_lists(
 
     return inputs, outputs, emissions
 
-
 def _make_unique_graph_node_name(base_name: str, seen_names: dict[str, int]) -> str:
     normalized = str(base_name or "").strip() or "Process"
     count = int(seen_names.get(normalized, 0))
@@ -3403,7 +3326,6 @@ def _make_unique_graph_node_name(base_name: str, seen_names: dict[str, int]) -> 
         return normalized
     seen_names[normalized] = count + 1
     return f"{normalized}({count + 1})"
-
 
 def _pick_process_display_name_for_import(source_json: dict | None, process_uuid: str | None, *, display_lang: str) -> str:
     data = source_json if isinstance(source_json, dict) else {}
@@ -3414,7 +3336,6 @@ def _pick_process_display_name_for_import(source_json: dict | None, process_uuid
     if lang == "en":
         return process_name_en or process_name_zh or process_name or _safe_str(process_uuid) or "Process"
     return process_name_zh or process_name_en or process_name or _safe_str(process_uuid) or "Process"
-
 
 def _limit_graph_port_visibility_to_connected_edges(*, nodes: list[dict], edges: list[dict]) -> None:
     connected_pairs: set[tuple[str, str]] = set()
@@ -3458,7 +3379,6 @@ def _limit_graph_port_visibility_to_connected_edges(*, nodes: list[dict], edges:
                 )
                 port["showOnNode"] = bool(is_connected)
                 port["internalExposed"] = bool(is_connected)
-
 
 def _prune_import_graph_invalid_product_role_edges(*, graph_json: dict, unresolved: list[dict], model_uuid: str) -> dict:
     if not isinstance(graph_json, dict):
@@ -3530,13 +3450,11 @@ def _prune_import_graph_invalid_product_role_edges(*, graph_json: dict, unresolv
     updated["exchanges"] = kept_edges
     return updated
 
-
 def _safe_float(value: object, default: float = 0.0) -> float:
     try:
         return float(value)
     except Exception:  # noqa: BLE001
         return default
-
 
 def _xflow_port_text(port_item: dict) -> str:
     data = port_item.get("data") if isinstance(port_item.get("data"), dict) else {}
@@ -3547,7 +3465,6 @@ def _xflow_port_text(port_item: dict) -> str:
     attrs = port_item.get("attrs") if isinstance(port_item.get("attrs"), dict) else {}
     attrs_text = attrs.get("text") if isinstance(attrs.get("text"), dict) else {}
     return _safe_str(attrs_text.get("title")) or _safe_str(attrs_text.get("text"))
-
 
 def _apply_xflow_ports_to_node(
     *,
@@ -3636,7 +3553,6 @@ def _apply_xflow_ports_to_node(
     for port in outputs:
         port.pop("_xflow_bound", None)
     return inputs, outputs
-
 
 def _build_tidas_graph_from_model_record(
     *,
@@ -3814,7 +3730,6 @@ def _build_tidas_graph_from_model_record(
         edges=graph.get("exchanges") if isinstance(graph.get("exchanges"), list) else [],
     )
     return graph, unresolved
-
 
 def _build_tidas_graph_from_xflow(
     *,
@@ -4005,31 +3920,6 @@ def _build_tidas_graph_from_xflow(
     )
     return graph, unresolved
 
-
-def _create_project_version_from_graph_json(*, db: Session, project_id: str, graph_json: dict) -> ModelVersion:
-    graph = HybridGraph.model_validate(graph_json)
-    normalize_graph_product_flags(graph)
-    validate_graph_contract(graph, require_non_empty=True, allow_pts_nodes=True)
-    validate_graph_flow_type_contract(graph, db=db, stage="import_model")
-    validate_graph_port_names_against_flow_catalog(graph, db=db, stage="import_model")
-    _bind_pts_published_versions_for_graph(db=db, project_id=project_id, graph=graph)
-    latest_version = db.query(func.max(ModelVersion.version)).filter(ModelVersion.model_id == project_id).scalar()
-    next_version = (latest_version or 0) + 1
-    persisted_graph_json = graph.model_dump(mode="python")
-    _enrich_graph_flow_name_en(persisted_graph_json, db=db)
-    normalized_graph_json = _normalize_graph_json_for_storage(persisted_graph_json)
-    slim_graph_json = _slim_graph_for_storage(normalized_graph_json)
-    version = ModelVersion(
-        model_id=project_id,
-        version=next_version,
-        graph_hash=_compute_graph_hash_from_slim_graph(slim_graph_json),
-        hybrid_graph_json=slim_graph_json,
-    )
-    db.add(version)
-    _sync_pts_resources_from_graph(db=db, project_id=project_id, graph=graph)
-    return version
-
-
 def _replace_flow_display_name(current_name: str | None, standard_name: str | None) -> str:
     standard = _safe_str(standard_name) or ""
     current = _safe_str(current_name) or ""
@@ -4042,7 +3932,6 @@ def _replace_flow_display_name(current_name: str | None, standard_name: str | No
         suffix = suffix.strip()
         return f"{standard}@{suffix}" if suffix else standard
     return standard
-
 
 def _sync_graph_flow_names(graph_json: dict, *, updated_flow_names: dict[str, str]) -> tuple[int, int]:
     changed_port_count = 0
@@ -4081,7 +3970,6 @@ def _sync_graph_flow_names(graph_json: dict, *, updated_flow_names: dict[str, st
 
     return changed_port_count, changed_edge_count
 
-
 def _enrich_graph_flow_name_en(graph_json: dict, *, db: Session) -> None:
     flow_name_en_by_uuid = _flow_name_en_by_uuid_cached(db)
     if not flow_name_en_by_uuid:
@@ -4115,7 +4003,6 @@ def _enrich_graph_flow_name_en(graph_json: dict, *, db: Session) -> None:
         if flow_name_en:
             edge["flow_name_en"] = flow_name_en
 
-
 def _enrich_node_ports_flow_name_en(node_json: dict, *, db: Session) -> None:
     if not isinstance(node_json, dict):
         return
@@ -4133,7 +4020,6 @@ def _enrich_node_ports_flow_name_en(node_json: dict, *, db: Session) -> None:
             flow_name_en = flow_name_en_by_uuid.get(flow_uuid) or flow_name_en_by_uuid.get(flow_uuid.lower())
             if flow_name_en:
                 port["flow_name_en"] = flow_name_en
-
 
 def _detect_project_flow_name_outdated_refs(
     *,
@@ -4179,7 +4065,6 @@ def _detect_project_flow_name_outdated_refs(
                 if len(evidence) >= 20:
                     return len(evidence), evidence
     return len(evidence), evidence
-
 
 def _sync_project_latest_version_flow_names(
     *,
@@ -4234,13 +4119,11 @@ def _sync_project_latest_version_flow_names(
         cleared_pts_definition_count,
     )
 
-
 def _first_category_segment(value: str | None) -> str | None:
     raw = _safe_str(value)
     if not raw:
         return None
     return _safe_str(raw.split(";", 1)[0])
-
 
 def _cache_get(key: str, ttl_seconds: float = _CACHE_TTL_SECONDS) -> object | None:
     entry = _api_cache.get(key)
@@ -4252,10 +4135,8 @@ def _cache_get(key: str, ttl_seconds: float = _CACHE_TTL_SECONDS) -> object | No
         return None
     return value
 
-
 def _cache_set(key: str, value: object) -> None:
     _api_cache[key] = (time.time(), value)
-
 
 def _cache_invalidate_prefix(prefix: str) -> int:
     removed = 0
@@ -4265,16 +4146,13 @@ def _cache_invalidate_prefix(prefix: str) -> int:
             removed += 1
     return removed
 
-
 def _cache_revision(domain: str) -> int:
     return int(_api_cache_revisions.get(domain, 0))
-
 
 def _cache_bump_revision(domain: str) -> int:
     next_value = _cache_revision(domain) + 1
     _api_cache_revisions[domain] = next_value
     return next_value
-
 
 def _invalidate_management_caches(
     *,
@@ -4307,7 +4185,6 @@ def _invalidate_management_caches(
         _cache_invalidate_prefix("reference_processes_catalog:v1:")
         _cache_invalidate_prefix("reference_process_report:v1:")
 
-
 def _refresh_flow_runtime_caches_for_current_request() -> None:
     _cache_bump_revision("flows")
     _cache_bump_revision("flow_categories")
@@ -4319,12 +4196,10 @@ def _refresh_flow_runtime_caches_for_current_request() -> None:
     _cache_invalidate_prefix("flow_meta_by_uuid:v1")
     _cache_invalidate_prefix("flow_name_en_by_uuid:v1")
 
-
 def _build_etag_for_payload(payload: object) -> str:
     canonical = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     return f"\"{digest}\""
-
 
 def _is_if_none_match_hit(if_none_match: str | None, etag: str) -> bool:
     if not if_none_match:
@@ -4332,9 +4207,7 @@ def _is_if_none_match_hit(if_none_match: str | None, etag: str) -> bool:
     candidates = [item.strip() for item in if_none_match.split(",") if item.strip()]
     return etag in candidates or "*" in candidates
 
-
 _PROJECT_STATUS_SET = {"active", "draft", "archived"}
-
 
 def _normalize_project_status(value: object | None, *, default: str = "active") -> str:
     raw = _safe_str(value)
@@ -4348,7 +4221,6 @@ def _normalize_project_status(value: object | None, *, default: str = "active") 
         )
     return normalized
 
-
 def _latest_version_by_project_id(db: Session) -> dict[str, ModelVersion]:
     rows = db.query(ModelVersion).order_by(ModelVersion.model_id.asc(), ModelVersion.version.desc(), ModelVersion.created_at.desc()).all()
     latest_by_project: dict[str, ModelVersion] = {}
@@ -4357,7 +4229,6 @@ def _latest_version_by_project_id(db: Session) -> dict[str, ModelVersion]:
         if pid not in latest_by_project:
             latest_by_project[pid] = row
     return latest_by_project
-
 
 def _graph_process_and_flow_counts(graph_json: dict | None) -> tuple[int, int]:
     if not isinstance(graph_json, dict):
@@ -4380,54 +4251,12 @@ def _graph_process_and_flow_counts(graph_json: dict | None) -> tuple[int, int]:
                     flow_keys.add(flow_uuid)
     return process_count, len(flow_keys)
 
-
-def _build_project_out(model: Model, latest: ModelVersion | None = None) -> ProjectOut:
-    process_count = 0
-    flow_count = 0
-    flow_name_sync_needed = False
-    outdated_flow_refs_count = 0
-    outdated_flow_ref_examples: list[dict] = []
-    if latest is not None:
-        graph_json = latest.hybrid_graph_json if isinstance(latest.hybrid_graph_json, dict) else {}
-        process_count, flow_count = _graph_process_and_flow_counts(graph_json)
-        tmp_db = SessionLocal()
-        try:
-            outdated_flow_refs_count, outdated_flow_ref_examples = _detect_project_flow_name_outdated_refs(
-                db=tmp_db,
-                graph_json=graph_json,
-            )
-        finally:
-            tmp_db.close()
-        flow_name_sync_needed = outdated_flow_refs_count > 0
-    return ProjectOut(
-        project_id=model.id,
-        name=model.name,
-        reference_product=_safe_str(model.reference_product),
-        functional_unit=_safe_str(model.functional_unit),
-        system_boundary=_safe_str(model.system_boundary),
-        time_representativeness=_safe_str(model.time_representativeness),
-        geography=_safe_str(model.geography),
-        description=_safe_str(model.description),
-        status=_safe_str(model.status) or "active",
-        process_count=process_count,
-        flow_count=flow_count,
-        created_at=model.created_at,
-        updated_at=model.updated_at,
-        latest_version=latest.version if latest else None,
-        latest_version_created_at=latest.created_at if latest else None,
-        flow_name_sync_needed=flow_name_sync_needed,
-        outdated_flow_refs_count=outdated_flow_refs_count,
-        outdated_flow_ref_examples=outdated_flow_ref_examples[:5],
-    )
-
-
 def _build_flow_sync_state_for_graph_json(*, db: Session, graph_json: dict) -> tuple[bool, int, list[dict]]:
     outdated_flow_refs_count, outdated_flow_ref_examples = _detect_project_flow_name_outdated_refs(
         db=db,
         graph_json=graph_json,
     )
     return outdated_flow_refs_count > 0, outdated_flow_refs_count, outdated_flow_ref_examples[:5]
-
 
 def _is_pts_publication_auto_repairable(*, resource: PtsResource | None, external: PtsExternalArtifact | None) -> bool:
     if resource is None or external is not None:
@@ -4436,7 +4265,6 @@ def _is_pts_publication_auto_repairable(*, resource: PtsResource | None, externa
         return False
     shell_node = dict(resource.shell_node_json or {})
     return bool(shell_node.get("inputs") or shell_node.get("outputs"))
-
 
 def _build_pts_validation_summary(*, db: Session, project_id: str, graph: HybridGraph) -> PtsValidationSummary:
     items: list[PtsValidationItem] = []
@@ -4487,7 +4315,6 @@ def _build_pts_validation_summary(*, db: Session, project_id: str, graph: Hybrid
         auto_repairable=any(item.auto_repairable for item in items),
         items=items,
     )
-
 
 def _repair_pts_publication_from_resource(*, db: Session, resource: PtsResource) -> tuple[bool, str]:
     existing = _load_pts_active_external_artifact(
@@ -4566,7 +4393,6 @@ def _repair_pts_publication_from_resource(*, db: Session, resource: PtsResource)
     resource.shell_node_json = _build_pts_shell_snapshot_from_external(row=resource, external=artifact)
     return True, "repaired_missing_active_artifact"
 
-
 def _build_project_integrity_summary(
     *,
     pts_validation: PtsValidationSummary,
@@ -4607,7 +4433,6 @@ def _build_project_integrity_summary(
         issues=issues,
     )
 
-
 def _latest_graphs_with_project_meta(db: Session) -> list[tuple[Model, ModelVersion]]:
     latest_by_project = _latest_version_by_project_id(db)
     if not latest_by_project:
@@ -4619,7 +4444,6 @@ def _latest_graphs_with_project_meta(db: Session) -> list[tuple[Model, ModelVers
         if latest is not None:
             result.append((model, latest))
     return result
-
 
 def _build_process_items_from_latest_graphs(db: Session) -> list[ProcessListItem]:
     latest_rows = _latest_graphs_with_project_meta(db)
@@ -4683,7 +4507,6 @@ def _build_process_items_from_latest_graphs(db: Session) -> list[ProcessListItem
         )
     return items
 
-
 def _build_flow_used_in_processes_map(db: Session) -> dict[str, int]:
     latest_rows = _latest_graphs_with_project_meta(db)
     used_by_flow: dict[str, set[str]] = defaultdict(set)
@@ -4709,18 +4532,6 @@ def _build_flow_used_in_processes_map(db: Session) -> dict[str, int]:
                     if flow_uuid:
                         used_by_flow[flow_uuid].add(process_key)
     return {flow_uuid: len(processes) for flow_uuid, processes in used_by_flow.items()}
-
-
-def _resolve_model_version_graph_hash(row: ModelVersion, *, assign_if_missing: bool = False) -> str:
-    resolved = str(row.graph_hash or "").strip()
-    if resolved:
-        return resolved
-    source = row.hybrid_graph_json if isinstance(row.hybrid_graph_json, dict) else {}
-    resolved = _compute_graph_hash_from_graph_json(source)
-    if assign_if_missing:
-        row.graph_hash = resolved
-    return resolved
-
 
 def _fts5_flow_search_query(db: Session, normalized_search: str):
     """Return (query, used_fts) tuple for flow_catalog search.
@@ -4769,7 +4580,6 @@ def _fts5_flow_search_query(db: Session, normalized_search: str):
     except Exception:
         return (db.query(FlowRecord), False)
 
-
 def _build_flow_used_in_processes_map_cached(db: Session) -> dict[str, int]:
     """Build flow->process usage map, cached on the session via a static attr."""
     cache_key = "_flow_used_in_processes_map"
@@ -4803,10 +4613,8 @@ def _build_flow_used_in_processes_map_cached(db: Session) -> dict[str, int]:
     setattr(db, cache_key, result)
     return result
 
-
 def _is_sqlite_database() -> bool:
     return settings.database_url.strip().lower().startswith("sqlite")
-
 
 def _run_sqlite_vacuum() -> dict:
     if not _is_sqlite_database():
@@ -4821,29 +4629,6 @@ def _run_sqlite_vacuum() -> dict:
         return {"executed": True, "checkpoint": checkpoint}
     finally:
         raw_conn.close()
-
-
-
-
-def _auto_prune_versions(*, db: Session, model_id: str) -> None:
-    """Auto-prune model versions after a new one is saved.
-
-    Keeps at most KEEP_LATEST_VERSIONS_PER_PROJECT (default 20) versions per model.
-    Always preserves versions referenced by RunJobs, the current latest, or draft pointer.
-    """
-    keep = max(1, int(settings.keep_latest_versions_per_project))
-    # We only prune for the new version (created_new_version=True path),
-    # but since we call this after every version creation, just prune unconditionally.
-    # We pass dry_run=False because this is the real prune.
-    # Reuse the existing pruning logic but limit to a single model.
-    _prune_model_versions_retention(
-        db=db,
-        keep_latest=keep,
-        dry_run=False,
-        project_id=model_id,
-        vacuum_after_cleanup=False,
-    )
-
 
 def _build_run_job_request_json(payload) -> dict:
     """Build a lightweight request_json for RunJob storage.
@@ -4886,92 +4671,12 @@ def _build_run_job_request_json(payload) -> dict:
             else None,
     }
 
-
-def _prune_model_versions_retention(
-    *,
-    db: Session,
-    keep_latest: int,
-    dry_run: bool,
-    project_id: str | None = None,
-    vacuum_after_cleanup: bool = False,
-) -> dict:
-    if keep_latest < 1:
-        raise ValueError("keep_latest must be >= 1")
-
-    query = db.query(ModelVersion)
-    if project_id:
-        query = query.filter(ModelVersion.model_id == project_id)
-    rows = query.order_by(ModelVersion.model_id.asc(), ModelVersion.version.desc(), ModelVersion.created_at.desc()).all()
-
-    scanned_versions = 0
-    scanned_projects = 0
-    redundant_version_ids: list[str] = []
-    redundant_examples: list[dict] = []
-    current_project: str | None = None
-    seen_per_project = 0
-
-    for row in rows:
-        scanned_versions += 1
-        row_project_id = str(row.model_id)
-        if row_project_id != current_project:
-            current_project = row_project_id
-            scanned_projects += 1
-            seen_per_project = 0
-        seen_per_project += 1
-        if seen_per_project <= keep_latest:
-            continue
-        redundant_version_ids.append(str(row.id))
-        if len(redundant_examples) < 200:
-            redundant_examples.append(
-                {
-                    "model_version_id": str(row.id),
-                    "project_id": row_project_id,
-                    "version": int(row.version),
-                    "created_at": row.created_at.isoformat() if row.created_at else None,
-                }
-            )
-
-    cleared_run_job_refs = 0
-    deleted_versions = 0
-    if not dry_run and redundant_version_ids:
-        for batch in _iter_chunks(redundant_version_ids):
-            cleared_run_job_refs += (
-                db.query(RunJob)
-                .filter(RunJob.model_version_id.in_(batch))
-                .update({RunJob.model_version_id: None}, synchronize_session=False)
-            )
-            deleted_versions += db.query(ModelVersion).filter(ModelVersion.id.in_(batch)).delete(synchronize_session=False)
-        db.commit()
-    elif not dry_run:
-        db.commit()
-
-    vacuum_result = {"executed": False, "reason": "disabled"}
-    if not dry_run and vacuum_after_cleanup:
-        db.close()
-        vacuum_result = _run_sqlite_vacuum()
-
-    return {
-        "keep_latest": keep_latest,
-        "project_id": project_id,
-        "dry_run": dry_run,
-        "scanned_projects": scanned_projects,
-        "scanned_versions": scanned_versions,
-        "redundant_versions": len(redundant_version_ids),
-        "deleted_versions": deleted_versions,
-        "cleared_run_job_refs": cleared_run_job_refs,
-        "redundant_model_version_ids": redundant_version_ids[:500],
-        "redundant_examples": redundant_examples,
-        "vacuum": vacuum_result,
-    }
-
-
 def require_debug_access(x_admin_token: str | None = Header(default=None, alias="X-Admin-Token")) -> None:
     if settings.debug:
         return
     if settings.admin_token and x_admin_token == settings.admin_token:
         return
     raise HTTPException(status_code=403, detail="Debug endpoints require DEBUG=true or admin token")
-
 
 def persist_debug_diagnostic(
     *,
@@ -4998,7 +4703,6 @@ def persist_debug_diagnostic(
     db.commit()
     db.refresh(row)
     return row.id
-
 
 def _matrix_rank_and_determinant(matrix: list[list[float]], tol: float = 1e-12) -> tuple[int, float]:
     n = len(matrix)
@@ -5030,7 +4734,6 @@ def _matrix_rank_and_determinant(matrix: list[list[float]], tol: float = 1e-12) 
     else:
         det *= sign
     return rank, det
-
 
 def _build_snapshot_matrix(snapshot: dict) -> dict:
     processes = snapshot.get("processes") if isinstance(snapshot, dict) else []
@@ -5166,7 +4869,6 @@ def _build_snapshot_matrix(snapshot: dict) -> dict:
         "evidence": evidences[:2000],
     }
 
-
 def run_solver_and_persist(
     *,
     payload: RunRequest,
@@ -5281,7 +4983,6 @@ def run_solver_and_persist(
 
     return status, run_job.id, solved, tiangong_like
 
-
 def upsert_pts_compile_artifact(
     *,
     db: Session,
@@ -5360,7 +5061,6 @@ def upsert_pts_compile_artifact(
     db.refresh(cached)
     return cached, False
 
-
 def extract_pts_definition(*, graph: HybridGraph, pts_node_id: str, graph_hash: str) -> dict:
     pts_node = next((node for node in graph.nodes if node.id == pts_node_id and node.node_kind == "pts_module"), None)
     if pts_node is None:
@@ -5414,7 +5114,6 @@ def extract_pts_definition(*, graph: HybridGraph, pts_node_id: str, graph_hash: 
         "pts_graph": pts_graph,
     }
 
-
 def upsert_pts_definition(*, db: Session, project_id: str, definition: dict) -> PtsDefinition:
     pts_uuid = str(definition["pts_uuid"])
     row = (
@@ -5448,7 +5147,6 @@ def upsert_pts_definition(*, db: Session, project_id: str, definition: dict) -> 
     db.refresh(row)
     return row
 
-
 def _slim_exchange_row(item: dict | None, fallback_direction: str, include_amount: bool) -> dict | None:
     if not isinstance(item, dict):
         return None
@@ -5477,7 +5175,6 @@ def _slim_exchange_row(item: dict | None, fallback_direction: str, include_amoun
         result["amount"] = float(item.get("amount") or 0.0)
     return result
 
-
 def _enrich_frontend_ports_flow_name_en(frontend_ports: dict, *, db: Session) -> None:
     if not isinstance(frontend_ports, dict):
         return
@@ -5498,7 +5195,6 @@ def _enrich_frontend_ports_flow_name_en(frontend_ports: dict, *, db: Session) ->
             if not flow_name_en:
                 continue
             row["flow_name_en"] = flow_name_en
-
 
 def _enrich_pts_external_payload_flow_name_en(payload: dict, *, db: Session) -> None:
     if not isinstance(payload, dict):
@@ -5571,7 +5267,6 @@ def _enrich_pts_external_payload_flow_name_en(payload: dict, *, db: Session) -> 
                     row.setdefault("display_name_en", f"{base_name_en} @ {source_name}")
                 else:
                     row.setdefault("display_name_en", base_name_en)
-
 
 def _build_frontend_ports_from_external_payload(payload: dict) -> dict:
     pts_uuid = str(payload.get("pts_uuid") or payload.get("ptsUuid") or "").strip() if isinstance(payload, dict) else ""
@@ -5734,7 +5429,6 @@ def _build_frontend_ports_from_external_payload(payload: dict) -> dict:
         ],
     }
 
-
 def _external_row_to_flow_port(row: dict, *, idx: int, direction: str, flow_type: str) -> dict:
     port_id = _stable_shell_port_id(row=row, idx=idx, direction=direction, flow_type=flow_type)
     legacy_port_id = _legacy_shell_port_id(row=row, idx=idx, direction=direction, flow_type=flow_type)
@@ -5766,12 +5460,10 @@ def _external_row_to_flow_port(row: dict, *, idx: int, direction: str, flow_type
         "product_name_en": str(row.get("product_name_en") or row.get("productNameEn") or ""),
     }
 
-
 def _legacy_shell_port_id(*, row: dict, idx: int, direction: str, flow_type: str) -> str:
     if direction == "input":
         return str(row.get("port_key") or row.get("id") or f"in::{str(row.get('flowUuid') or '')}::{idx}")
     return str(row.get("port_key") or row.get("product_key") or row.get("id") or f"{flow_type}_{idx}")
-
 
 def _stable_shell_port_id(*, row: dict, idx: int, direction: str, flow_type: str) -> str:
     legacy_port_id = _legacy_shell_port_id(row=row, idx=idx, direction=direction, flow_type=flow_type)
@@ -5779,7 +5471,6 @@ def _stable_shell_port_id(*, row: dict, idx: int, direction: str, flow_type: str
     digest = hashlib.sha256(f"{pts_uuid}|{direction}|{legacy_port_id}".encode("utf-8")).hexdigest()[:16]
     prefix = "ptsin" if direction == "input" else "ptsout"
     return f"{prefix}_{digest}"
-
 
 def _build_pts_port_id_map(*, shell_node: dict) -> dict[str, str]:
     mapping: dict[str, str] = {}
@@ -5791,7 +5482,6 @@ def _build_pts_port_id_map(*, shell_node: dict) -> dict[str, str]:
         if legacy_port_id and port_id:
             mapping[legacy_port_id] = port_id
     return mapping
-
 
 def _resolve_default_visible_port_ids(
     *,
@@ -5867,7 +5557,6 @@ def _resolve_default_visible_port_ids(
 
     return matched_ids
 
-
 def _apply_default_visible_port_ids_to_shell_node(*, shell_node: dict, default_visible_port_ids: list[str]) -> dict:
     if not isinstance(shell_node, dict):
         return shell_node
@@ -5888,7 +5577,6 @@ def _apply_default_visible_port_ids_to_shell_node(*, shell_node: dict, default_v
     updated["outputs"] = outputs
     return updated
 
-
 def _pts_port_identity_key(row: dict) -> tuple[str, str, str, str, str, str]:
     if not isinstance(row, dict):
         return ("", "", "", "", "", "")
@@ -5900,7 +5588,6 @@ def _pts_port_identity_key(row: dict) -> tuple[str, str, str, str, str, str]:
         str(row.get("direction") or "").strip(),
         str(row.get("port_key") or row.get("product_key") or "").strip(),
     )
-
 
 def _apply_default_visible_port_ids_to_external_payload(*, payload: dict, shell_node: dict, default_visible_port_ids: list[str]) -> dict:
     if not isinstance(payload, dict):
@@ -5936,10 +5623,8 @@ def _apply_default_visible_port_ids_to_external_payload(*, payload: dict, shell_
     }
     return updated
 
-
 def _is_effectively_zero(value: float, *, tolerance: float = 1e-9) -> bool:
     return abs(float(value)) <= tolerance
-
 
 def _is_total_significantly_below_target(
     actual_total: float,
@@ -5950,7 +5635,6 @@ def _is_total_significantly_below_target(
     if expected_total <= 0:
         return False
     return actual_total < (expected_total - tolerance)
-
 
 def _build_pts_publish_warnings(
     *,
@@ -6029,7 +5713,6 @@ def _build_pts_publish_warnings(
 
     return warnings
 
-
 def _load_pts_external_artifact(
     *,
     db: Session,
@@ -6044,7 +5727,6 @@ def _load_pts_external_artifact(
     if published_version is not None:
         query = query.filter(PtsExternalArtifact.published_version == published_version)
     return query.order_by(PtsExternalArtifact.updated_at.desc(), PtsExternalArtifact.created_at.desc()).first()
-
 
 def _load_pts_active_external_artifact(
     *,
@@ -6077,7 +5759,6 @@ def _load_pts_active_external_artifact(
         .order_by(PtsExternalArtifact.published_version.desc(), PtsExternalArtifact.updated_at.desc(), PtsExternalArtifact.created_at.desc())
         .first()
     )
-
 
 def _build_projected_pts_ports_from_external(external: PtsExternalArtifact) -> tuple[list[FlowPort], list[FlowPort]]:
     payload = external.artifact_json if isinstance(external.artifact_json, dict) else {}
@@ -6112,7 +5793,6 @@ def _build_projected_pts_ports_from_external(external: PtsExternalArtifact) -> t
     ]
     return projected_inputs, projected_outputs
 
-
 def _flow_port_projection_signature(port: FlowPort | dict) -> tuple:
     data = port.model_dump(mode="python", by_alias=True) if isinstance(port, FlowPort) else dict(port)
     return (
@@ -6127,7 +5807,6 @@ def _flow_port_projection_signature(port: FlowPort | dict) -> tuple:
         str(data.get("sourceNodeId") or data.get("source_node_id") or ""),
     )
 
-
 def _is_unpublished_empty_pts_draft(*, graph: HybridGraph, pts_node: HybridNode) -> bool:
     internal_canvas = _find_pts_internal_canvas(graph, pts_node.id)
     if internal_canvas is None:
@@ -6135,7 +5814,6 @@ def _is_unpublished_empty_pts_draft(*, graph: HybridGraph, pts_node: HybridNode)
     internal_nodes = internal_canvas.get("nodes") if isinstance(internal_canvas.get("nodes"), list) else []
     internal_edges = internal_canvas.get("edges") if isinstance(internal_canvas.get("edges"), list) else []
     return len(internal_nodes) == 0 and len(internal_edges) == 0
-
 
 def _validate_pts_nodes_are_synced_to_active_publish(*, db: Session, project_id: str, graph: HybridGraph) -> None:
     for node in graph.nodes:
@@ -6195,7 +5873,6 @@ def _validate_pts_nodes_are_synced_to_active_publish(*, db: Session, project_id:
                 },
             )
 
-
 def _project_pts_external_ports_into_graph(*, db: Session, project_id: str, graph: HybridGraph) -> None:
     pts_nodes = [node for node in graph.nodes if node.node_kind == "pts_module"]
     if not pts_nodes:
@@ -6227,7 +5904,6 @@ def _project_pts_external_ports_into_graph(*, db: Session, project_id: str, grap
         )
         node.emissions = []
 
-
 def _flow_port_identity_key(port: FlowPort | dict) -> tuple[str, str, str, str]:
     data = port.model_dump(mode="python", by_alias=True) if isinstance(port, FlowPort) else dict(port)
     return (
@@ -6236,7 +5912,6 @@ def _flow_port_identity_key(port: FlowPort | dict) -> tuple[str, str, str, str]:
         str(data.get("sourceProcessUuid") or data.get("source_process_uuid") or "").strip(),
         str(data.get("sourceNodeId") or data.get("source_node_id") or "").strip(),
     )
-
 
 def _collect_connected_port_ids_for_pts_node(*, graph: HybridGraph, node_id: str) -> set[str]:
     connected: set[str] = set()
@@ -6250,7 +5925,6 @@ def _collect_connected_port_ids_for_pts_node(*, graph: HybridGraph, node_id: str
             if port_id:
                 connected.add(port_id)
     return connected
-
 
 def _overlay_pts_port_visibility(
     *,
@@ -6294,7 +5968,6 @@ def _overlay_pts_port_visibility(
             show_on_node = True
         merged.append(port.model_copy(update={"showOnNode": show_on_node}))
     return merged
-
 
 def _canonicalize_pts_nodes_for_main_graph_save(*, db: Session, project_id: str, graph: HybridGraph) -> None:
     for node in graph.nodes:
@@ -6394,7 +6067,6 @@ def _canonicalize_pts_nodes_for_main_graph_save(*, db: Session, project_id: str,
             connected_port_ids=connected_port_ids,
         )
         node.emissions = []
-
 
 def build_pts_external_payload(*, project_id: str, pts_uuid: str, definition: dict, compile_row: PtsCompileArtifact) -> dict:
     artifact = compile_row.artifact_json or {}
@@ -6739,7 +6411,6 @@ def build_pts_external_payload(*, project_id: str, pts_uuid: str, definition: di
         },
     }
 
-
 def upsert_pts_external_artifact(
     *,
     db: Session,
@@ -6796,7 +6467,6 @@ def upsert_pts_external_artifact(
     db.commit()
     db.refresh(row)
     return row
-
 
 def build_flattened_graph_for_run_pts(*, graph: HybridGraph, compile_rows: list[PtsCompileArtifact]) -> HybridGraph:
     if not compile_rows:
@@ -7257,7 +6927,6 @@ def build_flattened_graph_for_run_pts(*, graph: HybridGraph, compile_rows: list[
         }
     )
 
-
 def _filter_lci_result_by_process_uuids(lci_result: dict, keep_process_uuids: set[str]) -> dict:
     process_index = lci_result.get("process_index")
     if not isinstance(process_index, list):
@@ -7314,7 +6983,6 @@ def _filter_lci_result_by_process_uuids(lci_result: dict, keep_process_uuids: se
             }
     return filtered
 
-
 def _collect_published_vp_process_uuids(
     *,
     graph: HybridGraph,
@@ -7368,7 +7036,6 @@ def _collect_published_vp_process_uuids(
         if "::vp::" not in node.id:
             keep.add(node.process_uuid)
     return keep
-
 
 def _load_published_compile_rows_for_graph(
     *,
@@ -7491,7 +7158,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 @app.on_event("startup")
 def on_startup() -> None:
     _migrate_flow_catalog_table_name()
@@ -7529,15 +7195,12 @@ def on_startup() -> None:
         finally:
             db.close()
 
-
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "service": settings.app_name}
 
-
 def list_reference_processes(db: Session = Depends(get_db)) -> list[ReferenceProcess]:
     return db.query(ReferenceProcess).order_by(ReferenceProcess.process_name.asc()).all()
-
 
 def import_reference_processes_json(
     payload: ImportProcessesRequest,
@@ -7556,7 +7219,6 @@ def import_reference_processes_json(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return ImportProcessesResponse(**result)
 
-
 @app.post("/api/processes/import-json", response_model=ImportProcessesResponse)
 def import_processes_json_api(
     payload: ImportProcessesRequest,
@@ -7565,7 +7227,6 @@ def import_processes_json_api(
     result = import_reference_processes_json(payload=payload, db=db)
     _invalidate_management_caches(stats=True, reference_processes=True)
     return result
-
 
 @app.post("/api/import/tidas/flows", response_model=TidasImportReportResponse)
 @app.post("/import/tidas/flows", response_model=TidasImportReportResponse)
@@ -7651,7 +7312,6 @@ async def import_tidas_flows(
         db.commit()
         _invalidate_management_caches(flows=True, stats=True, reference_processes=True)
     return _persist_tidas_import_report(db, report)
-
 
 @app.post("/api/import/tidas/processes", response_model=TidasImportReportResponse)
 @app.post("/import/tidas/processes", response_model=TidasImportReportResponse)
@@ -7888,7 +7548,6 @@ async def import_tidas_processes(
         _invalidate_management_caches(flows=is_zip_upload, stats=True, reference_processes=True)
     return _persist_tidas_import_report(db, report)
 
-
 @app.post("/api/import/tidas/models", response_model=TidasImportReportResponse)
 @app.post("/import/tidas/models", response_model=TidasImportReportResponse)
 async def import_tidas_models(
@@ -7988,7 +7647,6 @@ async def import_tidas_models(
         db.commit()
         _invalidate_management_caches(projects=True, stats=True)
     return _persist_tidas_import_report(db, report)
-
 
 @app.post("/api/import/tidas/bundle", response_model=TidasImportReportResponse)
 @app.post("/import/tidas/bundle", response_model=TidasImportReportResponse)
@@ -8261,7 +7919,6 @@ async def import_tidas_bundle(
         _invalidate_management_caches(projects=True, flows=True, stats=True, reference_processes=True)
     return _persist_tidas_import_report(db, report)
 
-
 @app.get("/api/import/reports/{job_id}", response_model=TidasImportReportResponse)
 @app.get("/import/reports/{job_id}", response_model=TidasImportReportResponse)
 def get_tidas_import_report(job_id: str, db: Session = Depends(get_db)) -> TidasImportReportResponse:
@@ -8271,11 +7928,9 @@ def get_tidas_import_report(job_id: str, db: Session = Depends(get_db)) -> Tidas
     result_json = row.result_json if isinstance(row.result_json, dict) else {}
     return TidasImportReportResponse.model_validate(result_json)
 
-
 # ==================== EF 3.1 LCI Import Endpoints ====================
 
 _EF31_DIAGNOSTIC_TYPE = "ef31.import.report.v1"
-
 
 def _persist_ef31_report(db: Session, report_payload: dict) -> dict:
     """Persist an EF 3.1 import report into DebugDiagnostic."""
@@ -8295,7 +7950,6 @@ def _persist_ef31_report(db: Session, report_payload: dict) -> dict:
     db.commit()
     db.refresh(diagnostic)
     return report_payload
-
 
 @app.post("/api/import/ef31/preview", response_model=Ef31ImportPreviewResponse)
 @app.post("/import/ef31/preview", response_model=Ef31ImportPreviewResponse)
@@ -8346,7 +8000,6 @@ def preview_ef31_lci_import(
     except Exception as e:
         raise HTTPException(status_code=400, detail={"code": "PREVIEW_FAILED", "message": str(e)})
 
-
 @app.post("/api/import/ef31/commit", response_model=Ef31ImportCommitResponse)
 @app.post("/import/ef31/commit", response_model=Ef31ImportCommitResponse)
 def commit_ef31_lci_import(
@@ -8381,7 +8034,6 @@ def commit_ef31_lci_import(
     except Exception as e:
         raise HTTPException(status_code=500, detail={"code": "COMMIT_FAILED", "message": str(e)})
 
-
 @app.get("/api/import/ef31/reports/{job_id}", response_model=Ef31ImportPreviewResponse)
 @app.get("/import/ef31/reports/{job_id}", response_model=Ef31ImportPreviewResponse)
 def get_ef31_import_report(job_id: str, db: Session = Depends(get_db)) -> Ef31ImportPreviewResponse:
@@ -8398,9 +8050,7 @@ def get_ef31_import_report(job_id: str, db: Session = Depends(get_db)) -> Ef31Im
     result_json = row.result_json if isinstance(row.result_json, dict) else {}
     return Ef31ImportPreviewResponse.model_validate(result_json)
 
-
 # ==================== TIDAS Export Endpoints ====================
-
 
 @app.post("/api/export/tidas/bundle/preview", response_model=TidasExportPreviewResponse)
 @app.post("/export/tidas/bundle/preview", response_model=TidasExportPreviewResponse)
@@ -8415,7 +8065,6 @@ def preview_tidas_bundle_export(
     """
     result = preview_export(db=db, project_id=payload.project_id, version=payload.version)
     return TidasExportPreviewResponse(**result)
-
 
 @app.post("/api/export/tidas/bundle")
 @app.post("/export/tidas/bundle")
@@ -8463,7 +8112,6 @@ def export_tidas_bundle(
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
-
 def list_elementary_flows(db: Session = Depends(get_db)) -> list[FlowRecord]:
     return (
         db.query(FlowRecord)
@@ -8472,7 +8120,6 @@ def list_elementary_flows(db: Session = Depends(get_db)) -> list[FlowRecord]:
         .all()
     )
 
-
 def list_intermediate_flows(db: Session = Depends(get_db)) -> list[FlowRecord]:
     return (
         db.query(FlowRecord)
@@ -8480,7 +8127,6 @@ def list_intermediate_flows(db: Session = Depends(get_db)) -> list[FlowRecord]:
         .order_by(FlowRecord.flow_name.asc())
         .all()
     )
-
 
 def import_elementary_flows(payload: ImportFlowsRequest, db: Session = Depends(get_db)) -> ImportFlowsResponse:
     result = import_flows_from_file(
@@ -8495,7 +8141,6 @@ def import_elementary_flows(payload: ImportFlowsRequest, db: Session = Depends(g
     )
     return ImportFlowsResponse(**result)
 
-
 def import_intermediate_flows(payload: ImportFlowsRequest, db: Session = Depends(get_db)) -> ImportFlowsResponse:
     result = import_flows_from_file(
         db,
@@ -8508,7 +8153,6 @@ def import_intermediate_flows(payload: ImportFlowsRequest, db: Session = Depends
     )
     return ImportFlowsResponse(**result)
 
-
 def import_unit_groups(payload: ImportUnitGroupsRequest, db: Session = Depends(get_db)) -> ImportUnitGroupsResponse:
     result = import_unit_groups_from_excel(
         db,
@@ -8517,10 +8161,8 @@ def import_unit_groups(payload: ImportUnitGroupsRequest, db: Session = Depends(g
     )
     return ImportUnitGroupsResponse(**result)
 
-
 def list_unit_groups(db: Session = Depends(get_db)) -> list[UnitGroup]:
     return db.query(UnitGroup).order_by(UnitGroup.name.asc()).all()
-
 
 @app.get("/api/reference/units", response_model=list[UnitDefinitionOut])
 @app.get("/reference/units", response_model=list[UnitDefinitionOut])
@@ -8529,7 +8171,6 @@ def list_units(unit_group: str | None = None, db: Session = Depends(get_db)) -> 
     if unit_group:
         query = query.filter(UnitDefinition.unit_group == unit_group)
     return query.order_by(UnitDefinition.unit_group.asc(), UnitDefinition.factor_to_reference.asc()).all()
-
 
 @app.post("/api/units/convert", response_model=UnitConvertResponse)
 @app.post("/units/convert", response_model=UnitConvertResponse)
@@ -8545,7 +8186,6 @@ def convert_units(payload: UnitConvertRequest, db: Session = Depends(get_db)) ->
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return UnitConvertResponse(**result)
-
 
 @app.post("/pts/validate", response_model=PtsValidateResponse)
 def validate_pts(payload: PtsValidateRequest) -> PtsValidateResponse:
@@ -8563,7 +8203,6 @@ def validate_pts(payload: PtsValidateRequest) -> PtsValidateResponse:
         invertible=result.invertible,
     )
 
-
 @app.post("/api/model/validate-handles", response_model=HandleValidationResponse)
 @app.post("/model/validate-handles", response_model=HandleValidationResponse)
 def validate_model_handles(payload: HandleValidationRequest) -> HandleValidationResponse:
@@ -8575,7 +8214,6 @@ def validate_model_handles(payload: HandleValidationRequest) -> HandleValidation
         issue_count=int(result.get("issue_count") or 0),
         issues=list(result.get("issues") or []),
     )
-
 
 @app.post("/debug/solver/check-snapshot", dependencies=[Depends(require_debug_access)])
 def debug_check_snapshot(
@@ -8609,7 +8247,6 @@ def debug_check_snapshot(
     if persisted_id:
         result["persisted_diagnostic_id"] = persisted_id
     return result
-
 
 @app.post("/debug/solver/inspect-run-pts", dependencies=[Depends(require_debug_access)])
 def debug_inspect_run_pts(
@@ -8699,7 +8336,6 @@ def debug_inspect_run_pts(
     if persisted_id:
         result["persisted_diagnostic_id"] = persisted_id
     return result
-
 
 @app.post("/debug/pts/compile-preview", dependencies=[Depends(require_debug_access)])
 def debug_pts_compile_preview(
@@ -8799,7 +8435,6 @@ def debug_pts_compile_preview(
         result["persisted_diagnostic_id"] = persisted_id
     return result
 
-
 @app.get("/debug/pts/{pts_node_id}/artifacts/latest", dependencies=[Depends(require_debug_access)])
 def debug_latest_pts_artifacts(
     pts_node_id: str,
@@ -8863,7 +8498,6 @@ def debug_latest_pts_artifacts(
     if persisted_id:
         result["persisted_diagnostic_id"] = persisted_id
     return result
-
 
 @app.post("/debug/graph/trace-flow", dependencies=[Depends(require_debug_access)])
 def debug_trace_flow(
@@ -8946,7 +8580,6 @@ def debug_trace_flow(
         result["persisted_diagnostic_id"] = persisted_id
     return result
 
-
 @app.get("/debug/run-jobs/{run_id}/diagnostics", dependencies=[Depends(require_debug_access)])
 def debug_run_job_diagnostics(
     run_id: str,
@@ -9017,7 +8650,6 @@ def debug_run_job_diagnostics(
     if persisted_id:
         result["persisted_diagnostic_id"] = persisted_id
     return result
-
 
 @app.post("/api/pts/compile", response_model=PtsCompileResponse)
 @app.post("/pts/compile", response_model=PtsCompileResponse)
@@ -9123,7 +8755,6 @@ def compile_pts_endpoint(payload: PtsCompileRequest, db: Session = Depends(get_d
         external_preview=external_payload,
     )
 
-
 @app.get("/api/pts/{pts_uuid}/compiled", response_model=PtsCompiledGetResponse)
 @app.get("/pts/{pts_uuid}/compiled", response_model=PtsCompiledGetResponse)
 def get_pts_compiled(pts_uuid: str, project_id: str, db: Session = Depends(get_db)) -> PtsCompiledGetResponse:
@@ -9162,7 +8793,6 @@ def get_pts_compiled(pts_uuid: str, project_id: str, db: Session = Depends(get_d
         artifact=compiled.artifact_json or {},
     )
 
-
 @app.get("/api/pts/{pts_uuid}/compiled-external", response_model=PtsCompiledExternalResponse)
 @app.get("/pts/{pts_uuid}/compiled-external", response_model=PtsCompiledExternalResponse)
 def get_pts_compiled_external(
@@ -9194,7 +8824,6 @@ def get_pts_compiled_external(
     payload["source_compile_version"] = int(row.source_compile_version or 0) if row.source_compile_version is not None else None
     return PtsCompiledExternalResponse.model_validate(payload)
 
-
 def _build_pts_resource_out(*, row: PtsResource, db: Session) -> PtsResourceOut:
     pts_graph = dict(row.pts_graph_json or {})
     if pts_graph:
@@ -9222,7 +8851,6 @@ def _build_pts_resource_out(*, row: PtsResource, db: Session) -> PtsResourceOut:
         pts_graph=pts_graph,
     )
 
-
 def _build_pts_shell_snapshot_from_external(*, row: PtsResource, external: PtsExternalArtifact) -> dict:
     shell_node = dict(row.shell_node_json or {})
     projected_inputs, projected_outputs = _build_projected_pts_ports_from_external(external)
@@ -9243,7 +8871,6 @@ def _build_pts_shell_snapshot_from_external(*, row: PtsResource, external: PtsEx
         "outputs": [port.model_dump(mode="python", by_alias=True) for port in projected_outputs],
         "emissions": [],
     }
-
 
 def _get_or_materialize_pts_resource_row(*, db: Session, pts_uuid: str) -> PtsResource:
     row = db.query(PtsResource).filter(PtsResource.pts_uuid == pts_uuid).first()
@@ -9274,7 +8901,6 @@ def _get_or_materialize_pts_resource_row(*, db: Session, pts_uuid: str) -> PtsRe
     db.refresh(row)
     return row
 
-
 def _resolve_pts_shell_snapshot_for_resource(*, db: Session, row: PtsResource) -> dict:
     project_id = str(row.project_id or "").strip()
     pts_uuid = str(row.pts_uuid or "").strip()
@@ -9287,7 +8913,6 @@ def _resolve_pts_shell_snapshot_for_resource(*, db: Session, row: PtsResource) -
         if external is not None:
             return _build_pts_shell_snapshot_from_external(row=row, external=external)
     return dict(row.shell_node_json or {})
-
 
 def _build_pts_unpack_port_bindings(*, pts_graph: dict, ports_policy: dict, shell_node: dict) -> list[PtsUnpackPortBinding]:
     if not isinstance(pts_graph, dict) or not pts_graph:
@@ -9403,14 +9028,12 @@ def _build_pts_unpack_port_bindings(*, pts_graph: dict, ports_policy: dict, shel
             )
     return bindings
 
-
 def _pts_ports_policy_has_rows(policy: dict | None) -> bool:
     if not isinstance(policy, dict):
         return False
     inputs = policy.get("inputs")
     outputs = policy.get("outputs")
     return bool((isinstance(inputs, list) and len(inputs) > 0) or (isinstance(outputs, list) and len(outputs) > 0))
-
 
 def _count_pts_policy_rows(policy: dict | None) -> tuple[int, int]:
     if not isinstance(policy, dict):
@@ -9422,7 +9045,6 @@ def _count_pts_policy_rows(policy: dict | None) -> tuple[int, int]:
         len(outputs) if isinstance(outputs, list) else 0,
     )
 
-
 def _count_shell_ports(shell_node: dict | None) -> tuple[int, int]:
     if not isinstance(shell_node, dict):
         return 0, 0
@@ -9432,7 +9054,6 @@ def _count_shell_ports(shell_node: dict | None) -> tuple[int, int]:
         len(inputs) if isinstance(inputs, list) else 0,
         len(outputs) if isinstance(outputs, list) else 0,
     )
-
 
 def _raise_if_pack_finalize_obviously_reentered(
     *,
@@ -9499,7 +9120,6 @@ def _raise_if_pack_finalize_obviously_reentered(
             },
         )
 
-
 def _upsert_pts_resource_from_definition(
     *,
     db: Session,
@@ -9546,7 +9166,6 @@ def _upsert_pts_resource_from_definition(
             row.active_published_version = row.latest_published_version
     return row
 
-
 def _build_compile_graph_from_pts_resource(row: PtsResource) -> HybridGraph | None:
     pts_graph = dict(row.pts_graph_json or {})
     shell_node = dict(row.shell_node_json or {})
@@ -9592,13 +9211,11 @@ def _build_compile_graph_from_pts_resource(row: PtsResource) -> HybridGraph | No
     except Exception:
         return None
 
-
 @app.get("/api/pts/{pts_uuid}", response_model=PtsResourceOut)
 @app.get("/pts/{pts_uuid}", response_model=PtsResourceOut)
 def get_pts_resource(pts_uuid: str, db: Session = Depends(get_db)) -> PtsResourceOut:
     row = _get_or_materialize_pts_resource_row(db=db, pts_uuid=pts_uuid)
     return _build_pts_resource_out(row=row, db=db)
-
 
 @app.post("/api/pts/{pts_uuid}/unpack", response_model=PtsUnpackResponse)
 @app.post("/pts/{pts_uuid}/unpack", response_model=PtsUnpackResponse)
@@ -9639,7 +9256,6 @@ def unpack_pts_resource(
         port_bindings=port_bindings,
         resource=resource,
     )
-
 
 @app.put("/api/pts/{pts_uuid}", response_model=PtsResourceOut)
 @app.put("/pts/{pts_uuid}", response_model=PtsResourceOut)
@@ -9727,7 +9343,6 @@ def put_pts_resource(pts_uuid: str, payload: PtsResourceUpdateRequest, db: Sessi
     db.commit()
     db.refresh(row)
     return _build_pts_resource_out(row=row, db=db)
-
 
 @app.post("/api/pts/{pts_uuid}/pack-finalize", response_model=PtsPackFinalizeResponse)
 @app.post("/pts/{pts_uuid}/pack-finalize", response_model=PtsPackFinalizeResponse)
@@ -9824,7 +9439,6 @@ def pack_finalize_pts_resource(
         warnings=list(publish_response.warnings or []),
     )
 
-
 def _resolve_compile_row_for_publish(*, db: Session, pts_uuid: str, payload: PtsPublishRequest) -> PtsCompileArtifact:
     query = db.query(PtsCompileArtifact).filter(
         PtsCompileArtifact.project_id == payload.project_id,
@@ -9848,7 +9462,6 @@ def _resolve_compile_row_for_publish(*, db: Session, pts_uuid: str, payload: Pts
         )
     return row
 
-
 def _bind_pts_published_versions_for_graph(*, db: Session, project_id: str, graph: HybridGraph) -> None:
     for node in graph.nodes:
         if node.node_kind != "pts_module":
@@ -9867,7 +9480,6 @@ def _bind_pts_published_versions_for_graph(*, db: Session, project_id: str, grap
             continue
         node.pts_published_version = int(external.published_version) if external.published_version is not None else None
         node.pts_published_artifact_id = str(external.id)
-
 
 @app.post("/api/pts/{pts_uuid}/publish", response_model=PtsPublishResponse)
 @app.post("/pts/{pts_uuid}/publish", response_model=PtsPublishResponse)
@@ -9939,7 +9551,6 @@ def publish_pts_artifact(pts_uuid: str, payload: PtsPublishRequest, db: Session 
         warnings=publish_warnings,
     )
 
-
 @app.get("/api/pts/{pts_uuid}/compile-history", response_model=PtsCompileHistoryResponse)
 @app.get("/pts/{pts_uuid}/compile-history", response_model=PtsCompileHistoryResponse)
 def get_pts_compile_history(pts_uuid: str, project_id: str, db: Session = Depends(get_db)) -> PtsCompileHistoryResponse:
@@ -9966,7 +9577,6 @@ def get_pts_compile_history(pts_uuid: str, project_id: str, db: Session = Depend
             for row in rows
         ],
     )
-
 
 @app.get("/api/pts/{pts_uuid}/published-history", response_model=PtsPublishedHistoryResponse)
 @app.get("/pts/{pts_uuid}/published-history", response_model=PtsPublishedHistoryResponse)
@@ -9995,7 +9605,6 @@ def get_pts_published_history(pts_uuid: str, project_id: str, db: Session = Depe
             for row in rows
         ],
     )
-
 
 @app.get("/api/pts/{pts_uuid}/ports")
 @app.get("/pts/{pts_uuid}/ports")
@@ -10037,7 +9646,6 @@ def get_pts_ports(
         "virtual_processes": payload.get("virtual_processes", []),
     }
 
-
 def delete_elementary_flow(flow_uuid: str, db: Session = Depends(get_db)) -> DeleteFlowsResponse:
     item = db.get(FlowRecord, flow_uuid)
     if item is None:
@@ -10048,7 +9656,6 @@ def delete_elementary_flow(flow_uuid: str, db: Session = Depends(get_db)) -> Del
     db.commit()
     return DeleteFlowsResponse(deleted=1, by_flow_uuid=flow_uuid)
 
-
 def delete_intermediate_flow(flow_uuid: str, db: Session = Depends(get_db)) -> DeleteFlowsResponse:
     item = db.get(FlowRecord, flow_uuid)
     if item is None:
@@ -10058,7 +9665,6 @@ def delete_intermediate_flow(flow_uuid: str, db: Session = Depends(get_db)) -> D
     db.delete(item)
     db.commit()
     return DeleteFlowsResponse(deleted=1, by_flow_uuid=flow_uuid)
-
 
 def delete_elementary_flows(
     only_non_ef31: bool = False,
@@ -10093,7 +9699,6 @@ def delete_elementary_flows(
         only_non_ef31=only_non_ef31,
     )
 
-
 def delete_intermediate_flows(
     db: Session = Depends(get_db),
 ) -> DeleteFlowsResponse:
@@ -10109,7 +9714,6 @@ def delete_intermediate_flows(
         by_flow_type="Intermediate flow",
         only_non_ef31=False,
     )
-
 
 def create_model(payload: ModelCreateRequest, db: Session = Depends(get_db)) -> ModelCreateResponse:
     normalize_graph_product_flags(payload.graph)
@@ -10195,302 +9799,6 @@ def create_model(payload: ModelCreateRequest, db: Session = Depends(get_db)) -> 
         graph_hash=graph_hash,
         **pts_compile_summary,
     )
-
-
-@app.post("/projects", response_model=ProjectOut)
-def create_project(payload: ProjectCreateRequest, db: Session = Depends(get_db)) -> ProjectOut:
-    _ensure_projects_management_schema()
-    project_name = payload.name.strip()
-    if not project_name:
-        raise HTTPException(status_code=400, detail="Project name cannot be empty")
-
-    existing = db.query(Model).filter(Model.name == project_name).first()
-    if existing:
-        raise HTTPException(status_code=409, detail="Project name already exists")
-
-    now = datetime.utcnow()
-    model = Model(
-        name=project_name,
-        reference_product=_safe_str(payload.reference_product),
-        functional_unit=_safe_str(payload.functional_unit),
-        system_boundary=_safe_str(payload.system_boundary),
-        time_representativeness=_safe_str(payload.time_representativeness),
-        geography=_safe_str(payload.geography),
-        description=_safe_str(payload.description),
-        status=_normalize_project_status("active"),
-        updated_at=now,
-    )
-    db.add(model)
-    db.commit()
-    db.refresh(model)
-    return _build_project_out(model, latest=None)
-
-
-@app.get("/projects", response_model=list[ProjectOut])
-def list_projects(db: Session = Depends(get_db)) -> list[ProjectOut]:
-    models = db.query(Model).order_by(Model.created_at.desc()).all()
-    latest_by_project = _latest_version_by_project_id(db)
-    return [_build_project_out(model, latest_by_project.get(str(model.id))) for model in models]
-
-
-@app.get("/api/projects/{project_id}", response_model=ProjectOut)
-@app.get("/projects/{project_id}", response_model=ProjectOut)
-def get_project(project_id: str, db: Session = Depends(get_db)) -> ProjectOut:
-    model = get_model_or_404(db, project_id)
-    latest = (
-        db.query(ModelVersion)
-        .filter(ModelVersion.model_id == model.id)
-        .order_by(ModelVersion.version.desc(), ModelVersion.created_at.desc())
-        .first()
-    )
-    return _build_project_out(model, latest)
-
-
-@app.post("/api/projects/{project_id}/sync-flow-names", response_model=ProjectFlowNameSyncResponse)
-@app.post("/projects/{project_id}/sync-flow-names", response_model=ProjectFlowNameSyncResponse)
-def sync_project_flow_names(project_id: str, db: Session = Depends(get_db)) -> ProjectFlowNameSyncResponse:
-    model = get_model_or_404(db, project_id)
-    (
-        latest_version,
-        synced_port_count,
-        synced_edge_count,
-        cleared_pts_compile_count,
-        cleared_pts_external_count,
-        cleared_pts_definition_count,
-    ) = _sync_project_latest_version_flow_names(db=db, project_id=model.id)
-    db.commit()
-    _invalidate_management_caches(projects=True, stats=True)
-    return ProjectFlowNameSyncResponse(
-        project_id=model.id,
-        synced=bool(synced_port_count or synced_edge_count),
-        latest_version=latest_version,
-        synced_port_count=synced_port_count,
-        synced_edge_count=synced_edge_count,
-        cleared_pts_compile_count=cleared_pts_compile_count,
-        cleared_pts_external_count=cleared_pts_external_count,
-        cleared_pts_definition_count=cleared_pts_definition_count,
-    )
-
-
-@app.get("/api/projects", response_model=PaginatedProjectsResponse)
-def list_projects_api(
-    search: str | None = Query(default=None),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=200),
-    recent: bool = Query(default=False),
-    limit: int | None = Query(default=None, ge=1, le=200),
-    if_none_match: str | None = Header(default=None, alias="If-None-Match"),
-    db: Session = Depends(get_db),
-) -> PaginatedProjectsResponse:
-    search_key = (search or "").strip().lower()
-    cache_key = (
-        f"projects:v1:rev={_cache_revision('projects')}:search={search_key}:"
-        f"page={page}:page_size={page_size}:recent={int(bool(recent))}:limit={limit or ''}"
-    )
-    cached = _cache_get(cache_key, ttl_seconds=_CACHE_TTL_PROJECTS_SECONDS)
-    if isinstance(cached, dict):
-        payload = cached.get("payload")
-        etag = cached.get("etag")
-        if isinstance(payload, dict) and isinstance(etag, str):
-            if _is_if_none_match_hit(if_none_match, etag):
-                return Response(status_code=304, headers={"ETag": etag})
-            return JSONResponse(content=payload, headers={"ETag": etag})
-
-    query = db.query(Model)
-    if search and search.strip():
-        token = f"%{search.strip().lower()}%"
-        query = query.filter(
-            func.lower(Model.name).like(token)
-            | func.lower(func.coalesce(Model.reference_product, "")).like(token)
-            | func.lower(func.coalesce(Model.functional_unit, "")).like(token)
-            | func.lower(func.coalesce(Model.system_boundary, "")).like(token)
-            | func.lower(func.coalesce(Model.time_representativeness, "")).like(token)
-            | func.lower(func.coalesce(Model.geography, "")).like(token)
-            | func.lower(func.coalesce(Model.description, "")).like(token)
-        )
-
-    ordered = query.order_by(Model.updated_at.desc(), Model.created_at.desc())
-    if recent:
-        effective_limit = limit or page_size
-        models = ordered.limit(effective_limit).all()
-        total = len(models)
-        page = 1
-        page_size = effective_limit
-    else:
-        total = query.count()
-        models = (
-            ordered
-            .offset((page - 1) * page_size)
-            .limit(page_size)
-            .all()
-        )
-    latest_by_project = _latest_version_by_project_id(db)
-    items = [_build_project_out(model, latest_by_project.get(str(model.id))) for model in models]
-    result = PaginatedProjectsResponse(items=items, total=total, page=page, page_size=page_size)
-    payload = result.model_dump(mode="json")
-    etag = _build_etag_for_payload(payload)
-    _cache_set(cache_key, {"payload": payload, "etag": etag})
-    if _is_if_none_match_hit(if_none_match, etag):
-        return Response(status_code=304, headers={"ETag": etag})
-    return JSONResponse(content=payload, headers={"ETag": etag})
-
-
-@app.post("/api/projects", response_model=ProjectOut)
-def create_project_api(payload: ProjectCreateRequest, db: Session = Depends(get_db)) -> ProjectOut:
-    project_name = payload.name.strip()
-    if not project_name:
-        raise HTTPException(status_code=400, detail={"code": "INVALID_REQUEST", "message": "Project name cannot be empty"})
-    existing = db.query(Model).filter(Model.name == project_name).first()
-    if existing:
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "DUPLICATE_PROJECT_NAME", "message": f"Project name already exists: {project_name}"},
-        )
-    created = create_project(payload=payload, db=db)
-    _invalidate_management_caches(projects=True, stats=True)
-    return created
-
-
-@app.patch("/api/projects/{project_id}", response_model=ProjectOut)
-def update_project_api(project_id: str, payload: ProjectUpdateRequest, db: Session = Depends(get_db)) -> ProjectOut:
-    model = db.query(Model).filter(Model.id == project_id).first()
-    if model is None:
-        raise HTTPException(status_code=404, detail={"code": "PROJECT_NOT_FOUND", "message": f"Project not found: {project_id}"})
-
-    if payload.name is not None:
-        new_name = payload.name.strip()
-        if not new_name:
-            raise HTTPException(status_code=400, detail={"code": "INVALID_REQUEST", "message": "Project name cannot be empty"})
-        existing = db.query(Model).filter(Model.name == new_name, Model.id != project_id).first()
-        if existing:
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "DUPLICATE_PROJECT_NAME", "message": f"Project name already exists: {new_name}"},
-            )
-        model.name = new_name
-
-    for field_name in (
-        "reference_product",
-        "functional_unit",
-        "system_boundary",
-        "time_representativeness",
-        "geography",
-        "description",
-    ):
-        value = getattr(payload, field_name)
-        if value is not None:
-            setattr(model, field_name, _safe_str(value))
-    if payload.status is not None:
-        model.status = _normalize_project_status(payload.status)
-    model.updated_at = datetime.utcnow()
-    db.commit()
-    db.refresh(model)
-    _invalidate_management_caches(projects=True, stats=True)
-    latest = (
-        db.query(ModelVersion)
-        .filter(ModelVersion.model_id == model.id)
-        .order_by(ModelVersion.version.desc(), ModelVersion.created_at.desc())
-        .first()
-    )
-    return _build_project_out(model, latest)
-
-
-@app.post("/api/projects/{project_id}/duplicate", response_model=ProjectOut)
-def duplicate_project_api(
-    project_id: str,
-    payload: ProjectDuplicateRequest | None = None,
-    db: Session = Depends(get_db),
-) -> ProjectOut:
-    source = db.query(Model).filter(Model.id == project_id).first()
-    if source is None:
-        raise HTTPException(status_code=404, detail={"code": "PROJECT_NOT_FOUND", "message": f"Project not found: {project_id}"})
-    source_latest = (
-        db.query(ModelVersion)
-        .filter(ModelVersion.model_id == source.id)
-        .order_by(ModelVersion.version.desc(), ModelVersion.created_at.desc())
-        .first()
-    )
-    base_name = _safe_str(payload.name) if payload else None
-    if not base_name:
-        base_name = f"{source.name}_copy"
-    candidate = base_name
-    suffix = 1
-    while db.query(Model).filter(Model.name == candidate).first() is not None:
-        suffix += 1
-        candidate = f"{base_name}_{suffix}"
-
-    now = datetime.utcnow()
-    duplicated = Model(
-        name=candidate,
-        reference_product=source.reference_product,
-        functional_unit=source.functional_unit,
-        system_boundary=source.system_boundary,
-        time_representativeness=source.time_representativeness,
-        geography=source.geography,
-        description=source.description,
-        status=source.status or "active",
-        updated_at=now,
-    )
-    db.add(duplicated)
-    db.flush()
-    if source_latest is not None:
-        new_version = ModelVersion(
-            model_id=duplicated.id,
-            version=1,
-            graph_hash=_resolve_model_version_graph_hash(source_latest, assign_if_missing=False),
-            hybrid_graph_json=source_latest.hybrid_graph_json if isinstance(source_latest.hybrid_graph_json, dict) else {},
-        )
-        db.add(new_version)
-    db.commit()
-    db.refresh(duplicated)
-    _invalidate_management_caches(projects=True, stats=True)
-    latest = (
-        db.query(ModelVersion)
-        .filter(ModelVersion.model_id == duplicated.id)
-        .order_by(ModelVersion.version.desc(), ModelVersion.created_at.desc())
-        .first()
-    )
-    return _build_project_out(duplicated, latest)
-
-
-@app.delete("/api/projects/{project_id}", response_model=DeleteProjectResponse)
-def delete_project_api(project_id: str, db: Session = Depends(get_db)) -> DeleteProjectResponse:
-    source = db.query(Model).filter(Model.id == project_id).first()
-    if source is None:
-        raise HTTPException(status_code=404, detail={"code": "PROJECT_NOT_FOUND", "message": f"Project not found: {project_id}"})
-    return delete_project(project_id=project_id, db=db)
-
-
-@app.delete("/projects/{project_id}", response_model=DeleteProjectResponse)
-def delete_project(project_id: str, db: Session = Depends(get_db)) -> DeleteProjectResponse:
-    model = get_model_or_404(db, project_id)
-    version_rows = db.query(ModelVersion.id).filter(ModelVersion.model_id == model.id).all()
-    version_ids = [row[0] for row in version_rows]
-
-    cleared = 0
-    if version_ids:
-        cleared = (
-            db.query(RunJob)
-            .filter(RunJob.model_version_id.in_(version_ids))
-            .update({RunJob.model_version_id: None}, synchronize_session=False)
-        )
-
-    deleted_versions = (
-        db.query(ModelVersion)
-        .filter(ModelVersion.model_id == model.id)
-        .delete(synchronize_session=False)
-    )
-    db.delete(model)
-    db.commit()
-    _invalidate_management_caches(projects=True, stats=True)
-
-    return DeleteProjectResponse(
-        project_id=project_id,
-        deleted_models=1,
-        deleted_versions=deleted_versions,
-        cleared_run_job_refs=cleared,
-    )
-
 
 @app.get("/api/reference/processes/catalog", response_model=ReferenceProcessCatalogResponse)
 @app.get("/reference/processes/catalog", response_model=ReferenceProcessCatalogResponse)
@@ -10598,7 +9906,6 @@ def list_reference_processes_catalog(
     if _is_if_none_match_hit(if_none_match, etag):
         return Response(status_code=304, headers={"ETag": etag})
     return JSONResponse(content=payload, headers={"ETag": etag})
-
 
 @app.post("/api/reference/processes/import", response_model=ImportReferenceProcessesResponse)
 @app.post("/reference/processes/import", response_model=ImportReferenceProcessesResponse)
@@ -10742,7 +10049,6 @@ def import_reference_processes(
         imported_processes=imported_processes,
     )
 
-
 @app.get("/api/reference/processes/{process_uuid}/import-report", response_model=ProcessImportReportResponse)
 @app.get("/reference/processes/{process_uuid}/import-report", response_model=ProcessImportReportResponse)
 def get_reference_process_import_report(
@@ -10824,7 +10130,6 @@ def get_reference_process_import_report(
         return Response(status_code=304, headers={"ETag": etag})
     return JSONResponse(content=payload, headers={"ETag": etag})
 
-
 @app.get("/api/reference/processes/{process_uuid}/filtered-exchanges", response_model=ProcessFilteredExchangesResponse)
 @app.get("/reference/processes/{process_uuid}/filtered-exchanges", response_model=ProcessFilteredExchangesResponse)
 def get_reference_process_filtered_exchanges(
@@ -10850,7 +10155,6 @@ def get_reference_process_filtered_exchanges(
         filtered_exchange_count=len(filtered),
         filtered_exchanges=filtered,
     )
-
 
 @app.get("/api/reference/flows/missing/summary", response_model=MissingFlowSummaryResponse)
 @app.get("/reference/flows/missing/summary", response_model=MissingFlowSummaryResponse)
@@ -10923,235 +10227,6 @@ def get_stats_api(db: Session = Depends(get_db)) -> StatsResponse:
     )
     _cache_set(cache_key, result)
     return result
-
-
-@app.post("/projects/{project_id}/versions", response_model=ModelCreateResponse)
-def create_project_version(
-    project_id: str,
-    payload: ModelVersionCreateRequest,
-    compile_pts_on_save: bool = Query(default=True),
-    db: Session = Depends(get_db),
-) -> ModelCreateResponse:
-    normalize_graph_product_flags(payload.graph)
-    _canonicalize_pts_nodes_for_main_graph_save(db=db, project_id=project_id, graph=payload.graph)
-    validate_graph_contract(payload.graph, require_non_empty=True, allow_pts_nodes=True)
-    validate_graph_flow_type_contract(payload.graph, db=db, stage="save_version")
-    validate_graph_port_names_against_flow_catalog(payload.graph, db=db, stage="save_version")
-
-    model = get_model_or_404(db, project_id)
-    normalized_graph = _normalize_graph_json_for_storage(payload.graph.model_dump(mode="python"))
-    slim_graph = _slim_graph_for_storage(normalized_graph)
-    graph_hash = _compute_graph_hash_from_slim_graph(slim_graph)
-
-    latest_row = (
-        db.query(ModelVersion)
-        .filter(ModelVersion.model_id == model.id)
-        .order_by(ModelVersion.version.desc(), ModelVersion.created_at.desc())
-        .first()
-    )
-    if latest_row is not None:
-        latest_has_hash = bool(str(latest_row.graph_hash or "").strip())
-        latest_hash = _resolve_model_version_graph_hash(latest_row, assign_if_missing=True)
-        if not latest_has_hash:
-            db.commit()
-        if latest_hash == graph_hash:
-            pts_compile_summary = _compile_pts_on_save_if_needed(
-                db=db,
-                project_id=model.id,
-                graph=payload.graph,
-                compile_on_save=compile_pts_on_save,
-            )
-            return ModelCreateResponse(
-                project_id=model.id,
-                version=latest_row.version,
-                created_at=latest_row.created_at,
-                created_new_version=False,
-                graph_hash=graph_hash,
-                message="内容未变化，未创建新版本",
-                **pts_compile_summary,
-            )
-
-    latest_version = (
-        db.query(func.max(ModelVersion.version))
-        .filter(ModelVersion.model_id == model.id)
-        .scalar()
-    )
-    next_version = (latest_version or 0) + 1
-
-    version = ModelVersion(
-        model_id=model.id,
-        version=next_version,
-        graph_hash=graph_hash,
-        hybrid_graph_json=slim_graph,
-    )
-    model.updated_at = datetime.utcnow()
-    db.add(version)
-    db.commit()
-    db.refresh(version)
-    pts_compile_summary = _compile_pts_on_save_if_needed(
-        db=db,
-        project_id=model.id,
-        graph=payload.graph,
-        compile_on_save=compile_pts_on_save,
-    )
-    # Auto-prune versions: keep only the latest N versions per model
-    try:
-        _auto_prune_versions(db=db, model_id=model.id)
-    except Exception:
-        pass
-    _invalidate_management_caches(projects=True, stats=True)
-    return ModelCreateResponse(
-        project_id=model.id,
-        version=version.version,
-        created_at=version.created_at,
-        created_new_version=True,
-        graph_hash=graph_hash,
-        **pts_compile_summary,
-    )
-
-
-@app.post("/api/projects/{project_id}/versions", response_model=ModelCreateResponse)
-def create_project_version_api(
-    project_id: str,
-    payload: ModelVersionCreateRequest,
-    compile_pts_on_save: bool = Query(default=True),
-    db: Session = Depends(get_db),
-) -> ModelCreateResponse:
-    return create_project_version(
-        project_id=project_id,
-        payload=payload,
-        compile_pts_on_save=compile_pts_on_save,
-        db=db,
-    )
-
-
-@app.get("/projects/{project_id}/versions", response_model=list[ModelCreateResponse])
-def list_project_versions(project_id: str, db: Session = Depends(get_db)) -> list[ModelCreateResponse]:
-    model = get_model_or_404(db, project_id)
-    versions = (
-        db.query(ModelVersion)
-        .filter(ModelVersion.model_id == model.id)
-        .order_by(ModelVersion.version.desc(), ModelVersion.created_at.desc())
-        .all()
-    )
-    return [
-        ModelCreateResponse(
-            project_id=model.id,
-            version=v.version,
-            created_at=v.created_at,
-            graph_hash=_resolve_model_version_graph_hash(v, assign_if_missing=False),
-        )
-        for v in versions
-    ]
-
-
-@app.get("/api/projects/{project_id}/versions/{version}", response_model=ModelVersionOut)
-@app.get("/projects/{project_id}/versions/{version}", response_model=ModelVersionOut)
-def get_project_version(project_id: str, version: int, db: Session = Depends(get_db)) -> ModelVersionOut:
-    model = get_model_or_404(db, project_id)
-    record = (
-        db.query(ModelVersion)
-        .filter(ModelVersion.model_id == model.id, ModelVersion.version == version)
-        .first()
-    )
-    if not record:
-        raise HTTPException(status_code=404, detail="Model version not found")
-    raw_graph = _hydrate_graph_for_api(record.hybrid_graph_json if isinstance(record.hybrid_graph_json, dict) else {}, db=db)
-    graph = HybridGraph.model_validate(raw_graph)
-    normalize_graph_product_flags(graph)
-    _project_pts_external_ports_into_graph(db=db, project_id=model.id, graph=graph)
-    pts_validation = _build_pts_validation_summary(db=db, project_id=model.id, graph=graph)
-    graph_json = graph.model_dump(mode="python")
-    _enrich_graph_flow_name_en(graph_json, db=db)
-    flow_name_sync_needed, outdated_flow_refs_count, outdated_flow_ref_examples = _build_flow_sync_state_for_graph_json(
-        db=db,
-        graph_json=graph_json,
-    )
-    project_integrity = _build_project_integrity_summary(
-        pts_validation=pts_validation,
-        flow_name_sync_needed=flow_name_sync_needed,
-        outdated_flow_refs_count=outdated_flow_refs_count,
-        outdated_flow_ref_examples=outdated_flow_ref_examples,
-    )
-    return ModelVersionOut(
-        project_id=model.id,
-        version=record.version,
-        created_at=record.created_at,
-        graph=graph_json,
-        handle_validation=safe_handle_validation_from_graph_json(graph_json),
-        flow_name_sync_needed=flow_name_sync_needed,
-        outdated_flow_refs_count=outdated_flow_refs_count,
-        outdated_flow_ref_examples=outdated_flow_ref_examples,
-        pts_validation=pts_validation,
-        project_integrity=project_integrity,
-    )
-
-
-@app.get("/api/projects/{project_id}/latest", response_model=ModelVersionOut)
-@app.get("/projects/{project_id}/latest", response_model=ModelVersionOut)
-def get_project_latest_by_id(
-    project_id: str,
-    if_none_match: str | None = Header(default=None, alias="If-None-Match"),
-    db: Session = Depends(get_db),
-) -> ModelVersionOut | Response:
-    model = get_model_or_404(db, project_id)
-    latest_row = (
-        db.query(ModelVersion)
-        .filter(ModelVersion.model_id == model.id)
-        .order_by(ModelVersion.version.desc(), ModelVersion.created_at.desc())
-        .first()
-    )
-    if latest_row is None:
-        raise HTTPException(status_code=404, detail="No model version found")
-    cache_key = (
-        f"project_latest:v1:rev={_cache_revision('projects')}:project_id={model.id}:"
-        f"version={latest_row.version}:graph_hash={str(latest_row.graph_hash or '')}"
-    )
-    cached = _cache_get(cache_key, ttl_seconds=_CACHE_TTL_PROJECTS_SECONDS)
-    if isinstance(cached, dict):
-        payload = cached.get("payload")
-        etag = cached.get("etag")
-        if isinstance(payload, dict) and isinstance(etag, str):
-            if _is_if_none_match_hit(if_none_match, etag):
-                return Response(status_code=304, headers={"ETag": etag})
-            return JSONResponse(content=payload, headers={"ETag": etag})
-
-    raw_graph = _hydrate_graph_for_api(latest_row.hybrid_graph_json if isinstance(latest_row.hybrid_graph_json, dict) else {}, db=db)
-    graph = HybridGraph.model_validate(raw_graph)
-    normalize_graph_product_flags(graph)
-    _project_pts_external_ports_into_graph(db=db, project_id=model.id, graph=graph)
-    pts_validation = _build_pts_validation_summary(db=db, project_id=model.id, graph=graph)
-    graph_json = graph.model_dump(mode="python")
-    _enrich_graph_flow_name_en(graph_json, db=db)
-    flow_name_sync_needed, outdated_flow_refs_count, outdated_flow_ref_examples = _build_flow_sync_state_for_graph_json(
-        db=db,
-        graph_json=graph_json,
-    )
-    project_integrity = _build_project_integrity_summary(
-        pts_validation=pts_validation,
-        flow_name_sync_needed=flow_name_sync_needed,
-        outdated_flow_refs_count=outdated_flow_refs_count,
-        outdated_flow_ref_examples=outdated_flow_ref_examples,
-    )
-    payload = ModelVersionOut(
-        project_id=model.id,
-        version=latest_row.version,
-        created_at=latest_row.created_at,
-        graph=graph_json,
-        handle_validation=safe_handle_validation_from_graph_json(graph_json),
-        flow_name_sync_needed=flow_name_sync_needed,
-        outdated_flow_refs_count=outdated_flow_refs_count,
-        outdated_flow_ref_examples=outdated_flow_ref_examples,
-        pts_validation=pts_validation,
-        project_integrity=project_integrity,
-    )
-    payload_json = payload.model_dump(mode="json")
-    etag = _build_etag_for_payload(payload_json)
-    _cache_set(cache_key, {"payload": payload_json, "etag": etag})
-    if _is_if_none_match_hit(if_none_match, etag):
-        return Response(status_code=304, headers={"ETag": etag})
-    return JSONResponse(content=payload_json, headers={"ETag": etag})
-
 
 @app.post("/api/projects/{project_id}/repair-pts-publications", response_model=RepairPtsPublicationsResponse)
 @app.post("/projects/{project_id}/repair-pts-publications", response_model=RepairPtsPublicationsResponse)
@@ -11251,162 +10326,6 @@ def repair_pts_publications_for_project(project_id: str, db: Session = Depends(g
     )
 
 
-@app.post("/api/projects/{project_id}/repair-integrity", response_model=RepairProjectIntegrityResponse)
-@app.post("/projects/{project_id}/repair-integrity", response_model=RepairProjectIntegrityResponse)
-def repair_project_integrity(project_id: str, db: Session = Depends(get_db)) -> RepairProjectIntegrityResponse:
-    model = get_model_or_404(db, project_id)
-    latest_row = (
-        db.query(ModelVersion)
-        .filter(ModelVersion.model_id == model.id)
-        .order_by(ModelVersion.version.desc(), ModelVersion.created_at.desc())
-        .first()
-    )
-    if latest_row is None:
-        raise HTTPException(status_code=404, detail="No model version found")
-
-    raw_graph = _hydrate_graph_for_api(latest_row.hybrid_graph_json if isinstance(latest_row.hybrid_graph_json, dict) else {}, db=db)
-    graph = HybridGraph.model_validate(raw_graph)
-    normalize_graph_product_flags(graph)
-    _project_pts_external_ports_into_graph(db=db, project_id=model.id, graph=graph)
-    graph_json = graph.model_dump(mode="python")
-    pts_validation = _build_pts_validation_summary(db=db, project_id=model.id, graph=graph)
-    flow_name_sync_needed, outdated_flow_refs_count, outdated_flow_ref_examples = _build_flow_sync_state_for_graph_json(
-        db=db,
-        graph_json=graph_json,
-    )
-
-    repaired_count = 0
-    skipped_count = 0
-    failed_count = 0
-    items: list[dict] = []
-
-    for item in pts_validation.items:
-        if not item.auto_repairable:
-            skipped_count += 1
-            items.append(
-                {
-                    "kind": "pts_publication",
-                    "pts_uuid": item.pts_uuid,
-                    "node_id": item.node_id,
-                    "node_name": item.node_name,
-                    "status": "skipped",
-                    "reason": item.reason,
-                }
-            )
-            continue
-        resource = (
-            db.query(PtsResource)
-            .filter(PtsResource.project_id == model.id, PtsResource.pts_uuid == item.pts_uuid)
-            .first()
-        )
-        if resource is None:
-            failed_count += 1
-            items.append(
-                {
-                    "kind": "pts_publication",
-                    "pts_uuid": item.pts_uuid,
-                    "node_id": item.node_id,
-                    "node_name": item.node_name,
-                    "status": "failed",
-                    "reason": "pts_resource_missing",
-                }
-            )
-            continue
-        try:
-            repaired, reason = _repair_pts_publication_from_resource(db=db, resource=resource)
-            if repaired:
-                repaired_count += 1
-                items.append(
-                    {
-                        "kind": "pts_publication",
-                        "pts_uuid": item.pts_uuid,
-                        "node_id": item.node_id,
-                        "node_name": item.node_name,
-                        "status": "repaired",
-                        "reason": reason,
-                    }
-                )
-            else:
-                skipped_count += 1
-                items.append(
-                    {
-                        "kind": "pts_publication",
-                        "pts_uuid": item.pts_uuid,
-                        "node_id": item.node_id,
-                        "node_name": item.node_name,
-                        "status": "skipped",
-                        "reason": reason,
-                    }
-                )
-        except Exception as exc:
-            failed_count += 1
-            items.append(
-                {
-                    "kind": "pts_publication",
-                    "pts_uuid": item.pts_uuid,
-                    "node_id": item.node_id,
-                    "node_name": item.node_name,
-                    "status": "failed",
-                    "reason": str(exc),
-                }
-            )
-
-    if flow_name_sync_needed:
-        try:
-            (
-                latest_version,
-                synced_port_count,
-                synced_edge_count,
-                updated_flow_count,
-                _before_count,
-                _after_count,
-            ) = _sync_project_latest_version_flow_names(db=db, project_id=model.id)
-            if synced_port_count > 0 or synced_edge_count > 0:
-                repaired_count += 1
-                items.append(
-                    {
-                        "kind": "flow_name_sync",
-                        "status": "repaired",
-                        "reason": "flow_names_synced",
-                        "version": latest_version,
-                        "synced_port_count": synced_port_count,
-                        "synced_edge_count": synced_edge_count,
-                        "updated_flow_count": updated_flow_count,
-                    }
-                )
-            else:
-                skipped_count += 1
-                items.append(
-                    {
-                        "kind": "flow_name_sync",
-                        "status": "skipped",
-                        "reason": "already_synced",
-                        "outdated_count": int(outdated_flow_refs_count or 0),
-                        "examples": list(outdated_flow_ref_examples or []),
-                    }
-                )
-        except Exception as exc:
-            failed_count += 1
-            items.append(
-                {
-                    "kind": "flow_name_sync",
-                    "status": "failed",
-                    "reason": str(exc),
-                    "outdated_count": int(outdated_flow_refs_count or 0),
-                }
-            )
-
-    db.commit()
-    _invalidate_management_caches(projects=True, stats=True)
-    return RepairProjectIntegrityResponse(
-        project_id=model.id,
-        repaired_count=repaired_count,
-        skipped_count=skipped_count,
-        failed_count=failed_count,
-        items=items,
-    )
-
-
 def get_model_version(project_id: str, version: int, db: Session = Depends(get_db)) -> dict:
     record = (
         db.query(ModelVersion)
@@ -11428,7 +10347,6 @@ def get_model_version(project_id: str, version: int, db: Session = Depends(get_d
         "created_at": record.created_at,
         "handle_validation": safe_handle_validation_from_graph_json(graph_json),
     }
-
 
 def get_project_latest(project_name: str, db: Session = Depends(get_db)) -> dict:
     normalized_name = project_name.strip()
@@ -11460,7 +10378,6 @@ def get_project_latest(project_name: str, db: Session = Depends(get_db)) -> dict
         "handle_validation": safe_handle_validation_from_graph_json(graph_json),
     }
 
-
 def get_fixed_project_latest(db: Session = Depends(get_db)) -> dict:
     latest = (
         db.query(ModelVersion, Model)
@@ -11485,7 +10402,6 @@ def get_fixed_project_latest(db: Session = Depends(get_db)) -> dict:
         "created_at": version.created_at,
         "handle_validation": safe_handle_validation_from_graph_json(graph_json),
     }
-
 
 @app.post("/admin/migrations/node-kinds", dependencies=[Depends(require_debug_access)])
 def migrate_node_kinds(
@@ -11687,7 +10603,6 @@ def migrate_node_kinds(
         },
     }
 
-
 @app.post("/admin/migrations/model-version-hashes", dependencies=[Depends(require_debug_access)])
 def migrate_model_version_hashes(
     project_id: str | None = Query(default=None),
@@ -11816,7 +10731,6 @@ def migrate_model_version_hashes(
         },
     }
 
-
 @app.post("/admin/migrations/pts-resources", dependencies=[Depends(require_debug_access)])
 def migrate_pts_resources_endpoint(
     project_id: str | None = Query(default=None),
@@ -11834,7 +10748,6 @@ def migrate_pts_resources_endpoint(
     report["schema"] = schema_report
     return report
 
-
 @app.post("/admin/migrations/pts-published-bindings", dependencies=[Depends(require_debug_access)])
 def migrate_pts_published_bindings_endpoint(
     project_id: str | None = Query(default=None),
@@ -11849,7 +10762,6 @@ def migrate_pts_published_bindings_endpoint(
         latest_only=latest_only,
     )
     return report
-
 
 @app.post("/admin/maintenance/prune-model-versions", dependencies=[Depends(require_debug_access)])
 def prune_model_versions_maintenance(
@@ -11873,7 +10785,6 @@ def prune_model_versions_maintenance(
         "maintenance": "prune-model-versions-v1",
         **result,
     }
-
 
 @app.post("/api/model/run", response_model=RunResponse)
 @app.post("/model/run", response_model=RunResponse)
@@ -11931,7 +10842,6 @@ def run_model(payload: RunRequest, db: Session = Depends(get_db)) -> RunResponse
         tiangong_like_input=tiangong_like,
         lci_result=solved["lci_result"],
     )
-
 
 # Stage 3: include catalog routers after legacy routes so specific legacy
 # paths (for example /api/reference/flows/missing/summary) keep priority over
