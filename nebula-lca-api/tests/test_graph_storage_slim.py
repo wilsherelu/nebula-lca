@@ -1,7 +1,10 @@
-"""Tests for Graph Storage Slim v1.
+"""Tests for Graph Storage Slim v1 (canvas + node_positions slim).
 
 Verifies:
 - Slim storage drops only pure display fields (flow_name_en, display_name_en, unitGroup).
+- Root canvas: drops full nodes/edges snapshot, keeps only shell (id/name/kind).
+- PTS internal canvas: preserves internal nodes/edges (with port slimming).
+- Node positions: drops metadata.node_positions when all nodes have inline position.
 - Saving the same graph with identical structure does NOT create a new version.
 - Hydrate restores display fields for API responses.
 - PTS nodes are saved with shell only.
@@ -66,9 +69,9 @@ def project(client):
 # ── helpers ────────────────────────────────────────────────────────────────
 
 
-def _make_simple_graph_node(process_uuid, name):
+def _make_simple_graph_node(process_uuid, name, position=None):
     """No ports → bypasses flow_catalog validation."""
-    return {
+    node = {
         "id": f"node-{process_uuid}",
         "node_kind": "unit_process",
         "mode": "normalized",
@@ -79,6 +82,9 @@ def _make_simple_graph_node(process_uuid, name):
         "inputs": [],
         "outputs": [],
     }
+    if position is not None:
+        node["position"] = position
+    return node
 
 
 def _make_graph(process_uuid, name, extra_nodes=None, metadata=None):
@@ -157,6 +163,39 @@ def _make_pts_node(pts_uuid, name):
     }
 
 
+def _make_pts_internal_canvas():
+    """Create a PTS internal canvas with real internal nodes."""
+    return {
+        "id": "canvas-pts-123",
+        "name": "PTS Module Internal",
+        "kind": "pts_internal",
+        "parentPtsNodeId": "node-pts-module-123",
+        "nodes": [
+            {
+                "id": "internal-node-1",
+                "node_kind": "unit_process",
+                "name": "Internal Step",
+                "inputs": [
+                    {
+                        "id": "ip-1",
+                        "flowUuid": "flow-internal-1",
+                        "name": "Internal Flow",
+                        "flow_name_en": "Internal Flow EN",
+                        "display_name_en": "Internal Display",
+                        "unit": "kg",
+                        "unitGroup": "mass",
+                        "amount": 1.0,
+                    }
+                ],
+                "outputs": [],
+            }
+        ],
+        "edges": [
+            {"id": "edge-1", "fromNode": "internal-node-1", "toNode": "internal-node-1"}
+        ],
+    }
+
+
 # ── unit tests ─────────────────────────────────────────────────────────────
 
 
@@ -219,6 +258,155 @@ class TestSlimUnit:
         slim2 = _slim_graph_for_storage(graph.model_dump(mode="python"))
         assert slim1 == slim2
 
+    def test_slim_root_canvas_shell_only(self):
+        """Root canvas should keep only id/name/kind, no nodes/edges snapshot.
+
+        Uses raw dict to bypass HybridGraph validation (canvases are not part
+        of the HybridGraph model schema).
+        """
+        graph_dict = {
+            "functionalUnit": "test",
+            "nodes": [
+                _make_simple_graph_node("proc-1", "Node A"),
+                _make_simple_graph_node("proc-2", "Node B"),
+            ],
+            "exchanges": [],
+            "metadata": {
+                "canvases": [
+                    {
+                        "id": "root",
+                        "name": "Product System",
+                        "kind": "root",
+                        "nodes": [
+                            {"id": "x", "name": "x"},
+                            {"id": "y", "name": "y"},
+                        ],
+                        "edges": [
+                            {"id": "e-x", "fromNode": "x", "toNode": "y"},
+                        ],
+                    }
+                ],
+            },
+        }
+        slim = _slim_graph_for_storage(graph_dict)
+        canvas = slim["metadata"]["canvases"][0]
+
+        # Shell fields preserved
+        assert canvas["id"] == "root"
+        assert canvas["name"] == "Product System"
+        assert canvas["kind"] == "root"
+        # Full nodes/edges snapshot DROPPED
+        assert "nodes" not in canvas or canvas["nodes"] == []
+        assert "edges" not in canvas or canvas["edges"] == []
+
+    def test_slim_pts_internal_canvas_preserved(self):
+        """PTS internal canvas should keep nodes/edges but slim port fields."""
+        pts_canvas = _make_pts_internal_canvas()
+        graph_dict = {
+            "functionalUnit": "test",
+            "nodes": [_make_simple_graph_node("proc-1", "Main Node")],
+            "exchanges": [],
+            "metadata": {
+                "canvases": [
+                    {
+                        "id": "root",
+                        "name": "Product System",
+                        "kind": "root",
+                        "nodes": [],
+                        "edges": [],
+                    },
+                    pts_canvas,
+                ],
+            },
+        }
+        slim = _slim_graph_for_storage(graph_dict)
+        canvases = slim["metadata"]["canvases"]
+
+        # Root canvas is shell-only
+        root_canvas = [c for c in canvases if c.get("kind") == "root"]
+        assert len(root_canvas) == 1
+        assert "nodes" not in root_canvas[0] or root_canvas[0].get("nodes") == []
+
+        # PTS internal canvas has nodes
+        pts_canvases = [c for c in canvases if c.get("kind") == "pts_internal"]
+        assert len(pts_canvases) == 1
+        assert "nodes" in pts_canvases[0]
+        assert len(pts_canvases[0]["nodes"]) == 1
+        # Port display fields slimmed
+        port = pts_canvases[0]["nodes"][0]["inputs"][0]
+        assert "flow_name_en" not in port
+        assert "display_name_en" not in port
+        assert "unitGroup" not in port
+        # Core port fields preserved
+        assert port["flowUuid"] == "flow-internal-1"
+        assert port["name"] == "Internal Flow"
+        # Edges preserved
+        assert len(pts_canvases[0]["edges"]) == 1
+
+    def test_slim_node_positions_dropped_when_all_have_inline_position(self):
+        """If every node has inline position, node_positions should be set to None.
+
+        Uses raw dict because HybridGraph schema drops the position field,
+        so only direct dict testing can verify this behavior.
+        """
+        graph_dict = {
+            "functionalUnit": "test",
+            "nodes": [
+                _make_simple_graph_node("proc-1", "A", position={"x": 100, "y": 200}),
+                _make_simple_graph_node("proc-2", "B", position={"x": 300, "y": 400}),
+            ],
+            "exchanges": [],
+            "metadata": {
+                "node_positions": {"node-proc-1": {"x": 100, "y": 200}},
+                "canvases": [],
+            },
+        }
+        slim = _slim_graph_for_storage(graph_dict)
+        assert slim["metadata"]["node_positions"] is None
+
+    def test_slim_node_positions_preserved_when_some_missing_position(self):
+        """If any node lacks inline position, node_positions is kept as-is."""
+        graph_dict = {
+            "functionalUnit": "test",
+            "nodes": [
+                _make_simple_graph_node("proc-1", "A", position={"x": 100, "y": 200}),
+                _make_simple_graph_node("proc-2", "B"),  # no position
+            ],
+            "exchanges": [],
+            "metadata": {
+                "node_positions": {"node-proc-1": {"x": 100, "y": 200}},
+                "canvases": [],
+            },
+        }
+        slim = _slim_graph_for_storage(graph_dict)
+        # node_positions should remain unchanged
+        assert "node_positions" in slim["metadata"]
+        assert slim["metadata"]["node_positions"]["node-proc-1"]["x"] == 100
+
+    def test_slim_node_positions_preserved_when_no_inline_position(self):
+        """If nodes have no inline position, node_positions is kept (not safe to slim).
+
+        This tests the actual API scenario where HybridGraph.model_dump drops
+        the position field, so slim receives nodes without position.
+        """
+        # Simulates payload.graph.model_dump() — no position in nodes
+        graph_dict = {
+            "functionalUnit": "test",
+            "nodes": [
+                _make_simple_graph_node("proc-1", "A"),  # no position
+                _make_simple_graph_node("proc-2", "B"),  # no position
+            ],
+            "exchanges": [],
+            "metadata": {
+                "node_positions": {"node-proc-1": {"x": 100, "y": 200}},
+                "canvases": [],
+            },
+        }
+        slim = _slim_graph_for_storage(graph_dict)
+        # node_positions kept because nodes lack inline position
+        assert "node_positions" in slim["metadata"]
+        assert slim["metadata"]["node_positions"]["node-proc-1"]["x"] == 100
+
 
 class TestSlimIntegration:
     """Integration tests via API endpoints (no ports → bypass flow validation)."""
@@ -258,3 +446,127 @@ class TestSlimIntegration:
         data2 = resp2.json()
         assert data2["created_new_version"] is False
         assert data2["version"] == version1
+
+    def test_root_canvas_slimmed_in_db(self, client, project):
+        """Root canvas in stored graph should contain only shell fields."""
+        # Use a canvas node that passes HybridGraph validation.
+        # The _normalize_graph_canvases_for_storage validates canvas nodes via
+        # HybridGraph.model_validate, so canvas nodes must have required fields.
+        graph = HybridGraph(
+            functionalUnit="Root Canvas Test",
+            nodes=[
+                _make_simple_graph_node("proc-root-1", "Root Node 1"),
+            ],
+            exchanges=[],
+            metadata={
+                "canvases": [
+                    {
+                        "id": "root",
+                        "name": "Product System",
+                        "kind": "root",
+                        "nodes": [
+                            {
+                                "id": "canvas-node-1",
+                                "name": "canvas-node-1",
+                                "node_kind": "unit_process",
+                                "mode": "normalized",
+                                "process_uuid": "canvas-proc-1",
+                                "location": "US",
+                                "reference_product": "canvas-node-1",
+                                "inputs": [],
+                                "outputs": [],
+                            },
+                        ],
+                        "edges": [
+                            {"id": "e-1", "fromNode": "canvas-node-1", "toNode": "canvas-node-1"},
+                        ],
+                    },
+                ],
+                "viewport": {"x": 0, "y": 0, "zoom": 1},
+            },
+        )
+        resp = client.post(f"/api/projects/{project}/versions", json={"graph": graph.model_dump()})
+        assert resp.status_code == 200, resp.text
+
+        db = _db_module.SessionLocal()
+        try:
+            version_record = (
+                db.query(ModelVersion)
+                .filter(ModelVersion.model_id == project, ModelVersion.version == 1)
+                .first()
+            )
+            stored = version_record.hybrid_graph_json
+
+            # Root canvas: shell only
+            canvases = stored["metadata"]["canvases"]
+            root_canvas = [c for c in canvases if c.get("id") == "root"]
+            assert len(root_canvas) == 1
+            rc = root_canvas[0]
+            assert rc["id"] == "root"
+            assert rc["kind"] == "root"
+            assert rc["name"] == "Product System"
+            assert "nodes" not in rc or rc.get("nodes") == []
+            assert "edges" not in rc or rc.get("edges") == []
+
+            # schema version marker
+            assert stored["metadata"]["storage_schema_version"] == "graph_slim_v1"
+        finally:
+            db.close()
+
+    def test_hydrate_preserves_slim_canvas(self, client, project):
+        """Saved graph with root canvas slimmed should still have metadata.canvases.
+
+        The slimmed root canvas has only shell (no nodes/edges). The frontend
+        rebuilds root canvas from top-level graph.nodes/graph.exchanges on load.
+        """
+        graph = HybridGraph(
+            functionalUnit="Canvas Slim Test",
+            nodes=[_make_simple_graph_node("proc-bc-1", "BC Node")],
+            exchanges=[],
+            metadata={
+                "canvases": [
+                    {
+                        "id": "root",
+                        "name": "Product System",
+                        "kind": "root",
+                        "nodes": [
+                            {
+                                "id": "x",
+                                "name": "x",
+                                "node_kind": "unit_process",
+                                "mode": "normalized",
+                                "process_uuid": "proc-x",
+                                "location": "CN",
+                                "reference_product": "x",
+                                "inputs": [],
+                                "outputs": [],
+                            },
+                        ],
+                        "edges": [
+                            {"id": "e-x", "fromNode": "x", "toNode": "x"},
+                        ],
+                    }
+                ],
+            },
+        )
+        resp = client.post(f"/api/projects/{project}/versions", json={"graph": graph.model_dump()})
+        assert resp.status_code == 200, resp.text
+
+        db = _db_module.SessionLocal()
+        try:
+            version_record = (
+                db.query(ModelVersion)
+                .filter(ModelVersion.model_id == project, ModelVersion.version == 1)
+                .first()
+            )
+            stored = version_record.hybrid_graph_json
+            # New format: storage_schema_version marker
+            assert stored["metadata"]["storage_schema_version"] == "graph_slim_v1"
+            # Root canvas slimmed to shell
+            canvases = stored["metadata"]["canvases"]
+            root_canvas = [c for c in canvases if c.get("id") == "root"]
+            assert len(root_canvas) == 1
+            assert "nodes" not in root_canvas[0] or root_canvas[0].get("nodes") == []
+            assert "edges" not in root_canvas[0] or root_canvas[0].get("edges") == []
+        finally:
+            db.close()

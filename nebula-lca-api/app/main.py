@@ -2509,6 +2509,10 @@ def _slim_graph_for_storage(graph_json: dict) -> dict:
 
     - FlowPort: drops pure display fields (flow_name_en, display_name_en, unitGroup).
     - PTS nodes: keep only shell fields; no compile artifacts.
+    - Root canvas: drops full nodes/edges snapshot (top-level nodes/exchanges are
+      the source of truth; frontend rebuilds root from them on import).
+    - Node positions: drops metadata.node_positions when all nodes have inline
+      position, avoiding redundant storage.
     - Writes storage_schema_version into metadata.
     """
     slim = {
@@ -2528,6 +2532,54 @@ def _slim_graph_for_storage(graph_json: dict) -> dict:
             slim["nodes"].append(_slim_node_for_storage(node))
 
     md = slim["metadata"]
+
+    # ── Root canvas slim ────────────────────────────────────────────────
+    canvases = md.get("canvases")
+    if isinstance(canvases, list):
+        slim_canvases: list[dict] = []
+        for canvas in canvases:
+            if not isinstance(canvas, dict):
+                slim_canvases.append(canvas)
+                continue
+            canvas_kind = str(canvas.get("kind", "") or "")
+            canvas_id = str(canvas.get("id", "") or "")
+            if canvas_kind == "root" or canvas_id == "root":
+                # Root canvas: keep only shell. Top-level nodes/exchanges are
+                # the source of truth; the frontend already rebuilds root from
+                # them (importGraph Branch A).
+                slim_canvases.append({
+                    "id": canvas_id,
+                    "name": canvas.get("name", "Product System"),
+                    "kind": "root",
+                })
+            else:
+                # Non-root canvas (e.g. pts_internal): keep nodes/edges but
+                # slim the port buckets inside each node.
+                slim_canvas = dict(canvas)
+                raw_cn = slim_canvas.get("nodes")
+                if isinstance(raw_cn, list):
+                    slim_canvas["nodes"] = [
+                        _slim_node_for_storage(n) if isinstance(n, dict) else n
+                        for n in raw_cn
+                    ]
+                slim_canvases.append(slim_canvas)
+        md["canvases"] = slim_canvases
+
+    # ── Node positions slim ─────────────────────────────────────────────
+    node_positions_key = "node_positions"
+    if node_positions_key in md:
+        all_have_position = (
+            isinstance(nodes, list)
+            and len(nodes) > 0
+            and all(
+                isinstance(n, dict) and isinstance(n.get("position"), dict)
+                for n in nodes
+            )
+        )
+        if all_have_position:
+            # Every node has inline position -> drop redundant dict.
+            md = {**md, node_positions_key: None}
+
     md["storage_schema_version"] = _STORAGE_SLIM_VERSION
     slim["metadata"] = md
     return slim
