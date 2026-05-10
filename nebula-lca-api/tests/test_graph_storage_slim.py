@@ -18,7 +18,11 @@ import uuid
 
 import pytest
 
-from app.main import app, _slim_graph_for_storage, _hydrate_graph_for_api
+from app.main import app
+from app.services.graph_storage import (
+    slim_graph_for_storage,
+    hydrate_graph_for_api,
+)
 from app.database import Base, engine, SessionLocal
 from app.models import Model, ModelVersion
 from app.schemas import HybridGraph
@@ -210,7 +214,7 @@ class TestSlimUnit:
             exchanges=[],
             metadata={},
         )
-        slim = _slim_graph_for_storage(graph.model_dump(mode="python"))
+        slim = slim_graph_for_storage(graph.model_dump(mode="python"))
 
         # Metadata marker
         assert slim["metadata"]["storage_schema_version"] == "graph_slim_v1"
@@ -241,7 +245,7 @@ class TestSlimUnit:
             exchanges=[],
             metadata={},
         )
-        slim = _slim_graph_for_storage(graph.model_dump(mode="python"))
+        slim = slim_graph_for_storage(graph.model_dump(mode="python"))
         slim_node = slim["nodes"][0]
 
         # Shell fields preserved
@@ -254,8 +258,8 @@ class TestSlimUnit:
     def test_slim_hash_deterministic(self):
         """Same graph → same slim → same hash."""
         graph = _make_graph("proc-1", "Test Process")
-        slim1 = _slim_graph_for_storage(graph.model_dump(mode="python"))
-        slim2 = _slim_graph_for_storage(graph.model_dump(mode="python"))
+        slim1 = slim_graph_for_storage(graph.model_dump(mode="python"))
+        slim2 = slim_graph_for_storage(graph.model_dump(mode="python"))
         assert slim1 == slim2
 
     def test_slim_root_canvas_shell_only(self):
@@ -288,7 +292,7 @@ class TestSlimUnit:
                 ],
             },
         }
-        slim = _slim_graph_for_storage(graph_dict)
+        slim = slim_graph_for_storage(graph_dict)
         canvas = slim["metadata"]["canvases"][0]
 
         # Shell fields preserved
@@ -319,7 +323,7 @@ class TestSlimUnit:
                 ],
             },
         }
-        slim = _slim_graph_for_storage(graph_dict)
+        slim = slim_graph_for_storage(graph_dict)
         canvases = slim["metadata"]["canvases"]
 
         # Root canvas is shell-only
@@ -361,7 +365,7 @@ class TestSlimUnit:
                 "canvases": [],
             },
         }
-        slim = _slim_graph_for_storage(graph_dict)
+        slim = slim_graph_for_storage(graph_dict)
         assert slim["metadata"]["node_positions"] is None
 
     def test_slim_node_positions_preserved_when_some_missing_position(self):
@@ -378,7 +382,7 @@ class TestSlimUnit:
                 "canvases": [],
             },
         }
-        slim = _slim_graph_for_storage(graph_dict)
+        slim = slim_graph_for_storage(graph_dict)
         # node_positions should remain unchanged
         assert "node_positions" in slim["metadata"]
         assert slim["metadata"]["node_positions"]["node-proc-1"]["x"] == 100
@@ -402,7 +406,7 @@ class TestSlimUnit:
                 "canvases": [],
             },
         }
-        slim = _slim_graph_for_storage(graph_dict)
+        slim = slim_graph_for_storage(graph_dict)
         # node_positions kept because nodes lack inline position
         assert "node_positions" in slim["metadata"]
         assert slim["metadata"]["node_positions"]["node-proc-1"]["x"] == 100
