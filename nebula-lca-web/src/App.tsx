@@ -280,7 +280,8 @@ const LOCAL_DRAFT_SAVE_DEBOUNCE_MS = 200;
 const INTERVAL_SAVE_MS = 60000;
 const draftKey = (projectId: string) => `nebula:${projectId}:draft`;
 const snapshotKey = (projectId: string) => `nebula:${projectId}:snapshot`;
-const latestProjectCacheKey = (projectId: string) => `nebula:${projectId}:latest`;
+const LATEST_PROJECT_CACHE_SCHEMA = "v2";
+const latestProjectCacheKey = (projectId: string) => `nebula:${projectId}:latest:${LATEST_PROJECT_CACHE_SCHEMA}`;
 
 type LatestProjectCacheEntry = {
   etag: string;
@@ -801,6 +802,15 @@ const resolvePayloadEdgePort = (
 };
 
 const normalizeGraphPayload = (graph: LcaGraphPayload): LcaGraphPayload => {
+  const stripDisplaySuffix = (value: string, sourceName: string) => {
+    const text = value.trim();
+    const suffix = sourceName.trim();
+    if (suffix && text.endsWith(` @ ${suffix}`)) {
+      return text.slice(0, -(` @ ${suffix}`).length).trim();
+    }
+    return text;
+  };
+
   const normalizeNode = (node: LcaGraphPayload["nodes"][number]) => {
     const normalizePorts = (ports: NonNullable<typeof node.inputs>) =>
       (ports ?? []).map((port) => {
@@ -827,10 +837,10 @@ const normalizeGraphPayload = (graph: LcaGraphPayload): LcaGraphPayload => {
         const identitySeed =
           portKey || productKey || sourceNodeId || sourceProcessUuid || sourceProcessName || flowUuid || "port";
         const fallbackId = `${direction}_${identitySeed}`;
-        const resolvedName =
-          displayName ||
-          (processName && baseName && processName.includes("@") ? processName : "") ||
-          baseName;
+        const resolvedName = stripDisplaySuffix(
+          baseName || displayName || (processName && processName.includes("@") ? processName : ""),
+          sourceProcessName || nestedSourceProcessName,
+        );
         const rawId = String(raw.id ?? port.id ?? "").trim();
         const legacyPortId = String(raw.legacyPortId ?? raw.legacy_port_id ?? port.legacyPortId ?? "").trim();
         const showOnNode = coerceOptionalBoolean(raw.show_on_node ?? raw.showOnNode ?? port.showOnNode) ?? false;
@@ -872,14 +882,15 @@ const normalizeGraphPayload = (graph: LcaGraphPayload): LcaGraphPayload => {
 
   const sanitizeEdges = <T extends Record<string, unknown>>(nodes: LcaGraphPayload["nodes"], edges: T[]): T[] => {
     const nodeById = new Map(nodes.map((node) => [String(node.id), node]));
-    return edges.map((edge) => {
+    const sanitized: T[] = [];
+    for (const edge of edges) {
       const sourceNodeId = String(edge.fromNode ?? edge.source ?? "").trim();
       const targetNodeId = String(edge.toNode ?? edge.target ?? "").trim();
       const sourceNode = sourceNodeId ? nodeById.get(sourceNodeId) : undefined;
       const targetNode = targetNodeId ? nodeById.get(targetNodeId) : undefined;
       const flowUuid = String(edge.flowUuid ?? edge.flow_uuid ?? "").trim();
       if (!sourceNode && !targetNode) {
-        return edge;
+        continue;
       }
 
       let nextEdge = edge;
@@ -920,8 +931,12 @@ const normalizeGraphPayload = (graph: LcaGraphPayload): LcaGraphPayload => {
           ),
         };
       }
-      return nextEdge;
-    });
+      if (!sourcePort || !targetPort) {
+        continue;
+      }
+      sanitized.push(nextEdge);
+    }
+    return sanitized;
   };
 
   const metadata = graph.metadata as { canvases?: Array<Record<string, unknown>> } | undefined;
@@ -4977,21 +4992,6 @@ export default function App() {
         </div>
       </header>
       {displayedStatusText && <div className={`status-toast status-bar--${statusLevel}`}>{displayedStatusText}</div>}
-      {!projectIntegrity.ok && (
-        <div className="inline-banner inline-banner--warning inline-banner--action">
-          <span>{projectIntegrityBannerText}</span>
-          <div className="inline-banner-actions">
-            {projectIntegrity.autoRepairable && (
-              <button type="button" className="link-btn" onClick={() => void repairProjectIntegrity()} disabled={busy}>
-                {uiLanguage === "zh" ? "自动修复" : "Auto Repair"}
-              </button>
-            )}
-            <button type="button" className="link-btn" onClick={() => setShowProjectIntegrityDialog(true)}>
-              {uiLanguage === "zh" ? "查看详情" : "Review"}
-            </button>
-          </div>
-        </div>
-      )}
       {showNormalizedEdgeFixBanner && (
         <div className="inline-banner inline-banner--warning inline-banner--action">
           <span>{`检测到 ${normalizedEdgeFixCandidates.length} 条归一化连线仍为实线，是否自动修复为虚线？`}</span>
@@ -5606,4 +5606,3 @@ export default function App() {
     </div>
   );
 }
-

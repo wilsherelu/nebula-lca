@@ -1852,13 +1852,13 @@ export function ProjectManagement(props: Props) {
           </div>
 
           <div className="pm-sidebar-section">
-            <div className="pm-sidebar-title">{zh ? "LCI 导入" : "LCI Import"}</div>
+            <div className="pm-sidebar-title">{zh ? "数据库导入" : "Database Import"}</div>
             <button
               type="button"
-              className="pm-nav-item"
+              className="pm-nav-item pm-import-nav-item"
               onClick={() => setEf31ImportOpen(true)}
             >
-              {zh ? "ecoinvent 3.11" : "ecoinvent 3.11"}
+              {zh ? "LCI 数据库" : "LCI Database"}
             </button>
           </div>
         </aside>

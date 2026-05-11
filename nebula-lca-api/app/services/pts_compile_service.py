@@ -5,14 +5,23 @@ Extracted from ``app.main`` for Stage 6C.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from ..models import PtsCompileArtifact
 from ..schemas import HybridGraph
 from .graph_contract import normalize_graph_product_flags
-from ..pts_compile import compile_pts, compute_pts_graph_hash
+from ..pts_compile import PTS_COMPILE_SCHEMA_VERSION, compile_pts, compute_pts_graph_hash
+from .pts_resources import (
+    _apply_pts_resource_policy_override,
+    _get_pts_resource_ports_policy,
+    extract_pts_definition,
+    upsert_pts_compile_artifact,
+    upsert_pts_definition,
+)
 
 def _raise_pts_compile_value_error_http(exc: ValueError, pts_node_id: str) -> None:
     raw = str(exc)

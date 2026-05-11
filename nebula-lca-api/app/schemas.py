@@ -563,6 +563,7 @@ class RunRequest(BaseModel):
     graph: HybridGraph
     model_version_id: str | None = None
     project_id: str | None = None
+    model_id: str | None = None
     force_recompile: bool = False
 
 
@@ -1220,4 +1221,3 @@ class Ef31ImportCommitResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list, description="Non-blocking warnings from commit")
     errors: list[str] = Field(default_factory=list, description="Blocking errors from commit")
     catalog_target_kind: Literal["lci_dataset"] = Field(default="lci_dataset", description="Catalog target kind")
-

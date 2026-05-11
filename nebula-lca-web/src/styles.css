@@ -3675,6 +3675,23 @@ body,
   flex: 1;
 }
 
+.pm-file-picker-btn {
+  min-width: 104px;
+  height: 36px;
+  border: 1px solid #8fbadb;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #f7fbff 0%, #eaf5ff 100%);
+  color: #17699b;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(20, 102, 153, 0.08);
+}
+
+.pm-file-picker-btn:hover {
+  border-color: #0d83ff;
+  color: #0d83ff;
+}
+
 .pm-error {
   margin: 0 14px 12px;
   color: #b33a2e;
@@ -3785,6 +3802,18 @@ body,
   background: #e6f2fa;
   color: #1f678f;
   font-weight: 700;
+}
+
+.pm-import-nav-item {
+  border: 1px solid #c4ddeb;
+  background: linear-gradient(180deg, #f7fbff 0%, #edf7fc 100%);
+  color: #1f678f;
+  font-weight: 700;
+}
+
+.pm-import-nav-item:hover {
+  border-color: #8fbadb;
+  background: #e6f4fb;
 }
 
 .pm-page {

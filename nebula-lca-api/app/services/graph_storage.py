@@ -130,14 +130,31 @@ def slim_graph_for_storage(graph_json: dict) -> dict:
             canvas_kind = str(canvas.get("kind", "") or "")
             canvas_id = str(canvas.get("id", "") or "")
             if canvas_kind == "root" or canvas_id == "root":
-                # Root canvas: keep only shell. Top-level nodes/exchanges are
-                # the source of truth; the frontend already rebuilds root from
-                # them (importGraph Branch A).
-                slim_canvases.append({
-                    "id": canvas_id,
-                    "name": canvas.get("name", "Product System"),
-                    "kind": "root",
-                })
+                # Only shell the root canvas when top-level exchanges are the
+                # source of truth. Older graphs can still keep root edges only
+                # under metadata.canvases[root], so dropping them would erase
+                # the model topology on the next save.
+                root_edges = canvas.get("edges")
+                top_level_edges = graph_json.get("exchanges")
+                can_shell_root = (
+                    isinstance(top_level_edges, list)
+                    and len(top_level_edges) > 0
+                ) or not (isinstance(root_edges, list) and len(root_edges) > 0)
+                if can_shell_root:
+                    slim_canvases.append({
+                        "id": canvas_id,
+                        "name": canvas.get("name", "Product System"),
+                        "kind": "root",
+                    })
+                else:
+                    slim_canvas = dict(canvas)
+                    raw_cn = slim_canvas.get("nodes")
+                    if isinstance(raw_cn, list):
+                        slim_canvas["nodes"] = [
+                            slim_node_for_storage(n) if isinstance(n, dict) else n
+                            for n in raw_cn
+                        ]
+                    slim_canvases.append(slim_canvas)
             else:
                 # Non-root canvas (e.g. pts_internal): keep nodes/edges but
                 # slim the port buckets inside each node.
@@ -182,6 +199,32 @@ def hydrate_graph_for_api(graph_json: dict, db: Any) -> dict:
     """
     if not isinstance(graph_json, dict):
         return graph_json
+
+    # Legacy compatibility: some older saves kept the root topology only under
+    # metadata.canvases[root]. When top-level exchanges are empty, promote that
+    # root canvas back to the API graph so run/save paths see the real edges.
+    top_level_edges = graph_json.get("exchanges")
+    if not (isinstance(top_level_edges, list) and len(top_level_edges) > 0):
+        md_for_root = graph_json.get("metadata") or {}
+        canvases = md_for_root.get("canvases")
+        if isinstance(canvases, list):
+            root_canvas = next(
+                (
+                    c for c in canvases
+                    if isinstance(c, dict)
+                    and (str(c.get("kind") or "") == "root" or str(c.get("id") or "") == "root")
+                ),
+                None,
+            )
+            if isinstance(root_canvas, dict):
+                root_edges = root_canvas.get("edges")
+                root_nodes = root_canvas.get("nodes")
+                if isinstance(root_edges, list) and len(root_edges) > 0:
+                    promoted = dict(graph_json)
+                    promoted["exchanges"] = root_edges
+                    if isinstance(root_nodes, list) and len(root_nodes) > 0:
+                        promoted["nodes"] = root_nodes
+                    graph_json = promoted
 
     md = graph_json.get("metadata") or {}
     if md.get("storage_schema_version") == _STORAGE_SLIM_VERSION:

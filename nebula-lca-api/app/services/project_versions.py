@@ -7,6 +7,7 @@ project CRUD, version creation, and version pruning.
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime
 from typing import Any
 
@@ -339,6 +340,28 @@ def _replace_flow_display_name(current_name: str | None, standard_name: str | No
     return standard
 
 
+def _looks_like_uuid_text(value: str | None) -> bool:
+    text = _safe_str(value).lower()
+    if not text:
+        return False
+    try:
+        uuid.UUID(text)
+        return True
+    except ValueError:
+        return False
+
+
+def _valid_catalog_flow_names(meta: tuple | None) -> set[str]:
+    if not meta:
+        return set()
+    names: set[str] = set()
+    for value in (meta[0] if len(meta) > 0 else None, meta[1] if len(meta) > 1 else None):
+        name = _normalize_port_display_name(value)
+        if name and not _looks_like_uuid_text(name):
+            names.add(name)
+    return names
+
+
 def _sync_graph_flow_names(graph_json: dict, *, updated_flow_names: dict[str, str]) -> tuple[int, int]:
     """Update flow display names in *graph_json* in-place.
 
@@ -359,7 +382,7 @@ def _sync_graph_flow_names(graph_json: dict, *, updated_flow_names: dict[str, st
                     continue
                 flow_uuid = _safe_str(port.get("flowUuid"))
                 standard_name = updated_flow_names.get(flow_uuid) or updated_flow_names.get(flow_uuid.lower())
-                if not standard_name:
+                if not standard_name or _looks_like_uuid_text(standard_name):
                     continue
                 new_name = _replace_flow_display_name(port.get("name"), standard_name)
                 if _safe_str(port.get("name")) != new_name:
@@ -371,7 +394,7 @@ def _sync_graph_flow_names(graph_json: dict, *, updated_flow_names: dict[str, st
             continue
         flow_uuid = _safe_str(edge.get("flowUuid"))
         standard_name = updated_flow_names.get(flow_uuid) or updated_flow_names.get(flow_uuid.lower())
-        if not standard_name:
+        if not standard_name or _looks_like_uuid_text(standard_name):
             continue
         new_name = _replace_flow_display_name(edge.get("flowName"), standard_name)
         if _safe_str(edge.get("flowName")) != new_name:
@@ -437,8 +460,8 @@ def _detect_project_flow_name_outdated_refs(
                 meta = flow_meta.get(flow_uuid) or flow_meta.get(flow_uuid.lower())
                 if not meta:
                     continue
-                expected_name = _normalize_port_display_name(meta[0])
-                if not expected_name or not actual_name or actual_name == expected_name:
+                expected_names = _valid_catalog_flow_names(meta)
+                if not expected_names or not actual_name or actual_name in expected_names:
                     continue
                 evidence.append(
                     {
@@ -447,7 +470,7 @@ def _detect_project_flow_name_outdated_refs(
                         "port_id": _safe_str(port.get("id")),
                         "bucket": bucket_name,
                         "flow_uuid": flow_uuid,
-                        "expected_flow_name": _truncate_text_preview(expected_name),
+                        "expected_flow_name": _truncate_text_preview(" / ".join(sorted(expected_names))),
                         "actual_port_name": _truncate_text_preview(actual_name),
                     }
                 )
@@ -495,7 +518,7 @@ def _sync_project_latest_version_flow_names(
     updated_flow_names = {
         flow_uuid: str(meta[0] or "")
         for flow_uuid, meta in flow_meta.items()
-        if flow_uuid and meta and str(meta[0] or "")
+        if flow_uuid and meta and str(meta[0] or "") and not _looks_like_uuid_text(str(meta[0] or ""))
     }
     cloned_graph = json.loads(json.dumps(latest_row.hybrid_graph_json, ensure_ascii=False))
     synced_port_count, synced_edge_count = _sync_graph_flow_names(cloned_graph, updated_flow_names=updated_flow_names)
@@ -604,14 +627,14 @@ def _get_flow_meta_by_uuid_cached(db: Session) -> dict[str, tuple[str | None, st
     value = {
         str(row.flow_uuid).strip(): (
             _safe_str(row.flow_name),
-            _safe_str(row.default_unit),
+            _safe_str(row.flow_name_en),
             _safe_str(row.flow_type),
             _safe_str(row.unit_group),
         )
         for row in db.query(
             FlowRecord.flow_uuid,
             FlowRecord.flow_name,
-            FlowRecord.default_unit,
+            FlowRecord.flow_name_en,
             FlowRecord.flow_type,
             FlowRecord.unit_group,
         ).all()
