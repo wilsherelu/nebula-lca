@@ -14,7 +14,8 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
-from ..database import SessionLocal, get_db
+from .. import database as _database
+from ..database import get_db
 from ..models import DebugDiagnostic
 from ..schemas import (
     Ef31ImportCommitRequest,
@@ -88,7 +89,7 @@ def preview_ef31_lci_import(
             limit=limit,
         )
         # Persist to DebugDiagnostic.
-        report_db = SessionLocal()
+        report_db = _database.SessionLocal()
         try:
             _persist_ef31_report(report_db, {
                 "job_id": job_id,
