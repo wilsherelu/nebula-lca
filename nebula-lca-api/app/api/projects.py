@@ -37,6 +37,7 @@ from ..services.project_versions import (
     _build_project_out,
     _latest_version_by_project_id,
     _resolve_model_version_graph_hash,
+    _sync_project_latest_version_flow_names,
 )
 from ..services.graph_contract import (
     normalize_graph_product_flags,
@@ -852,7 +853,7 @@ def repair_project_integrity(
             )
             continue
         try:
-            repaired, reason = _repair_pts_publication_from_resource(db=db, resource=resource)
+            repaired, reason = _get_pts_helpers["_repair_pts_publication_from_resource"](db=db, resource=resource)
             if repaired:
                 repaired_count += 1
                 items.append(

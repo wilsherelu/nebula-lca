@@ -5371,6 +5371,31 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         };
       }
 
+      const isolatedMarketNode = selectedNodes.find((node) => {
+        if (!isMarketProcessNode(node)) {
+          return false;
+        }
+        const marketInputs = node.data.inputs.filter((port) => port.type !== "biosphere" && String(port.flowUuid ?? "").trim());
+        if (marketInputs.length === 0) {
+          return false;
+        }
+        return !marketInputs.some((port) => {
+          const flowUuid = String(port.flowUuid ?? "").trim();
+          return normalizedInternalEdges.some((edge) => {
+            if (edge.target !== node.id || String(edge.data?.flowUuid ?? "").trim() !== flowUuid) {
+              return false;
+            }
+            const targetPortId = parseHandlePortId(edge.targetHandle ?? undefined, "in:");
+            return !targetPortId || targetPortId === port.id || String(port.legacyPortId ?? "").trim() === targetPortId;
+          });
+        });
+      });
+      if (isolatedMarketNode) {
+        return {
+          connectionHint: `PTS 封装失败：市场过程“${isolatedMarketNode.data.name}”必须至少包含一个内部上游供应过程，推荐将全部供应商一起封装。`,
+        };
+      }
+
       const sanitizedSelectedCanvas = pruneDetachedMarketInputs({
         ...active,
         nodes: selectedNodes,

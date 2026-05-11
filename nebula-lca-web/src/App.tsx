@@ -1627,6 +1627,9 @@ const formatApiError = (raw: unknown): string => {
     if (payload.code === "PTS_MAIN_GRAPH_STALE") {
       return "主图保存失败：当前 PTS 壳端口已过期，请先刷新主图中的 PTS 最新发布端口后再保存。";
     }
+    if (payload.code === "PTS_MARKET_PROCESS_REQUIRES_INTERNAL_SUPPLIERS") {
+      return "PTS 封装失败：市场过程必须至少包含一个内部上游供应过程，推荐将全部供应商一起封装。";
+    }
     return payload.message ? `${payload.message}` : text;
   } catch {
     return text;
@@ -1704,6 +1707,73 @@ const buildPtsPublishWarningStatusText = (
   return mode === "publish"
     ? `Warning: PTS saved successfully, but market share total is not 1. Example: ${nodeLabel} (${detail})`
     : `Warning: PTS packed and published successfully, but market share total is not 1. Example: ${nodeLabel} (${detail})`;
+};
+
+const parsePortIdFromHandle = (handle: unknown, prefix: "in:" | "out:"): string => {
+  const raw = String(handle ?? "").trim();
+  if (!raw) {
+    return "";
+  }
+  if (raw.startsWith(prefix)) {
+    return raw.slice(prefix.length).trim();
+  }
+  if (prefix === "in:" && raw.startsWith("inr:")) {
+    return raw.slice("inr:".length).trim();
+  }
+  if (prefix === "out:" && raw.startsWith("outl:")) {
+    return raw.slice("outl:".length).trim();
+  }
+  return raw;
+};
+
+const getPtsMarketSupplierCoverageIssues = (ptsGraph: LcaGraphPayload | null, uiLanguage: "zh" | "en"): string[] => {
+  if (!ptsGraph) {
+    return [];
+  }
+  const nodesById = new Map((ptsGraph.nodes ?? []).map((node) => [node.id, node]));
+  const inboundByPort = new Set<string>();
+  const inboundByFlow = new Map<string, number>();
+  (ptsGraph.exchanges ?? []).forEach((edge) => {
+    if (!nodesById.has(edge.fromNode) || !nodesById.has(edge.toNode) || !edge.flowUuid) {
+      return;
+    }
+    const targetPortId = parsePortIdFromHandle(edge.target_port_id ?? edge.targetHandle, "in:");
+    const flowKey = `${edge.toNode}::${edge.flowUuid}`;
+    inboundByFlow.set(flowKey, (inboundByFlow.get(flowKey) ?? 0) + 1);
+    if (targetPortId) {
+      inboundByPort.add(`${edge.toNode}::${targetPortId}::${edge.flowUuid}`);
+    }
+  });
+
+  const issues: string[] = [];
+  (ptsGraph.nodes ?? []).forEach((node) => {
+    if (node.node_kind !== "market_process") {
+      return;
+    }
+    const inputs = (node.inputs ?? []).filter((port) => port.type !== "biosphere" && port.flowUuid);
+    if (inputs.length === 0) {
+      return;
+    }
+    const flowCounts = new Map<string, number>();
+    inputs.forEach((port) => {
+      flowCounts.set(port.flowUuid, (flowCounts.get(port.flowUuid) ?? 0) + 1);
+    });
+    const covered = inputs.filter((port) => {
+      const portKey = `${node.id}::${port.id}::${port.flowUuid}`;
+      if (inboundByPort.has(portKey)) {
+        return true;
+      }
+      return (flowCounts.get(port.flowUuid) ?? 0) === 1 && (inboundByFlow.get(`${node.id}::${port.flowUuid}`) ?? 0) > 0;
+    });
+    if (covered.length === 0) {
+      issues.push(
+        uiLanguage === "zh"
+          ? `市场过程“${node.name}”没有任何内部供应商。请将至少一个上游供应过程一起封装，推荐封装全部供应商。`
+          : `Market process "${node.name}" has no internal supplier. Package at least one upstream supplier, preferably all suppliers.`,
+      );
+    }
+  });
+  return issues;
 };
 
 export default function App() {
@@ -3602,6 +3672,13 @@ export default function App() {
         if (!requestBody) {
           throw new Error("missing pts resource payload");
         }
+        const marketSupplierIssues = getPtsMarketSupplierCoverageIssues(
+          requestBody.pts_graph as LcaGraphPayload,
+          uiLanguage,
+        );
+        if (marketSupplierIssues.length > 0) {
+          throw new Error(marketSupplierIssues[0]);
+        }
         const response = await fetch(`${API_BASE}/pts/${encodeURIComponent(ptsUuid)}/pack-finalize`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -4102,6 +4179,8 @@ export default function App() {
     const shouldUseStatusToast =
       text === "PTS封装完成。" ||
       text === "PTS解封完成。" ||
+      text.startsWith("PTS 封装失败") ||
+      text.startsWith("PTS封装失败") ||
       text.startsWith("自动连线完成") ||
       text.startsWith("自动连线未找到") ||
       text.startsWith("Auto-connect complete") ||

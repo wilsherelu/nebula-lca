@@ -1117,6 +1117,14 @@ def compile_pts(graph: HybridGraph, pts_node_id: str, ports_policy: dict | None 
                     or None
                 )
                 product_key = f"{_stable_id_token(source_process_uuid)}::{_stable_id_token(flow_uuid)}" if source_process_uuid and flow_uuid else flow_uuid
+                process_uuid_parts = [
+                    _stable_id_token(str(pts_node.pts_uuid or pts_node.process_uuid or pts_node_id)),
+                    "product",
+                    _stable_id_token(source_process_uuid or source_node_id or f"vp{local_idx}"),
+                    _stable_id_token(source_port_id or flow_uuid),
+                    _stable_id_token(flow_uuid),
+                ]
+                enriched["process_uuid"] = "::".join(process_uuid_parts)
                 enriched["source_process_uuid"] = source_process_uuid
                 enriched["source_process_name"] = source_process_name
                 enriched["source_node_id"] = source_node_id

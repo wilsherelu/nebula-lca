@@ -20,6 +20,7 @@ from ..schemas import ProjectOut
 
 # ── graph_storage import (already exists, no circular) ────────────────────
 from ..services.graph_storage import (
+    compute_graph_hash_from_graph_json,
     compute_graph_hash_from_slim_graph,
     hydrate_graph_for_api,
     slim_graph_for_storage,
@@ -526,7 +527,7 @@ def _sync_project_latest_version_flow_names(
         return latest_row.version, 0, 0, 0, 0, 0
 
     latest_row.hybrid_graph_json = cloned_graph
-    latest_row.graph_hash = _compute_graph_hash_from_graph_json(cloned_graph)
+    latest_row.graph_hash = compute_graph_hash_from_graph_json(cloned_graph)
     db.query(Model).filter(Model.id == project_id).update({Model.updated_at: datetime.utcnow()}, synchronize_session=False)
 
     cleared_pts_compile_count = (
