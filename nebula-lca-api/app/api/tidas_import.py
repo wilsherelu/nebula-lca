@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from ..database import SessionLocal, get_db
+from ..database import get_db
 from ..models import DebugDiagnostic, FlowRecord, Model, ReferenceProcess
 from ..schemas import (
     FilteredExchangeEvidence,

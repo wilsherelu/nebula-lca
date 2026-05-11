@@ -18,7 +18,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from .database import SessionLocal
+from . import database as _database
 from .models import FlowRecord, UnitDefinition, ReferenceProcess
 from .ecoinvent_ef31_loader import (
     ElementaryFlow,
@@ -313,7 +313,7 @@ def dry_run_lci_import(
     close_on_exit = False
 
     if db is None:
-        db = SessionLocal()
+        db = _database.SessionLocal()
         close_on_exit = True
 
     try:
@@ -400,7 +400,7 @@ def commit_lci_import(
 
     close_on_exit = False
     if db is None:
-        db = SessionLocal()
+        db = _database.SessionLocal()
         close_on_exit = True
 
     try:

@@ -3110,6 +3110,174 @@ def validate_model_handles(payload: HandleValidationRequest) -> HandleValidation
         issues=list(result.get("issues") or []),
     )
 
+
+def _matrix_rank_and_determinant(matrix: list[list[float]], tol: float = 1e-12) -> tuple[int, float]:
+    n = len(matrix)
+    if n == 0:
+        return 0, 0.0
+    m = [row[:] for row in matrix]
+    rank = 0
+    det = 1.0
+    sign = 1.0
+    for col in range(n):
+        pivot = max(range(rank, n), key=lambda r: abs(m[r][col]))
+        if abs(m[pivot][col]) <= tol:
+            det = 0.0
+            continue
+        if pivot != rank:
+            m[rank], m[pivot] = m[pivot], m[rank]
+            sign *= -1.0
+        pivot_val = m[rank][col]
+        det *= pivot_val
+        for r in range(rank + 1, n):
+            factor = m[r][col] / pivot_val
+            if abs(factor) <= tol:
+                continue
+            for c in range(col, n):
+                m[r][c] -= factor * m[rank][c]
+        rank += 1
+    if rank < n:
+        det = 0.0
+    else:
+        det *= sign
+    return rank, det
+
+
+def _build_snapshot_matrix(snapshot: dict) -> dict:
+    processes = snapshot.get("processes") if isinstance(snapshot, dict) else []
+    exchanges = snapshot.get("exchanges") if isinstance(snapshot, dict) else []
+    links = snapshot.get("links") if isinstance(snapshot, dict) else []
+    process_rows = [p for p in processes if isinstance(p, dict)]
+    exchange_rows = [e for e in exchanges if isinstance(e, dict)]
+    link_rows = [l for l in links if isinstance(l, dict)]
+
+    process_ids = [str(p.get("process_uuid") or "") for p in process_rows]
+    idx = {pid: i for i, pid in enumerate(process_ids) if pid}
+    n = len(process_ids)
+    a = [[0.0 for _ in range(n)] for _ in range(n)]
+
+    exchange_by_id = {str(e.get("exchange_id") or ""): e for e in exchange_rows}
+    ref_amount_by_process: dict[str, float] = {}
+    ref_exchange_by_process: dict[str, str] = {}
+    for p in process_rows:
+        pid = str(p.get("process_uuid") or "")
+        ref_exchange_id = str(p.get("reference_product_flow_uuid") or "")
+        ref_exchange_by_process[pid] = ref_exchange_id
+        ref_exchange = exchange_by_id.get(ref_exchange_id)
+        ref_amount_by_process[pid] = float((ref_exchange or {}).get("amount") or 0.0)
+
+    for link in link_rows:
+        provider = str(link.get("provider_process_uuid") or "")
+        consumer = str(link.get("consumer_process_uuid") or "")
+        if provider not in idx or consumer not in idx:
+            continue
+        denom = ref_amount_by_process.get(consumer, 0.0)
+        if denom <= 1e-12:
+            continue
+        amount = float(link.get("consumer_amount") or link.get("amount") or 0.0)
+        if amount == 0.0:
+            continue
+        a[idx[provider]][idx[consumer]] += amount / denom
+
+    i_minus_a = [[(1.0 if i == j else 0.0) - a[i][j] for j in range(n)] for i in range(n)]
+    rank, det = _matrix_rank_and_determinant(i_minus_a)
+    invertible = rank == n and abs(det) > 1e-12
+
+    non_zero_entries: list[dict] = []
+    for i in range(n):
+        for j in range(n):
+            value = a[i][j]
+            if abs(value) <= 1e-12:
+                continue
+            non_zero_entries.append(
+                {
+                    "row": i,
+                    "col": j,
+                    "provider_process_uuid": process_ids[i],
+                    "consumer_process_uuid": process_ids[j],
+                    "value": value,
+                }
+            )
+
+    adjacency: dict[str, set[str]] = {}
+    for link in link_rows:
+        provider = str(link.get("provider_process_uuid") or "")
+        consumer = str(link.get("consumer_process_uuid") or "")
+        if not provider or not consumer:
+            continue
+        adjacency.setdefault(provider, set()).add(consumer)
+
+    suspect_cycles: list[list[str]] = []
+    visited: set[str] = set()
+    stack: list[str] = []
+    in_stack: set[str] = set()
+
+    def dfs(node: str) -> None:
+        visited.add(node)
+        stack.append(node)
+        in_stack.add(node)
+        for nxt in adjacency.get(node, set()):
+            if nxt not in visited:
+                dfs(nxt)
+            elif nxt in in_stack:
+                start_idx = stack.index(nxt)
+                cycle = stack[start_idx:] + [nxt]
+                if cycle not in suspect_cycles:
+                    suspect_cycles.append(cycle)
+        stack.pop()
+        in_stack.remove(node)
+
+    for pid in process_ids:
+        if pid and pid not in visited:
+            dfs(pid)
+
+    evidences: list[dict] = []
+    reason_counts = {
+        "self_dependency": 0,
+        "zero_reference": 0,
+        "duplicate_reference_flow": 0,
+        "unresolved_provider_cycle": 0,
+    }
+    for i, pid in enumerate(process_ids):
+        if abs(a[i][i]) > 1e-12:
+            reason_counts["self_dependency"] += 1
+            evidences.append({"category": "self_dependency", "process_uuid": pid, "value": a[i][i]})
+    for pid, ref_amount in ref_amount_by_process.items():
+        if ref_amount <= 1e-12:
+            reason_counts["zero_reference"] += 1
+            evidences.append(
+                {
+                    "category": "zero_reference",
+                    "process_uuid": pid,
+                    "reference_exchange_id": ref_exchange_by_process.get(pid),
+                    "amount": ref_amount,
+                }
+            )
+    ref_exchange_ids = [ref_exchange_by_process.get(pid, "") for pid in process_ids if pid]
+    if len([item for item in ref_exchange_ids if item]) != len(set([item for item in ref_exchange_ids if item])):
+        reason_counts["duplicate_reference_flow"] += 1
+        evidences.append({"category": "duplicate_reference_flow", "reference_exchange_ids": ref_exchange_ids})
+    if suspect_cycles:
+        reason_counts["unresolved_provider_cycle"] += len(suspect_cycles)
+        for cycle in suspect_cycles:
+            evidences.append({"category": "unresolved_provider_cycle", "cycle": cycle})
+
+    return {
+        "invertible": invertible,
+        "rank": rank,
+        "determinant": det,
+        "a_matrix_preview": {
+            "rows": n,
+            "cols": n,
+            "non_zero_count": len(non_zero_entries),
+            "non_zero_entries": non_zero_entries[:2000],
+        },
+        "suspect_cycles": suspect_cycles[:100],
+        "singular_reasons": reason_counts,
+        "evidence": evidences[:2000],
+    }
+
+
 @app.post("/debug/solver/check-snapshot", dependencies=[Depends(require_debug_access)])
 def debug_check_snapshot(
     payload: dict,

@@ -8,7 +8,6 @@ Uses dynamic .7z generation from fixture SPOLD + MasterData XML.
 
 import io
 import json
-import os
 import tempfile
 import uuid
 from pathlib import Path
@@ -17,36 +16,33 @@ import pytest
 import py7zr
 from fastapi.testclient import TestClient
 
-# Keep API tests isolated from the developer's real lca_demo.db.
-_TEST_DB = Path(tempfile.gettempdir()) / f"nebula_ef31_import_api_{uuid.uuid4().hex}.db"
-os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DB.as_posix()}"
-
 # Ensure app imports work
+import app.database as _db_module
 from app.main import app
-from app.database import Base, engine, SessionLocal
+from app.database import Base
 from app.models import DebugDiagnostic, ReferenceProcess
 
 
 @pytest.fixture(autouse=True)
 def setup_db():
     """Create tables for each test, clean up after."""
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=_db_module.engine)
     yield
-    engine_db_path = Path(str(engine.url.database or "")).resolve()
-    expected_db_path = _TEST_DB.resolve()
-    if engine_db_path != expected_db_path:
+    engine_db_path = Path(str(_db_module.engine.url.database or "")).resolve()
+    temp_root = Path(tempfile.gettempdir()).resolve()
+    if temp_root != engine_db_path and temp_root not in engine_db_path.parents:
         raise RuntimeError(
             f"Refusing to clean EF31 API test tables outside temp DB: {engine_db_path}"
         )
     # Cleanup using Session
-    db = SessionLocal()
+    db = _db_module.SessionLocal()
     try:
         db.execute(ReferenceProcess.__table__.delete())
         db.execute(DebugDiagnostic.__table__.delete())
         db.commit()
     finally:
         db.close()
-    engine.dispose()
+    _db_module.engine.dispose()
 
 
 @pytest.fixture()
@@ -284,7 +280,7 @@ class TestEf31CommitEndpoint:
         assert data["catalog_target_kind"] == "lci_dataset"
 
         # Verify ReferenceProcess in DB
-        db = SessionLocal()
+        db = _db_module.SessionLocal()
         try:
             procs = db.execute(ReferenceProcess.__table__.select()).all()
             assert len(procs) >= 1
