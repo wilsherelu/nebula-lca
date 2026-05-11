@@ -216,7 +216,12 @@ app.include_router(_ef31_import_api_router)
 app.include_router(_tidas_import_base_router)
 app.include_router(_tidas_import_api_router)
 app.include_router(_ref_catalog_base_router)
+# ── reference_data router (Stage 6B-lite: stats only) ──
+from .api.reference_data import _api_router as _reference_data_api_router
+
 app.include_router(_ref_catalog_api_router)
+app.include_router(_reference_data_api_router)
+
 
 def get_model_or_404(db: Session, model_id: str) -> Model:
     model = db.query(Model).filter(Model.id == model_id).first()
@@ -4509,43 +4514,6 @@ def create_model(payload: ModelCreateRequest, db: Session = Depends(get_db)) -> 
         graph_hash=graph_hash,
         **pts_compile_summary,
     )
-
-@app.get("/api/stats", response_model=StatsResponse)
-def get_stats_api(db: Session = Depends(get_db)) -> StatsResponse:
-    cache_key = f"stats:v2:rev={_cache_revision('stats')}"
-    cached = _cache_get(cache_key, ttl_seconds=_CACHE_TTL_STATS_SECONDS)
-    if isinstance(cached, StatsResponse):
-        return cached
-
-    projects = db.query(Model).count()
-    flows_library_total = db.query(FlowRecord).count()
-    process_library_total = db.query(ReferenceProcess).count()
-    latest_rows = _latest_graphs_with_project_meta(db)
-    graph_process_total = 0
-    graph_flow_total = 0
-    for _, latest in latest_rows:
-        process_count, flow_count = _graph_process_and_flow_counts(
-            latest.hybrid_graph_json if isinstance(latest.hybrid_graph_json, dict) else {}
-        )
-        graph_process_total += process_count
-        graph_flow_total += flow_count
-
-    # Library-oriented stats for management dashboard.
-    flows_latest_graph = graph_flow_total
-    flow_total = flows_library_total
-
-    result = StatsResponse(
-        projects=projects,
-        processes=process_library_total,
-        flows=flow_total,
-        flows_latest_graph=flows_latest_graph,
-        flows_library_total=flows_library_total,
-        flow_library_total=flows_library_total,
-        graph_processes=graph_process_total,
-        graph_flows=graph_flow_total,
-    )
-    _cache_set(cache_key, result)
-    return result
 
 @app.post("/api/projects/{project_id}/repair-pts-publications", response_model=RepairPtsPublicationsResponse)
 @app.post("/projects/{project_id}/repair-pts-publications", response_model=RepairPtsPublicationsResponse)
