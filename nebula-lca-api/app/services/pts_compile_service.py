@@ -317,4 +317,3 @@ def _compile_pts_on_save_if_needed(
         "pts_failed_count": 0,
         "pts_failed_items": [],
     }
-

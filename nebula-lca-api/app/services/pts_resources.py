@@ -5,18 +5,31 @@ Extracted from ``app.main`` for Stage 6C.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ..schemas import HybridGraph, HybridNode, normalize_same_flow_uuid_opposite_direction_ports
+from ..schemas import (
+    FlowPort,
+    HybridGraph,
+    HybridNode,
+    PtsPackFinalizeRequest,
+    PtsPublishRequest,
+    PtsResourceOut,
+    PtsUnpackPortBinding,
+    normalize_same_flow_uuid_opposite_direction_ports,
+)
 from ..models import (
     PtsCompileArtifact,
+    PtsDefinition,
     PtsExternalArtifact,
     PtsResource,
 )
+from ..pts_compile import compute_pts_graph_hash
+from .graph_contract import _port_id_from_handle, is_graph_non_empty
 
 def _get_pts_resource_ports_policy(
     *,
@@ -449,6 +462,47 @@ def _get_or_materialize_pts_resource_row(*, db: Session, pts_uuid: str) -> PtsRe
     db.refresh(row)
     return row
 
+
+def _load_pts_external_artifact(
+    *,
+    db: Session,
+    project_id: str,
+    pts_uuid: str,
+    published_version: int | None = None,
+) -> PtsExternalArtifact | None:
+    query = db.query(PtsExternalArtifact).filter(
+        PtsExternalArtifact.project_id == project_id,
+        PtsExternalArtifact.pts_uuid == pts_uuid,
+    )
+    if published_version is not None:
+        query = query.filter(PtsExternalArtifact.published_version == published_version)
+    return query.order_by(
+        PtsExternalArtifact.published_version.desc(),
+        PtsExternalArtifact.updated_at.desc(),
+        PtsExternalArtifact.created_at.desc(),
+    ).first()
+
+
+def _load_pts_active_external_artifact(
+    *,
+    db: Session,
+    project_id: str,
+    pts_uuid: str,
+) -> PtsExternalArtifact | None:
+    resource = (
+        db.query(PtsResource)
+        .filter(PtsResource.project_id == project_id, PtsResource.pts_uuid == pts_uuid)
+        .first()
+    )
+    active_version = int(resource.active_published_version) if resource and resource.active_published_version is not None else None
+    return _load_pts_external_artifact(
+        db=db,
+        project_id=project_id,
+        pts_uuid=pts_uuid,
+        published_version=active_version,
+    )
+
+
 def _build_pts_resource_out(*, row: PtsResource, db: Session) -> PtsResourceOut:
     pts_graph = dict(row.pts_graph_json or {})
     if pts_graph:
@@ -641,6 +695,77 @@ def _count_pts_policy_rows(policy: dict | None) -> tuple[int, int]:
         len(outputs) if isinstance(outputs, list) else 0,
     )
 
+
+def _count_shell_ports(shell_node: dict | None) -> tuple[int, int]:
+    if not isinstance(shell_node, dict):
+        return 0, 0
+    inputs = shell_node.get("inputs")
+    outputs = shell_node.get("outputs")
+    return (
+        len(inputs) if isinstance(inputs, list) else 0,
+        len(outputs) if isinstance(outputs, list) else 0,
+    )
+
+
+def _raise_if_pack_finalize_obviously_reentered(
+    *,
+    pts_uuid: str,
+    payload: PtsPackFinalizeRequest,
+    derived_ports_policy: dict,
+    existing_row: PtsResource | None,
+) -> None:
+    if existing_row is None:
+        return
+    existing_published_version = (
+        int(existing_row.active_published_version)
+        if existing_row.active_published_version is not None
+        else (
+            int(existing_row.latest_published_version)
+            if existing_row.latest_published_version is not None
+            else None
+        )
+    )
+    if existing_published_version is None:
+        return
+    existing_shell = dict(existing_row.shell_node_json or {})
+    existing_shell_inputs, existing_shell_outputs = _count_shell_ports(existing_shell)
+    if existing_shell_inputs == 0 and existing_shell_outputs == 0:
+        return
+
+    incoming_policy_inputs, incoming_policy_outputs = _count_pts_policy_rows(derived_ports_policy)
+    same_graph_hash = bool(
+        str(payload.latest_graph_hash or "").strip()
+        and str(existing_row.latest_graph_hash or "").strip()
+        and str(payload.latest_graph_hash or "").strip() == str(existing_row.latest_graph_hash or "").strip()
+    )
+    if not same_graph_hash:
+        return
+
+    if incoming_policy_inputs <= existing_shell_inputs and incoming_policy_outputs <= existing_shell_outputs:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "PTS_PACK_FINALIZE_REENTRY_FORBIDDEN",
+                "message": (
+                    f"pack-finalize for pts_uuid={pts_uuid} looks like a second pass built from the current "
+                    "published shell instead of the original wrap source. Do not re-run pack-finalize for an "
+                    "already packed node on ordinary root refresh/click flows."
+                ),
+                "evidence": [
+                    {
+                        "pts_uuid": pts_uuid,
+                        "latest_graph_hash": str(existing_row.latest_graph_hash or "") or None,
+                        "existing_published_version": existing_published_version,
+                        "existing_shell_input_count": existing_shell_inputs,
+                        "existing_shell_output_count": existing_shell_outputs,
+                        "incoming_policy_input_count": incoming_policy_inputs,
+                        "incoming_policy_output_count": incoming_policy_outputs,
+                    }
+                ],
+            },
+        )
+
+
 def _upsert_pts_resource_from_definition(
     *,
     db: Session,
@@ -773,4 +898,3 @@ def _bind_pts_published_versions_for_graph(*, db: Session, project_id: str, grap
             continue
         node.pts_published_version = int(external.published_version) if external.published_version is not None else None
         node.pts_published_artifact_id = str(external.id)
-
