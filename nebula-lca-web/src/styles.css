@@ -3804,18 +3804,6 @@ body,
   font-weight: 700;
 }
 
-.pm-import-nav-item {
-  border: 1px solid #c4ddeb;
-  background: linear-gradient(180deg, #f7fbff 0%, #edf7fc 100%);
-  color: #1f678f;
-  font-weight: 700;
-}
-
-.pm-import-nav-item:hover {
-  border-color: #8fbadb;
-  background: #e6f4fb;
-}
-
 .pm-page {
   border: 0;
   border-radius: 12px;
@@ -4056,6 +4044,32 @@ body,
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.pm-project-card-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.pm-project-info-btn {
+  height: 28px;
+  border: 1px solid #d1e1eb;
+  border-radius: 999px;
+  background: #f8fbfd;
+  color: #416476;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pm-project-info-btn:hover {
+  border-color: #9fc5dc;
+  background: #eef7fc;
+  color: #1f678f;
 }
 
 .pm-project-card-meta {

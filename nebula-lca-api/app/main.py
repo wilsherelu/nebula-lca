@@ -206,6 +206,15 @@ _collect_connected_port_ids_for_pts_node = _pr._collect_connected_port_ids_for_p
 _overlay_pts_port_visibility = _pr._overlay_pts_port_visibility
 _load_published_compile_rows_for_graph = _pr._load_published_compile_rows_for_graph
 build_flattened_graph_for_run_pts = _pr.build_flattened_graph_for_run_pts
+_build_compile_graph_from_pts_resource = _pr._build_compile_graph_from_pts_resource
+extract_pts_definition = _pr.extract_pts_definition
+upsert_pts_definition = _pr.upsert_pts_definition
+upsert_pts_compile_artifact = _pr.upsert_pts_compile_artifact
+build_pts_external_payload = _pr.build_pts_external_payload
+_enrich_pts_external_payload_flow_name_en = _pr._enrich_pts_external_payload_flow_name_en
+upsert_pts_external_artifact = _pr.upsert_pts_external_artifact
+_upsert_pts_resource_from_definition = _pr._upsert_pts_resource_from_definition
+_build_pts_shell_snapshot_from_external = _pr._build_pts_shell_snapshot_from_external
 
 # Re-export project/version helpers from services
 from .services.project_versions import (
@@ -2669,8 +2678,79 @@ def _canonicalize_pts_nodes_for_main_graph_save(*, db: Session, project_id: str,
         return
     _project_pts_external_ports_into_graph(db=db, project_id=project_id, graph=graph)
 
+def _is_pts_publication_auto_repairable(*, resource: PtsResource | None, external: PtsExternalArtifact | None) -> bool:
+    if external is not None or resource is None:
+        return False
+    if not isinstance(resource.pts_graph_json, dict) or not resource.pts_graph_json.get("nodes"):
+        return False
+    if not isinstance(resource.shell_node_json, dict) or not resource.shell_node_json:
+        return False
+    return True
+
 def _repair_pts_publication_from_resource(*, db: Session, resource: PtsResource) -> tuple[bool, str]:
-    return False, "pts_publication_repair_unavailable"
+    graph = _build_compile_graph_from_pts_resource(resource)
+    if graph is None:
+        return False, "pts_resource_graph_invalid"
+
+    shell_node = dict(resource.shell_node_json or {})
+    pts_node_id = str(resource.pts_node_id or shell_node.get("id") or "").strip()
+    if not pts_node_id:
+        return False, "pts_node_id_missing"
+
+    try:
+        compile_row, _cached = upsert_pts_compile_artifact(
+            db=db,
+            project_id=str(resource.project_id),
+            pts_node_id=pts_node_id,
+            force_recompile=True,
+            graph=graph,
+        )
+        definition = extract_pts_definition(
+            graph=graph,
+            pts_node_id=pts_node_id,
+            graph_hash=str(compile_row.graph_hash or ""),
+        )
+        definition_row = upsert_pts_definition(db=db, project_id=str(resource.project_id), definition=definition)
+        external_payload = build_pts_external_payload(
+            project_id=str(resource.project_id),
+            pts_uuid=str(resource.pts_uuid),
+            definition=definition_row.definition_json or definition,
+            compile_row=compile_row,
+        )
+        _enrich_pts_external_payload_flow_name_en(external_payload, db=db)
+        external = upsert_pts_external_artifact(
+            db=db,
+            project_id=str(resource.project_id),
+            pts_uuid=str(resource.pts_uuid),
+            pts_node_id=pts_node_id,
+            graph_hash=str(compile_row.graph_hash or ""),
+            payload=external_payload,
+            source_compile_id=str(compile_row.id),
+            source_compile_version=(
+                int(compile_row.compile_version)
+                if compile_row.compile_version is not None
+                else None
+            ),
+            set_active=True,
+        )
+        repaired_resource = _upsert_pts_resource_from_definition(
+            db=db,
+            definition_row=definition_row,
+            compile_row=compile_row,
+            external_row=external,
+        )
+        repaired_resource.shell_node_json = _build_pts_shell_snapshot_from_external(
+            row=repaired_resource,
+            external=external,
+        )
+        repaired_resource.active_published_version = int(external.published_version or 0) or repaired_resource.active_published_version
+        db.commit()
+        return True, "pts_publication_repaired"
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        return False, f"pts_publication_repair_failed: {exc}"
 
 def _solver_flow_type_by_uuid_cached(db: Session) -> dict[str, str]:
     return {

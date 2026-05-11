@@ -1192,13 +1192,70 @@ def build_flattened_graph_for_run_pts(*, graph: HybridGraph, compile_rows: list[
         if not candidates:
             return None
         if source_port_id:
+            pts_node = node_by_id.get(pts_node_id)
+            shell_port = None
+            if pts_node is not None:
+                for port in pts_node.outputs:
+                    port_ids = {
+                        str(port.id or "").strip(),
+                        str(port.legacy_port_id or "").strip(),
+                        str(port.port_key or "").strip(),
+                        str(port.product_key or "").strip(),
+                    }
+                    if source_port_id in port_ids:
+                        shell_port = port
+                        break
+            if shell_port is not None:
+                shell_product_key = str(shell_port.product_key or shell_port.port_key or "").strip()
+                shell_source_process_uuid = str(shell_port.source_process_uuid or "").strip()
+                shell_source_node_id = str(shell_port.source_node_id or "").strip()
+                exact_by_key = [
+                    node
+                    for vp, node in candidates
+                    if shell_product_key and str(vp.get("product_key") or vp.get("virtual_process_key") or "").strip() == shell_product_key
+                ]
+                if len(exact_by_key) == 1:
+                    return exact_by_key[0]
+                exact_by_source = [
+                    node
+                    for vp, node in candidates
+                    if (
+                        shell_source_process_uuid
+                        and str(vp.get("source_process_uuid") or vp.get("sourceProcessUuid") or "").strip() == shell_source_process_uuid
+                    )
+                    or (
+                        shell_source_node_id
+                        and str(vp.get("source_node_id") or vp.get("sourceNodeId") or "").strip() == shell_source_node_id
+                    )
+                ]
+                if len(exact_by_source) == 1:
+                    return exact_by_source[0]
             exact = [
                 node for vp, node in candidates
                 if str(vp.get("source_port_id") or vp.get("sourcePortId") or "").endswith(source_port_id)
             ]
             if len(exact) == 1:
                 return exact[0]
-        return candidates[0][1]
+        if len(candidates) == 1:
+            return candidates[0][1]
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "PTS_OUTPUT_PROVIDER_AMBIGUOUS",
+                "message": (
+                    "PTS output edge is ambiguous: multiple virtual product processes "
+                    "share the same flow UUID, but the edge does not identify a concrete "
+                    "PTS output port/provider."
+                ),
+                "pts_node_id": pts_node_id,
+                "flow_uuid": flow_uuid,
+                "source_port_id": source_port_id,
+                "candidate_process_uuids": [
+                    str(vp.get("process_uuid") or "")
+                    for vp, _node in candidates[:20]
+                ],
+            },
+        )
 
     def _find_input_targets(pts_node_id: str, flow_uuid: str) -> list[tuple[HybridNode, float, str | None]]:
         targets: list[tuple[HybridNode, float, str | None]] = []
@@ -2014,6 +2071,189 @@ def _build_pts_publish_warnings(
         )
 
     return warnings
+
+
+def _raise_if_pts_market_has_no_internal_share(
+    *,
+    pts_uuid: str,
+    pts_node_id: str | None,
+    pts_graph: dict | None,
+) -> None:
+    zero_share_warnings = [
+        warning
+        for warning in _build_pts_publish_warnings(
+            project_id="",
+            pts_uuid=pts_uuid,
+            pts_node_id=pts_node_id,
+            pts_graph=pts_graph,
+            external_payload=None,
+        )
+        if warning.code == "PTS_INPUT_SHARE_ZERO"
+    ]
+    if not zero_share_warnings:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "PTS_MARKET_PROCESS_REQUIRES_INTERNAL_SUPPLIERS",
+            "message": "Market processes inside PTS must include at least one internal upstream supplier.",
+            "evidence": [warning.model_dump() for warning in zero_share_warnings[:20]],
+        },
+    )
+
+
+def _market_input_port_id(port: dict) -> str:
+    return str(port.get("id") or port.get("port_id") or port.get("portId") or "").strip()
+
+
+def _edge_target_port_id(edge: dict) -> str:
+    raw = str(
+        edge.get("target_port_id")
+        or edge.get("targetPortId")
+        or edge.get("targetHandle")
+        or ""
+    )
+    return _port_id_from_handle(raw, "in") or raw.strip()
+
+
+def _validate_pts_market_supplier_coverage(
+    *,
+    pts_uuid: str,
+    pts_node_id: str | None,
+    pts_graph: dict | None,
+) -> list[PtsModelWarning]:
+    """Market processes inside PTS must keep supplier semantics internal.
+
+    A market with all suppliers inside the PTS is valid. A market with some
+    internal suppliers is allowed but warned as a truncated market. A market
+    with no internal suppliers cannot be packaged because PTS boundary inputs
+    cannot represent provider shares.
+    """
+    if not isinstance(pts_graph, dict):
+        return []
+
+    raw_nodes = [node for node in list(pts_graph.get("nodes") or []) if isinstance(node, dict)]
+    raw_edges = [edge for edge in list(pts_graph.get("exchanges") or []) if isinstance(edge, dict)]
+    if not raw_nodes:
+        return []
+
+    nodes_by_id = {str(node.get("id") or "").strip(): node for node in raw_nodes if str(node.get("id") or "").strip()}
+    internal_sources_by_market_port: dict[tuple[str, str, str], set[str]] = defaultdict(set)
+    internal_sources_by_market_flow: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for edge in raw_edges:
+        to_node = str(edge.get("toNode") or edge.get("target") or "").strip()
+        from_node = str(edge.get("fromNode") or edge.get("source") or "").strip()
+        flow_uuid = str(edge.get("flowUuid") or edge.get("flow_uuid") or "").strip()
+        if not to_node or not from_node or not flow_uuid:
+            continue
+        if to_node not in nodes_by_id or from_node not in nodes_by_id:
+            continue
+        target_port_id = _edge_target_port_id(edge)
+        internal_sources_by_market_flow[(to_node, flow_uuid)].add(from_node)
+        if target_port_id:
+            internal_sources_by_market_port[(to_node, target_port_id, flow_uuid)].add(from_node)
+
+    warnings: list[PtsModelWarning] = []
+    blocking_errors: list[dict] = []
+    for node in raw_nodes:
+        if str(node.get("node_kind") or "").strip() != "market_process":
+            continue
+        node_id = str(node.get("id") or "").strip()
+        if not node_id:
+            continue
+
+        provider_inputs: list[tuple[dict, str, str]] = []
+        covered_inputs: list[dict] = []
+        missing_inputs: list[dict] = []
+        for port in list(node.get("inputs") or []):
+            if not isinstance(port, dict):
+                continue
+            if is_elementary_flow_semantic(graph_exchange_type_to_flow_semantic(port.get("type"))):
+                continue
+            flow_uuid = str(port.get("flowUuid") or port.get("flow_uuid") or "").strip()
+            if not flow_uuid:
+                continue
+            port_id = _market_input_port_id(port)
+            provider_inputs.append((port, port_id, flow_uuid))
+
+        if not provider_inputs:
+            continue
+
+        flow_input_counts: dict[str, int] = defaultdict(int)
+        for _port, _port_id, flow_uuid in provider_inputs:
+            flow_input_counts[flow_uuid] += 1
+
+        for port, port_id, flow_uuid in provider_inputs:
+            sources = set()
+            if port_id:
+                sources.update(internal_sources_by_market_port.get((node_id, port_id, flow_uuid), set()))
+            if not sources and flow_input_counts.get(flow_uuid, 0) == 1:
+                sources.update(internal_sources_by_market_flow.get((node_id, flow_uuid), set()))
+            evidence = {
+                "node_id": node_id,
+                "node_name": str(node.get("name") or ""),
+                "port_id": port_id,
+                "flow_uuid": flow_uuid,
+                "flow_name": str(port.get("name") or ""),
+                "unit": str(port.get("unit") or ""),
+                "amount": port.get("amount"),
+                "internal_source_node_ids": sorted(sources),
+            }
+            if sources:
+                covered_inputs.append(evidence)
+            else:
+                missing_inputs.append(evidence)
+
+        node_name = str(node.get("name") or "").strip() or node_id
+        if not covered_inputs:
+            blocking_errors.append(
+                {
+                    "node_id": node_id,
+                    "node_name": node_name,
+                    "message": (
+                        f"Market process {node_name} is packed without internal suppliers. "
+                        "Package the market with at least one upstream supplier, preferably all suppliers."
+                    ),
+                    "missing_inputs": missing_inputs[:50],
+                }
+            )
+            continue
+
+        if missing_inputs:
+            warnings.append(
+                PtsModelWarning(
+                    code="PTS_MARKET_PROCESS_PARTIAL_SUPPLIERS",
+                    severity="warning",
+                    message=(
+                        f"Market process {node_name} includes only part of its suppliers. "
+                        "Missing suppliers are not exposed as PTS inputs and their market shares are dropped."
+                    ),
+                    pts_uuid=pts_uuid,
+                    pts_node_id=pts_node_id or node_id,
+                    node_name=node_name,
+                    expected_total=float(len(provider_inputs)),
+                    actual_total=float(len(covered_inputs)),
+                    evidence=[
+                        {
+                            "covered_inputs": covered_inputs[:50],
+                            "missing_inputs": missing_inputs[:50],
+                        }
+                    ],
+                )
+            )
+
+    if blocking_errors:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "PTS_MARKET_PROCESS_REQUIRES_INTERNAL_SUPPLIERS",
+                "message": "Market processes inside PTS must include upstream suppliers; isolated market processes cannot be packaged.",
+                "evidence": blocking_errors[:20],
+            },
+        )
+
+    return warnings
+
 
 def build_pts_external_payload(*, project_id: str, pts_uuid: str, definition: dict, compile_row: PtsCompileArtifact) -> dict:
     artifact = compile_row.artifact_json or {}

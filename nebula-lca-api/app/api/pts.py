@@ -58,6 +58,8 @@ _raise_if_pack_finalize_obviously_reentered = _pr._raise_if_pack_finalize_obviou
 _resolve_compile_row_for_publish = _pr._resolve_compile_row_for_publish
 _resolve_pts_shell_snapshot_for_resource = _pr._resolve_pts_shell_snapshot_for_resource
 _upsert_pts_resource_from_definition = _pr._upsert_pts_resource_from_definition
+_raise_if_pts_market_has_no_internal_share = _pr._raise_if_pts_market_has_no_internal_share
+_validate_pts_market_supplier_coverage = _pr._validate_pts_market_supplier_coverage
 _build_frontend_ports_from_external_payload = _pr._build_frontend_ports_from_external_payload
 build_pts_external_payload = _pr.build_pts_external_payload
 extract_pts_definition = _pr.extract_pts_definition
@@ -319,6 +321,11 @@ def pack_finalize_pts_resource(
     payload: PtsPackFinalizeRequest,
     db: Session = Depends(get_db),
 ) -> PtsPackFinalizeResponse:
+    _validate_pts_market_supplier_coverage(
+        pts_uuid=pts_uuid,
+        pts_node_id=payload.pts_node_id,
+        pts_graph=dict(payload.pts_graph or {}),
+    )
     derived_ports_policy = _normalize_pts_ports_policy_from_graph(
         pts_graph=dict(payload.pts_graph or {}),
         fallback_policy=None,
@@ -433,6 +440,24 @@ def publish_pts_artifact(pts_uuid: str, payload: PtsPublishRequest, db: Session 
         project_id=payload.project_id,
         definition=definition,
     )
+    resource_for_validation = (
+        db.query(PtsResource)
+        .filter(PtsResource.project_id == payload.project_id, PtsResource.pts_uuid == pts_uuid)
+        .first()
+    )
+    validation_graph = dict(definition.get("pts_graph") or {})
+    if not is_graph_non_empty(validation_graph) and resource_for_validation is not None:
+        validation_graph = dict(resource_for_validation.pts_graph_json or {})
+    market_warnings = _validate_pts_market_supplier_coverage(
+        pts_uuid=pts_uuid,
+        pts_node_id=compile_row.pts_node_id,
+        pts_graph=validation_graph,
+    )
+    _raise_if_pts_market_has_no_internal_share(
+        pts_uuid=pts_uuid,
+        pts_node_id=compile_row.pts_node_id,
+        pts_graph=validation_graph,
+    )
     external_payload = build_pts_external_payload(
         project_id=payload.project_id,
         pts_uuid=pts_uuid,
@@ -470,6 +495,7 @@ def publish_pts_artifact(pts_uuid: str, payload: PtsPublishRequest, db: Session 
         pts_graph=dict(resource.pts_graph_json or {}) if resource is not None else {},
         external_payload=external_payload,
     )
+    publish_warnings = [*market_warnings, *publish_warnings]
     return PtsPublishResponse(
         project_id=payload.project_id,
         pts_uuid=pts_uuid,

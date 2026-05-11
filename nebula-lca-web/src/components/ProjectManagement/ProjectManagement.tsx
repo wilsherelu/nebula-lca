@@ -427,7 +427,7 @@ function CreateProjectModal(props: {
     <div className="pm-modal-mask">
       <div className="pm-modal" onClick={(event) => event.stopPropagation()}>
         <div className="pm-modal-head">
-          <strong>{mode === "edit" ? (zh ? "编辑项目" : "Edit Project") : (zh ? "新建项目" : "Create Project")}</strong>
+          <strong>{mode === "edit" ? (zh ? "修改项目信息" : "Edit Project Info") : (zh ? "新建项目" : "Create Project")}</strong>
           <button type="button" className="pm-link-btn" onClick={onClose}>
             {zh ? "关闭" : "Close"}
           </button>
@@ -1855,7 +1855,7 @@ export function ProjectManagement(props: Props) {
             <div className="pm-sidebar-title">{zh ? "数据库导入" : "Database Import"}</div>
             <button
               type="button"
-              className="pm-nav-item pm-import-nav-item"
+              className="pm-nav-item"
               onClick={() => setEf31ImportOpen(true)}
             >
               {zh ? "LCI 数据库" : "LCI Database"}
@@ -1922,16 +1922,18 @@ export function ProjectManagement(props: Props) {
                   <div className="pm-recent-grid">
                     {rows.map((row) => (
                       <article key={row.projectId} className="pm-project-card">
-                        <div className="pm-project-card-title">{row.projectName}</div>
+                        <div className="pm-project-card-top">
+                          <div className="pm-project-card-title">{row.projectName}</div>
+                          <button type="button" className="pm-project-info-btn" onClick={() => openProjectEdit(row)}>
+                            {zh ? "修改项目信息" : "Edit Info"}
+                          </button>
+                        </div>
                         <div className="pm-project-card-meta">{zh ? "参考产品：" : "Reference: "}{row.referenceProduct}</div>
                         <div className="pm-project-card-meta">{zh ? "系统边界：" : "Boundary: "}{row.systemBoundary}</div>
                         <div className="pm-project-card-meta">{zh ? "最近修改：" : "Updated: "}{row.lastModified}</div>
                         <div className="pm-project-card-actions">
                           <button type="button" className="pm-link-btn primary" onClick={() => onOpenProject(row.projectId)}>
                             {zh ? "打开" : "Open"}
-                          </button>
-                          <button type="button" className="pm-link-btn" onClick={() => openProjectEdit(row)}>
-                            {zh ? "编辑" : "Edit"}
                           </button>
                           <button type="button" className="pm-link-btn" onClick={() => void openTidasExport(row.projectId, row.projectName, row.latestVersion)} disabled={!row.latestVersion}>
                             {zh ? "导出" : "Export"}
@@ -1994,7 +1996,7 @@ export function ProjectManagement(props: Props) {
                                 <button type="button" className="pm-link-btn" onClick={() => void openTidasExport(row.projectId, row.projectName, row.latestVersion)} disabled={!row.latestVersion}>
                                   {zh ? "导出" : "Export"}
                                 </button>
-                                <button type="button" className="pm-link-btn" onClick={() => openProjectEdit(row)}>{zh ? "编辑" : "Edit"}</button>
+                                <button type="button" className="pm-link-btn" onClick={() => openProjectEdit(row)}>{zh ? "修改信息" : "Edit Info"}</button>
                                 <button type="button" className="pm-link-btn">{zh ? "复制" : "Duplicate"}</button>
                                 <button type="button" className="pm-link-btn danger" onClick={() => onDeleteProject(row.projectId)}>
                                   {zh ? "删除" : "Delete"}
