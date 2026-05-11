@@ -5,12 +5,13 @@ Extracted from ``app.main`` for Stage 6C.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import PtsCompileArtifact, PtsExternalArtifact, PtsResource
+from ..models import PtsCompileArtifact, PtsDefinition, PtsExternalArtifact, PtsResource
 from ..schemas import (
+    HybridGraph,
     PtsCompileHistoryResponse,
     PtsCompileRequest,
     PtsCompileResponse,
@@ -28,11 +29,29 @@ from ..schemas import (
     PtsValidateRequest,
     PtsValidateResponse,
     PtsPublishedHistoryResponse,
+    PtsVersionItem,
+    normalize_same_flow_uuid_opposite_direction_ports,
 )
 from ..services import pts_compile_service as _pcs
 from ..services import pts_resources as _pr
+from ..pts_compile import compile_pts
 from ..pts_validate import validate_pts_compile
-from ..services.graph_contract import validate_graph_contract
+from ..services.graph_contract import is_graph_non_empty, normalize_graph_product_flags, validate_graph_contract
+
+_apply_pts_resource_policy_override = _pr._apply_pts_resource_policy_override
+_build_compile_graph_from_pts_resource = _pr._build_compile_graph_from_pts_resource
+_build_pts_resource_out = _pr._build_pts_resource_out
+_build_pts_shell_snapshot_from_external = _pr._build_pts_shell_snapshot_from_external
+_build_pts_unpack_port_bindings = _pr._build_pts_unpack_port_bindings
+_get_or_materialize_pts_resource_row = _pr._get_or_materialize_pts_resource_row
+_get_pts_resource_ports_policy = _pr._get_pts_resource_ports_policy
+_load_pts_external_artifact = _pr._load_pts_external_artifact
+_normalize_pts_ports_policy_from_graph = _pr._normalize_pts_ports_policy_from_graph
+_raise_if_pack_finalize_obviously_reentered = _pr._raise_if_pack_finalize_obviously_reentered
+_resolve_compile_row_for_publish = _pr._resolve_compile_row_for_publish
+_resolve_pts_shell_snapshot_for_resource = _pr._resolve_pts_shell_snapshot_for_resource
+_upsert_pts_resource_from_definition = _pr._upsert_pts_resource_from_definition
+_raise_pts_compile_value_error_http = _pcs._raise_pts_compile_value_error_http
 
 # -- Routers ----------------------------------------------------------------
 
@@ -543,5 +562,3 @@ def get_pts_ports(
         "output_virtual_process_bindings": payload.get("output_virtual_process_bindings", []),
         "virtual_processes": payload.get("virtual_processes", []),
     }
-
-
