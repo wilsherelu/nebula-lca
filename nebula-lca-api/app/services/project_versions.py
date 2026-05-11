@@ -26,6 +26,8 @@ from ..services.graph_storage import (
 
 # ── graph_contract import (already exists, no circular) ───────────────────
 from ..services.graph_contract import (
+    _normalize_port_display_name,
+    _truncate_text_preview,
     normalize_graph_product_flags,
     validate_graph_contract,
     validate_graph_flow_type_contract,
