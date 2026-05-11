@@ -42,6 +42,13 @@ from ..schemas import HybridGraph
 _main_helpers_loaded = False
 
 
+def _safe_str(value: object) -> str | None:
+    if value is None:
+        return None
+    text_value = str(value).strip()
+    return text_value or None
+
+
 def _ensure_main_helpers():
     """Ensure lazy main.py helpers are loaded into module globals."""
     global _main_helpers_loaded

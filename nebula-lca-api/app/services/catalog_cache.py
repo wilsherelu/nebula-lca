@@ -92,12 +92,16 @@ def _latest_graphs_with_project_meta(db: Session) -> list[tuple[Model, ModelVers
     )
     rows = (
         db.query(Model, ModelVersion)
+        .select_from(Model)
         .join(
             latest_subq,
-            (Model.id == latest_subq.c.model_id)
-            & (ModelVersion.model_id == latest_subq.c.model_id),
+            Model.id == latest_subq.c.model_id,
         )
-        .filter(ModelVersion.version == latest_subq.c.max_version)
+        .join(
+            ModelVersion,
+            (ModelVersion.model_id == Model.id)
+            & (ModelVersion.version == latest_subq.c.max_version),
+        )
         .all()
     )
     return rows
