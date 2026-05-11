@@ -583,13 +583,14 @@ def _flow_meta_by_uuid_cached(
     try:
         rows = db.query(
             FlowRecord.flow_uuid,
+            FlowRecord.flow_name,
             FlowRecord.flow_name_en,
             FlowRecord.flow_type,
             FlowRecord.unit_group,
         ).all()
         for r in rows:
             uu = str(r.flow_uuid or "")
-            cache[uu] = (r.flow_name_en, uu, r.flow_type, r.unit_group)
+            cache[uu] = (r.flow_name, r.flow_name_en, r.flow_type, r.unit_group)
             if uu.lower() != uu:
                 cache[uu.lower()] = cache[uu]
     except Exception:
@@ -676,23 +677,27 @@ def validate_graph_port_names_against_flow_catalog(
                 meta = flow_meta.get(flow_uuid) or flow_meta.get(flow_uuid.lower())
                 if not meta:
                     continue
-                expected_name = _normalize_port_display_name(meta[0])
+                expected_names = {
+                    _normalize_port_display_name(name)
+                    for name in (meta[0], meta[1])
+                    if _normalize_port_display_name(name)
+                }
                 actual_name = _normalize_port_display_name(port.name)
-                if "@" in actual_name or "@" in expected_name:
+                if "@" in actual_name or any("@" in name for name in expected_names):
                     continue
-                if stage == "import_model" and expected_name:
-                    if actual_name == expected_name:
+                if stage == "import_model" and expected_names:
+                    if actual_name in expected_names:
                         if sampled >= sample_limit:
                             break
                         continue
-                    if actual_name.startswith(f"{expected_name};"):
+                    if any(actual_name.startswith(f"{name};") for name in expected_names):
                         if sampled >= sample_limit:
                             break
                         continue
-                if not expected_name or not actual_name:
+                if not expected_names or not actual_name:
                     continue
                 sampled += 1
-                if not expected_name or not actual_name or actual_name == expected_name:
+                if not expected_names or not actual_name or actual_name in expected_names:
                     if sampled >= sample_limit:
                         break
                     continue
@@ -702,7 +707,7 @@ def validate_graph_port_names_against_flow_catalog(
                     "port_id": str(port.id or ""),
                     "bucket": bucket_name,
                     "flow_uuid": flow_uuid,
-                    "expected_flow_name": _truncate_text_preview(expected_name),
+                    "expected_flow_name": _truncate_text_preview(" / ".join(sorted(expected_names))),
                     "actual_port_name": _truncate_text_preview(actual_name),
                     "stage": stage,
                 })

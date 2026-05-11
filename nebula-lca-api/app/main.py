@@ -136,6 +136,7 @@ from .pts_compile import PTS_COMPILE_SCHEMA_VERSION, compile_pts, compute_pts_gr
 from .services import graph_contract as _gc
 from .services import graph_storage as _gs
 from .services import catalog_cache as _cc
+from .services import pts_resources as _pr
 from .api.projects import _base_router, _api_router as _api_projects_router
 from .api.paginated_projects import _router as _paginated_projects_router
 from .api.export_tidas import _base_router as _export_tidas_base_router, _api_router as _export_tidas_api_router
@@ -194,6 +195,18 @@ _build_etag_for_payload = _cc.build_etag_for_payload
 _is_if_none_match_hit = _cc.is_if_none_match_hit
 _invalidate_management_caches = _cc.invalidate_management_caches
 
+# PTS resource helpers live in ``app.services.pts_resources`` after Stage 6C.
+# Keep these aliases for legacy main.py helpers that still run during project
+# save/load until the remaining PTS code is fully migrated.
+_load_pts_active_external_artifact = _pr._load_pts_active_external_artifact
+_build_projected_pts_ports_from_external = _pr._build_projected_pts_ports_from_external
+_normalize_pts_shell_node_kind = _pr._normalize_pts_shell_node_kind
+_enrich_node_ports_flow_name_en = _pr._enrich_node_ports_flow_name_en
+_collect_connected_port_ids_for_pts_node = _pr._collect_connected_port_ids_for_pts_node
+_overlay_pts_port_visibility = _pr._overlay_pts_port_visibility
+_load_published_compile_rows_for_graph = _pr._load_published_compile_rows_for_graph
+build_flattened_graph_for_run_pts = _pr.build_flattened_graph_for_run_pts
+
 # Re-export project/version helpers from services
 from .services.project_versions import (
     _build_project_out,
@@ -237,6 +250,8 @@ def get_model_or_404(db: Session, model_id: str) -> Model:
 def resolve_project_id_for_run(payload: RunRequest, db: Session) -> str:
     if payload.project_id:
         return get_model_or_404(db, payload.project_id).id
+    if payload.model_id:
+        return get_model_or_404(db, payload.model_id).id
 
     if payload.model_version_id:
         if ":" in payload.model_version_id:
@@ -263,6 +278,125 @@ _api_cache_revisions: dict[str, int] = defaultdict(int)
 _indicator_meta_by_index_cache: dict[int, dict[str, str]] | None = None
 _indicator_units_cache_path: str | None = None
 _indicator_units_cache_mtime: float | None = None
+
+def _resolve_indicator_index_csv_path() -> Path | None:
+    local = Path(__file__).resolve().parent.parent / "data" / "EF3.1" / "indicator_index.csv"
+    if local.exists():
+        return local
+
+    base = Path(settings.nebula_lca_ef31_dir)
+    if base.is_file():
+        return base
+    candidate = base / "indicator_index.csv"
+    if candidate.exists():
+        return candidate
+    return None
+
+
+def _load_indicator_meta_by_index() -> dict[int, dict[str, str]]:
+    global _indicator_meta_by_index_cache, _indicator_units_cache_path, _indicator_units_cache_mtime
+
+    csv_path = _resolve_indicator_index_csv_path()
+    path_str = str(csv_path) if csv_path is not None else ""
+    current_mtime: float | None = None
+    if csv_path is not None and csv_path.exists():
+        try:
+            current_mtime = float(csv_path.stat().st_mtime)
+        except OSError:
+            current_mtime = None
+
+    if (
+        _indicator_meta_by_index_cache is not None
+        and _indicator_units_cache_path == path_str
+        and _indicator_units_cache_mtime == current_mtime
+    ):
+        return _indicator_meta_by_index_cache
+
+    if csv_path is None or not csv_path.exists():
+        _indicator_meta_by_index_cache = {}
+        _indicator_units_cache_path = path_str
+        _indicator_units_cache_mtime = None
+        return _indicator_meta_by_index_cache
+
+    with csv_path.open("r", encoding="utf-8-sig", newline="") as handle:
+        sample = handle.read(2048)
+        handle.seek(0)
+        delimiter = ";" if sample.count(";") >= sample.count(",") else ","
+        reader = csv.DictReader(handle, delimiter=delimiter)
+        mapping: dict[int, dict[str, str]] = {}
+        for row in reader:
+            idx_raw = str(row.get("indicator_index") or "").strip()
+            if not idx_raw:
+                continue
+            try:
+                idx = int(idx_raw)
+            except ValueError:
+                continue
+            mapping[idx] = {
+                "method_en": str(row.get("method_en") or "").strip(),
+                "method_zh": str(row.get("method_zh") or "").strip(),
+                "indicator_en": str(row.get("indicator_en") or "").strip(),
+                "indicator_zh": str(row.get("indicator_zh") or "").strip(),
+                "indicator_unit": str(row.get("LCIA_unit") or row.get("lcia_unit") or "").strip(),
+            }
+
+    _indicator_meta_by_index_cache = mapping
+    _indicator_units_cache_path = path_str
+    _indicator_units_cache_mtime = current_mtime
+    return mapping
+
+
+def _infer_indicator_unit(entry: dict) -> str:
+    unit = str(entry.get("indicator_unit") or entry.get("unit") or "").strip()
+    if unit and unit not in {"-", "--", "N/A", "n/a"}:
+        return unit
+    idx_value = entry.get("indicator_index")
+    idx_raw = "" if idx_value is None else str(idx_value).strip()
+    if idx_raw:
+        try:
+            idx = int(idx_raw)
+            meta = _load_indicator_meta_by_index().get(idx, {})
+            return str(meta.get("indicator_unit") or "").strip()
+        except ValueError:
+            return ""
+    return ""
+
+
+def _enrich_indicator_index_with_units(indicator_index: object) -> list:
+    rows = indicator_index if isinstance(indicator_index, list) else []
+    enriched: list = []
+    meta_by_index = _load_indicator_meta_by_index()
+    for item in rows:
+        if not isinstance(item, dict):
+            enriched.append(item)
+            continue
+        row = dict(item)
+        idx_value = row.get("indicator_index")
+        idx_raw = "" if idx_value is None else str(idx_value).strip()
+        csv_meta: dict[str, str] = {}
+        if idx_raw:
+            try:
+                csv_meta = meta_by_index.get(int(idx_raw), {})
+            except ValueError:
+                csv_meta = {}
+
+        for key in ("method_zh", "indicator_zh"):
+            cur = str(row.get(key) or "").strip()
+            if cur:
+                continue
+            fallback = str(csv_meta.get(key) or "").strip()
+            if fallback:
+                row[key] = fallback
+
+        row.pop("ecoinvent_category", None)
+
+        unit = _infer_indicator_unit(row)
+        if unit:
+            row["indicator_unit"] = unit
+            row["unit"] = unit
+        enriched.append(row)
+    return enriched
+
 
 def _build_run_job_request_json(payload) -> dict:
     """Build a lightweight request_json for RunJob storage.
@@ -4472,6 +4606,122 @@ def prune_model_versions_maintenance(
         "maintenance": "prune-model-versions-v1",
         **result,
     }
+
+
+def run_solver_and_persist(
+    *,
+    payload: RunRequest,
+    db: Session,
+) -> tuple[str, str, dict, dict]:
+    # Harden product flags at backend entry to avoid stale/null frontend payloads.
+    normalize_graph_product_flags(payload.graph)
+    normalize_same_flow_uuid_opposite_direction_ports(payload.graph)
+
+    unit_rows = db.query(UnitDefinition).all()
+    unit_factor_by_group_and_name: dict[tuple[str, str], float] = {}
+    reference_unit_by_group: dict[str, str] = {}
+    for row in unit_rows:
+        unit_factor_by_group_and_name[(row.unit_group, row.unit_name)] = float(row.factor_to_reference)
+        if row.is_reference and row.unit_group not in reference_unit_by_group:
+            reference_unit_by_group[row.unit_group] = row.unit_name
+    for group in db.query(UnitGroup).all():
+        if group.reference_unit and group.name not in reference_unit_by_group:
+            reference_unit_by_group[group.name] = group.reference_unit
+
+    display_process_unit_map = _build_process_unit_map_from_graph(payload.graph)
+    flow_type_by_uuid = _solver_flow_type_by_uuid_cached(db)
+
+    normalized_graph = normalize_graph_units_to_reference(
+        payload.graph,
+        unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+        reference_unit_by_group=reference_unit_by_group,
+    )
+
+    try:
+        tiangong_like = to_tiangong_like(normalized_graph, flow_type_by_uuid=flow_type_by_uuid)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "INVALID_DUAL_EDGE_FOR_NORMALIZED_MARKET",
+                "message": str(exc),
+                "evidence": [{"stage": "to_tiangong_like", "error": str(exc)}],
+            },
+        ) from exc
+    status = "completed"
+    message = "Run completed"
+
+    try:
+        adapter_result = run_tiangong_lcia(normalized_graph, flow_type_by_uuid=flow_type_by_uuid)
+    except Exception as exc:
+        try:
+            debug_dir = Path(__file__).resolve().parent.parent / "tmp"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S%fZ")
+            debug_path = debug_dir / f"solver_failed_snapshot_{ts}.json"
+            debug_path.write_text(json.dumps(tiangong_like, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+        raise HTTPException(status_code=502, detail=f"tiangong solver api failed: {exc}") from exc
+
+    solver_output = adapter_result["solver_output"]
+    snapshot_process_unit_map = _build_process_unit_map_from_snapshot(adapter_result.get("tiangong_like_input", {}))
+    merged_process_unit_map = dict(snapshot_process_unit_map)
+    for pid, meta in display_process_unit_map.items():
+        if not isinstance(meta, dict):
+            continue
+        prev = merged_process_unit_map.get(pid, {})
+        merged_process_unit_map[pid] = {
+            "reference_flow_uuid": str(meta.get("reference_flow_uuid") or prev.get("reference_flow_uuid") or ""),
+            "reference_unit": str(meta.get("reference_unit") or prev.get("reference_unit") or ""),
+            "reference_unit_group": str(meta.get("reference_unit_group") or prev.get("reference_unit_group") or ""),
+        }
+
+    scaled_values = _rescale_lci_values_to_inventory_units(
+        values=solver_output.get("values", []),
+        process_index=solver_output.get("process_index", []),
+        process_unit_map=merged_process_unit_map,
+        unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+    )
+    product_result_index, product_unit_map, product_values = _build_product_result_view_from_graph(
+        graph=payload.graph,
+        process_index=solver_output.get("process_index", []),
+        values=scaled_values,
+    )
+
+    solved = {
+        "summary": solver_output.get("summary", {}),
+        "lci_result": {
+            "issues": solver_output.get("issues", []),
+            "missing_ef31_flow_uuids": solver_output.get("missing_ef31_flow_uuids", []),
+            "missing_ef31_flows": solver_output.get("missing_ef31_flows", []),
+            "indicator_index": _enrich_indicator_index_with_units(solver_output.get("indicator_index", [])),
+            "process_index": solver_output.get("process_index", []),
+            "values": scaled_values,
+            "process_unit_map": merged_process_unit_map,
+            "product_result_index": product_result_index,
+            "product_values": product_values,
+            "product_unit_map": product_unit_map,
+        },
+    }
+    tiangong_like = adapter_result["tiangong_like_input"]
+
+    request_json = _build_run_job_request_json(payload)
+    run_job = RunJob(
+        model_version_id=payload.model_version_id,
+        status=status,
+        request_json=request_json,
+        result_json=solved,
+        message=message,
+        created_at=datetime.utcnow(),
+        finished_at=datetime.utcnow(),
+    )
+    db.add(run_job)
+    db.commit()
+    db.refresh(run_job)
+
+    return status, run_job.id, solved, tiangong_like
+
 
 @app.post("/api/model/run", response_model=RunResponse)
 @app.post("/model/run", response_model=RunResponse)

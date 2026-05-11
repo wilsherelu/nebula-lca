@@ -485,7 +485,7 @@ def get_project_latest_by_id(
         raise HTTPException(status_code=404, detail="No model version found")
 
     cache_key = (
-        f"project_latest:v1:rev={_cache_helpers['_cache_revision']('projects')}:project_id={model.id}:"
+        f"project_latest:v2:rev={_cache_helpers['_cache_revision']('projects')}:project_id={model.id}:"
         f"version={latest_row.version}:graph_hash={str(latest_row.graph_hash or '')}"
     )
     cached = _cache_helpers["_cache_get"](cache_key, ttl_seconds=CACHE_TTL_PROJECTS_SECONDS)

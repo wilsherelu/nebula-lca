@@ -191,18 +191,18 @@ export default function Ef31ImportDialog(props: {
   /* ---------------------------------------------------------------- */
 
   const t = {
-    title: zh ? "导入 ecoinvent 3.11 LCI" : "Import ecoinvent 3.11 LCI",
+    title: zh ? "导入 LCI 数据库" : "Import LCI Database",
     step1: zh ? "1. 上传文件" : "1. Upload Files",
     step2: zh ? "2. 预览" : "2. Preview",
     step3: zh ? "3. 确认导入" : "3. Confirm Import",
     step4: zh ? "4. 结果" : "4. Result",
-    lciLabel: zh ? "LCI 档案（必填）" : "LCI Archive (Required)",
-    lciaLabel: zh ? "LCIA 档案（可选）" : "LCIA Archive (Optional)",
+    lciLabel: zh ? "LCI 数据包（必填）" : "LCI Database Package (Required)",
+    lciaLabel: zh ? "LCIA 因子文件（可选）" : "LCIA Factor File (Optional)",
     lciaHint: zh
       ? "支持 .xlsx 或 .7z 格式"
       : "Supports .xlsx or .7z format",
     limitLabel: zh
-      ? "预览/导入前 N 个 LCI dataset（用于小批量验证）"
+      ? "预览/导入前 N 个 LCI 数据集（用于小批量验证）"
       : "Preview/Import first N LCI datasets (for small-scale validation)",
     browse: zh ? "选择文件" : "Browse",
     preview: zh ? "预览" : "Preview",
@@ -277,9 +277,9 @@ export default function Ef31ImportDialog(props: {
                     className="pm-file-picker-display"
                     value={lciFile?.name ?? ""}
                     readOnly
-                    placeholder={zh ? "请选择 ecoinvent LCI .7z 文件" : "Choose ecoinvent LCI .7z file"}
+                    placeholder={zh ? "请选择 LCI 数据包 .7z 文件" : "Choose LCI database .7z file"}
                   />
-                  <button type="button" className="pm-ghost-btn" onClick={() => lciInputRef.current?.click()}>
+                  <button type="button" className="pm-file-picker-btn" onClick={() => lciInputRef.current?.click()}>
                     {t.browse}
                   </button>
                   <input
@@ -306,7 +306,7 @@ export default function Ef31ImportDialog(props: {
                     readOnly
                     placeholder={t.emptyLcia}
                   />
-                  <button type="button" className="pm-ghost-btn" onClick={() => lciaInputRef.current?.click()}>
+                  <button type="button" className="pm-file-picker-btn" onClick={() => lciaInputRef.current?.click()}>
                     {t.browse}
                   </button>
                   <input

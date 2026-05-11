@@ -41,8 +41,15 @@ from ..services.graph_contract import is_graph_non_empty, normalize_graph_produc
 _apply_pts_resource_policy_override = _pr._apply_pts_resource_policy_override
 _build_compile_graph_from_pts_resource = _pr._build_compile_graph_from_pts_resource
 _build_pts_resource_out = _pr._build_pts_resource_out
+_build_pts_port_id_map = _pr._build_pts_port_id_map
+_build_pts_publish_warnings = _pr._build_pts_publish_warnings
 _build_pts_shell_snapshot_from_external = _pr._build_pts_shell_snapshot_from_external
 _build_pts_unpack_port_bindings = _pr._build_pts_unpack_port_bindings
+_apply_default_visible_port_ids_to_external_payload = _pr._apply_default_visible_port_ids_to_external_payload
+_apply_default_visible_port_ids_to_shell_node = _pr._apply_default_visible_port_ids_to_shell_node
+_enrich_frontend_ports_flow_name_en = _pr._enrich_frontend_ports_flow_name_en
+_enrich_pts_external_payload_flow_name_en = _pr._enrich_pts_external_payload_flow_name_en
+_resolve_default_visible_port_ids = _pr._resolve_default_visible_port_ids
 _get_or_materialize_pts_resource_row = _pr._get_or_materialize_pts_resource_row
 _get_pts_resource_ports_policy = _pr._get_pts_resource_ports_policy
 _load_pts_external_artifact = _pr._load_pts_external_artifact
@@ -51,6 +58,12 @@ _raise_if_pack_finalize_obviously_reentered = _pr._raise_if_pack_finalize_obviou
 _resolve_compile_row_for_publish = _pr._resolve_compile_row_for_publish
 _resolve_pts_shell_snapshot_for_resource = _pr._resolve_pts_shell_snapshot_for_resource
 _upsert_pts_resource_from_definition = _pr._upsert_pts_resource_from_definition
+_build_frontend_ports_from_external_payload = _pr._build_frontend_ports_from_external_payload
+build_pts_external_payload = _pr.build_pts_external_payload
+extract_pts_definition = _pr.extract_pts_definition
+upsert_pts_compile_artifact = _pr.upsert_pts_compile_artifact
+upsert_pts_definition = _pr.upsert_pts_definition
+upsert_pts_external_artifact = _pr.upsert_pts_external_artifact
 _raise_pts_compile_value_error_http = _pcs._raise_pts_compile_value_error_http
 
 # -- Routers ----------------------------------------------------------------
@@ -393,6 +406,13 @@ def pack_finalize_pts_resource(
         default_visible_port_ids=default_visible_port_ids,
         warnings=list(publish_response.warnings or []),
     )
+
+
+@_pts_api_router.put("/api/pts/{pts_uuid}", response_model=PtsResourceOut)
+@_pts_base_router.put("/pts/{pts_uuid}", response_model=PtsResourceOut)
+def put_pts_resource(pts_uuid: str, payload: PtsResourceUpdateRequest, db: Session = Depends(get_db)) -> PtsResourceOut:
+    row = _pr.upsert_pts_resource_from_update(db=db, pts_uuid=pts_uuid, payload=payload)
+    return _build_pts_resource_out(row=row, db=db)
 
 
 @_pts_api_router.post("/api/pts/{pts_uuid}/publish", response_model=PtsPublishResponse)

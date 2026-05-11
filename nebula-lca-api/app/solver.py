@@ -182,14 +182,17 @@ def to_tiangong_like(graph: HybridGraph, *, flow_type_by_uuid: dict[str, str] | 
 
     for edge in graph.exchanges:
         target_port_amount = 0.0
+        target_port_amount_present = False
         target_port_flow_uuid = ""
         target_handle_or_port = edge.targetHandle or edge.target_port_id
         target_port_id = _port_id_from_handle(target_handle_or_port, "in")
         source_handle_or_port = edge.sourceHandle or edge.source_port_id
         source_port_id = _port_id_from_handle(source_handle_or_port, "out")
         if target_port_id:
-            target_port_amount = input_port_amount_by_node_and_port.get((edge.toNode, target_port_id), 0.0)
-            target_port_flow_uuid = input_port_flow_uuid_by_node_and_port.get((edge.toNode, target_port_id), "")
+            target_key = (edge.toNode, target_port_id)
+            target_port_amount_present = target_key in input_port_amount_by_node_and_port
+            target_port_amount = input_port_amount_by_node_and_port.get(target_key, 0.0)
+            target_port_flow_uuid = input_port_flow_uuid_by_node_and_port.get(target_key, "")
 
         consumer_amount = float(edge.consumerAmount or 0.0)
         provider_amount = float(edge.providerAmount or 0.0)
@@ -205,7 +208,7 @@ def to_tiangong_like(graph: HybridGraph, *, flow_type_by_uuid: dict[str, str] | 
         if edge.quantityMode == "dual":
             # For normalized market nodes, consumer side must use target input-row normalized amount.
             if is_normalized_market:
-                if target_port_amount <= 0:
+                if not target_port_amount_present:
                     raise ValueError(
                         f"normalized market dual edge missing target input amount: edge_id={edge.id}, "
                         f"to_node={edge.toNode}, target_handle={target_handle_or_port or ''}"

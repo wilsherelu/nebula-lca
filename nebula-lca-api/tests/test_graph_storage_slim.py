@@ -274,7 +274,7 @@ class TestSlimUnit:
                 _make_simple_graph_node("proc-1", "Node A"),
                 _make_simple_graph_node("proc-2", "Node B"),
             ],
-            "exchanges": [],
+            "exchanges": [{"id": "top-e", "fromNode": "proc-1", "toNode": "proc-2"}],
             "metadata": {
                 "canvases": [
                     {
@@ -302,6 +302,38 @@ class TestSlimUnit:
         # Full nodes/edges snapshot DROPPED
         assert "nodes" not in canvas or canvas["nodes"] == []
         assert "edges" not in canvas or canvas["edges"] == []
+
+    def test_slim_root_canvas_preserved_when_top_level_edges_missing(self):
+        """Legacy graphs may keep root edges only in metadata.canvases."""
+        graph_dict = {
+            "functionalUnit": "test",
+            "nodes": [
+                _make_simple_graph_node("proc-1", "Node A"),
+                _make_simple_graph_node("proc-2", "Node B"),
+            ],
+            "exchanges": [],
+            "metadata": {
+                "canvases": [
+                    {
+                        "id": "root",
+                        "name": "Product System",
+                        "kind": "root",
+                        "nodes": [
+                            _make_simple_graph_node("proc-1", "Node A"),
+                            _make_simple_graph_node("proc-2", "Node B"),
+                        ],
+                        "edges": [
+                            {"id": "e-x", "fromNode": "proc-1", "toNode": "proc-2"},
+                        ],
+                    }
+                ],
+            },
+        }
+        slim = slim_graph_for_storage(graph_dict)
+        canvas = slim["metadata"]["canvases"][0]
+
+        assert len(canvas.get("nodes") or []) == 2
+        assert len(canvas.get("edges") or []) == 1
 
     def test_slim_pts_internal_canvas_preserved(self):
         """PTS internal canvas should keep nodes/edges but slim port fields."""
@@ -451,8 +483,8 @@ class TestSlimIntegration:
         assert data2["created_new_version"] is False
         assert data2["version"] == version1
 
-    def test_root_canvas_slimmed_in_db(self, client, project):
-        """Root canvas in stored graph should contain only shell fields."""
+    def test_root_canvas_preserved_in_db_when_top_level_edges_missing(self, client, project):
+        """Root canvas edges are preserved when top-level exchanges are empty."""
         # Use a canvas node that passes HybridGraph validation.
         # The _normalize_graph_canvases_for_storage validates canvas nodes via
         # HybridGraph.model_validate, so canvas nodes must have required fields.
@@ -501,7 +533,8 @@ class TestSlimIntegration:
             )
             stored = version_record.hybrid_graph_json
 
-            # Root canvas: shell only
+            # Root canvas: preserved because this legacy-shaped graph has no
+            # top-level exchanges to rebuild from.
             canvases = stored["metadata"]["canvases"]
             root_canvas = [c for c in canvases if c.get("id") == "root"]
             assert len(root_canvas) == 1
@@ -509,8 +542,8 @@ class TestSlimIntegration:
             assert rc["id"] == "root"
             assert rc["kind"] == "root"
             assert rc["name"] == "Product System"
-            assert "nodes" not in rc or rc.get("nodes") == []
-            assert "edges" not in rc or rc.get("edges") == []
+            assert len(rc.get("nodes") or []) == 1
+            assert len(rc.get("edges") or []) == 1
 
             # schema version marker
             assert stored["metadata"]["storage_schema_version"] == "graph_slim_v1"
@@ -566,11 +599,11 @@ class TestSlimIntegration:
             stored = version_record.hybrid_graph_json
             # New format: storage_schema_version marker
             assert stored["metadata"]["storage_schema_version"] == "graph_slim_v1"
-            # Root canvas slimmed to shell
+            # Root canvas preserved because there are no top-level exchanges.
             canvases = stored["metadata"]["canvases"]
             root_canvas = [c for c in canvases if c.get("id") == "root"]
             assert len(root_canvas) == 1
-            assert "nodes" not in root_canvas[0] or root_canvas[0].get("nodes") == []
-            assert "edges" not in root_canvas[0] or root_canvas[0].get("edges") == []
+            assert len(root_canvas[0].get("nodes") or []) == 1
+            assert len(root_canvas[0].get("edges") or []) == 1
         finally:
             db.close()
