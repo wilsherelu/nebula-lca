@@ -218,8 +218,10 @@ app.include_router(_tidas_import_api_router)
 app.include_router(_ref_catalog_base_router)
 # ── reference_data router (Stage 6B-lite: stats only) ──
 from .api.reference_data import _api_router as _reference_data_api_router
+from .api.reference_data import _base_router as _reference_data_base_router
 
 app.include_router(_ref_catalog_api_router)
+app.include_router(_reference_data_base_router)
 app.include_router(_reference_data_api_router)
 
 
@@ -2878,29 +2880,6 @@ def import_unit_groups(payload: ImportUnitGroupsRequest, db: Session = Depends(g
 
 def list_unit_groups(db: Session = Depends(get_db)) -> list[UnitGroup]:
     return db.query(UnitGroup).order_by(UnitGroup.name.asc()).all()
-
-@app.get("/api/reference/units", response_model=list[UnitDefinitionOut])
-@app.get("/reference/units", response_model=list[UnitDefinitionOut])
-def list_units(unit_group: str | None = None, db: Session = Depends(get_db)) -> list[UnitDefinition]:
-    query = db.query(UnitDefinition)
-    if unit_group:
-        query = query.filter(UnitDefinition.unit_group == unit_group)
-    return query.order_by(UnitDefinition.unit_group.asc(), UnitDefinition.factor_to_reference.asc()).all()
-
-@app.post("/api/units/convert", response_model=UnitConvertResponse)
-@app.post("/units/convert", response_model=UnitConvertResponse)
-def convert_units(payload: UnitConvertRequest, db: Session = Depends(get_db)) -> UnitConvertResponse:
-    try:
-        result = convert_unit_value(
-            db,
-            value=payload.value,
-            from_unit=payload.from_unit,
-            to_unit=payload.to_unit,
-            unit_group=payload.unit_group,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return UnitConvertResponse(**result)
 
 @app.post("/pts/validate", response_model=PtsValidateResponse)
 def validate_pts(payload: PtsValidateRequest) -> PtsValidateResponse:

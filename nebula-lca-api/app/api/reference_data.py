@@ -1,7 +1,14 @@
-"""Stats API route extracted from ``app.main`` (Stage 6B-lite).
+"""Reference data (units, unit conversion) and stats API routes.
 
-Units, unit groups, and flow import/delete routes remain in ``app.main``
-and will be extracted in a future Stage 6B+ migration.
+Extracted from ``app.main`` for Stage 6B-lite (stats) and Stage 6B+ (units).
+Uses ``APIRouter`` pattern; the router is included in main.py via
+``app.include_router()``.
+
+URL paths preserved to match the original ``@app.xxx`` registrations.
+
+Unit groups and elementary/intermediate flow import/delete routes remain
+in ``app.main`` — they had no ``@app.xxx`` decorators and were never
+registered routes. They will be handled in a future migration if ever needed.
 """
 
 from __future__ import annotations
@@ -10,10 +17,22 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..schemas import StatsResponse
+from ..models import UnitDefinition
+from ..schemas import (
+    StatsResponse,
+    UnitConvertRequest,
+    UnitConvertResponse,
+    UnitDefinitionOut,
+)
+from ..ingest import convert_unit_value
 
+# -- Router ----------------------------------------------------------------
+
+_base_router = APIRouter(tags=["reference-data"])
 _api_router = APIRouter(tags=["api-reference-data"])
 
+
+# Stats ----------------------------------------------------------------
 
 @_api_router.get("/api/stats", response_model=StatsResponse)
 def get_stats_api(db: Session = Depends(get_db)) -> StatsResponse:
@@ -51,3 +70,33 @@ def get_stats_api(db: Session = Depends(get_db)) -> StatsResponse:
     )
     _cc.cache_set(cache_key, result)
     return result
+
+
+# Units ----------------------------------------------------------------
+
+@_api_router.get("/api/reference/units", response_model=list[UnitDefinitionOut])
+@_base_router.get("/reference/units", response_model=list[UnitDefinitionOut])
+def list_units(unit_group: str | None = None, db: Session = Depends(get_db)) -> list[UnitDefinition]:
+    query = db.query(UnitDefinition)
+    if unit_group:
+        query = query.filter(UnitDefinition.unit_group == unit_group)
+    return query.order_by(UnitDefinition.unit_group.asc(), UnitDefinition.factor_to_reference.asc()).all()
+
+
+# Unit Conversion ---------------------------------------------------------
+
+@_api_router.post("/api/units/convert", response_model=UnitConvertResponse)
+@_base_router.post("/units/convert", response_model=UnitConvertResponse)
+def convert_units(payload: UnitConvertRequest, db: Session = Depends(get_db)) -> UnitConvertResponse:
+    try:
+        result = convert_unit_value(
+            db,
+            value=payload.value,
+            from_unit=payload.from_unit,
+            to_unit=payload.to_unit,
+            unit_group=payload.unit_group,
+        )
+    except ValueError as exc:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return UnitConvertResponse(**result)
