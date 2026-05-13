@@ -8,6 +8,9 @@ interface Ef31PreviewCounts {
   datasets?: number;
   exchanges?: number;
   missing_refs?: number;
+  cf_rows_matched?: number;
+  cf_rows_unmatched?: number;
+  cf_rows_ambiguous?: number;
 }
 
 interface Ef31ArchiveFileDiscovery {
@@ -26,6 +29,9 @@ interface Ef31Foundation {
   indicators_ef31?: number;
   cf_rows_total?: number;
   cf_rows_ef31?: number;
+  cf_rows_matched?: number;
+  cf_rows_unmatched?: number;
+  cf_rows_ambiguous?: number;
 }
 
 interface Ef31PreviewResponse {
@@ -55,6 +61,18 @@ interface Ef31CommitResponse {
   warnings: string[];
   errors: string[];
   catalog_target_kind?: string;
+}
+
+interface Ef31RuntimeCsvResponse {
+  job_id: string;
+  output_dir: string;
+  flows_count: number;
+  indicators_count: number;
+  factors_count: number;
+  cf_matched: number;
+  cf_unmatched: number;
+  cf_ambiguous: number;
+  env_var: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -88,6 +106,8 @@ export default function Ef31ImportDialog(props: {
   const [reportPayload, setReportPayload] = useState<Record<string, unknown> | null>(null);
   const [reportBusy, setReportBusy] = useState(false);
   const [reportJobId, setReportJobId] = useState<string>("");
+  const [runtimeCsv, setRuntimeCsv] = useState<Ef31RuntimeCsvResponse | null>(null);
+  const [runtimeBusy, setRuntimeBusy] = useState(false);
 
   const lciInputRef = useRef<HTMLInputElement | null>(null);
   const lciaInputRef = useRef<HTMLInputElement | null>(null);
@@ -106,6 +126,8 @@ export default function Ef31ImportDialog(props: {
       setReportPayload(null);
       setReportBusy(false);
       setReportJobId("");
+      setRuntimeCsv(null);
+      setRuntimeBusy(false);
     }
   }, [open]);
 
@@ -183,6 +205,28 @@ export default function Ef31ImportDialog(props: {
       setErrorText(error instanceof Error ? error.message : zh ? "报告加载失败" : "Report load failed");
     } finally {
       setReportBusy(false);
+    }
+  };
+
+  const handleGenerateRuntimeCsv = async () => {
+    const jobId = commitResult?.job_id ?? preview?.job_id;
+    if (!jobId) return;
+    setRuntimeBusy(true);
+    setErrorText("");
+    try {
+      const resp = await fetch(`${API_BASE}/import/ef31/runtime-csv/${encodeURIComponent(jobId)}`, {
+        method: "POST",
+      });
+      if (!resp.ok) {
+        const err = (await resp.json().catch(() => ({}))) as { message?: string; detail?: { message?: string } };
+        throw new Error(err.detail?.message ?? err.message ?? `HTTP ${resp.status}`);
+      }
+      const data = (await resp.json()) as Ef31RuntimeCsvResponse;
+      setRuntimeCsv(data);
+    } catch (error) {
+      setErrorText(error instanceof Error ? error.message : "Runtime CSV generation failed");
+    } finally {
+      setRuntimeBusy(false);
     }
   };
 
@@ -402,8 +446,42 @@ export default function Ef31ImportDialog(props: {
                   <span>
                     {zh ? "EF3.1 CF" : "EF3.1 CFs"}: <b>{preview.foundation?.cf_rows_ef31 ?? 0}</b>
                   </span>
+                  <span>
+                    CF matched: <b>{preview.foundation?.cf_rows_matched ?? preview.counts?.cf_rows_matched ?? 0}</b>
+                  </span>
+                  <span>
+                    CF unmatched:{" "}
+                    <b style={{ color: (preview.foundation?.cf_rows_unmatched ?? preview.counts?.cf_rows_unmatched ?? 0) > 0 ? "#c0392b" : "inherit" }}>
+                      {preview.foundation?.cf_rows_unmatched ?? preview.counts?.cf_rows_unmatched ?? 0}
+                    </b>
+                  </span>
+                  <span>
+                    CF ambiguous:{" "}
+                    <b style={{ color: (preview.foundation?.cf_rows_ambiguous ?? preview.counts?.cf_rows_ambiguous ?? 0) > 0 ? "#c0392b" : "inherit" }}>
+                      {preview.foundation?.cf_rows_ambiguous ?? preview.counts?.cf_rows_ambiguous ?? 0}
+                    </b>
+                  </span>
                 </div>
               </label>
+
+              {runtimeCsv && (
+                <label className="span-2" style={{ cursor: "default" }}>
+                  <span style={{ fontWeight: 600 }}>Solver runtime CSV</span>
+                  <div style={{ display: "grid", gap: 4, fontSize: 12, color: "#496675" }}>
+                    <div>
+                      {runtimeCsv.env_var}: <b>{runtimeCsv.output_dir}</b>
+                    </div>
+                    <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                      <span>flows: <b>{runtimeCsv.flows_count}</b></span>
+                      <span>indicators: <b>{runtimeCsv.indicators_count}</b></span>
+                      <span>factors: <b>{runtimeCsv.factors_count}</b></span>
+                      <span>matched: <b>{runtimeCsv.cf_matched}</b></span>
+                      <span>unmatched: <b>{runtimeCsv.cf_unmatched}</b></span>
+                      <span>ambiguous: <b>{runtimeCsv.cf_ambiguous}</b></span>
+                    </div>
+                  </div>
+                </label>
+              )}
 
               {/* Warnings / Errors */}
               {preview.warnings && preview.warnings.length > 0 && (
@@ -474,6 +552,16 @@ export default function Ef31ImportDialog(props: {
                 <div style={{ fontSize: 12, color: "#8fa8b5" }}>
                   catalog_target_kind: <b>{commitResult.catalog_target_kind ?? "lci_dataset"}</b>
                 </div>
+                {runtimeCsv && (
+                  <div style={{ display: "grid", gap: 4, marginTop: 6, fontSize: 12, color: "#496675" }}>
+                    <div>
+                      {runtimeCsv.env_var}: <b>{runtimeCsv.output_dir}</b>
+                    </div>
+                    <div>
+                      runtime CSV: {runtimeCsv.flows_count} flows / {runtimeCsv.indicators_count} indicators / {runtimeCsv.factors_count} factors
+                    </div>
+                  </div>
+                )}
               </div>
             </label>
           )}
@@ -507,6 +595,14 @@ export default function Ef31ImportDialog(props: {
                 onClick={() => setPhase("upload")}
               >
                 {t.back}
+              </button>
+              <button
+                type="button"
+                className="pm-ghost-btn"
+                onClick={handleGenerateRuntimeCsv}
+                disabled={runtimeBusy || busy}
+              >
+                {runtimeBusy ? "Generating runtime CSV..." : "Generate runtime CSV"}
               </button>
               <button
                 type="button"
@@ -611,6 +707,14 @@ export default function Ef31ImportDialog(props: {
                 {reportBusy
                   ? (zh ? "加载中…" : "Loading…")
                   : t.viewReport}
+              </button>
+              <button
+                type="button"
+                className="pm-ghost-btn"
+                onClick={handleGenerateRuntimeCsv}
+                disabled={runtimeBusy}
+              >
+                {runtimeBusy ? "Generating runtime CSV..." : "Generate runtime CSV"}
               </button>
               <button
                 type="button"

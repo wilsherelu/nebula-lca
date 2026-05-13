@@ -20,7 +20,9 @@ from ..models import DebugDiagnostic
 from ..schemas import (
     Ef31ImportCommitRequest,
     Ef31ImportCommitResponse,
+    Ef31ImportReportResponse,
     Ef31ImportPreviewResponse,
+    Ef31RuntimeCsvResponse,
 )
 
 _EF31_DIAGNOSTIC_TYPE = "ef31.import.report.v1"
@@ -143,9 +145,34 @@ def commit_ef31_lci_import(
 
 # ── Report route ───────────────────────────────────────────────────────────
 
-@_api_router.get("/ef31/reports/{job_id}", response_model=Ef31ImportPreviewResponse)
-@_base_router.get("/ef31/reports/{job_id}", response_model=Ef31ImportPreviewResponse)
-def get_ef31_import_report(job_id: str, db: Session = Depends(get_db)) -> Ef31ImportPreviewResponse:
+@_api_router.post("/ef31/runtime-csv/{job_id}", response_model=Ef31RuntimeCsvResponse)
+@_base_router.post("/ef31/runtime-csv/{job_id}", response_model=Ef31RuntimeCsvResponse)
+def generate_ef31_runtime_csv(job_id: str, db: Session = Depends(get_db)) -> Ef31RuntimeCsvResponse:
+    """Generate solver runtime CSVs for a previewed EF 3.1 import job."""
+    try:
+        from app.services.ef31_runtime_csv import generate_ef31_runtime_csvs
+
+        summary = generate_ef31_runtime_csvs(job_id, overwrite=True)
+        summary["env_var"] = "NEBULA_LCA_EF31_DIR"
+
+        row = db.get(DebugDiagnostic, job_id)
+        if row is not None and row.diagnostic_type == _EF31_DIAGNOSTIC_TYPE:
+            payload = dict(row.result_json) if isinstance(row.result_json, dict) else {}
+            payload["runtime_csv"] = summary
+            row.result_json = payload
+            row.payload_json = payload
+            db.commit()
+
+        return Ef31RuntimeCsvResponse(**summary)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail={"code": "JOB_ARTIFACT_NOT_FOUND", "message": str(e)})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"code": "RUNTIME_CSV_FAILED", "message": str(e)})
+
+
+@_api_router.get("/ef31/reports/{job_id}", response_model=Ef31ImportReportResponse)
+@_base_router.get("/ef31/reports/{job_id}", response_model=Ef31ImportReportResponse)
+def get_ef31_import_report(job_id: str, db: Session = Depends(get_db)) -> Ef31ImportReportResponse:
     """Retrieve the latest report for an EF 3.1 import job.
 
     Returns the most recent preview or commit report.
@@ -157,4 +184,8 @@ def get_ef31_import_report(job_id: str, db: Session = Depends(get_db)) -> Ef31Im
             detail={"code": "IMPORT_REPORT_NOT_FOUND", "message": f"report not found: {job_id}"},
         )
     result_json = row.result_json if isinstance(row.result_json, dict) else {}
-    return Ef31ImportPreviewResponse.model_validate(result_json)
+    return Ef31ImportReportResponse.model_validate({
+        **result_json,
+        "job_id": result_json.get("job_id", job_id),
+        "payload": result_json,
+    })

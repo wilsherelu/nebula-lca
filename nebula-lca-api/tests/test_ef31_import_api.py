@@ -85,7 +85,7 @@ def _make_elementary_exchanges_xml(flows: list[dict]) -> str:
         <ElementaryFlow>
           <uuid>{f['uuid']}</uuid>
           <shortNameEN>{f['name']}</shortNameEN>
-          <nameEN>Flow for {f['name']}</nameEN>
+          <nameEN>{f['name']}</nameEN>
           <flowType>Elementary flow</flowType>
           <unit>{f['unit']}</unit>
           <unitGroup>default</unitGroup>
@@ -334,6 +334,38 @@ class TestEf31ReportEndpoint:
         """Report for non-existent job returns 404."""
         resp = client.get("/import/ef31/reports/nonexistent-job-id")
         assert resp.status_code == 404
+
+    def test_report_after_commit_uses_unified_schema(self, client, tmp_path):
+        """Committed reports should not be validated as preview-only payloads."""
+        spold_files = [
+            {
+                "activity_id": "act-commit-report",
+                "rp_id": "rp-commit-report",
+                "activity_name": "Commit Report Test",
+                "location": "CH",
+                "ref_product_name": "market for commit report",
+                "filename": "commit_report.spold",
+                "exchanges": [
+                    {"exchange_id": "flow-co2-001", "name": "CO2",
+                     "unit": "kg", "compartment": "air"},
+                ],
+            },
+        ]
+        job_id = _preview_and_get_job(client, tmp_path, spold_files)
+
+        commit_resp = client.post(
+            "/import/ef31/commit",
+            json={"job_id": job_id, "confirm": True},
+        )
+        assert commit_resp.status_code == 200, commit_resp.json()
+
+        report_resp = client.get(f"/import/ef31/reports/{job_id}")
+        assert report_resp.status_code == 200, report_resp.json()
+        data = report_resp.json()
+        assert data["job_id"] == job_id
+        assert data["status"] == "committed"
+        assert data["committed"] is True
+        assert data["payload"]["committed"] is True
 
 
 # ============================================================================
@@ -706,3 +738,57 @@ class TestEf31SeparateLciaUpload:
         data = resp.json()
         assert data["foundation"] is not None
         assert data["foundation"]["cf_rows_ef31"] > 0
+
+
+class TestEf31RuntimeCsvEndpoint:
+    """Tests for POST /import/ef31/runtime-csv/{job_id}."""
+
+    def test_runtime_csv_generation_endpoint(self, client, tmp_path):
+        """Preview LCIA artifacts should be convertible into solver runtime CSVs."""
+        spold_files = [
+            {
+                "activity_id": "act-runtime",
+                "rp_id": "rp-runtime",
+                "activity_name": "Runtime CSV Test",
+                "location": "CH",
+                "ref_product_name": "market for runtime",
+                "filename": "runtime.spold",
+                "exchanges": [
+                    {"exchange_id": "flow-co2-001", "name": "CO2",
+                     "unit": "kg", "compartment": "air"},
+                ],
+            },
+        ]
+        archive = _make_fake_7z_with_lcia(tmp_path, spold_files, include_lcia=True)
+
+        with open(archive, "rb") as f:
+            preview_resp = client.post(
+                "/import/ef31/preview",
+                files={"lci_archive": ("runtime_lci_lcia.7z", f, "application/x-7z-compressed")},
+                params={"limit": 10},
+            )
+        assert preview_resp.status_code == 200, preview_resp.json()
+        job_id = preview_resp.json()["job_id"]
+
+        runtime_resp = client.post(f"/import/ef31/runtime-csv/{job_id}")
+        assert runtime_resp.status_code == 200, runtime_resp.json()
+        data = runtime_resp.json()
+        assert data["job_id"] == job_id
+        assert data["env_var"] == "NEBULA_LCA_EF31_DIR"
+        assert data["flows_count"] >= 1
+        assert data["indicators_count"] >= 1
+        assert data["factors_count"] >= 1
+        assert data["cf_matched"] >= 1
+        assert Path(data["output_dir"]).exists()
+        assert (Path(data["output_dir"]) / "flow_index.csv").exists()
+        assert (Path(data["output_dir"]) / "indicator_index.csv").exists()
+        assert (Path(data["output_dir"]) / "lcia_factors.csv").exists()
+
+        report_resp = client.get(f"/import/ef31/reports/{job_id}")
+        assert report_resp.status_code == 200, report_resp.json()
+        report = report_resp.json()
+        assert report["runtime_csv"]["output_dir"] == data["output_dir"]
+
+    def test_runtime_csv_missing_job_returns_404(self, client):
+        resp = client.post("/import/ef31/runtime-csv/not-a-job")
+        assert resp.status_code == 404
