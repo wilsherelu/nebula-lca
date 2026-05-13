@@ -8,9 +8,17 @@ from .schemas import HybridGraph
 from .solver import to_tiangong_like
 
 
-def run_tiangong_lcia(graph: HybridGraph, *, flow_type_by_uuid: dict[str, str] | None = None) -> dict:
+def run_tiangong_lcia(
+    graph: HybridGraph,
+    *,
+    flow_type_by_uuid: dict[str, str] | None = None,
+    lcia_methods: list[str] | None = None,
+) -> dict:
     snapshot = to_tiangong_like(graph, flow_type_by_uuid=flow_type_by_uuid)
-    payload = json.dumps({"snapshot": snapshot}, ensure_ascii=False).encode("utf-8")
+    payload = json.dumps(
+        {"snapshot": snapshot, "lcia_methods": lcia_methods or ["EF v3.1"]},
+        ensure_ascii=False,
+    ).encode("utf-8")
     api_url = settings.nebula_lca_solver_api_url.rstrip("/") + "/v1/lcia"
     req = request.Request(
         api_url,

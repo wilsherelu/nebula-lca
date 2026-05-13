@@ -294,6 +294,7 @@ def build_b_matrix_from_snapshot(
 def build_c_matrix_from_ef31(
     ef_dir: str,
     b_matrix: dict,
+    lcia_methods: Optional[Sequence[str]] = None,
     issues: Optional[List[str]] = None,
 ) -> dict:
     if issues is None:
@@ -344,7 +345,22 @@ def build_c_matrix_from_ef31(
                     "ecoinvent_category": _get_csv_value(row, col_map, "ecoinvent_category"),
                 }
 
+    selected_methods = {
+        str(method).strip()
+        for method in (lcia_methods or [])
+        if str(method).strip()
+    }
+    if selected_methods:
+        indicator_lookup = {
+            idx: info
+            for idx, info in indicator_lookup.items()
+            if str(info.get("method_en", "")).strip() in selected_methods
+            or str(info.get("method_zh", "")).strip() in selected_methods
+        }
+        indicator_ids = [idx for idx in indicator_ids if idx in indicator_lookup]
+
     indicator_ids.sort()
+    indicator_id_set = set(indicator_ids)
 
     b_flow_ids = b_matrix.get("rows", [])
     flow_index_to_uuid: Dict[int, str] = {}
@@ -372,6 +388,8 @@ def build_c_matrix_from_ef31(
                 indicator_idx = _to_int(row[row_idx_col] if row_idx_col < len(row) else None)
                 flow_idx = _to_int(row[col_idx_col] if col_idx_col < len(row) else None)
                 if indicator_idx is None or flow_idx is None:
+                    continue
+                if indicator_idx not in indicator_id_set:
                     continue
                 if flow_idx not in target_flow_indices:
                     continue

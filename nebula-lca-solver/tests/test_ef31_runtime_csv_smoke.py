@@ -14,12 +14,15 @@ def _write_runtime_csvs(root):
         writer = csv.writer(handle, delimiter=";")
         writer.writerow(["indicator_index", "method_en", "method_zh", "indicator_en", "indicator_zh", "ecoinvent_category"])
         writer.writerow([0, "EF v3.1", "EF v3.1", "Global warming", "Global warming", "climate change"])
+        writer.writerow([1, "EF v3.1 no LT", "EF v3.1 no LT", "Global warming no LT", "Global warming no LT", "climate change no LT"])
 
     with (root / "lcia_factors.csv").open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle, delimiter=";")
         writer.writerow(["row", "column", "coefficient"])
         writer.writerow([0, 0, 1.0])
         writer.writerow([0, 1, 27.0])
+        writer.writerow([1, 0, 0.9])
+        writer.writerow([1, 1, 25.0])
 
 
 def test_build_c_matrix_reads_generated_ef31_runtime_csvs(tmp_path):
@@ -33,11 +36,28 @@ def test_build_c_matrix_reads_generated_ef31_runtime_csvs(tmp_path):
     )
 
     assert issues == []
-    assert result["C"]["rows"] == [0]
+    assert result["C"]["rows"] == [0, 1]
     assert result["C"]["cols"] == ["flow-co2", "flow-ch4"]
+    assert result["C"]["shape"] == [2, 2]
+    assert [item["value"] for item in result["C"]["data"]] == [1.0, 27.0, 0.9, 25.0]
+    assert result["indicator_lookup"][0]["ecoinvent_category"] == "climate change"
+
+
+def test_build_c_matrix_filters_lcia_methods(tmp_path):
+    _write_runtime_csvs(tmp_path)
+    issues = []
+
+    result = build_c_matrix_from_ef31(
+        str(tmp_path),
+        {"rows": ["flow-co2", "flow-ch4"], "cols": [], "data": []},
+        lcia_methods=["EF v3.1"],
+        issues=issues,
+    )
+
+    assert issues == []
+    assert result["C"]["rows"] == [0]
     assert result["C"]["shape"] == [1, 2]
     assert [item["value"] for item in result["C"]["data"]] == [1.0, 27.0]
-    assert result["indicator_lookup"][0]["ecoinvent_category"] == "climate change"
 
 
 def test_build_c_matrix_reports_missing_runtime_flow(tmp_path):

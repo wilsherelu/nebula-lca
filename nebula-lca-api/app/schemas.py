@@ -565,6 +565,7 @@ class RunRequest(BaseModel):
     project_id: str | None = None
     model_id: str | None = None
     force_recompile: bool = False
+    lcia_methods: list[str] = Field(default_factory=lambda: ["EF v3.1"])
 
 
 class RunResponse(BaseModel):
