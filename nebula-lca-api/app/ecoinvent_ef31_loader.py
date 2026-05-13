@@ -470,6 +470,7 @@ def match_cf_to_flows(
         if len(flows) == 1:
             matched.append({
                 'cf_method': cf.method,
+                'cf_category': cf.category,
                 'cf_indicator': cf.indicator,
                 'cf_flow_name': cf.flow_name,
                 'cf_compartment': cf.compartment,
@@ -481,6 +482,7 @@ def match_cf_to_flows(
         elif len(flows) > 1:
             ambiguous.append({
                 'cf_method': cf.method,
+                'cf_category': cf.category,
                 'cf_indicator': cf.indicator,
                 'cf_flow_name': cf.flow_name,
                 'cf_compartment': cf.compartment,
@@ -492,6 +494,7 @@ def match_cf_to_flows(
         else:
             unmatched.append({
                 'cf_method': cf.method,
+                'cf_category': cf.category,
                 'cf_indicator': cf.indicator,
                 'cf_flow_name': cf.flow_name,
                 'cf_compartment': cf.compartment,
