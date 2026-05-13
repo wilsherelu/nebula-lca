@@ -111,7 +111,7 @@ def _get_model_or_404(db: Session, model_id: str) -> Model:
 
 
 def _safe_handle_validation(graph_json: dict) -> dict:
-    from ..main import safe_handle_validation_from_graph_json
+    from ..services.graph_contract import safe_handle_validation_from_graph_json
     return safe_handle_validation_from_graph_json(graph_json)
 
 
@@ -165,7 +165,7 @@ def _ensure_projects_management_schema() -> dict:
     }
 
 
-# ── Lazily-load project-version PTS helpers from main.py ──────────────────
+# ── Lazily-load project-version PTS helpers from pts_operations ─────────
 
 _get_pts_helpers = None
 
@@ -175,15 +175,15 @@ def _ensure_pts_helpers():
     if _get_pts_helpers is not None:
         return
     # fmt: off
-    from ..main import (
+    from ..services.pts_operations import (
         _compile_pts_on_save_if_needed,
-        _normalize_graph_json_for_storage,
         _project_pts_external_ports_into_graph,
         _build_pts_validation_summary,
         _enrich_graph_flow_name_en,
         _canonicalize_pts_nodes_for_main_graph_save,
         _repair_pts_publication_from_resource,
     )
+    from ..services.graph_contract import _normalize_graph_json_for_storage
     # fmt: on
     _get_pts_helpers = {
         "_compile_pts_on_save_if_needed": _compile_pts_on_save_if_needed,

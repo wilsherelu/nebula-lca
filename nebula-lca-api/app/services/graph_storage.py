@@ -366,9 +366,9 @@ def canonicalize_value_for_hash(value: Any) -> Any:
 
 
 def compute_graph_hash_from_graph_json(graph_json: dict) -> str:
-    # Import here to avoid circular import — the caller is expected to
-    # import _normalize_graph_json_for_storage from main still.
-    from ..main import _normalize_graph_json_for_storage
+    # Import here to avoid circular import — _normalize_graph_json_for_storage
+    # now lives in graph_contract.
+    from ..services.graph_contract import _normalize_graph_json_for_storage
 
     normalized = _normalize_graph_json_for_storage(graph_json)
     canonical_value = canonicalize_value_for_hash(normalized)

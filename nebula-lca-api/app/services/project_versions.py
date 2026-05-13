@@ -54,19 +54,19 @@ def _safe_str(value: object) -> str | None:
 
 
 def _ensure_main_helpers():
-    """Ensure lazy main.py helpers are loaded into module globals."""
+    """Ensure lazy service helpers are loaded into module globals."""
     global _main_helpers_loaded
     if _main_helpers_loaded:
         return
-    from ..main import (
+    # fmt: off
+    from .pts_operations import (
         _enrich_graph_flow_name_en,
-        _normalize_graph_json_for_storage,
         _project_pts_external_ports_into_graph,
         _build_pts_validation_summary,
         _bind_pts_published_versions_for_graph,
         _sync_pts_resources_from_graph,
-        _safe_str,
     )
+    from .graph_contract import _normalize_graph_json_for_storage
     # fmt: on
     globals().update({
         "_enrich_graph_flow_name_en": _enrich_graph_flow_name_en,
@@ -300,9 +300,9 @@ def _prune_model_versions_retention(
 
     vacuum_result = {"executed": False, "reason": "disabled"}
     if not dry_run and vacuum_after_cleanup:
-        from ..main import _run_sqlite_vacuum
-
-        vacuum_result = _run_sqlite_vacuum()
+        # _run_sqlite_vacuum was never defined in main.py; keep this path
+        # as a no-op but flag it for future implementation.
+        vacuum_result = {"executed": False, "reason": "sqlite_vacuum_not_implemented"}
 
     return {
         "keep_latest": keep_latest,

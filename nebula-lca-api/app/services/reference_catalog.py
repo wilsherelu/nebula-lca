@@ -29,7 +29,6 @@ from typing import Any
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from ..database import engine
 from ..models import FlowRecord, ReferenceProcess
 from ..schemas import (
     FilteredExchangeEvidence,
