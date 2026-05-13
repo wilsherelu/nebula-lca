@@ -1827,6 +1827,8 @@ export default function App() {
   const [lastRun, setLastRun] = useState<RunResponse | null>(null);
   const [showRunAnalysis, setShowRunAnalysis] = useState(false);
   const [showRunWarnings, setShowRunWarnings] = useState(false);
+  const [lciaMethodSelection, setLciaMethodSelection] = useState("EF v3.1");
+  const [lciaMethodOptions, setLciaMethodOptions] = useState<string[]>(["EF v3.1", "EF v3.1 no LT"]);
   const [ptsPublishWarnings, setPtsPublishWarnings] = useState<PtsModelingWarning[]>([]);
   const [showPtsPublishWarnings, setShowPtsPublishWarnings] = useState(false);
   const [showTargetProductDialog, setShowTargetProductDialog] = useState(false);
@@ -2809,6 +2811,30 @@ export default function App() {
     return rows;
   }, []);
 
+  useEffect(() => {
+    void (async () => {
+      try {
+        const response = await fetch(`${API_BASE}/reference/lcia-methods`);
+        if (!response.ok) {
+          return;
+        }
+        const payload = (await response.json()) as { methods?: unknown[]; default_method?: unknown };
+        const methods = (payload.methods ?? [])
+          .map((item) => String(item ?? "").trim())
+          .filter(Boolean);
+        if (methods.length > 0) {
+          setLciaMethodOptions(methods);
+        }
+        const defaultMethod = String(payload.default_method ?? "EF v3.1").trim();
+        if (defaultMethod) {
+          setLciaMethodSelection(defaultMethod);
+        }
+      } catch {
+        // Keep built-in EF v3.1 defaults when the method index is unavailable.
+      }
+    })();
+  }, []);
+
   const repairProjectIntegrity = useCallback(async () => {
     if (!projectId) {
       return;
@@ -3334,10 +3360,12 @@ export default function App() {
     setStatusText("正在运行求解...");
     setLastRun(null);
     try {
+      const lciaMethods = lciaMethodSelection === "all" ? [] : [lciaMethodSelection];
       const body = JSON.stringify({
         graph,
         model_version_id: projectId && version ? `${projectId}:${version}` : undefined,
         project_id: projectId || undefined,
+        lcia_methods: lciaMethods,
       });
       const runCandidates = [`${API_BASE}/model/run`, `${API_BASE_NO_PREFIX}/model/run`];
       let payload: RunResponse | null = null;
@@ -3374,7 +3402,7 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-    }, [exportGraph, getBalancedWarnings, getMarketWarnings, projectId, repairRootEdgeHandles, selectedProductKey, targetProductQuantity, targetProductQuantityMode, version]);
+  }, [exportGraph, getBalancedWarnings, getMarketWarnings, lciaMethodSelection, projectId, repairRootEdgeHandles, selectedProductKey, targetProductQuantity, targetProductQuantityMode, version]);
 
   const compileCurrentPts = useCallback(async (mode: "save_compile" | "publish") => {
     if (activeCanvasKind !== "pts_internal") {
@@ -5055,6 +5083,17 @@ export default function App() {
           ) : (
             <>
               <button onClick={() => void persistModel("manual")} disabled={busy}>{i18n.save}</button>
+              <select
+                value={lciaMethodSelection}
+                onChange={(event) => setLciaMethodSelection(event.target.value)}
+                disabled={busy}
+                title={uiLanguage === "zh" ? "LCIA 方法；TIDAS 导出仅支持 EF v3.1" : "LCIA method; TIDAS export supports EF v3.1 only"}
+              >
+                {lciaMethodOptions.map((method) => (
+                  <option key={method} value={method}>{method}</option>
+                ))}
+                <option value="all">{uiLanguage === "zh" ? "全部方法" : "All methods"}</option>
+              </select>
               <button onClick={() => void runModel()} disabled={busy}>
                 {i18n.run}
               </button>
@@ -5138,6 +5177,12 @@ export default function App() {
           </div>
           {warningBannerText && <div className="run-analysis-warning-banner">{warningBannerText}</div>}
           <div className="run-analysis-summary">
+            <div className="run-analysis-summary-card">
+              <span className="run-analysis-summary-label">{uiLanguage === "zh" ? "LCIA 方法" : "LCIA Method"}</span>
+              <strong className="run-analysis-summary-value">
+                {lciaMethodSelection === "all" ? (uiLanguage === "zh" ? "全部" : "All") : lciaMethodSelection}
+              </strong>
+            </div>
             <div className="run-analysis-summary-card">
               <span className="run-analysis-summary-label">{uiLanguage === "zh" ? "过程数" : "Processes"}</span>
               <strong className="run-analysis-summary-value">{groupedProductCfpRows.length}</strong>

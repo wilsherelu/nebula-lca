@@ -247,10 +247,14 @@ def preview_ef31_import(
     cf_matched: list[dict] = []
     cf_unmatched: list[dict] = []
     cf_ambiguous: list[dict] = []
+    all_cf_matched: list[dict] = []
+    all_cf_unmatched: list[dict] = []
+    all_cf_ambiguous: list[dict] = []
     if lcia_excel and lcia_excel.exists():
         try:
             indicators, all_cfs = parse_lcia_excel(lcia_excel)
             ef31_cfs = filter_cf_ef31(all_cfs)
+            all_cf_matched, all_cf_unmatched, all_cf_ambiguous = filter_cf_match_cf_to_flows(all_cfs, elementary_flows)
             # Match CFs to elementary flows (only EF 3.1)
             cf_matched, cf_unmatched, cf_ambiguous = filter_cf_match_cf_to_flows(ef31_cfs, elementary_flows)
         except Exception as e:
@@ -339,6 +343,21 @@ def preview_ef31_import(
         ],
     )
     _write_json(
+        job_dir / "all_cfs.json",
+        [
+            {
+                "method": cf.method,
+                "category": cf.category,
+                "indicator": cf.indicator,
+                "flow_name": cf.flow_name,
+                "compartment": cf.compartment,
+                "subcompartment": cf.subcompartment,
+                "cf_value": cf.cf_value,
+            }
+            for cf in all_cfs
+        ],
+    )
+    _write_json(
         job_dir / "ef31_cfs.json",
         [
             {
@@ -357,6 +376,11 @@ def preview_ef31_import(
         "matched": cf_matched,
         "unmatched": cf_unmatched,
         "ambiguous": cf_ambiguous,
+    })
+    _write_json(job_dir / "cf_matches_all.json", {
+        "matched": all_cf_matched,
+        "unmatched": all_cf_unmatched,
+        "ambiguous": all_cf_ambiguous,
     })
 
     # DB dry-run

@@ -49,6 +49,10 @@ class ComputeResponse(BaseModel):
 
 class LciaPayload(BaseModel):
     snapshot: Dict
+    lcia_methods: List[str] = Field(
+        default_factory=lambda: ["EF v3.1"],
+        description="LCIA methods to calculate; empty means all available methods.",
+    )
 
 
 class LciaResponse(BaseModel):

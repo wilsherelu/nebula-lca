@@ -705,6 +705,39 @@ class TestEf31SeparateLciaUpload:
         assert data["foundation"] is not None
         assert data["foundation"]["cf_rows_ef31"] > 0
 
+    def test_preview_persists_all_lcia_method_artifacts(self, client, tmp_path):
+        """Runtime CSV generation should be able to include non-EF31 methods."""
+        spold_files = [
+            {
+                "activity_id": "act-all-methods",
+                "rp_id": "rp-all-methods",
+                "activity_name": "All Methods Test",
+                "location": "CH",
+                "ref_product_name": "market for all methods",
+                "filename": "all_methods.spold",
+                "exchanges": [
+                    {"exchange_id": "flow-co2-001", "name": "CO2",
+                     "unit": "kg", "compartment": "air"},
+                ],
+            },
+        ]
+        archive = _make_fake_7z_with_lcia(tmp_path, spold_files, include_lcia=True)
+
+        with open(archive, "rb") as f:
+            preview_resp = client.post(
+                "/import/ef31/preview",
+                files={"lci_archive": ("all_methods_lci_lcia.7z", f, "application/x-7z-compressed")},
+                params={"limit": 10},
+            )
+        assert preview_resp.status_code == 200, preview_resp.json()
+        job_id = preview_resp.json()["job_id"]
+
+        job_dir = Path("import-cache") / "ef31_jobs" / job_id
+        all_cfs = json.loads((job_dir / "all_cfs.json").read_text(encoding="utf-8"))
+        all_matches = json.loads((job_dir / "cf_matches_all.json").read_text(encoding="utf-8"))
+        assert len(all_cfs) >= 3
+        assert len(all_matches["matched"]) >= 2
+
     def test_separate_lcia_7z(self, client, tmp_path):
         """Separately uploaded LCIA .7z should produce cf_rows_ef31 > 0."""
         spold_files = [

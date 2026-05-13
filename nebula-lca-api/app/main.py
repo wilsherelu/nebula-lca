@@ -3754,7 +3754,11 @@ def run_solver_and_persist(
     message = "Run completed"
 
     try:
-        adapter_result = run_tiangong_lcia(normalized_graph, flow_type_by_uuid=flow_type_by_uuid)
+        adapter_result = run_tiangong_lcia(
+            normalized_graph,
+            flow_type_by_uuid=flow_type_by_uuid,
+            lcia_methods=payload.lcia_methods,
+        )
     except Exception as exc:
         try:
             debug_dir = Path(__file__).resolve().parent.parent / "tmp"
@@ -3866,6 +3870,7 @@ def run_model(payload: RunRequest, db: Session = Depends(get_db)) -> RunResponse
                 model_version_id=payload.model_version_id,
                 project_id=project_id,
                 force_recompile=False,
+                lcia_methods=["EF v3.1"],
             )
 
         status, run_id, solved, tiangong_like = run_solver_and_persist(payload=effective_payload, db=db)

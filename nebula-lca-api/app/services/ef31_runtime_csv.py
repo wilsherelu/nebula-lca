@@ -53,14 +53,18 @@ def generate_ef31_runtime_csvs(
         raise FileNotFoundError(f"Job directory not found: {job_dir}")
 
     indicators_path = job_dir / "indicators.json"
-    cfs_path = job_dir / "ef31_cfs.json"
-    matches_path = job_dir / "cf_matches.json"
+    cfs_path = job_dir / "all_cfs.json"
+    matches_path = job_dir / "cf_matches_all.json"
+    if not cfs_path.exists():
+        cfs_path = job_dir / "ef31_cfs.json"
+    if not matches_path.exists():
+        matches_path = job_dir / "cf_matches.json"
     elementary_flows_path = job_dir / "elementary_flows.json"
 
     if not indicators_path.exists():
         raise FileNotFoundError(f"indicators.json not found in job dir: {job_dir}")
     if not cfs_path.exists():
-        raise FileNotFoundError(f"ef31_cfs.json not found in job dir: {job_dir}")
+        raise FileNotFoundError(f"all_cfs.json or ef31_cfs.json not found in job dir: {job_dir}")
     if not matches_path.exists():
         raise FileNotFoundError(f"cf_matches.json not found in job dir: {job_dir}")
 

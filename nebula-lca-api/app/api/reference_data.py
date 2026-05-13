@@ -13,9 +13,13 @@ registered routes. They will be handled in a future migration if ever needed.
 
 from __future__ import annotations
 
+import csv
+from pathlib import Path
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from ..config import WORKSPACE_ROOT, settings
 from ..database import get_db
 from ..models import UnitDefinition
 from ..schemas import (
@@ -81,6 +85,47 @@ def list_units(unit_group: str | None = None, db: Session = Depends(get_db)) -> 
     if unit_group:
         query = query.filter(UnitDefinition.unit_group == unit_group)
     return query.order_by(UnitDefinition.unit_group.asc(), UnitDefinition.factor_to_reference.asc()).all()
+
+
+@_api_router.get("/api/reference/lcia-methods")
+@_base_router.get("/reference/lcia-methods")
+def list_lcia_methods() -> dict:
+    def _read_methods(csv_path: Path) -> set[str]:
+        rows: set[str] = set()
+        if csv_path.exists():
+            with csv_path.open("r", encoding="utf-8-sig", newline="") as handle:
+                sample = handle.read(2048)
+                handle.seek(0)
+                delimiter = ";" if sample.count(";") >= sample.count(",") else ","
+                reader = csv.DictReader(handle, delimiter=delimiter)
+                for row in reader:
+                    method = str(row.get("method_en") or row.get("method") or "").strip()
+                    if method:
+                        rows.add(method)
+        return rows
+
+    runtime_root = WORKSPACE_ROOT / "agent-memory" / "local-ef31-runtime"
+    runtime_candidates = []
+    if runtime_root.exists():
+        runtime_candidates = [
+            candidate / "indicator_index.csv"
+            for candidate in runtime_root.iterdir()
+            if (candidate / "indicator_index.csv").exists()
+        ]
+    if runtime_candidates:
+        scored = [(path, _read_methods(path)) for path in runtime_candidates]
+        csv_path, methods = max(scored, key=lambda item: (len(item[1]), item[0].stat().st_mtime))
+    else:
+        base = Path(settings.nebula_lca_ef31_dir)
+        csv_path = base if base.is_file() else base / "indicator_index.csv"
+        methods = _read_methods(csv_path)
+    if not methods:
+        methods.update(["EF v3.1", "EF v3.1 no LT"])
+    return {
+        "default_method": "EF v3.1",
+        "methods": sorted(methods),
+        "source": str(csv_path) if csv_path.exists() else "",
+    }
 
 
 # Unit Conversion ---------------------------------------------------------
