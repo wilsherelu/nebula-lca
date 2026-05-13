@@ -25,6 +25,7 @@ from app.ecoinvent_ef31_loader import (
     parse_intermediate_exchanges,
     parse_lcia_excel,
     filter_cf_ef31,
+    match_cf_to_flows as _match_cf_to_flows,
     FoundationReport,
     LCIDataset,
     LCIElementaryExchange,
@@ -34,6 +35,19 @@ from app.ecoinvent_ef31_loader import (
     Indicator,
     CharacterizationFactor,
 )
+
+
+def filter_cf_match_cf_to_flows(
+    ef31_cfs: list[CharacterizationFactor],
+    elementary_flows: list[ElementaryFlow],
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Thin wrapper: call match_cf_to_flows with EF 3.1 CFs only."""
+    return _match_cf_to_flows(ef31_cfs, elementary_flows)
+
+# ---------------------------------------------------------------------------
+# Preview
+# ---------------------------------------------------------------------------
+
 from app.ef31_db_service import (
     dry_run_lci_import,
     commit_lci_import,
@@ -230,10 +244,15 @@ def preview_ef31_import(
     indicators: list[Indicator] = []
     all_cfs: list[CharacterizationFactor] = []
     ef31_cfs: list[CharacterizationFactor] = []
+    cf_matched: list[dict] = []
+    cf_unmatched: list[dict] = []
+    cf_ambiguous: list[dict] = []
     if lcia_excel and lcia_excel.exists():
         try:
             indicators, all_cfs = parse_lcia_excel(lcia_excel)
             ef31_cfs = filter_cf_ef31(all_cfs)
+            # Match CFs to elementary flows (only EF 3.1)
+            cf_matched, cf_unmatched, cf_ambiguous = filter_cf_match_cf_to_flows(ef31_cfs, elementary_flows)
         except Exception as e:
             warnings.append(f"Failed to parse LCIA Excel: {e}")
 
@@ -249,6 +268,9 @@ def preview_ef31_import(
             "indicators_ef31": len([i for i in indicators if i.method in ('EF v3.1', 'EF v3.1 no LT')]),
             "cf_rows_total": len(all_cfs),
             "cf_rows_ef31": len(ef31_cfs),
+            "cf_rows_matched": len(cf_matched),
+            "cf_rows_unmatched": len(cf_unmatched),
+            "cf_rows_ambiguous": len(cf_ambiguous),
         }
 
     # Parse LCI datasets
@@ -289,6 +311,53 @@ def preview_ef31_import(
         job_dir / "exchanges.jsonl",
         [_exchange_to_dict(exc) for excs in exchanges_map.values() for exc in excs],
     )
+    _write_json(
+        job_dir / "elementary_flows.json",
+        [
+            {
+                "flow_uuid": ef.flow_uuid,
+                "flow_name": ef.flow_name,
+                "flow_name_en": ef.flow_name_en,
+                "compartment": ef.compartment,
+                "subcompartment": ef.subcompartment,
+            }
+            for ef in elementary_flows
+        ],
+    )
+
+    # Save LCIA artifacts: indicators, CFs, and match results
+    _write_json(
+        job_dir / "indicators.json",
+        [
+            {
+                "method": ind.method,
+                "category": ind.category,
+                "indicator": ind.indicator,
+                "indicator_unit": ind.indicator_unit,
+            }
+            for ind in indicators
+        ],
+    )
+    _write_json(
+        job_dir / "ef31_cfs.json",
+        [
+            {
+                "method": cf.method,
+                "category": cf.category,
+                "indicator": cf.indicator,
+                "flow_name": cf.flow_name,
+                "compartment": cf.compartment,
+                "subcompartment": cf.subcompartment,
+                "cf_value": cf.cf_value,
+            }
+            for cf in ef31_cfs
+        ],
+    )
+    _write_json(job_dir / "cf_matches.json", {
+        "matched": cf_matched,
+        "unmatched": cf_unmatched,
+        "ambiguous": cf_ambiguous,
+    })
 
     # DB dry-run
     dry_run = dry_run_lci_import(
@@ -316,6 +385,9 @@ def preview_ef31_import(
         "indicators_ef31": len([i for i in indicators if i.method in ('EF v3.1', 'EF v3.1 no LT')]),
         "cf_rows_total": len(all_cfs),
         "cf_rows_ef31": len(ef31_cfs),
+        "cf_rows_matched": len(cf_matched),
+        "cf_rows_unmatched": len(cf_unmatched),
+        "cf_rows_ambiguous": len(cf_ambiguous),
     }
 
     expires_at = (
