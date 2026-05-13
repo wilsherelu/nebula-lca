@@ -1221,3 +1221,38 @@ class Ef31ImportCommitResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list, description="Non-blocking warnings from commit")
     errors: list[str] = Field(default_factory=list, description="Blocking errors from commit")
     catalog_target_kind: Literal["lci_dataset"] = Field(default="lci_dataset", description="Catalog target kind")
+
+
+class Ef31RuntimeCsvResponse(BaseModel):
+    """Response after generating solver runtime CSVs for an EF 3.1 job."""
+    job_id: str = Field(..., description="EF 3.1 import job ID")
+    output_dir: str = Field(..., description="Directory containing solver runtime CSVs")
+    flows_count: int = Field(..., description="Rows written to flow_index.csv")
+    indicators_count: int = Field(..., description="Rows written to indicator_index.csv")
+    factors_count: int = Field(..., description="Rows written to lcia_factors.csv")
+    cf_matched: int = Field(default=0, description="Matched EF 3.1 CF rows")
+    cf_unmatched: int = Field(default=0, description="Unmatched EF 3.1 CF rows")
+    cf_ambiguous: int = Field(default=0, description="Ambiguous EF 3.1 CF rows")
+    env_var: str = Field(default="NEBULA_LCA_EF31_DIR", description="Solver environment variable")
+
+
+class Ef31ImportReportResponse(BaseModel):
+    """Unified EF 3.1 import report response for preview, commit, and runtime CSV reports."""
+    job_id: str = Field(..., description="EF 3.1 import job ID")
+    status: str = Field(default="unknown", description="Report status, e.g. preview or committed")
+    diagnostic_type: str | None = Field(default=None, description="DebugDiagnostic type")
+    payload: dict = Field(default_factory=dict, description="Raw persisted report payload")
+    can_commit: bool | None = None
+    limit: int | None = None
+    counts: dict = Field(default_factory=dict)
+    dry_run_summary: dict = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    expires_at: str | None = None
+    archive_name: str | None = None
+    archive_file_discovery: dict | None = None
+    foundation: dict | None = None
+    preview_counts: dict | None = None
+    committed: bool | None = None
+    catalog_target_kind: str | None = None
+    runtime_csv: dict | None = None

@@ -35,7 +35,10 @@ def lcia(payload: LciaPayload) -> LciaResponse:
     b_matrix = base["B"]
     ef31_dir = os.environ.get("NEBULA_LCA_EF31_DIR", "data/EF3.1")
     if not Path(ef31_dir).exists():
-        raise HTTPException(status_code=400, detail=f"EF3.1 dir not found: {ef31_dir}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"EF3.1 dir not found: {ef31_dir}; set NEBULA_LCA_EF31_DIR to a runtime CSV directory",
+        )
     c_pack = build_c_matrix_from_ef31(ef31_dir, b_matrix, issues=base.get("issues"))
     c_matrix = c_pack["C"]
 

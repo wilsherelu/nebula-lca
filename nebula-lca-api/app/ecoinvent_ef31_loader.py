@@ -398,15 +398,35 @@ def parse_lcia_excel(lcia_path: Path) -> tuple[List[Indicator], List[Characteriz
     
     indicators = []
     cfs = []
+
+    def _excel_text(value: object) -> str:
+        if value is None:
+            return ""
+        try:
+            if pd.isna(value):
+                return ""
+        except Exception:
+            pass
+        return str(value).strip()
+
+    def _excel_float(value: object) -> float:
+        if value is None:
+            return 0.0
+        try:
+            if pd.isna(value):
+                return 0.0
+        except Exception:
+            pass
+        return float(value or 0)
     
     try:
         df_ind = pd.read_excel(lcia_path, sheet_name='Indicators')
         for _, row in df_ind.iterrows():
             indicators.append(Indicator(
-                method=str(row.get('Method', '')),
-                category=str(row.get('Category', '')),
-                indicator=str(row.get('Indicator', '')),
-                indicator_unit=str(row.get('Indicator Unit', '')),
+                method=_excel_text(row.get('Method', '')),
+                category=_excel_text(row.get('Category', '')),
+                indicator=_excel_text(row.get('Indicator', '')),
+                indicator_unit=_excel_text(row.get('Indicator Unit', '')),
             ))
         logger.info(f"Parsed {len(indicators)} indicators")
     except Exception as e:
@@ -416,13 +436,13 @@ def parse_lcia_excel(lcia_path: Path) -> tuple[List[Indicator], List[Characteriz
         df_cf = pd.read_excel(lcia_path, sheet_name='CFs')
         for _, row in df_cf.iterrows():
             cfs.append(CharacterizationFactor(
-                method=str(row.get('Method', '')),
-                category=str(row.get('Category', '')),
-                indicator=str(row.get('Indicator', '')),
-                flow_name=str(row.get('Name', '')),
-                compartment=str(row.get('Compartment', '')) or None,
-                subcompartment=str(row.get('Subcompartment', '')) or None,
-                cf_value=float(row.get('CF', 0) or 0),
+                method=_excel_text(row.get('Method', '')),
+                category=_excel_text(row.get('Category', '')),
+                indicator=_excel_text(row.get('Indicator', '')),
+                flow_name=_excel_text(row.get('Name', '')),
+                compartment=_excel_text(row.get('Compartment', '')) or None,
+                subcompartment=_excel_text(row.get('Subcompartment', '')) or None,
+                cf_value=_excel_float(row.get('CF', 0)),
             ))
         logger.info(f"Parsed {len(cfs)} characterization factors")
     except Exception as e:
