@@ -251,6 +251,14 @@ from .services.project_versions import (
 )
 app = FastAPI(title=settings.app_name, version="0.1.0")
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # ── Include modular routers ──
 app.include_router(_base_router)
 app.include_router(_api_projects_router)
