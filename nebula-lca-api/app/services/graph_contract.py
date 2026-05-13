@@ -10,6 +10,7 @@ DB-dependent functions accept ``db: Session`` as an explicit parameter.
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from typing import Any
 
 from fastapi import HTTPException
@@ -780,3 +781,480 @@ def validate_graph_contract(
             status_code=400,
             detail="PTS nodes detected. Use /model/run with published PTS artifacts.",
         )
+
+
+# ── Handle validation helpers ──────────────────────────────────────────
+
+
+def analyze_handle_consistency(graph: HybridGraph) -> dict:
+    """Check edge handle consistency against node port IDs.
+
+    Returns a dict with ``ok``, ``issue_count``, and ``issues`` list.
+    """
+    node_port_ids: dict[str, set[str]] = {}
+    source_candidates: dict[tuple[str, str], list[str]] = {}
+    target_candidates: dict[tuple[str, str], list[str]] = {}
+
+    for node in graph.nodes:
+        all_ports = [*node.inputs, *node.outputs]
+        node_port_ids[node.id] = {port.id for port in all_ports if port.id}
+
+        for port in node.outputs:
+            if port.id and port.flowUuid:
+                source_candidates.setdefault((node.id, port.flowUuid), []).append(port.id)
+        for port in node.inputs:
+            if port.id and port.flowUuid:
+                target_candidates.setdefault((node.id, port.flowUuid), []).append(port.id)
+
+    issues: list[dict] = []
+    for edge in graph.exchanges:
+        source_handle = edge.source_port_id or edge.sourceHandle
+        target_handle = edge.target_port_id or edge.targetHandle
+
+        source_ok = bool(source_handle and source_handle in node_port_ids.get(edge.fromNode, set()))
+        target_ok = bool(target_handle and target_handle in node_port_ids.get(edge.toNode, set()))
+        if source_ok and target_ok:
+            continue
+
+        source_options = source_candidates.get((edge.fromNode, edge.flowUuid), [])
+        target_options = target_candidates.get((edge.toNode, edge.flowUuid), [])
+        source_guess = source_options[0] if len(source_options) == 1 else None
+        target_guess = target_options[0] if len(target_options) == 1 else None
+
+        issues.append(
+            {
+                "edge_id": edge.id,
+                "flow_uuid": edge.flowUuid,
+                "from_node_id": edge.fromNode,
+                "to_node_id": edge.toNode,
+                "source_handle": source_handle,
+                "target_handle": target_handle,
+                "source_ok": source_ok,
+                "target_ok": target_ok,
+                "suggested_source_port_id": source_guess,
+                "suggested_target_port_id": target_guess,
+                "suggested_source_handle": source_guess,
+                "suggested_target_handle": target_guess,
+            }
+        )
+
+    return {
+        "ok": len(issues) == 0,
+        "issue_count": len(issues),
+        "issues": issues,
+    }
+
+
+def analyze_handle_consistency_from_graph_json(graph_json: dict) -> dict:
+    """Validate handle consistency from a graph JSON payload.
+
+    Wraps graph parsing and ``analyze_handle_consistency``.
+    """
+    try:
+        graph = HybridGraph.model_validate(graph_json)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "issue_count": 1,
+            "issues": [{"code": "GRAPH_PARSE_ERROR", "message": str(exc)}],
+        }
+    return analyze_handle_consistency(graph)
+
+
+def safe_handle_validation_from_graph_json(graph_json: dict) -> dict:
+    """Safe wrapper around handle validation — catches runtime errors."""
+    try:
+        return analyze_handle_consistency_from_graph_json(graph_json)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "issue_count": 1,
+            "issues": [{"code": "HANDLE_VALIDATION_RUNTIME_ERROR", "message": str(exc)}],
+        }
+
+
+# ── Graph storage normalization helpers ────────────────────────────────
+# These functions are part of the ``_normalize_graph_json_for_storage``
+# pipeline extracted from ``main.py``.  They are called before persisting
+# graph JSON to the database.
+
+
+def _split_port_source_suffix(name: str | None) -> tuple[str, str]:
+    """Split a display name into base and ``@suffix``."""
+    text = str(name or "").strip()
+    if "@" not in text:
+        return text, ""
+    base, suffix = text.split("@", 1)
+    return base.strip(), suffix.strip()
+
+
+def _market_input_display_name(flow_name: str | None, source_name: str | None) -> str:
+    """Build a market-process input display name with source suffix."""
+    base_name, _ = _split_port_source_suffix(flow_name)
+    source = str(source_name or "").strip()
+    if not source:
+        return base_name
+    return f"{base_name}@{source}" if base_name else source
+
+
+def _enrich_market_process_input_sources_on_canvas(*, nodes: list[dict], exchanges: list[dict]) -> None:
+    """Enrich market-process input ports with source-process metadata.
+
+    For each edge that flows from one process node to a market-process
+    input port, populate ``sourceProcessUuid``, ``sourceProcessName``,
+    and ``sourceNodeId`` on the target port.  Also append the source
+    name as a ``@suffix`` on the port name.
+    """
+    if not isinstance(nodes, list) or not isinstance(exchanges, list):
+        return
+
+    node_by_id = {
+        str(node.get("id") or "").strip(): node
+        for node in nodes
+        if isinstance(node, dict) and str(node.get("id") or "").strip()
+    }
+    incoming_by_port: dict[tuple[str, str, str], list[dict]] = {}
+    incoming_by_flow: dict[tuple[str, str], list[dict]] = {}
+
+    for edge in exchanges:
+        if not isinstance(edge, dict):
+            continue
+        target_node_id = str(edge.get("toNode") or "").strip()
+        source_node_id = str(edge.get("fromNode") or "").strip()
+        flow_uuid = str(edge.get("flowUuid") or "").strip()
+        if not target_node_id or not source_node_id or not flow_uuid:
+            continue
+        provider_node = node_by_id.get(source_node_id)
+        if provider_node is None:
+            continue
+        provider = {
+            "source_process_uuid": str(provider_node.get("process_uuid") or "").strip(),
+            "source_process_name": str(provider_node.get("name") or "").strip(),
+            "source_node_id": source_node_id,
+        }
+        target_port_id = _port_id_from_handle(
+            str(edge.get("targetPortId") or edge.get("target_port_id") or edge.get("targetHandle") or ""),
+            "in",
+        )
+        if target_port_id:
+            incoming_by_port.setdefault((target_node_id, target_port_id, flow_uuid), []).append(provider)
+        incoming_by_flow.setdefault((target_node_id, flow_uuid), []).append(provider)
+
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        if str(node.get("node_kind") or "").strip() != "market_process":
+            continue
+        node_id = str(node.get("id") or "").strip()
+        inputs = node.get("inputs")
+        if not isinstance(inputs, list):
+            continue
+        for port in inputs:
+            if not isinstance(port, dict):
+                continue
+            if str(port.get("type") or "").strip() == "biosphere":
+                continue
+            flow_uuid = str(port.get("flowUuid") or "").strip()
+            port_id = str(port.get("id") or "").strip()
+            if not flow_uuid:
+                continue
+            candidates = incoming_by_port.get((node_id, port_id, flow_uuid), [])
+            if len(candidates) != 1:
+                flow_candidates = incoming_by_flow.get((node_id, flow_uuid), [])
+                if len(flow_candidates) == 1:
+                    candidates = flow_candidates
+            if len(candidates) != 1:
+                continue
+            provider = candidates[0]
+            source_process_uuid = str(provider.get("source_process_uuid") or "").strip()
+            source_process_name = str(provider.get("source_process_name") or "").strip()
+            source_node_id = str(provider.get("source_node_id") or "").strip()
+            if source_process_uuid:
+                port["sourceProcessUuid"] = source_process_uuid
+                port["source_process_uuid"] = source_process_uuid
+            if source_process_name:
+                port["sourceProcessName"] = source_process_name
+                port["source_process_name"] = source_process_name
+            if source_node_id:
+                port["sourceNodeId"] = source_node_id
+                port["source_node_id"] = source_node_id
+
+            current_name = str(port.get("name") or "").strip()
+            if source_process_name and "@" not in current_name:
+                port["name"] = _market_input_display_name(current_name or flow_uuid, source_process_name)
+
+
+def _enrich_market_process_input_sources_in_graph_json(graph_json: dict) -> dict:
+    """Walk top-level and canvas nodes to enrich market-process inputs.
+
+    Returns *graph_json* (mutated in-place) for convenience.
+    """
+    if not isinstance(graph_json, dict):
+        return graph_json
+
+    nodes = graph_json.get("nodes")
+    exchanges = graph_json.get("exchanges")
+    if isinstance(nodes, list) and isinstance(exchanges, list):
+        _enrich_market_process_input_sources_on_canvas(nodes=nodes, exchanges=exchanges)
+
+    metadata = graph_json.get("metadata")
+    canvases = metadata.get("canvases") if isinstance(metadata, dict) else None
+    if isinstance(canvases, list):
+        for canvas in canvases:
+            if not isinstance(canvas, dict):
+                continue
+            canvas_nodes = canvas.get("nodes")
+            canvas_edges = canvas.get("edges")
+            if isinstance(canvas_nodes, list) and isinstance(canvas_edges, list):
+                _enrich_market_process_input_sources_on_canvas(nodes=canvas_nodes, exchanges=canvas_edges)
+
+    return graph_json
+
+
+# ── Process name uniqueness ────────────────────────────────────────────
+
+_NON_PTS_UNIQUE_NAME_NODE_KINDS: set[str] = {"unit_process", "market_process", "lci_dataset"}
+
+
+def _process_name_uniqueness_group(node_kind: str) -> str | None:
+    normalized = str(node_kind or "").strip()
+    if normalized in _NON_PTS_UNIQUE_NAME_NODE_KINDS:
+        return "process"
+    if normalized == "pts_module":
+        return "pts_module"
+    return None
+
+
+def _raise_if_duplicate_process_names_in_graph(*, graph: HybridGraph, scope_label: str) -> None:
+    buckets: dict[tuple[str, str], list[HybridNode]] = defaultdict(list)
+    for node in list(graph.nodes or []):
+        group = _process_name_uniqueness_group(str(node.node_kind or ""))
+        if not group:
+            continue
+        name = str(node.name or "").strip()
+        if not name:
+            continue
+        buckets[(group, name.casefold())].append(node)
+
+    duplicates: list[dict] = []
+    for (group, _normalized_name), nodes in buckets.items():
+        if len(nodes) < 2:
+            continue
+        duplicates.append(
+            {
+                "scope": scope_label,
+                "group": group,
+                "name": str(nodes[0].name or "").strip(),
+                "node_ids": [str(node.id or "") for node in nodes],
+                "node_kinds": [str(node.node_kind or "") for node in nodes],
+            }
+        )
+
+    if not duplicates:
+        return
+
+    duplicates.sort(key=lambda item: (str(item.get("scope") or ""), str(item.get("group") or ""), str(item.get("name") or "")))
+    first = duplicates[0]
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "DUPLICATE_PROCESS_NAME",
+            "message": f"Duplicate process name is not allowed in {scope_label}: {first['name']}",
+            "scope": scope_label,
+            "duplicates": duplicates,
+        },
+    )
+
+
+def _validate_process_name_uniqueness_for_graph_json(*, graph_json: dict, scope_label: str) -> None:
+    """Validate that no two nodes share the same name within a process-group."""
+    graph = HybridGraph.model_validate(graph_json)
+    _raise_if_duplicate_process_names_in_graph(graph=graph, scope_label=scope_label)
+
+
+# ── Canvas / node position helpers ─────────────────────────────────────
+
+def _normalize_node_json_for_storage(node_json: dict) -> dict:
+    """Validate a node through ``HybridNode`` and normalise its buckets."""
+    raw = dict(node_json or {})
+    normalized = HybridNode.model_validate(raw).model_dump(mode="python")
+    raw["node_kind"] = normalized.get("node_kind", raw.get("node_kind"))
+    raw["inputs"] = normalized.get("inputs", [])
+    raw["outputs"] = normalized.get("outputs", [])
+    raw["emissions"] = normalized.get("emissions", [])
+    raw["mode"] = normalized.get("mode", raw.get("mode"))
+    raw["process_uuid"] = normalized.get("process_uuid", raw.get("process_uuid"))
+    raw["pts_uuid"] = normalized.get("pts_uuid", raw.get("pts_uuid"))
+    return raw
+
+
+def _restore_canvas_node_positions(*, source_canvas: dict, normalized_canvas: dict) -> dict:
+    """Restore inline positions from *source_canvas* into *normalized_canvas*."""
+    if not isinstance(normalized_canvas, dict):
+        return normalized_canvas
+    source_nodes = source_canvas.get("nodes") if isinstance(source_canvas.get("nodes"), list) else []
+    normalized_nodes = normalized_canvas.get("nodes") if isinstance(normalized_canvas.get("nodes"), list) else []
+    source_by_id = {
+        str(node.get("id") or "").strip(): node
+        for node in source_nodes
+        if isinstance(node, dict) and str(node.get("id") or "").strip()
+    }
+    restored_nodes: list[dict] = []
+    for node in normalized_nodes:
+        if not isinstance(node, dict):
+            restored_nodes.append(node)
+            continue
+        restored = dict(node)
+        source_node = source_by_id.get(str(restored.get("id") or "").strip())
+        if isinstance(source_node, dict):
+            position = source_node.get("position") if isinstance(source_node.get("position"), dict) else None
+            if isinstance(position, dict):
+                restored["position"] = {
+                    "x": float(position.get("x", 0.0)),
+                    "y": float(position.get("y", 0.0)),
+                }
+        restored_nodes.append(restored)
+    updated = dict(normalized_canvas)
+    updated["nodes"] = restored_nodes
+    source_meta = source_canvas.get("metadata") if isinstance(source_canvas.get("metadata"), dict) else {}
+    normalized_meta = updated.get("metadata") if isinstance(updated.get("metadata"), dict) else {}
+    source_positions = source_meta.get("node_positions") if isinstance(source_meta.get("node_positions"), dict) else None
+    if isinstance(source_positions, dict):
+        updated["metadata"] = {
+            **dict(normalized_meta),
+            "node_positions": dict(source_positions),
+        }
+    return updated
+
+
+def _restore_graph_node_positions(*, source_graph_json: dict, normalized_graph_json: dict) -> dict:
+    """Restore inline positions from *source_graph_json* into *normalized_graph_json*."""
+    if not isinstance(source_graph_json, dict) or not isinstance(normalized_graph_json, dict):
+        return normalized_graph_json
+
+    source_nodes = source_graph_json.get("nodes") if isinstance(source_graph_json.get("nodes"), list) else []
+    normalized_nodes = normalized_graph_json.get("nodes") if isinstance(normalized_graph_json.get("nodes"), list) else []
+    source_by_id = {
+        str(node.get("id") or "").strip(): node
+        for node in source_nodes
+        if isinstance(node, dict) and str(node.get("id") or "").strip()
+    }
+
+    restored_nodes: list[dict] = []
+    for node in normalized_nodes:
+        if not isinstance(node, dict):
+            restored_nodes.append(node)
+            continue
+        restored = dict(node)
+        source_node = source_by_id.get(str(restored.get("id") or "").strip())
+        if isinstance(source_node, dict):
+            position = source_node.get("position") if isinstance(source_node.get("position"), dict) else None
+            if isinstance(position, dict):
+                restored["position"] = {
+                    "x": float(position.get("x", 0.0)),
+                    "y": float(position.get("y", 0.0)),
+                }
+        restored_nodes.append(restored)
+
+    updated = dict(normalized_graph_json)
+    updated["nodes"] = restored_nodes
+
+    source_meta = source_graph_json.get("metadata") if isinstance(source_graph_json.get("metadata"), dict) else {}
+    normalized_meta = updated.get("metadata") if isinstance(updated.get("metadata"), dict) else {}
+    source_positions = source_meta.get("node_positions") if isinstance(source_meta.get("node_positions"), dict) else None
+    if isinstance(source_positions, dict):
+        updated["metadata"] = {
+            **dict(normalized_meta),
+            "node_positions": dict(source_positions),
+        }
+
+    source_canvases = source_meta.get("canvases") if isinstance(source_meta.get("canvases"), list) else []
+    normalized_canvases = normalized_meta.get("canvases") if isinstance(normalized_meta.get("canvases"), list) else []
+    if normalized_canvases:
+        source_canvas_by_id = {
+            str(canvas.get("id") or "").strip(): canvas
+            for canvas in source_canvases
+            if isinstance(canvas, dict) and str(canvas.get("id") or "").strip()
+        }
+        restored_canvases: list[dict] = []
+        for idx, canvas in enumerate(normalized_canvases):
+            if not isinstance(canvas, dict):
+                restored_canvases.append(canvas)
+                continue
+            source_canvas = source_canvas_by_id.get(str(canvas.get("id") or "").strip())
+            if source_canvas is None and idx < len(source_canvases) and isinstance(source_canvases[idx], dict):
+                source_canvas = source_canvases[idx]
+            restored_canvases.append(
+                _restore_canvas_node_positions(
+                    source_canvas=source_canvas if isinstance(source_canvas, dict) else {},
+                    normalized_canvas=canvas,
+                )
+            )
+        updated["metadata"] = {
+            **dict(updated.get("metadata") or {}),
+            "canvases": restored_canvases,
+        }
+
+    return updated
+
+
+def _normalize_graph_canvases_for_storage(graph_json: dict) -> dict:
+    """Normalize node JSON inside canvas metadata before storage."""
+    metadata = graph_json.get("metadata")
+    if not isinstance(metadata, dict):
+        return graph_json
+    canvases = metadata.get("canvases")
+    if not isinstance(canvases, list):
+        return graph_json
+
+    normalized_canvases: list[dict] = []
+    for canvas in canvases:
+        if not isinstance(canvas, dict):
+            normalized_canvases.append(canvas)
+            continue
+        canvas_copy = dict(canvas)
+        nodes = canvas_copy.get("nodes")
+        if isinstance(nodes, list):
+            normalized_nodes: list[dict] = []
+            for node in nodes:
+                if not isinstance(node, dict):
+                    normalized_nodes.append(node)
+                    continue
+                if "inputs" in node or "outputs" in node or "emissions" in node:
+                    normalized_nodes.append(_normalize_node_json_for_storage(node))
+                else:
+                    normalized_nodes.append(node)
+            canvas_copy["nodes"] = normalized_nodes
+        normalized_canvases.append(canvas_copy)
+
+    metadata_copy = dict(metadata)
+    metadata_copy["canvases"] = normalized_canvases
+    graph_json["metadata"] = metadata_copy
+    return graph_json
+
+
+# ── Entry point ────────────────────────────────────────────────────────
+
+def _normalize_graph_json_for_storage(graph_json: dict) -> dict:
+    """Normalize a graph JSON payload for persistent storage.
+
+    Pipeline:
+    1. Enrich market-process input sources
+    2. Validate process-name uniqueness
+    3. Validate & dump via ``HybridGraph`` model
+    4. Normalise product flags & edge/port IDs
+    5. Normalise canvas node JSON
+    6. Restore inline positions
+
+    Returns a new dict ready for slimming and hashing.
+    """
+    _enrich_market_process_input_sources_in_graph_json(graph_json)
+    _validate_process_name_uniqueness_for_graph_json(graph_json=graph_json, scope_label="main_graph")
+    graph = HybridGraph.model_validate(graph_json)
+    normalize_graph_product_flags(graph)
+    normalize_graph_edge_port_ids(graph)
+    normalized = graph.model_dump(mode="python")
+    normalized = _normalize_graph_canvases_for_storage(normalized)
+    _validate_process_name_uniqueness_for_graph_json(graph_json=normalized, scope_label="main_graph")
+    normalized = _enrich_market_process_input_sources_in_graph_json(normalized)
+    return _restore_graph_node_positions(source_graph_json=graph_json, normalized_graph_json=normalized)
