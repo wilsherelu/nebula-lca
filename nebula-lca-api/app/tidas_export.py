@@ -466,7 +466,7 @@ def _calculate_allocation_factors(
     process_uuid: str,
     report: ExportReport,
     db: Session | None = None,
-) -> dict[str, float]:
+) -> dict[str, float] | None:
     """Calculate allocation factors for multi-product process outputs.
 
     Allocation is based on physical relationships (output quantities) when products
@@ -496,22 +496,33 @@ def _calculate_allocation_factors(
             user_allocation[port.get("id")] = float(alloc_factor)
 
     if user_allocation:
+        if len(user_allocation) != len(product_outputs):
+            report.add_warning(
+                "allocation",
+                f"Multi-product process {process_uuid}: user-specified allocation factors are incomplete, manual allocation required",
+                {
+                    "process_uuid": process_uuid,
+                    "user_allocation": user_allocation,
+                    "product_count": len(product_outputs),
+                },
+            )
+            report.manual_allocation_required_processes.append(process_uuid)
+            return None
         user_sum = sum(user_allocation.values())
         if abs(user_sum - 1.0) < 0.01:
             # User-specified allocation sums to ~1.0, use it
             return user_allocation
-        else:
-            # User specified incomplete/invalid allocation - warn and fall through
-            report.add_warning(
-                "allocation",
-                f"Multi-product process {process_uuid}: user-specified allocation factors sum to {user_sum:.4f} (expected 1.0), will auto-calculate",
-                {
-                    "process_uuid": process_uuid,
-                    "user_allocation": user_allocation,
-                    "sum": user_sum,
-                },
-            )
-            report.manual_allocation_required_processes.append(process_uuid)
+        report.add_warning(
+            "allocation",
+            f"Multi-product process {process_uuid}: user-specified allocation factors sum to {user_sum:.4f} (expected 1.0), manual allocation required",
+            {
+                "process_uuid": process_uuid,
+                "user_allocation": user_allocation,
+                "sum": user_sum,
+            },
+        )
+        report.manual_allocation_required_processes.append(process_uuid)
+        return None
 
     # Group products by unit group and convert to reference units
     unit_groups: dict[str, list[tuple[dict, float]]] = {}  # ug -> [(port, converted_amount)]
@@ -868,8 +879,6 @@ def _build_tidas_exchange(exc: dict, allocation_factors: dict | None = None, ref
             "manualAllocationRequired": True,
             "isReferenceFlow": internal_id == ref_internal_id,
         }
-    if direction == "Output" and internal_id == ref_internal_id and tidas_exc["allocations"]["allocation"] == {}:
-        tidas_exc["allocations"] = {"allocation": {"@allocatedFraction": "100%"}}
     return tidas_exc
 
 
