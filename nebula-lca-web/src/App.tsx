@@ -1840,6 +1840,7 @@ export default function App() {
   const [lciaMethodSelection, setLciaMethodSelection] = useState("EF v3.1");
   const [draftLciaMethodSelection, setDraftLciaMethodSelection] = useState("EF v3.1");
   const [showRunConfigDialog, setShowRunConfigDialog] = useState(false);
+  const [productDetailViewKey, setProductDetailViewKey] = useState("");
   const [lciaMethodOptions, setLciaMethodOptions] = useState<string[]>(["EF v3.1", "EF v3.1 no LT"]);
   const [ptsPublishWarnings, setPtsPublishWarnings] = useState<PtsModelingWarning[]>([]);
   const [showPtsPublishWarnings, setShowPtsPublishWarnings] = useState(false);
@@ -4640,6 +4641,10 @@ export default function App() {
     () => (selectedProductIndex >= 0 ? productColumns[selectedProductIndex] ?? undefined : undefined),
     [productColumns, selectedProductIndex],
   );
+  const productDetailRow = useMemo(
+    () => productColumns.find((item) => item.viewKey === productDetailViewKey) ?? null,
+    [productColumns, productDetailViewKey],
+  );
   const targetProductQuantityValue = useMemo(() => {
     if (targetProductQuantityMode === "functional_unit") {
       return parseFunctionalUnitQuantity(functionalUnit);
@@ -5274,13 +5279,15 @@ export default function App() {
                     <col className="run-analysis-col-product" />
                     <col className="run-analysis-col-value" />
                     <col className="run-analysis-col-unit" />
+                    <col className="run-analysis-col-actions" />
                   </colgroup>
                   <thead>
                     <tr>
                       <th>{uiLanguage === "zh" ? "过程" : "Process"}</th>
-                      <th>{uiLanguage === "zh" ? "产品（点击查看全指标）" : "Product (click to view full indicators)"}</th>
+                      <th>{uiLanguage === "zh" ? "产品" : "Product"}</th>
                       <th className="numeric">{uiLanguage === "zh" ? "单位产品结果" : "Unit product result"}</th>
                       <th>{uiLanguage === "zh" ? "单位" : "Unit"}</th>
+                      <th>{uiLanguage === "zh" ? "操作" : "Actions"}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -5288,7 +5295,7 @@ export default function App() {
                       const expanded = expandedResultProcesses.includes(group.processUuid);
                       return [
                         <tr key={`group-${group.processUuid}`} className="run-analysis-process-group-row">
-                          <td colSpan={4}>
+                          <td colSpan={5}>
                             <button
                               type="button"
                               className="run-analysis-process-toggle"
@@ -5324,13 +5331,12 @@ export default function App() {
                                 ].filter(Boolean).join("\n")}>
                                   <div className="run-analysis-product-cell">
                                     <span className="run-analysis-product-name">{row.productName}</span>
-                                    <span className="run-analysis-product-meta">
-                                      {[
-                                        row.processLocation ? `location: ${row.processLocation}` : "",
-                                        row.processUuid ? `process: ${row.processUuid}` : "",
-                                        row.productFlowUuid ? `flow: ${row.productFlowUuid}` : "",
-                                      ].filter(Boolean).join(" · ")}
-                                    </span>
+                                  </div>
+                                </td>
+                                <td className={`numeric ${row.value === 0 ? "run-analysis-value--zero" : ""}`}>{row.value.toExponential(3)}</td>
+                                <td className="run-analysis-unit-cell">{row.unitLabel}</td>
+                                <td>
+                                  <div className="run-analysis-row-actions">
                                     <button
                                       type="button"
                                       className={`run-analysis-view-switch${
@@ -5357,13 +5363,19 @@ export default function App() {
                                           ? "展示全指标中"
                                           : "Showing full indicators"
                                         : uiLanguage === "zh"
-                                          ? "查看全指标"
-                                          : "View full indicators"}
+                                          ? "查看"
+                                          : "View"}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="run-analysis-view-switch"
+                                      onClick={() => setProductDetailViewKey(row.viewKey)}
+                                      title={uiLanguage === "zh" ? "查看过程和产品详情" : "View process and product details"}
+                                    >
+                                      {uiLanguage === "zh" ? "详情" : "Details"}
                                     </button>
                                   </div>
                                 </td>
-                                <td className={`numeric ${row.value === 0 ? "run-analysis-value--zero" : ""}`}>{row.value.toExponential(3)}</td>
-                                <td className="run-analysis-unit-cell">{row.unitLabel}</td>
                               </tr>
                             ))
                           : []),
@@ -5371,7 +5383,7 @@ export default function App() {
                     })}
                     {groupedProductCfpRows.length === 0 && (
                       <tr>
-                        <td colSpan={4}>
+                        <td colSpan={5}>
                           {!hasProductResultView
                             ? "后端尚未返回产品结果视图（product_result_index / product_values）。"
                             : "未找到 Climate change 结果"}
@@ -5481,6 +5493,28 @@ export default function App() {
                       )}
                     </tbody>
                   </table>
+                </div>
+              </section>
+            </div>
+          )}
+          {productDetailRow && (
+            <div className="run-analysis-subdialog-mask" onClick={() => setProductDetailViewKey("")}>
+              <section className="run-analysis-subdialog" onClick={(event) => event.stopPropagation()}>
+                <div className="run-analysis-subdialog-head">
+                  <strong>{uiLanguage === "zh" ? "产品详情" : "Product Details"}</strong>
+                  <button type="button" className="drawer-close-btn" onClick={() => setProductDetailViewKey("")}>
+                    {i18n.close}
+                  </button>
+                </div>
+                <div className="run-analysis-detail-list">
+                  <div><span>{uiLanguage === "zh" ? "产品" : "Product"}</span><strong>{productDetailRow.productName || "-"}</strong></div>
+                  <div><span>{uiLanguage === "zh" ? "过程" : "Process"}</span><strong>{productDetailRow.processName || "-"}</strong></div>
+                  <div><span>{uiLanguage === "zh" ? "地区" : "Location"}</span><code>{productDetailRow.processLocation || "-"}</code></div>
+                  <div><span>process UUID</span><code>{productDetailRow.processUuid || "-"}</code></div>
+                  <div><span>flow UUID</span><code>{productDetailRow.productFlowUuid || "-"}</code></div>
+                  <div><span>port ID</span><code>{productDetailRow.productPortId || "-"}</code></div>
+                  <div><span>{uiLanguage === "zh" ? "单位" : "Unit"}</span><code>{productDetailRow.unit || "-"}</code></div>
+                  <div><span>{uiLanguage === "zh" ? "单位组" : "Unit group"}</span><code>{productDetailRow.unitGroup || "-"}</code></div>
                 </div>
               </section>
             </div>
