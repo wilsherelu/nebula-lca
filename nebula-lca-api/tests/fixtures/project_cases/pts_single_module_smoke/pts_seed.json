@@ -1,0 +1,193 @@
+{
+  "pts_seed": {
+    "resources": [
+      {
+        "id": "resource-diesel-smoke",
+        "project_id": "PLACEHOLDER",
+        "pts_uuid": "pts-diesel-smoke",
+        "name": "Diesel PTS Resource",
+        "pts_node_id": "node-diesel-pts",
+        "latest_graph_hash": "static-hash-diesel-smoke",
+        "compiled_graph_hash": "static-hash-diesel-smoke",
+        "latest_compile_version": 1,
+        "latest_published_version": 1,
+        "active_published_version": 1,
+        "pts_graph_json": {
+          "nodes": [
+            {
+              "id": "inner-prod",
+              "node_kind": "unit_process",
+              "name": "Diesel Production",
+              "outputs": [
+                {
+                  "flowUuid": "flow-diesel-smoke",
+                  "amount": 1.0
+                }
+              ]
+            }
+          ],
+          "exchanges": []
+        },
+        "ports_policy_json": {
+          "output_ports": {
+            "flow-diesel-smoke": "out-diesel"
+          }
+        },
+        "shell_node_json": {
+          "id": "node-diesel-pts",
+          "node_kind": "pts_module",
+          "pts_uuid": "pts-diesel-smoke",
+          "process_uuid": "pts-diesel-smoke",
+          "name": "Diesel PTS",
+          "outputs": [
+            {
+              "id": "out-diesel",
+              "flowUuid": "flow-diesel-smoke",
+              "name": "diesel",
+              "unit": "kg",
+              "amount": 1.0,
+              "type": "technosphere",
+              "direction": "output",
+              "isProduct": true,
+              "product_key": "pts-diesel-smoke::product::diesel-vp"
+            }
+          ]
+        },
+        "published_at": "2026-01-01T00:00:00Z",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "definitions": [
+      {
+        "id": "def-diesel-smoke",
+        "project_id": "PLACEHOLDER",
+        "pts_id": null,
+        "pts_uuid": "pts-diesel-smoke",
+        "pts_node_id": "node-diesel-pts",
+        "internal_node_ids_json": [
+          "inner-prod"
+        ],
+        "product_refs_json": [
+          {
+            "flow_uuid": "flow-diesel-smoke",
+            "amount": 1.0
+          }
+        ],
+        "ports_policy_json": {
+          "output_ports": {
+            "flow-diesel-smoke": "out-diesel"
+          }
+        },
+        "latest_graph_hash": "static-hash-diesel-smoke",
+        "definition_json": {},
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "compile_artifacts": [
+      {
+        "id": "compile-diesel-smoke",
+        "project_id": "PLACEHOLDER",
+        "pts_node_id": "node-diesel-pts",
+        "pts_uuid": "pts-diesel-smoke",
+        "graph_hash": "static-hash-diesel-smoke",
+        "compile_version": 1,
+        "ok": true,
+        "matrix_size": 1,
+        "invertible": true,
+        "errors_json": [],
+        "warnings_json": [],
+        "artifact_json": {
+          "pts_node_id": "node-diesel-pts",
+          "graph_hash": "static-hash-diesel-smoke",
+          "ok": true,
+          "matrix_size": 1,
+          "invertible": true,
+          "errors": [],
+          "warnings": [],
+          "virtual_processes": [
+            {
+              "process_uuid": "pts-diesel-smoke::product::diesel-vp",
+              "process_name": "Diesel VP",
+              "product_key": "pts-diesel-smoke::product::diesel-vp",
+              "source_process_uuid": "inner-prod",
+              "source_node_id": "inner-prod",
+              "source_port_id": "out-diesel",
+              "reference_product": {
+                "id": "out-diesel",
+                "flowUuid": "flow-diesel-smoke",
+                "name": "diesel",
+                "unit": "kg",
+                "amount": 1.0
+              },
+              "elementary_flows": [
+                {
+                  "id": "em-co2-diesel-vp",
+                  "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+                  "name": "carbon dioxide (fossil)",
+                  "unit": "kg",
+                  "amount": 0.5
+                }
+              ],
+              "technosphere_inputs": []
+            }
+          ]
+        },
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "external_artifacts": [
+      {
+        "id": "ext-artifact-diesel-smoke",
+        "project_id": "PLACEHOLDER",
+        "pts_id": null,
+        "pts_uuid": "pts-diesel-smoke",
+        "pts_node_id": "node-diesel-pts",
+        "graph_hash": "static-hash-diesel-smoke",
+        "published_version": 1,
+        "source_compile_id": "compile-diesel-smoke",
+        "source_compile_version": 1,
+        "artifact_json": {
+          "pts_node_id": "node-diesel-pts",
+          "graph_hash": "static-hash-diesel-smoke",
+          "ok": true,
+          "matrix_size": 1,
+          "invertible": true,
+          "errors": [],
+          "warnings": [],
+          "virtual_processes": [
+            {
+              "process_uuid": "pts-diesel-smoke::product::diesel-vp",
+              "process_name": "Diesel VP",
+              "product_key": "pts-diesel-smoke::product::diesel-vp",
+              "source_process_uuid": "inner-prod",
+              "source_node_id": "inner-prod",
+              "source_port_id": "out-diesel",
+              "reference_product": {
+                "id": "out-diesel",
+                "flowUuid": "flow-diesel-smoke",
+                "name": "diesel",
+                "unit": "kg",
+                "amount": 1.0
+              },
+              "elementary_flows": [
+                {
+                  "id": "em-co2-diesel-vp",
+                  "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+                  "name": "carbon dioxide (fossil)",
+                  "unit": "kg",
+                  "amount": 0.5
+                }
+              ],
+              "technosphere_inputs": []
+            }
+          ]
+        },
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z"
+      }
+    ]
+  }
+}

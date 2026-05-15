@@ -1,0 +1,37 @@
+{
+  "unit_groups": [
+    {"name": "Units of mass", "reference_unit": "kg"},
+    {"name": "Units of energy", "reference_unit": "MJ"}
+  ],
+  "unit_definitions": [
+    {"unit_group": "Units of mass", "unit_name": "kg", "factor_to_reference": 1.0, "is_reference": true},
+    {"unit_group": "Units of energy", "unit_name": "kWh", "factor_to_reference": 3.6, "is_reference": false},
+    {"unit_group": "Units of energy", "unit_name": "MJ", "factor_to_reference": 1.0, "is_reference": true}
+  ],
+  "flows": [
+    {
+      "flow_uuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+      "flow_name": "carbon dioxide (fossil) (Mass, kg, Emissions to air, unspecified)",
+      "flow_type": "Elementary flow",
+      "default_unit": "kg",
+      "unit_group": "Units of mass",
+      "source": "tiangong"
+    },
+    {
+      "flow_uuid": "flow-diesel",
+      "flow_name": "diesel",
+      "flow_type": "Product flow",
+      "default_unit": "kg",
+      "unit_group": "Units of mass",
+      "source": "test"
+    },
+    {
+      "flow_uuid": "flow-electricity",
+      "flow_name": "electricity",
+      "flow_type": "Product flow",
+      "default_unit": "kWh",
+      "unit_group": "Units of energy",
+      "source": "test"
+    }
+  ]
+}

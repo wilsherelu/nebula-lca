@@ -1,0 +1,231 @@
+{
+  "name": "多过程多产品无回流",
+  "graph": {
+    "functionalUnit": "1 kg diesel",
+    "nodes": [
+      {
+        "id": "node-thermal-power",
+        "node_kind": "unit_process",
+        "mode": "normalized",
+        "process_uuid": "proc-thermal-power",
+        "name": "火力发电",
+        "location": "GLO",
+        "reference_product": "electricity",
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "out-electricity-thermal",
+            "flowUuid": "flow-electricity",
+            "name": "electricity",
+            "unit": "kWh",
+            "unitGroup": "Units of energy",
+            "amount": 1.0,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          }
+        ],
+        "emissions": [
+          {
+            "id": "em-co2-thermal",
+            "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+            "name": "carbon dioxide (fossil) (Mass, kg, Emissions to air, unspecified)",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 0.9,
+            "type": "biosphere",
+            "direction": "output"
+          }
+        ]
+      },
+      {
+        "id": "node-pv-power",
+        "node_kind": "unit_process",
+        "mode": "normalized",
+        "process_uuid": "proc-pv-power",
+        "name": "光伏发电",
+        "location": "GLO",
+        "reference_product": "electricity",
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "out-electricity-pv",
+            "flowUuid": "flow-electricity",
+            "name": "electricity",
+            "unit": "kWh",
+            "unitGroup": "Units of energy",
+            "amount": 1.0,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          }
+        ],
+        "emissions": [
+          {
+            "id": "em-co2-pv",
+            "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+            "name": "carbon dioxide (fossil) (Mass, kg, Emissions to air, unspecified)",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 0.05,
+            "type": "biosphere",
+            "direction": "output"
+          }
+        ]
+      },
+      {
+        "id": "node-market-electricity",
+        "node_kind": "market_process",
+        "mode": "normalized",
+        "process_uuid": "proc-market-electricity",
+        "name": "电力市场",
+        "location": "GLO",
+        "reference_product": "electricity",
+        "inputs": [
+          {
+            "id": "in-electricity-thermal",
+            "flowUuid": "flow-electricity",
+            "name": "electricity @ 火力发电",
+            "unit": "kWh",
+            "unitGroup": "Units of energy",
+            "amount": 0.8,
+            "type": "technosphere",
+            "direction": "input"
+          },
+          {
+            "id": "in-electricity-pv",
+            "flowUuid": "flow-electricity",
+            "name": "electricity @ 光伏发电",
+            "unit": "kWh",
+            "unitGroup": "Units of energy",
+            "amount": 0.2,
+            "type": "technosphere",
+            "direction": "input"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "out-electricity-market",
+            "flowUuid": "flow-electricity",
+            "name": "electricity",
+            "unit": "kWh",
+            "unitGroup": "Units of energy",
+            "amount": 1.0,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          }
+        ],
+        "emissions": []
+      },
+      {
+        "id": "node-refining",
+        "node_kind": "unit_process",
+        "mode": "normalized",
+        "process_uuid": "proc-refining",
+        "name": "炼油",
+        "location": "GLO",
+        "reference_product": "diesel",
+        "inputs": [
+          {
+            "id": "in-electricity-refining",
+            "flowUuid": "flow-electricity",
+            "name": "electricity",
+            "unit": "kWh",
+            "unitGroup": "Units of energy",
+            "amount": 10.0,
+            "type": "technosphere",
+            "direction": "input"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "out-diesel",
+            "flowUuid": "flow-diesel",
+            "name": "diesel",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 2.0,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          },
+          {
+            "id": "out-naphtha",
+            "flowUuid": "flow-naphtha",
+            "name": "naphtha",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 3.0,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          }
+        ],
+        "emissions": [
+          {
+            "id": "em-co2-refining",
+            "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+            "name": "carbon dioxide (fossil) (Mass, kg, Emissions to air, unspecified)",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 8.0,
+            "type": "biosphere",
+            "direction": "output"
+          }
+        ]
+      }
+    ],
+    "exchanges": [
+      {
+        "id": "edge-thermal-to-market",
+        "fromNode": "node-thermal-power",
+        "toNode": "node-market-electricity",
+        "sourceHandle": "out:out-electricity-thermal",
+        "targetHandle": "in:in-electricity-thermal",
+        "flowUuid": "flow-electricity",
+        "flowName": "electricity",
+        "quantityMode": "single",
+        "amount": 0.8,
+        "providerAmount": 0.8,
+        "consumerAmount": 0.8,
+        "unit": "kWh",
+        "type": "technosphere",
+        "allocation": "none"
+      },
+      {
+        "id": "edge-pv-to-market",
+        "fromNode": "node-pv-power",
+        "toNode": "node-market-electricity",
+        "sourceHandle": "out:out-electricity-pv",
+        "targetHandle": "in:in-electricity-pv",
+        "flowUuid": "flow-electricity",
+        "flowName": "electricity",
+        "quantityMode": "single",
+        "amount": 0.2,
+        "providerAmount": 0.2,
+        "consumerAmount": 0.2,
+        "unit": "kWh",
+        "type": "technosphere",
+        "allocation": "none"
+      },
+      {
+        "id": "edge-market-to-refining",
+        "fromNode": "node-market-electricity",
+        "toNode": "node-refining",
+        "sourceHandle": "out:out-electricity-market",
+        "targetHandle": "in:in-electricity-refining",
+        "flowUuid": "flow-electricity",
+        "flowName": "electricity",
+        "quantityMode": "single",
+        "amount": 10.0,
+        "providerAmount": 10.0,
+        "consumerAmount": 10.0,
+        "unit": "kWh",
+        "type": "technosphere",
+        "allocation": "none"
+      }
+    ],
+    "metadata": {}
+  }
+}

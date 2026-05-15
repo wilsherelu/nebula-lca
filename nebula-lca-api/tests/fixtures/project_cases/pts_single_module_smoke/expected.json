@@ -1,0 +1,19 @@
+{
+  "target_product": "diesel",
+  "target_process_uuid": "pts-diesel-smoke::product::diesel-vp",
+  "climate_change": 0.5,
+  "summary": {
+    "indicator_count": 25,
+    "missing_ef31_flow_count": 0
+  },
+  "snapshot": {
+    "snapshot_shell_process_count": 1,
+    "link_count": 0,
+    "required_flow_uuids": [
+      "08a91e70-3ddc-11dd-923d-0050c2490048"
+    ]
+  },
+  "process_index_uuids": [
+    "pts-diesel-smoke::product::diesel-vp"
+  ]
+}
