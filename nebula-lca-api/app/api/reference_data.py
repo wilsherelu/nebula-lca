@@ -20,9 +20,10 @@ from pathlib import Path
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from ..config import WORKSPACE_ROOT, settings
+from ..config import settings
 from ..database import get_db
 from ..models import UnitDefinition
+from ..services.ef31_runtime_csv import ACTIVE_MANIFEST_NAME, DEFAULT_EF31_RUNTIME_ROOT
 from ..schemas import (
     StatsResponse,
     UnitConvertRequest,
@@ -92,11 +93,13 @@ def list_units(unit_group: str | None = None, db: Session = Depends(get_db)) -> 
 @_base_router.get("/reference/lcia-methods")
 def list_lcia_methods() -> dict:
     def _read_runtime_summary(csv_path: Path) -> dict:
+        manifest_path = csv_path.parent / "manifest.json"
         summary_path = csv_path.parent / "runtime_summary.json"
-        if not summary_path.exists():
+        path = manifest_path if manifest_path.exists() else summary_path
+        if not path.exists():
             return {}
         try:
-            with summary_path.open("r", encoding="utf-8") as handle:
+            with path.open("r", encoding="utf-8") as handle:
                 data = json.load(handle)
             return data if isinstance(data, dict) else {}
         except (OSError, json.JSONDecodeError):
@@ -116,14 +119,24 @@ def list_lcia_methods() -> dict:
                         rows.add(method)
         return rows
 
-    runtime_root = WORKSPACE_ROOT / "agent-memory" / "local-ef31-runtime"
+    runtime_root = DEFAULT_EF31_RUNTIME_ROOT
     runtime_candidates = []
+    active_manifest = runtime_root / ACTIVE_MANIFEST_NAME
+    if active_manifest.exists():
+        try:
+            active = json.loads(active_manifest.read_text(encoding="utf-8"))
+            active_dir = Path(str(active.get("artifact_dir") or active.get("output_dir") or ""))
+            active_indicator = active_dir / "indicator_index.csv"
+            if active_indicator.exists():
+                runtime_candidates.append(active_indicator)
+        except (OSError, json.JSONDecodeError):
+            pass
     if runtime_root.exists():
-        runtime_candidates = [
+        runtime_candidates.extend([
             candidate / "indicator_index.csv"
             for candidate in runtime_root.iterdir()
             if (candidate / "indicator_index.csv").exists()
-        ]
+        ])
     if runtime_candidates:
         scored = []
         for path in runtime_candidates:

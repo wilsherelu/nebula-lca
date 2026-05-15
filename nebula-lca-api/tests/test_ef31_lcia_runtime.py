@@ -294,11 +294,17 @@ class TestPreviewJobLciaArtifacts:
         )
 
         summary_path = output_root / "summary-test" / "runtime_summary.json"
+        manifest_path = output_root / "summary-test" / "manifest.json"
+        active_path = output_root / "active_manifest.json"
         assert summary_path.exists()
+        assert manifest_path.exists()
+        assert active_path.exists()
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
         assert summary["flows_count"] >= 2
         assert summary["indicators_count"] >= 1
         assert summary["factors_count"] == 2
+        assert summary["runtime_schema_version"] == "ef31-runtime-artifact-v1"
+        assert summary["artifact_dir"] == summary["output_dir"]
 
     def test_duplicate_job_raises_error(self, tmp_path):
         job_dir = self._make_job_dir(tmp_path, "dup-test")

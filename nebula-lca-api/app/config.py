@@ -33,6 +33,10 @@ class Settings(BaseModel):
         "NEBULA_LCA_EF31_DIR",
         _default_ef31_dir(),
     )
+    nebula_lca_runtime_root: str = os.getenv(
+        "NEBULA_LCA_RUNTIME_ROOT",
+        str(PROJECT_ROOT / "runtime"),
+    )
     nebula_lca_solver_api_url: str = os.getenv("NEBULA_LCA_SOLVER_API_URL", "http://127.0.0.1:8000")
     debug: bool = _env_bool("DEBUG", False)
     admin_token: str = os.getenv("ADMIN_TOKEN", "")

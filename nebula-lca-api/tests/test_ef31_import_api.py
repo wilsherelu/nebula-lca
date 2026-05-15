@@ -901,6 +901,9 @@ class TestEf31RuntimeCsvEndpoint:
         assert runtime_resp.status_code == 200, runtime_resp.json()
         data = runtime_resp.json()
         assert data["job_id"] == job_id
+        assert data["runtime_schema_version"] == "ef31-runtime-artifact-v1"
+        assert data["runtime_id"] == job_id
+        assert data["active"] is True
         assert data["env_var"] == "NEBULA_LCA_EF31_DIR"
         assert data["flows_count"] >= 1
         assert data["indicators_count"] >= 1
@@ -910,6 +913,8 @@ class TestEf31RuntimeCsvEndpoint:
         assert (Path(data["output_dir"]) / "flow_index.csv").exists()
         assert (Path(data["output_dir"]) / "indicator_index.csv").exists()
         assert (Path(data["output_dir"]) / "lcia_factors.csv").exists()
+        assert (Path(data["output_dir"]) / "manifest.json").exists()
+        assert (Path(data["output_dir"]).parent / "active_manifest.json").exists()
 
         report_resp = client.get(f"/import/ef31/reports/{job_id}")
         assert report_resp.status_code == 200, report_resp.json()

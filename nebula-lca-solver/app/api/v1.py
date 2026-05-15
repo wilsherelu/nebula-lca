@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 import os
 from pathlib import Path
-import csv
+import time
 
 from app.core.schema import (
     ComputeRequest,
@@ -12,10 +12,9 @@ from app.core.schema import (
     PtsCompilePayload,
     PtsCompileResponse,
 )
+from app.core.ef31_runtime_cache import GLOBAL_EF31_RUNTIME_CACHE
 from app.core.lcia import compute_lcia
 from app.core.matrix_builder import (
-    build_c_matrix_from_ef31,
-    build_c_matrix_from_ef31_sources,
     build_matrices_from_snapshot,
 )
 from app.core.pts_compile import compile_pts_from_payload
@@ -31,10 +30,13 @@ def compute(req: ComputeRequest) -> ComputeResponse:
 
 @router.post("/lcia", response_model=LciaResponse)
 def lcia(payload: LciaPayload) -> LciaResponse:
+    total_started_at = time.perf_counter()
     snapshot = payload.snapshot or {}
     if not snapshot:
         raise HTTPException(status_code=400, detail="snapshot payload is required")
+    build_ab_started_at = time.perf_counter()
     base = build_matrices_from_snapshot(snapshot)
+    build_ab_seconds = time.perf_counter() - build_ab_started_at
     issues = base.setdefault("issues", [])
     b_matrix = base["B"]
     ef31_dir = os.environ.get("NEBULA_LCA_EF31_DIR", "data/EF3.1")
@@ -47,45 +49,34 @@ def lcia(payload: LciaPayload) -> LciaResponse:
     legacy_ef31_dir = Path(os.environ.get("NEBULA_LCA_LEGACY_EF31_DIR", "data/EF3.1"))
     if not legacy_ef31_dir.is_absolute():
         legacy_ef31_dir = Path(__file__).resolve().parents[2] / legacy_ef31_dir
+    build_c_started_at = time.perf_counter()
     if selected_methods and selected_methods.issubset({"EF v3.1"}):
-        c_pack = build_c_matrix_from_ef31_sources(
+        c_pack = GLOBAL_EF31_RUNTIME_CACHE.build_c_matrix_from_sources(
             [str(legacy_ef31_dir), ef31_dir],
             b_matrix,
             lcia_methods=payload.lcia_methods,
             issues=base.get("issues"),
         )
     else:
-        c_pack = build_c_matrix_from_ef31(
+        c_pack = GLOBAL_EF31_RUNTIME_CACHE.build_c_matrix_from_dir(
             ef31_dir,
             b_matrix,
             lcia_methods=payload.lcia_methods,
             issues=base.get("issues"),
         )
+    build_c_seconds = time.perf_counter() - build_c_started_at
     c_matrix = c_pack["C"]
 
     try:
+        solve_started_at = time.perf_counter()
         lcia_matrix = compute_lcia(base["A"], b_matrix, c_matrix)
+        solve_seconds = time.perf_counter() - solve_started_at
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     indicator_lookup = c_pack.get("indicator_lookup", {})
     b_flow_rows = b_matrix.get("rows", []) or []
     ef_flow_uuid_set: set[str] = set(c_pack.get("runtime_flow_uuids", set()))
-    if not ef_flow_uuid_set:
-        flow_index_path = Path(ef31_dir) / "flow_index.csv"
-        with flow_index_path.open("r", encoding="utf-8") as handle:
-            reader = csv.reader(handle, delimiter=";")
-            header = next(reader, [])
-            if header:
-                header[0] = header[0].lstrip("\ufeff")
-            col_map = {name: idx for idx, name in enumerate(header)}
-            uuid_idx = col_map.get("FlowUUID")
-            if uuid_idx is not None:
-                for row in reader:
-                    if uuid_idx < len(row):
-                        flow_uuid = row[uuid_idx].strip()
-                        if flow_uuid:
-                            ef_flow_uuid_set.add(flow_uuid)
 
     flows = snapshot.get("flows", []) or []
     flow_name_map = {
@@ -100,6 +91,7 @@ def lcia(payload: LciaPayload) -> LciaResponse:
     ]
 
     mmr_path: str | None = None
+    mmr_started_at = time.perf_counter()
     try:
         # Lazy import to avoid hard-failing service startup when local protobuf
         # runtime version is temporarily mismatched.
@@ -112,6 +104,8 @@ def lcia(payload: LciaPayload) -> LciaResponse:
         mmr_path = str(mmr_file)
     except Exception as exc:
         issues.append(f"MMR export skipped: {exc}")
+    mmr_seconds = time.perf_counter() - mmr_started_at
+    total_seconds = time.perf_counter() - total_started_at
 
     return LciaResponse(
         summary={
@@ -120,6 +114,13 @@ def lcia(payload: LciaPayload) -> LciaResponse:
             "indicator_count": len(c_matrix["rows"]),
             "issue_count": len(issues),
             "missing_ef31_flow_count": len(missing_ef31_flow_uuids),
+            "timing_build_ab_seconds": build_ab_seconds,
+            "timing_build_c_seconds": build_c_seconds,
+            "timing_solve_seconds": solve_seconds,
+            "timing_mmr_seconds": mmr_seconds,
+            "timing_total_seconds": total_seconds,
+            "ef31_runtime_cache_hit": bool(c_pack.get("cache_hit", False)),
+            "ef31_runtime_source_count": int(c_pack.get("runtime_source_count", 0)),
         },
         missing_ef31_flow_uuids=missing_ef31_flow_uuids,
         missing_ef31_flows=missing_ef31_flows,

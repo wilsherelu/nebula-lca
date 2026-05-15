@@ -1,0 +1,14 @@
+{
+  "target_product": "final product",
+  "target_process_uuid": "proc-b",
+  "climate_change": 11.0,
+  "summary": {
+    "indicator_count": 25,
+    "missing_ef31_flow_count": 0
+  },
+  "snapshot": {
+    "process_count": 2,
+    "link_count": 1,
+    "required_flow_uuids": ["08a91e70-3ddc-11dd-923d-0050c2490048"]
+  }
+}

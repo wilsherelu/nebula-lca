@@ -1,0 +1,108 @@
+{
+  "name": "case_chain_two_processes",
+  "graph": {
+    "functionalUnit": "1 kg final product",
+    "nodes": [
+      {
+        "id": "node-a",
+        "node_kind": "unit_process",
+        "mode": "normalized",
+        "process_uuid": "proc-a",
+        "name": "upstream process",
+        "location": "GLO",
+        "reference_product": "intermediate",
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "out-intermediate",
+            "flowUuid": "flow-intermediate",
+            "name": "intermediate",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1.0,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          }
+        ],
+        "emissions": [
+          {
+            "id": "em-a-co2",
+            "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+            "name": "carbon dioxide (fossil) (Mass, kg, Emissions to air, unspecified)",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 3.0,
+            "type": "biosphere",
+            "direction": "output"
+          }
+        ]
+      },
+      {
+        "id": "node-b",
+        "node_kind": "unit_process",
+        "mode": "normalized",
+        "process_uuid": "proc-b",
+        "name": "final process",
+        "location": "GLO",
+        "reference_product": "final product",
+        "inputs": [
+          {
+            "id": "in-intermediate",
+            "flowUuid": "flow-intermediate",
+            "name": "intermediate",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 2.0,
+            "type": "technosphere",
+            "direction": "input"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "out-final",
+            "flowUuid": "flow-final",
+            "name": "final product",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1.0,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          }
+        ],
+        "emissions": [
+          {
+            "id": "em-b-co2",
+            "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+            "name": "carbon dioxide (fossil) (Mass, kg, Emissions to air, unspecified)",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 5.0,
+            "type": "biosphere",
+            "direction": "output"
+          }
+        ]
+      }
+    ],
+    "exchanges": [
+      {
+        "id": "edge-a-b",
+        "fromNode": "node-a",
+        "toNode": "node-b",
+        "sourceHandle": "out:out-intermediate",
+        "targetHandle": "in:in-intermediate",
+        "flowUuid": "flow-intermediate",
+        "flowName": "intermediate",
+        "quantityMode": "single",
+        "amount": 2.0,
+        "providerAmount": 2.0,
+        "consumerAmount": 2.0,
+        "unit": "kg",
+        "type": "technosphere",
+        "allocation": "none"
+      }
+    ],
+    "metadata": {}
+  }
+}
