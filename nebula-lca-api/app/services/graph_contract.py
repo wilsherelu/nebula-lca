@@ -189,7 +189,10 @@ def validate_product_unit_group_consistency(graph: HybridGraph) -> None:
     for node in graph.nodes:
         if node.node_kind not in {"unit_process", "market_process"}:
             continue
-        product_outputs = [port for port in node.outputs if bool(port.isProduct)]
+        product_outputs = [
+            port for port in node.outputs
+            if bool(port.isProduct) and port.allocationFactor is not None
+        ]
         if len(product_outputs) <= 1:
             continue
         distinct_groups = {str(port.unitGroup or "").strip() for port in product_outputs}

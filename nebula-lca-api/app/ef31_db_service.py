@@ -288,6 +288,25 @@ def _build_elementary_exchanges_json(
     return result
 
 
+def _build_reference_product_exchange_json(dataset: LCIDataset) -> dict | None:
+    """Build the single product output required by an LCI dataset node."""
+    if not dataset.reference_product_id:
+        return None
+    return {
+        "exchange_id": dataset.reference_product_id,
+        "exchange_internal_id": dataset.reference_product_id,
+        "flow_uuid": dataset.reference_product_id,
+        "flow_name": dataset.reference_product_name,
+        "unit": dataset.reference_product_unit,
+        "amount": dataset.reference_product_amount or 1,
+        "direction": "output",
+        "flow_type": "Product flow",
+        "is_allocated_product": True,
+        "is_reference_flow": True,
+        "isProduct": True,
+    }
+
+
 def dry_run_lci_import(
     datasets: list[LCIDataset],
     exchanges_map: dict[str, list[LCIElementaryExchange]],
@@ -488,9 +507,12 @@ def commit_lci_import(
             exchanges_json = _build_elementary_exchanges_json(
                 file_exchanges, elementary_flows
             )
+            reference_product_exchange = _build_reference_product_exchange_json(dataset)
+            if reference_product_exchange is not None:
+                exchanges_json = [reference_product_exchange, *exchanges_json]
             process_json = {
                 "reference_flow_uuid": dataset.reference_product_id or None,
-                "reference_flow_internal_id": None,
+                "reference_flow_internal_id": dataset.reference_product_id or None,
                 "reference_product": dataset.reference_product_name,
                 "reference_product_unit": dataset.reference_product_unit,
                 "reference_product_amount": dataset.reference_product_amount,
@@ -513,6 +535,7 @@ def commit_lci_import(
                 process_name_en=dataset.activity_name,
                 process_type="lci_dataset",
                 reference_flow_uuid=dataset.reference_product_id or None,
+                reference_flow_internal_id=dataset.reference_product_id or None,
                 process_json=process_json,
                 source_file=dataset.filename,
                 source_process_uuid=proc_uuid,

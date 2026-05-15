@@ -45,6 +45,37 @@ body,
   min-width: 0;
 }
 
+.topbar-home-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.topbar-brand-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.topbar-brand-copy .title {
+  line-height: 26px;
+}
+
+.topbar-brand-hint {
+  margin-top: -3px;
+  font-size: 9px;
+  font-weight: 500;
+  color: #6c8490;
+  line-height: 1;
+}
+
 .topbar-logo {
   width: 26px;
   height: 26px;
@@ -171,6 +202,19 @@ body,
   font-size: 14px;
   line-height: 1;
   cursor: pointer;
+}
+
+.topbar .topbar-home-link {
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+}
+
+.topbar .topbar-home-link:hover .topbar-brand-hint {
+  color: #0d83ff;
 }
 
 .topbar .ghost-btn {
@@ -481,7 +525,7 @@ body,
 
 .run-analysis-summary {
   display: grid;
-  grid-template-columns: 0.9fr 0.9fr 0.9fr 1.5fr;
+  grid-template-columns: minmax(130px, 0.85fr) minmax(110px, 0.75fr) minmax(110px, 0.75fr) minmax(150px, 0.9fr) minmax(260px, 1.35fr);
   gap: 10px;
   margin-bottom: 10px;
 }
@@ -526,6 +570,7 @@ body,
   line-height: 1.1;
   color: #214858;
   font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
 
 .run-analysis-summary-meta {
@@ -911,6 +956,10 @@ body,
 
 .target-product-modal {
   width: min(620px, calc(100vw - 24px));
+}
+
+.run-config-modal {
+  width: min(560px, calc(100vw - 24px));
 }
 
 .target-product-form {

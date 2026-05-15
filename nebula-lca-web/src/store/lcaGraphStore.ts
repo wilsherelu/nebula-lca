@@ -140,6 +140,7 @@ export type FilteredExchangeEvidence = {
   reason?: string;
 };
 export type ImportedUnitProcessPayload = {
+  nodeKind?: Extract<LcaNodeData["nodeKind"], "unit_process" | "lci_dataset">;
   processUuid: string;
   sourceProcessUuid?: string;
   importMode: ProcessImportMode;
@@ -1101,8 +1102,9 @@ const buildImportedUnitProcessNode = (
     type: "lcaProcess",
     position,
     data: {
-      nodeKind: "unit_process",
-      mode: "balanced",
+      nodeKind: payload.nodeKind ?? "unit_process",
+      mode: payload.nodeKind === "lci_dataset" ? "normalized" : "balanced",
+      lciRole: payload.nodeKind === "lci_dataset" ? "provider" : undefined,
       importMode: payload.importMode,
       sourceProcessUuid: payload.sourceProcessUuid,
       importWarnings: payload.warnings,
@@ -1140,7 +1142,7 @@ const sanitizeMarketNode = (node: Node<LcaNodeData>): Node<LcaNodeData> => {
     const allIntermediates = [...outputIntermediates, ...inputIntermediates];
     const chosen =
       allIntermediates.find((p) => p.flowUuid === node.data.referenceProductFlowUuid) ??
-      allIntermediates[0];
+      (node.data.referenceProductFlowUuid ? undefined : allIntermediates[0]);
 
     const nextInputs = inputBiosphere.concat(
       chosen && chosen.direction === "input" ? [{ ...chosen, direction: "input" as const }] : [],

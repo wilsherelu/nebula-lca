@@ -20,7 +20,8 @@ from fastapi.testclient import TestClient
 import app.database as _db_module
 from app.main import app
 from app.database import Base
-from app.models import DebugDiagnostic, ReferenceProcess
+from app.models import DebugDiagnostic, FlowRecord, ReferenceProcess
+from app.services.catalog_cache import invalidate_management_caches
 
 
 @pytest.fixture(autouse=True)
@@ -48,6 +49,96 @@ def setup_db():
 @pytest.fixture()
 def client():
     return TestClient(app)
+
+
+def test_reference_process_import_accepts_lci_dataset_target(client):
+    """Canvas import for ecoinvent LCI datasets should not be rejected as unimplemented."""
+    source_uuid = "source-lci-process-001"
+    db = _db_module.SessionLocal()
+    try:
+        db.add(
+            FlowRecord(
+                flow_uuid="ref-flow-001",
+                flow_name="reference product",
+                flow_type="Product flow",
+                default_unit="kg",
+                unit_group="Units of mass",
+            )
+        )
+        db.add(
+            FlowRecord(
+                flow_uuid="wrong-intermediate-001",
+                flow_name="coal gangue",
+                flow_type="Product flow",
+                default_unit="kg",
+                unit_group="Units of mass",
+            )
+        )
+        db.add(
+            ReferenceProcess(
+                process_uuid=source_uuid,
+                process_name="Source LCI process",
+                process_name_zh="Source LCI process",
+                process_name_en="Source LCI process",
+                process_type="lci_dataset",
+                reference_flow_uuid="ref-flow-001",
+                process_json={
+                    "process_uuid": source_uuid,
+                    "process_name_zh": "Source LCI process",
+                    "location": "GLO",
+                    "reference_flow_uuid": "ref-flow-001",
+                    "reference_product": "reference product",
+                    "reference_product_unit": "kg",
+                    "reference_product_amount": 1,
+                    "exchanges": [
+                        {
+                            "flow_uuid": "wrong-intermediate-001",
+                            "flow_name": "coal gangue",
+                            "direction": "input",
+                            "amount": 0.6,
+                            "unit": "kg",
+                            "flow_type": "Product flow",
+                        }
+                    ],
+                },
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    try:
+        resp = client.post(
+            "/api/reference/processes/import",
+            json={
+                "target_kind": "lci_dataset",
+                "import_mode": "locked",
+                "process_uuids": [source_uuid],
+            },
+        )
+
+        assert resp.status_code == 200, resp.json()
+        data = resp.json()
+        assert data["target_kind"] == "lci_dataset"
+        assert data["imported_process_count"] == 1
+        imported = data["imported_processes"][0]
+        assert imported["process_kind"] == "lci_dataset"
+        assert imported["reference_flow_uuid"] == "ref-flow-001"
+        product_outputs = [row for row in imported["outputs"] if row["is_product"]]
+        assert len(product_outputs) == 1
+        assert product_outputs[0]["flow_uuid"] == "ref-flow-001"
+        assert all(row["flow_uuid"] != "wrong-intermediate-001" for row in imported["inputs"])
+        assert all(row["flow_uuid"] != "wrong-intermediate-001" for row in imported["outputs"])
+    finally:
+        db = _db_module.SessionLocal()
+        try:
+            db.query(FlowRecord).filter(FlowRecord.flow_uuid.in_(["ref-flow-001", "wrong-intermediate-001"])).delete(
+                synchronize_session=False
+            )
+            db.commit()
+        finally:
+            db.close()
+        invalidate_management_caches(flows=True, stats=True, reference_processes=True)
 
 
 def _make_spold_xml(activity_id: str, rp_id: str, activity_name: str,
@@ -289,7 +380,10 @@ class TestEf31CommitEndpoint:
             assert proc.import_mode == "ecoinvent_ef31_lci"
             assert proc.reference_flow_uuid == "rp-001"
             assert proc.process_json["exchange_count"] == 1
-            assert len(proc.process_json["exchanges"]) == 1
+            assert len(proc.process_json["exchanges"]) == 2
+            assert proc.process_json["exchanges"][0]["flow_uuid"] == "rp-001"
+            assert proc.process_json["exchanges"][0]["isProduct"] is True
+            assert proc.process_json["exchanges"][1]["flow_uuid"] == "flow-co2-001"
         finally:
             db.close()
 
