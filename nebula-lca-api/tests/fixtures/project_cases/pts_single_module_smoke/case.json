@@ -1,0 +1,78 @@
+{
+  "name": "PTS Single Module Smoke",
+  "graph": {
+    "functionalUnit": "1 kg diesel",
+    "nodes": [
+      {
+        "id": "node-diesel-pts",
+        "node_kind": "pts_module",
+        "mode": "normalized",
+        "pts_uuid": "pts-diesel-smoke",
+        "process_uuid": "pts-diesel-smoke",
+        "name": "Diesel PTS",
+        "location": "GLO",
+        "reference_product": "diesel",
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "out-diesel",
+            "flowUuid": "flow-diesel-smoke",
+            "name": "diesel",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1.0,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          }
+        ],
+        "emissions": []
+      }
+    ],
+    "exchanges": [],
+    "metadata": {
+      "canvases": [
+        {
+          "kind": "pts_internal",
+          "parentPtsNodeId": "node-diesel-pts",
+          "nodes": [
+            {
+              "id": "inner-prod",
+              "node_kind": "unit_process",
+              "mode": "normalized",
+              "process_uuid": "inner-prod",
+              "name": "Diesel Production",
+              "location": "GLO",
+              "reference_product": "diesel",
+              "inputs": [],
+              "outputs": [
+                {
+                  "id": "out-diesel",
+                  "flowUuid": "flow-diesel-smoke",
+                  "name": "diesel",
+                  "unit": "kg",
+                  "amount": 1.0,
+                  "type": "technosphere",
+                  "direction": "output",
+                  "isProduct": true
+                }
+              ],
+              "emissions": [
+                {
+                  "id": "em-co2",
+                  "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+                  "name": "carbon dioxide (fossil)",
+                  "unit": "kg",
+                  "amount": 0.5,
+                  "type": "biosphere",
+                  "direction": "output"
+                }
+              ]
+            }
+          ],
+          "edges": []
+        }
+      ]
+    }
+  }
+}

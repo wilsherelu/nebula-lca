@@ -1,0 +1,218 @@
+{
+  "name": "Real PTS Two Modules Coupled",
+  "graph": {
+    "functionalUnit": "1 kg diesel",
+    "nodes": [
+      {
+        "id": "node-diesel-pts",
+        "node_kind": "pts_module",
+        "mode": "normalized",
+        "pts_uuid": "pts_37e7db4a",
+        "process_uuid": "pts_37e7db4a",
+        "name": "Diesel PTS",
+        "location": "GLO",
+        "reference_product": "diesel",
+        "inputs": [
+          {
+            "id": "in-electricity",
+            "flowUuid": "flow-electricity",
+            "name": "electricity",
+            "unit": "kWh",
+            "unitGroup": "Units of energy",
+            "amount": 2.0,
+            "type": "technosphere",
+            "direction": "input"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "out-diesel",
+            "flowUuid": "flow-diesel",
+            "name": "diesel",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1.0,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          }
+        ],
+        "emissions": [
+          {
+            "id": "em-co2-fossil",
+            "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+            "name": "carbon dioxide (fossil)",
+            "unit": "kg",
+            "amount": 1.0,
+            "type": "biosphere",
+            "direction": "output"
+          }
+        ]
+      },
+      {
+        "id": "node-electricity-pts",
+        "node_kind": "pts_module",
+        "mode": "normalized",
+        "pts_uuid": "pts_66c6ed27",
+        "process_uuid": "pts_66c6ed27",
+        "name": "Electricity PTS",
+        "location": "GLO",
+        "reference_product": "electricity",
+        "inputs": [
+          {
+            "id": "in-diesel",
+            "flowUuid": "flow-diesel",
+            "name": "diesel",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 0.5,
+            "type": "technosphere",
+            "direction": "input"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "out-electricity",
+            "flowUuid": "flow-electricity",
+            "name": "electricity",
+            "unit": "kWh",
+            "unitGroup": "Units of energy",
+            "amount": 1.0,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          }
+        ],
+        "emissions": [
+          {
+            "id": "em-co2-fossil-2",
+            "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+            "name": "carbon dioxide (fossil)",
+            "unit": "kg",
+            "amount": 0.2,
+            "type": "biosphere",
+            "direction": "output"
+          }
+        ]
+      }
+    ],
+    "exchanges": [
+      {
+        "id": "edge-diesel-to-electricity",
+        "fromNode": "node-diesel-pts",
+        "toNode": "node-electricity-pts",
+        "sourceHandle": "out:out-diesel",
+        "targetHandle": "in:in-diesel",
+        "flowUuid": "flow-diesel",
+        "flowName": "diesel",
+        "quantityMode": "single",
+        "amount": 0.5,
+        "providerAmount": 0.5,
+        "consumerAmount": 0.5,
+        "unit": "kg",
+        "type": "technosphere",
+        "allocation": "none"
+      },
+      {
+        "id": "edge-electricity-to-diesel",
+        "fromNode": "node-electricity-pts",
+        "toNode": "node-diesel-pts",
+        "sourceHandle": "out:out-electricity",
+        "targetHandle": "in:in-electricity",
+        "flowUuid": "flow-electricity",
+        "flowName": "electricity",
+        "quantityMode": "single",
+        "amount": 2.0,
+        "providerAmount": 2.0,
+        "consumerAmount": 2.0,
+        "unit": "kWh",
+        "type": "technosphere",
+        "allocation": "none"
+      }
+    ],
+    "metadata": {
+      "canvases": [
+        {
+          "kind": "pts_internal",
+          "parentPtsNodeId": "node-diesel-pts",
+          "nodes": [
+            {
+              "id": "inner-diesel-prod",
+              "node_kind": "unit_process",
+              "mode": "normalized",
+              "process_uuid": "inner-diesel-prod",
+              "name": "Diesel Internal Production",
+              "location": "GLO",
+              "reference_product": "diesel",
+              "inputs": [],
+              "outputs": [
+                {
+                  "id": "out-diesel",
+                  "flowUuid": "flow-diesel",
+                  "name": "diesel",
+                  "unit": "kg",
+                  "amount": 1.0,
+                  "type": "technosphere",
+                  "direction": "output",
+                  "isProduct": true
+                }
+              ],
+              "emissions": [
+                {
+                  "id": "em-co2-1",
+                  "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+                  "name": "carbon dioxide (fossil)",
+                  "unit": "kg",
+                  "amount": 0.5,
+                  "type": "biosphere",
+                  "direction": "output"
+                }
+              ]
+            }
+          ],
+          "edges": []
+        },
+        {
+          "kind": "pts_internal",
+          "parentPtsNodeId": "node-electricity-pts",
+          "nodes": [
+            {
+              "id": "inner-electricity-prod",
+              "node_kind": "unit_process",
+              "mode": "normalized",
+              "process_uuid": "inner-electricity-prod",
+              "name": "Electricity Internal Production",
+              "location": "GLO",
+              "reference_product": "electricity",
+              "inputs": [],
+              "outputs": [
+                {
+                  "id": "out-electricity",
+                  "flowUuid": "flow-electricity",
+                  "name": "electricity",
+                  "unit": "kWh",
+                  "amount": 1.0,
+                  "type": "technosphere",
+                  "direction": "output",
+                  "isProduct": true
+                }
+              ],
+              "emissions": [
+                {
+                  "id": "em-co2-2",
+                  "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+                  "name": "carbon dioxide (fossil)",
+                  "unit": "kg",
+                  "amount": 0.1,
+                  "type": "biosphere",
+                  "direction": "output"
+                }
+              ]
+            }
+          ],
+          "edges": []
+        }
+      ]
+    }
+  }
+}
