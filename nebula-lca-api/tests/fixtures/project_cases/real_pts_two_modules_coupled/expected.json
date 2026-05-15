@@ -1,0 +1,26 @@
+{
+  "target_product": "diesel",
+  "target_process_uuid": "pts_37e7db4a::product::diesel-vp",
+  "climate_change": 0.9616985845129058,
+  "summary": {
+    "indicator_count": 25,
+    "missing_ef31_flow_count": 0
+  },
+  "snapshot": {
+    "snapshot_shell_process_count": 2,
+    "link_count": 2,
+    "required_flow_uuids": [
+      "08a91e70-3ddc-11dd-923d-0050c2490048",
+      "flow-diesel",
+      "flow-electricity"
+    ]
+  },
+  "process_index_uuids": [
+    "pts_37e7db4a::product::diesel-vp",
+    "pts_66c6ed27::product::electricity-vp"
+  ],
+  "product_results": {
+    "pts_37e7db4a::product::diesel-vp": 0.9616985845129058,
+    "pts_66c6ed27::product::electricity-vp": 0.9983347210657786
+  }
+}

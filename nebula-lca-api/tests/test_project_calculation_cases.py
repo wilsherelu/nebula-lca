@@ -83,31 +83,30 @@ def test_project_case_pts_single_module_smoke(client, solver_url):
         db.close()
 
 
-# ── PTS two-module coupled regression (xfail: edge binding unverified) ───
+# ── PTS two-module coupled regression ─────────────────────────────────────
 
 def test_project_case_real_pts_two_modules_coupled(client, solver_url):
-    """PTS regression: two coupled PTS modules (diesel + electricity) with inter-supply edges.
+    """PTS coupling: two coupled PTS modules (diesel + electricity) with inter-supply edges.
 
-    This test exercises the full PTS coupling pipeline:
+    Verifies the full PTS coupling pipeline:
       - 2 pts_module nodes with internal canvases
       - 2 inter-PTS technosphere edges (diesel→electricity, electricity→diesel)
       - Pre-seeded PTS resources / definitions / compile artifacts / external artifacts
       - Dynamic graph hash computation
 
-    EXPECTED FAILURE: Edge binding validation in version creation fails for
-    pts_module ↔ pts_module technosphere links. The normalized graph produces
-    edge targets that don't match any known ports in the pts_module's internal
-    scope, causing /api/projects/{id}/versions to return 400.
-
-    When this regression is fixed (PTS normalization should preserve technosphere
-    edges between pts_module nodes, and edge binding should accept them), the
-    expected results are:
+    Expected results (verified from manual calculation):
       - diesel PTS climate change: 0.9616985845129058
       - electricity PTS climate change: 0.9983347210657786
-      - indicator_count: 25, missing_ef31_flow_count: 0
     """
-    pytest.xfail(
-        "PTS edge binding fails for pts_module↔pts_module technosphere edges "
-        "(version creation API returns 400). Fix in PTS normalization/binding "
-        "before enabling this test."
-    )
+    db = _db_module.SessionLocal()
+    try:
+        result = run_project_case(
+            client, db, CASES_ROOT / "real_pts_two_modules_coupled", use_pts=True,
+            pts_graph_hashes={
+                "pts_37e7db4a": "graph-hash-diesel-coupled",
+                "pts_66c6ed27": "graph-hash-electricity-coupled",
+            },
+        )
+        assert_case_result(result)
+    finally:
+        db.close()

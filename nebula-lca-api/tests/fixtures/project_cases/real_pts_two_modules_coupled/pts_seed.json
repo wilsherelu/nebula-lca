@@ -1,0 +1,814 @@
+{
+  "pts_seed": {
+    "resources": [
+      {
+        "id": "resource-diesel-coupled",
+        "project_id": "PLACEHOLDER",
+        "pts_uuid": "pts_37e7db4a",
+        "name": "Diesel PTS Resource",
+        "pts_node_id": "node-diesel-pts",
+        "latest_graph_hash": "graph-hash-diesel-coupled",
+        "compiled_graph_hash": "graph-hash-diesel-coupled",
+        "latest_compile_version": 1,
+        "latest_published_version": 1,
+        "active_published_version": 1,
+        "pts_graph_json": {
+          "nodes": [
+            {
+              "id": "inner-diesel-prod",
+              "node_kind": "unit_process",
+              "name": "Diesel Internal Production",
+              "outputs": [
+                {
+                  "flowUuid": "flow-diesel",
+                  "amount": 1
+                }
+              ]
+            }
+          ],
+          "exchanges": []
+        },
+        "ports_policy_json": {
+          "output_ports": {
+            "flow-diesel": "out-diesel"
+          },
+          "input_ports": {
+            "flow-electricity": "in-electricity"
+          }
+        },
+        "shell_node_json": {
+          "id": "node-diesel-pts",
+          "node_kind": "pts_module",
+          "pts_uuid": "pts_37e7db4a",
+          "process_uuid": "pts_37e7db4a",
+          "name": "Diesel PTS",
+          "inputs": [
+            {
+              "id": "in-electricity",
+              "flowUuid": "flow-electricity",
+              "name": "electricity",
+              "unit": "kWh",
+              "unitGroup": "Units of energy",
+              "amount": 0.4812499999999999,
+              "type": "technosphere",
+              "direction": "input",
+              "showOnNode": true,
+              "internalExposed": true
+            }
+          ],
+          "outputs": [
+            {
+              "id": "out-diesel",
+              "flowUuid": "flow-diesel",
+              "name": "diesel",
+              "unit": "kg",
+              "unitGroup": "Units of mass",
+              "amount": 1,
+              "type": "technosphere",
+              "direction": "output",
+              "isProduct": true,
+              "showOnNode": true,
+              "internalExposed": true,
+              "product_key": "pts_37e7db4a::product::diesel-vp",
+              "port_key": "pts_37e7db4a::product::diesel-vp",
+              "reference_product_flow_uuid": "flow-diesel",
+              "product_name": "diesel"
+            }
+          ]
+        },
+        "published_at": "2026-01-01T00:00:00Z",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z"
+      },
+      {
+        "id": "resource-electricity-coupled",
+        "project_id": "PLACEHOLDER",
+        "pts_uuid": "pts_66c6ed27",
+        "name": "Electricity PTS Resource",
+        "pts_node_id": "node-electricity-pts",
+        "latest_graph_hash": "graph-hash-electricity-coupled",
+        "compiled_graph_hash": "graph-hash-electricity-coupled",
+        "latest_compile_version": 1,
+        "latest_published_version": 1,
+        "active_published_version": 1,
+        "pts_graph_json": {
+          "nodes": [
+            {
+              "id": "inner-electricity-prod",
+              "node_kind": "unit_process",
+              "name": "Electricity Internal Production",
+              "outputs": [
+                {
+                  "flowUuid": "flow-electricity",
+                  "amount": 1
+                }
+              ]
+            }
+          ],
+          "exchanges": []
+        },
+        "ports_policy_json": {
+          "output_ports": {
+            "flow-electricity": "out-electricity"
+          },
+          "input_ports": {
+            "flow-diesel": "in-diesel"
+          }
+        },
+        "shell_node_json": {
+          "id": "node-electricity-pts",
+          "node_kind": "pts_module",
+          "pts_uuid": "pts_66c6ed27",
+          "process_uuid": "pts_66c6ed27",
+          "name": "Electricity PTS",
+          "inputs": [
+            {
+              "id": "in-diesel",
+              "flowUuid": "flow-diesel",
+              "name": "diesel",
+              "unit": "kg",
+              "unitGroup": "Units of mass",
+              "amount": 0.04347826086956522,
+              "type": "technosphere",
+              "direction": "input",
+              "showOnNode": true,
+              "internalExposed": true
+            }
+          ],
+          "outputs": [
+            {
+              "id": "out-electricity",
+              "flowUuid": "flow-electricity",
+              "name": "electricity",
+              "unit": "kWh",
+              "unitGroup": "Units of energy",
+              "amount": 1,
+              "type": "technosphere",
+              "direction": "output",
+              "isProduct": true,
+              "showOnNode": true,
+              "internalExposed": true,
+              "product_key": "pts_66c6ed27::product::electricity-vp",
+              "port_key": "pts_66c6ed27::product::electricity-vp",
+              "reference_product_flow_uuid": "flow-electricity",
+              "product_name": "electricity"
+            }
+          ]
+        },
+        "published_at": "2026-01-01T00:00:00Z",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "definitions": [
+      {
+        "id": "def-diesel-coupled",
+        "project_id": "PLACEHOLDER",
+        "pts_id": null,
+        "pts_uuid": "pts_37e7db4a",
+        "pts_node_id": "node-diesel-pts",
+        "internal_node_ids_json": [
+          "inner-diesel-prod"
+        ],
+        "product_refs_json": [
+          {
+            "flow_uuid": "flow-diesel",
+            "amount": 1
+          }
+        ],
+        "ports_policy_json": {
+          "output_ports": {
+            "flow-diesel": "out-diesel"
+          },
+          "input_ports": {
+            "flow-electricity": "in-electricity"
+          }
+        },
+        "latest_graph_hash": "graph-hash-diesel-coupled",
+        "definition_json": {},
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z"
+      },
+      {
+        "id": "def-electricity-coupled",
+        "project_id": "PLACEHOLDER",
+        "pts_id": null,
+        "pts_uuid": "pts_66c6ed27",
+        "pts_node_id": "node-electricity-pts",
+        "internal_node_ids_json": [
+          "inner-electricity-prod"
+        ],
+        "product_refs_json": [
+          {
+            "flow_uuid": "flow-electricity",
+            "amount": 1
+          }
+        ],
+        "ports_policy_json": {
+          "output_ports": {
+            "flow-electricity": "out-electricity"
+          },
+          "input_ports": {
+            "flow-diesel": "in-diesel"
+          }
+        },
+        "latest_graph_hash": "graph-hash-electricity-coupled",
+        "definition_json": {},
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "compile_artifacts": [
+      {
+        "id": "compile-diesel-coupled",
+        "project_id": "PLACEHOLDER",
+        "pts_node_id": "node-diesel-pts",
+        "pts_uuid": "pts_37e7db4a",
+        "graph_hash": "graph-hash-diesel-coupled",
+        "compile_version": 1,
+        "ok": true,
+        "matrix_size": 1,
+        "invertible": true,
+        "errors_json": [],
+        "warnings_json": [],
+        "artifact_json": {
+          "pts_node_id": "node-diesel-pts",
+          "graph_hash": "graph-hash-diesel-coupled",
+          "ok": true,
+          "matrix_size": 1,
+          "invertible": true,
+          "errors": [],
+          "warnings": [],
+          "virtual_processes": [
+            {
+              "process_uuid": "pts_37e7db4a::product::diesel-vp",
+              "process_name": "Diesel VP",
+              "product_key": "pts_37e7db4a::product::diesel-vp",
+              "source_process_uuid": "inner-diesel-prod",
+              "source_node_id": "inner-diesel-prod",
+              "source_port_id": "out-diesel",
+              "reference_product": {
+                "id": "out-diesel",
+                "flowUuid": "flow-diesel",
+                "name": "diesel",
+                "unit": "kg",
+                "amount": 1,
+                "unitGroup": "Units of mass"
+              },
+              "elementary_flows": [
+                {
+                  "id": "em-co2-diesel-vp",
+                  "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+                  "name": "carbon dioxide (fossil)",
+                  "unit": "kg",
+                  "amount": 0.48124999999999984
+                }
+              ],
+              "technosphere_inputs": [
+                {
+                  "id": "in-electricity",
+                  "flowUuid": "flow-electricity",
+                  "name": "electricity",
+                  "unit": "kWh",
+                  "unitGroup": "Units of energy",
+                  "amount": 0.4812499999999999,
+                  "type": "technosphere",
+                  "direction": "input",
+                  "showOnNode": true,
+                  "internalExposed": true
+                }
+              ]
+            }
+          ],
+          "external_boundary": {
+            "inputs": [
+              {
+                "id": "in-electricity",
+                "flowUuid": "flow-electricity",
+                "name": "electricity",
+                "unit": "kWh",
+                "unitGroup": "Units of energy",
+                "amount": 0.4812499999999999,
+                "type": "technosphere",
+                "direction": "input",
+                "showOnNode": true,
+                "internalExposed": true
+              }
+            ],
+            "outputs": [
+              {
+                "id": "out-diesel",
+                "flowUuid": "flow-diesel",
+                "name": "diesel",
+                "unit": "kg",
+                "unitGroup": "Units of mass",
+                "amount": 1,
+                "type": "technosphere",
+                "direction": "output",
+                "isProduct": true,
+                "showOnNode": true,
+                "internalExposed": true,
+                "product_key": "pts_37e7db4a::product::diesel-vp",
+                "port_key": "pts_37e7db4a::product::diesel-vp",
+                "reference_product_flow_uuid": "flow-diesel",
+                "product_name": "diesel"
+              }
+            ],
+            "elementary": [
+              {
+                "id": "em-co2-pts_37e7db4a",
+                "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+                "name": "carbon dioxide (fossil)",
+                "unit": "kg",
+                "unitGroup": "Units of mass",
+                "amount": 0.48124999999999984,
+                "type": "biosphere",
+                "direction": "output",
+                "showOnNode": false
+              }
+            ]
+          },
+          "frontend_ports": {
+            "inputs": [
+              {
+                "id": "in-electricity",
+                "flowUuid": "flow-electricity",
+                "name": "electricity",
+                "unit": "kWh",
+                "unitGroup": "Units of energy",
+                "amount": 0.4812499999999999,
+                "type": "technosphere",
+                "direction": "input",
+                "showOnNode": true,
+                "internalExposed": true
+              }
+            ],
+            "outputs": [
+              {
+                "id": "out-diesel",
+                "flowUuid": "flow-diesel",
+                "name": "diesel",
+                "unit": "kg",
+                "unitGroup": "Units of mass",
+                "amount": 1,
+                "type": "technosphere",
+                "direction": "output",
+                "isProduct": true,
+                "showOnNode": true,
+                "internalExposed": true,
+                "product_key": "pts_37e7db4a::product::diesel-vp",
+                "port_key": "pts_37e7db4a::product::diesel-vp",
+                "reference_product_flow_uuid": "flow-diesel",
+                "product_name": "diesel"
+              }
+            ]
+          }
+        },
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z"
+      },
+      {
+        "id": "compile-electricity-coupled",
+        "project_id": "PLACEHOLDER",
+        "pts_node_id": "node-electricity-pts",
+        "pts_uuid": "pts_66c6ed27",
+        "graph_hash": "graph-hash-electricity-coupled",
+        "compile_version": 1,
+        "ok": true,
+        "matrix_size": 1,
+        "invertible": true,
+        "errors_json": [],
+        "warnings_json": [],
+        "artifact_json": {
+          "pts_node_id": "node-electricity-pts",
+          "graph_hash": "graph-hash-electricity-coupled",
+          "ok": true,
+          "matrix_size": 1,
+          "invertible": true,
+          "errors": [],
+          "warnings": [],
+          "virtual_processes": [
+            {
+              "process_uuid": "pts_66c6ed27::product::electricity-vp",
+              "process_name": "Electricity VP",
+              "product_key": "pts_66c6ed27::product::electricity-vp",
+              "source_process_uuid": "inner-electricity-prod",
+              "source_node_id": "inner-electricity-prod",
+              "source_port_id": "out-electricity",
+              "reference_product": {
+                "id": "out-electricity",
+                "flowUuid": "flow-electricity",
+                "name": "electricity",
+                "unit": "kWh",
+                "amount": 1,
+                "unitGroup": "Units of energy"
+              },
+              "elementary_flows": [
+                {
+                  "id": "em-co2-electricity-vp",
+                  "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+                  "name": "carbon dioxide (fossil)",
+                  "unit": "kg",
+                  "amount": 0.9565217391304348
+                }
+              ],
+              "technosphere_inputs": [
+                {
+                  "id": "in-diesel",
+                  "flowUuid": "flow-diesel",
+                  "name": "diesel",
+                  "unit": "kg",
+                  "unitGroup": "Units of mass",
+                  "amount": 0.04347826086956522,
+                  "type": "technosphere",
+                  "direction": "input",
+                  "showOnNode": true,
+                  "internalExposed": true
+                }
+              ]
+            }
+          ],
+          "external_boundary": {
+            "inputs": [
+              {
+                "id": "in-diesel",
+                "flowUuid": "flow-diesel",
+                "name": "diesel",
+                "unit": "kg",
+                "unitGroup": "Units of mass",
+                "amount": 0.04347826086956522,
+                "type": "technosphere",
+                "direction": "input",
+                "showOnNode": true,
+                "internalExposed": true
+              }
+            ],
+            "outputs": [
+              {
+                "id": "out-electricity",
+                "flowUuid": "flow-electricity",
+                "name": "electricity",
+                "unit": "kWh",
+                "unitGroup": "Units of energy",
+                "amount": 1,
+                "type": "technosphere",
+                "direction": "output",
+                "isProduct": true,
+                "showOnNode": true,
+                "internalExposed": true,
+                "product_key": "pts_66c6ed27::product::electricity-vp",
+                "port_key": "pts_66c6ed27::product::electricity-vp",
+                "reference_product_flow_uuid": "flow-electricity",
+                "product_name": "electricity"
+              }
+            ],
+            "elementary": [
+              {
+                "id": "em-co2-pts_66c6ed27",
+                "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+                "name": "carbon dioxide (fossil)",
+                "unit": "kg",
+                "unitGroup": "Units of mass",
+                "amount": 0.9565217391304348,
+                "type": "biosphere",
+                "direction": "output",
+                "showOnNode": false
+              }
+            ]
+          },
+          "frontend_ports": {
+            "inputs": [
+              {
+                "id": "in-diesel",
+                "flowUuid": "flow-diesel",
+                "name": "diesel",
+                "unit": "kg",
+                "unitGroup": "Units of mass",
+                "amount": 0.04347826086956522,
+                "type": "technosphere",
+                "direction": "input",
+                "showOnNode": true,
+                "internalExposed": true
+              }
+            ],
+            "outputs": [
+              {
+                "id": "out-electricity",
+                "flowUuid": "flow-electricity",
+                "name": "electricity",
+                "unit": "kWh",
+                "unitGroup": "Units of energy",
+                "amount": 1,
+                "type": "technosphere",
+                "direction": "output",
+                "isProduct": true,
+                "showOnNode": true,
+                "internalExposed": true,
+                "product_key": "pts_66c6ed27::product::electricity-vp",
+                "port_key": "pts_66c6ed27::product::electricity-vp",
+                "reference_product_flow_uuid": "flow-electricity",
+                "product_name": "electricity"
+              }
+            ]
+          }
+        },
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "external_artifacts": [
+      {
+        "id": "ext-artifact-diesel-coupled",
+        "project_id": "PLACEHOLDER",
+        "pts_id": null,
+        "pts_uuid": "pts_37e7db4a",
+        "pts_node_id": "node-diesel-pts",
+        "graph_hash": "graph-hash-diesel-coupled",
+        "published_version": 1,
+        "source_compile_id": "compile-diesel-coupled",
+        "source_compile_version": 1,
+        "artifact_json": {
+          "pts_node_id": "node-diesel-pts",
+          "graph_hash": "graph-hash-diesel-coupled",
+          "ok": true,
+          "matrix_size": 1,
+          "invertible": true,
+          "errors": [],
+          "warnings": [],
+          "virtual_processes": [
+            {
+              "process_uuid": "pts_37e7db4a::product::diesel-vp",
+              "process_name": "Diesel VP",
+              "product_key": "pts_37e7db4a::product::diesel-vp",
+              "source_process_uuid": "inner-diesel-prod",
+              "source_node_id": "inner-diesel-prod",
+              "source_port_id": "out-diesel",
+              "reference_product": {
+                "id": "out-diesel",
+                "flowUuid": "flow-diesel",
+                "name": "diesel",
+                "unit": "kg",
+                "amount": 1,
+                "unitGroup": "Units of mass"
+              },
+              "elementary_flows": [
+                {
+                  "id": "em-co2-diesel-vp",
+                  "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+                  "name": "carbon dioxide (fossil)",
+                  "unit": "kg",
+                  "amount": 0.48124999999999984
+                }
+              ],
+              "technosphere_inputs": [
+                {
+                  "id": "in-electricity",
+                  "flowUuid": "flow-electricity",
+                  "name": "electricity",
+                  "unit": "kWh",
+                  "unitGroup": "Units of energy",
+                  "amount": 0.4812499999999999,
+                  "type": "technosphere",
+                  "direction": "input",
+                  "showOnNode": true,
+                  "internalExposed": true
+                }
+              ]
+            }
+          ],
+          "external_boundary": {
+            "inputs": [
+              {
+                "id": "in-electricity",
+                "flowUuid": "flow-electricity",
+                "name": "electricity",
+                "unit": "kWh",
+                "unitGroup": "Units of energy",
+                "amount": 0.4812499999999999,
+                "type": "technosphere",
+                "direction": "input",
+                "showOnNode": true,
+                "internalExposed": true
+              }
+            ],
+            "outputs": [
+              {
+                "id": "out-diesel",
+                "flowUuid": "flow-diesel",
+                "name": "diesel",
+                "unit": "kg",
+                "unitGroup": "Units of mass",
+                "amount": 1,
+                "type": "technosphere",
+                "direction": "output",
+                "isProduct": true,
+                "showOnNode": true,
+                "internalExposed": true,
+                "product_key": "pts_37e7db4a::product::diesel-vp",
+                "port_key": "pts_37e7db4a::product::diesel-vp",
+                "reference_product_flow_uuid": "flow-diesel",
+                "product_name": "diesel"
+              }
+            ],
+            "elementary": [
+              {
+                "id": "em-co2-pts_37e7db4a",
+                "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+                "name": "carbon dioxide (fossil)",
+                "unit": "kg",
+                "unitGroup": "Units of mass",
+                "amount": 0.48124999999999984,
+                "type": "biosphere",
+                "direction": "output",
+                "showOnNode": false
+              }
+            ]
+          },
+          "frontend_ports": {
+            "inputs": [
+              {
+                "id": "in-electricity",
+                "flowUuid": "flow-electricity",
+                "name": "electricity",
+                "unit": "kWh",
+                "unitGroup": "Units of energy",
+                "amount": 0.4812499999999999,
+                "type": "technosphere",
+                "direction": "input",
+                "showOnNode": true,
+                "internalExposed": true
+              }
+            ],
+            "outputs": [
+              {
+                "id": "out-diesel",
+                "flowUuid": "flow-diesel",
+                "name": "diesel",
+                "unit": "kg",
+                "unitGroup": "Units of mass",
+                "amount": 1,
+                "type": "technosphere",
+                "direction": "output",
+                "isProduct": true,
+                "showOnNode": true,
+                "internalExposed": true,
+                "product_key": "pts_37e7db4a::product::diesel-vp",
+                "port_key": "pts_37e7db4a::product::diesel-vp",
+                "reference_product_flow_uuid": "flow-diesel",
+                "product_name": "diesel"
+              }
+            ]
+          }
+        },
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z"
+      },
+      {
+        "id": "ext-artifact-electricity-coupled",
+        "project_id": "PLACEHOLDER",
+        "pts_id": null,
+        "pts_uuid": "pts_66c6ed27",
+        "pts_node_id": "node-electricity-pts",
+        "graph_hash": "graph-hash-electricity-coupled",
+        "published_version": 1,
+        "source_compile_id": "compile-electricity-coupled",
+        "source_compile_version": 1,
+        "artifact_json": {
+          "pts_node_id": "node-electricity-pts",
+          "graph_hash": "graph-hash-electricity-coupled",
+          "ok": true,
+          "matrix_size": 1,
+          "invertible": true,
+          "errors": [],
+          "warnings": [],
+          "virtual_processes": [
+            {
+              "process_uuid": "pts_66c6ed27::product::electricity-vp",
+              "process_name": "Electricity VP",
+              "product_key": "pts_66c6ed27::product::electricity-vp",
+              "source_process_uuid": "inner-electricity-prod",
+              "source_node_id": "inner-electricity-prod",
+              "source_port_id": "out-electricity",
+              "reference_product": {
+                "id": "out-electricity",
+                "flowUuid": "flow-electricity",
+                "name": "electricity",
+                "unit": "kWh",
+                "amount": 1,
+                "unitGroup": "Units of energy"
+              },
+              "elementary_flows": [
+                {
+                  "id": "em-co2-electricity-vp",
+                  "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+                  "name": "carbon dioxide (fossil)",
+                  "unit": "kg",
+                  "amount": 0.9565217391304348
+                }
+              ],
+              "technosphere_inputs": [
+                {
+                  "id": "in-diesel",
+                  "flowUuid": "flow-diesel",
+                  "name": "diesel",
+                  "unit": "kg",
+                  "unitGroup": "Units of mass",
+                  "amount": 0.04347826086956522,
+                  "type": "technosphere",
+                  "direction": "input",
+                  "showOnNode": true,
+                  "internalExposed": true
+                }
+              ]
+            }
+          ],
+          "external_boundary": {
+            "inputs": [
+              {
+                "id": "in-diesel",
+                "flowUuid": "flow-diesel",
+                "name": "diesel",
+                "unit": "kg",
+                "unitGroup": "Units of mass",
+                "amount": 0.04347826086956522,
+                "type": "technosphere",
+                "direction": "input",
+                "showOnNode": true,
+                "internalExposed": true
+              }
+            ],
+            "outputs": [
+              {
+                "id": "out-electricity",
+                "flowUuid": "flow-electricity",
+                "name": "electricity",
+                "unit": "kWh",
+                "unitGroup": "Units of energy",
+                "amount": 1,
+                "type": "technosphere",
+                "direction": "output",
+                "isProduct": true,
+                "showOnNode": true,
+                "internalExposed": true,
+                "product_key": "pts_66c6ed27::product::electricity-vp",
+                "port_key": "pts_66c6ed27::product::electricity-vp",
+                "reference_product_flow_uuid": "flow-electricity",
+                "product_name": "electricity"
+              }
+            ],
+            "elementary": [
+              {
+                "id": "em-co2-pts_66c6ed27",
+                "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+                "name": "carbon dioxide (fossil)",
+                "unit": "kg",
+                "unitGroup": "Units of mass",
+                "amount": 0.9565217391304348,
+                "type": "biosphere",
+                "direction": "output",
+                "showOnNode": false
+              }
+            ]
+          },
+          "frontend_ports": {
+            "inputs": [
+              {
+                "id": "in-diesel",
+                "flowUuid": "flow-diesel",
+                "name": "diesel",
+                "unit": "kg",
+                "unitGroup": "Units of mass",
+                "amount": 0.04347826086956522,
+                "type": "technosphere",
+                "direction": "input",
+                "showOnNode": true,
+                "internalExposed": true
+              }
+            ],
+            "outputs": [
+              {
+                "id": "out-electricity",
+                "flowUuid": "flow-electricity",
+                "name": "electricity",
+                "unit": "kWh",
+                "unitGroup": "Units of energy",
+                "amount": 1,
+                "type": "technosphere",
+                "direction": "output",
+                "isProduct": true,
+                "showOnNode": true,
+                "internalExposed": true,
+                "product_key": "pts_66c6ed27::product::electricity-vp",
+                "port_key": "pts_66c6ed27::product::electricity-vp",
+                "reference_product_flow_uuid": "flow-electricity",
+                "product_name": "electricity"
+              }
+            ]
+          }
+        },
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z"
+      }
+    ]
+  }
+}
