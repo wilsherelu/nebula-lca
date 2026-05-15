@@ -19,7 +19,7 @@
             "name": "electricity",
             "unit": "kWh",
             "unitGroup": "Units of energy",
-            "amount": 2.0,
+            "amount": 0.4812499999999999,
             "type": "technosphere",
             "direction": "input"
           }
@@ -31,7 +31,7 @@
             "name": "diesel",
             "unit": "kg",
             "unitGroup": "Units of mass",
-            "amount": 1.0,
+            "amount": 1,
             "type": "technosphere",
             "direction": "output",
             "isProduct": true
@@ -43,7 +43,7 @@
             "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
             "name": "carbon dioxide (fossil)",
             "unit": "kg",
-            "amount": 1.0,
+            "amount": 1,
             "type": "biosphere",
             "direction": "output"
           }
@@ -65,7 +65,7 @@
             "name": "diesel",
             "unit": "kg",
             "unitGroup": "Units of mass",
-            "amount": 0.5,
+            "amount": 0.04347826086956522,
             "type": "technosphere",
             "direction": "input"
           }
@@ -77,7 +77,7 @@
             "name": "electricity",
             "unit": "kWh",
             "unitGroup": "Units of energy",
-            "amount": 1.0,
+            "amount": 1,
             "type": "technosphere",
             "direction": "output",
             "isProduct": true
@@ -106,9 +106,9 @@
         "flowUuid": "flow-diesel",
         "flowName": "diesel",
         "quantityMode": "single",
-        "amount": 0.5,
-        "providerAmount": 0.5,
-        "consumerAmount": 0.5,
+        "amount": 0.04347826086956522,
+        "providerAmount": 0.04347826086956522,
+        "consumerAmount": 0.04347826086956522,
         "unit": "kg",
         "type": "technosphere",
         "allocation": "none"
@@ -122,9 +122,9 @@
         "flowUuid": "flow-electricity",
         "flowName": "electricity",
         "quantityMode": "single",
-        "amount": 2.0,
-        "providerAmount": 2.0,
-        "consumerAmount": 2.0,
+        "amount": 0.4812499999999999,
+        "providerAmount": 0.4812499999999999,
+        "consumerAmount": 0.4812499999999999,
         "unit": "kWh",
         "type": "technosphere",
         "allocation": "none"
@@ -151,7 +151,7 @@
                   "flowUuid": "flow-diesel",
                   "name": "diesel",
                   "unit": "kg",
-                  "amount": 1.0,
+                  "amount": 1,
                   "type": "technosphere",
                   "direction": "output",
                   "isProduct": true
@@ -163,7 +163,7 @@
                   "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
                   "name": "carbon dioxide (fossil)",
                   "unit": "kg",
-                  "amount": 0.5,
+                  "amount": 0.48124999999999984,
                   "type": "biosphere",
                   "direction": "output"
                 }
@@ -191,7 +191,7 @@
                   "flowUuid": "flow-electricity",
                   "name": "electricity",
                   "unit": "kWh",
-                  "amount": 1.0,
+                  "amount": 1,
                   "type": "technosphere",
                   "direction": "output",
                   "isProduct": true
@@ -203,7 +203,7 @@
                   "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
                   "name": "carbon dioxide (fossil)",
                   "unit": "kg",
-                  "amount": 0.1,
+                  "amount": 0.9565217391304348,
                   "type": "biosphere",
                   "direction": "output"
                 }

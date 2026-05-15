@@ -2879,7 +2879,20 @@ def _overlay_pts_port_visibility(
         show_on_node = bool(port.showOnNode)
         if submitted is not None:
             show_on_node = bool(submitted.showOnNode)
-        if str(port.id or "") in connected_port_ids:
+        connected_ids = {str(port.id or "").strip(), str(port.legacy_port_id or "").strip()}
+        if submitted is not None:
+            connected_ids.update({
+                str(submitted.id or "").strip(),
+                str(submitted.legacy_port_id or "").strip(),
+            })
+        if connected_ids.intersection(connected_port_ids):
             show_on_node = True
-        merged.append(port.model_copy(update={"showOnNode": show_on_node}))
+        # Use submitted port when matched to preserve original port IDs.
+        # This prevents edge binding from breaking when projected ports have
+        # auto-generated IDs (e.g. ptsout_<sha256>) that differ from the
+        # IDs the graph edges reference.
+        if submitted is not None:
+            merged.append(submitted.model_copy(update={"showOnNode": show_on_node}))
+        else:
+            merged.append(port.model_copy(update={"showOnNode": show_on_node}))
     return merged
