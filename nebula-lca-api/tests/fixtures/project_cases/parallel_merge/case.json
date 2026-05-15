@@ -1,0 +1,169 @@
+{
+  "name": "case_parallel_merge",
+  "graph": {
+    "functionalUnit": "1 kg final product",
+    "nodes": [
+      {
+        "id": "node-a",
+        "node_kind": "unit_process",
+        "mode": "normalized",
+        "process_uuid": "proc-a",
+        "name": "upstream process A",
+        "location": "GLO",
+        "reference_product": "intermediate-a",
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "out-a",
+            "flowUuid": "flow-intermediate-a",
+            "name": "intermediate-a",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1.0,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          }
+        ],
+        "emissions": [
+          {
+            "id": "em-a-co2",
+            "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+            "name": "carbon dioxide (fossil) (Mass, kg, Emissions to air, unspecified)",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 2.0,
+            "type": "biosphere",
+            "direction": "output"
+          }
+        ]
+      },
+      {
+        "id": "node-b",
+        "node_kind": "unit_process",
+        "mode": "normalized",
+        "process_uuid": "proc-b",
+        "name": "upstream process B",
+        "location": "GLO",
+        "reference_product": "intermediate-b",
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "out-b",
+            "flowUuid": "flow-intermediate-b",
+            "name": "intermediate-b",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1.0,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          }
+        ],
+        "emissions": [
+          {
+            "id": "em-b-co2",
+            "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+            "name": "carbon dioxide (fossil) (Mass, kg, Emissions to air, unspecified)",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 3.0,
+            "type": "biosphere",
+            "direction": "output"
+          }
+        ]
+      },
+      {
+        "id": "node-c",
+        "node_kind": "unit_process",
+        "mode": "normalized",
+        "process_uuid": "proc-c",
+        "name": "final process C",
+        "location": "GLO",
+        "reference_product": "final product",
+        "inputs": [
+          {
+            "id": "in-a",
+            "flowUuid": "flow-intermediate-a",
+            "name": "intermediate-a",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1.0,
+            "type": "technosphere",
+            "direction": "input"
+          },
+          {
+            "id": "in-b",
+            "flowUuid": "flow-intermediate-b",
+            "name": "intermediate-b",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 2.0,
+            "type": "technosphere",
+            "direction": "input"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "out-final",
+            "flowUuid": "flow-final",
+            "name": "final product",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1.0,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          }
+        ],
+        "emissions": [
+          {
+            "id": "em-c-co2",
+            "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+            "name": "carbon dioxide (fossil) (Mass, kg, Emissions to air, unspecified)",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 5.0,
+            "type": "biosphere",
+            "direction": "output"
+          }
+        ]
+      }
+    ],
+    "exchanges": [
+      {
+        "id": "edge-a-c",
+        "fromNode": "node-a",
+        "toNode": "node-c",
+        "sourceHandle": "out:out-a",
+        "targetHandle": "in:in-a",
+        "flowUuid": "flow-intermediate-a",
+        "flowName": "intermediate-a",
+        "quantityMode": "single",
+        "amount": 1.0,
+        "providerAmount": 1.0,
+        "consumerAmount": 1.0,
+        "unit": "kg",
+        "type": "technosphere",
+        "allocation": "none"
+      },
+      {
+        "id": "edge-b-c",
+        "fromNode": "node-b",
+        "toNode": "node-c",
+        "sourceHandle": "out:out-b",
+        "targetHandle": "in:in-b",
+        "flowUuid": "flow-intermediate-b",
+        "flowName": "intermediate-b",
+        "quantityMode": "single",
+        "amount": 2.0,
+        "providerAmount": 2.0,
+        "consumerAmount": 2.0,
+        "unit": "kg",
+        "type": "technosphere",
+        "allocation": "none"
+      }
+    ],
+    "metadata": {}
+  }
+}

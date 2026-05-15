@@ -48,6 +48,10 @@ def solver_url(tmp_path_factory):
         "single_process",
         "chain_two_processes",
         "ecoinvent_lci_provider",
+        "parallel_merge",
+        "multi_product_same_unit_group",
+        "mixed_tiangong_ecoinvent_ef31",
+        "eco_lci_to_custom_process",
     ],
 )
 def test_project_case_closed_loop_calculation(client, solver_url, case_name):

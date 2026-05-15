@@ -1,0 +1,109 @@
+{
+  "name": "case_eco_lci_to_custom_process",
+  "graph": {
+    "functionalUnit": "1 kg final product",
+    "nodes": [
+      {
+        "id": "node-eco",
+        "node_kind": "lci_dataset",
+        "mode": "normalized",
+        "lci_role": "provider",
+        "process_uuid": "proc-eco-lci",
+        "name": "eco LCI provider",
+        "location": "GLO",
+        "reference_product": "eco reference product",
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "out-eco-product",
+            "flowUuid": "flow-eco-product",
+            "name": "eco reference product",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1.0,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          }
+        ],
+        "emissions": [
+          {
+            "id": "em-eco-ch4",
+            "flowUuid": "flow-eco-ch4",
+            "name": "Methane (synthetic eco)",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1.0,
+            "type": "biosphere",
+            "direction": "output"
+          }
+        ]
+      },
+      {
+        "id": "node-custom",
+        "node_kind": "unit_process",
+        "mode": "normalized",
+        "process_uuid": "proc-custom",
+        "name": "custom downstream process",
+        "location": "GLO",
+        "reference_product": "final product",
+        "inputs": [
+          {
+            "id": "in-eco",
+            "flowUuid": "flow-eco-product",
+            "name": "eco reference product",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 2.0,
+            "type": "technosphere",
+            "direction": "input"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "out-final",
+            "flowUuid": "flow-final",
+            "name": "final product",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1.0,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          }
+        ],
+        "emissions": [
+          {
+            "id": "em-custom-co2",
+            "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+            "name": "carbon dioxide (fossil) (Mass, kg, Emissions to air, unspecified)",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 3.0,
+            "type": "biosphere",
+            "direction": "output"
+          }
+        ]
+      }
+    ],
+    "exchanges": [
+      {
+        "id": "edge-eco-custom",
+        "fromNode": "node-eco",
+        "toNode": "node-custom",
+        "sourceHandle": "out:out-eco-product",
+        "targetHandle": "in:in-eco",
+        "flowUuid": "flow-eco-product",
+        "flowName": "eco reference product",
+        "quantityMode": "single",
+        "amount": 2.0,
+        "providerAmount": 2.0,
+        "consumerAmount": 2.0,
+        "unit": "kg",
+        "type": "technosphere",
+        "allocation": "none"
+      }
+    ],
+    "metadata": {}
+  }
+}
