@@ -165,6 +165,7 @@ type ProductResultRow = {
   processUuid: string;
   rawProcessUuid: string;
   processName: string;
+  processLocation?: string;
   productPortId: string;
   productFlowUuid: string;
   productName: string;
@@ -4541,6 +4542,7 @@ export default function App() {
       const productNameEn = String(obj.product_name_en ?? "").trim();
       let processUuid = rawProcessUuid;
       let processName = String(obj.process_name ?? obj.process_uuid ?? "");
+      const processLocation = String(obj.process_location ?? "").trim();
       let ptsProcessName = "";
       let productName =
         (uiLanguage === "en" ? productNameEn || productNameZh : productNameZh) || productKey;
@@ -4607,6 +4609,7 @@ export default function App() {
         processUuid,
         rawProcessUuid,
         processName,
+        processLocation,
         productPortId,
         productFlowUuid: String(productFlowUuid ?? unitRow.flow_uuid ?? ""),
         productName,
@@ -4737,6 +4740,7 @@ export default function App() {
         viewKey: string;
         processUuid: string;
         processName: string;
+        processLocation?: string;
         productFlowUuid: string;
         productName: string;
         isReferenceProduct: boolean;
@@ -4778,6 +4782,7 @@ export default function App() {
         viewKey: product.viewKey,
         processUuid: product.processUuid,
         processName: product.processName,
+        processLocation: product.processLocation,
         productFlowUuid: product.productFlowUuid,
         productName: product.productName,
         isReferenceProduct: product.isReferenceProduct,
@@ -5311,9 +5316,21 @@ export default function App() {
                                 <td title={row.processName}>
                                   <span className="run-analysis-process-cell">{row.processName}</span>
                                 </td>
-                                <td title={row.productName}>
+                                <td title={[
+                                  row.productName,
+                                  row.processLocation ? `location=${row.processLocation}` : "",
+                                  row.processUuid ? `process_uuid=${row.processUuid}` : "",
+                                  row.productFlowUuid ? `flow_uuid=${row.productFlowUuid}` : "",
+                                ].filter(Boolean).join("\n")}>
                                   <div className="run-analysis-product-cell">
                                     <span className="run-analysis-product-name">{row.productName}</span>
+                                    <span className="run-analysis-product-meta">
+                                      {[
+                                        row.processLocation ? `location: ${row.processLocation}` : "",
+                                        row.processUuid ? `process: ${row.processUuid}` : "",
+                                        row.productFlowUuid ? `flow: ${row.productFlowUuid}` : "",
+                                      ].filter(Boolean).join(" · ")}
+                                    </span>
                                     <button
                                       type="button"
                                       className={`run-analysis-view-switch${
