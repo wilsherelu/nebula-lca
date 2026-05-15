@@ -1,0 +1,64 @@
+{
+  "unit_groups": [
+    {
+      "name": "Units of mass",
+      "reference_unit": "kg"
+    }
+  ],
+  "unit_definitions": [
+    {
+      "unit_group": "Units of mass",
+      "unit_name": "kg",
+      "factor_to_reference": 1.0,
+      "is_reference": true
+    }
+  ],
+  "flows": [
+    {
+      "flow_uuid": "flow-eco-product",
+      "flow_name": "eco reference product",
+      "flow_type": "Product flow",
+      "default_unit": "kg",
+      "unit_group": "Units of mass",
+      "source": "ecoinvent"
+    },
+    {
+      "flow_uuid": "flow-eco-ch4",
+      "flow_name": "Methane (synthetic eco)",
+      "flow_type": "Elementary flow",
+      "default_unit": "kg",
+      "unit_group": "Units of mass",
+      "source": "ecoinvent"
+    },
+    {
+      "flow_uuid": "flow-final",
+      "flow_name": "final product",
+      "flow_type": "Product flow",
+      "default_unit": "kg",
+      "unit_group": "Units of mass",
+      "source": "tiangong"
+    },
+    {
+      "flow_uuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+      "flow_name": "carbon dioxide (fossil) (Mass, kg, Emissions to air, unspecified)",
+      "flow_type": "Elementary flow",
+      "default_unit": "kg",
+      "unit_group": "Units of mass",
+      "source": "tiangong"
+    }
+  ],
+  "processes": [
+    {
+      "process_uuid": "proc-eco-lci",
+      "process_name": "eco LCI provider",
+      "process_type": "lci_dataset",
+      "reference_flow_uuid": "flow-eco-product",
+      "import_mode": "locked",
+      "import_report_json": {
+        "reference_product": "eco reference product",
+        "reference_product_unit": "kg",
+        "reference_product_amount": 1.0
+      }
+    }
+  ]
+}

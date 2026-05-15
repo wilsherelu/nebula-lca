@@ -1,0 +1,56 @@
+{
+  "name": "case_multi_product_same_unit_group",
+  "graph": {
+    "functionalUnit": "1 kg product-a",
+    "nodes": [
+      {
+        "id": "node-mp",
+        "node_kind": "unit_process",
+        "mode": "normalized",
+        "process_uuid": "proc-multi",
+        "name": "multi-product process",
+        "location": "GLO",
+        "reference_product": "product-a",
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "out-a",
+            "flowUuid": "flow-product-a",
+            "name": "product-a",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 2.0,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          },
+          {
+            "id": "out-b",
+            "flowUuid": "flow-product-b",
+            "name": "product-b",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1.0,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          }
+        ],
+        "emissions": [
+          {
+            "id": "em-co2",
+            "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+            "name": "carbon dioxide (fossil) (Mass, kg, Emissions to air, unspecified)",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 9.0,
+            "type": "biosphere",
+            "direction": "output"
+          }
+        ]
+      }
+    ],
+    "exchanges": [],
+    "metadata": {}
+  }
+}

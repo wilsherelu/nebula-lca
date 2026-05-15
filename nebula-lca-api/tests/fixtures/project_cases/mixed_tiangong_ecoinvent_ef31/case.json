@@ -1,0 +1,55 @@
+{
+  "name": "case_mixed_tiangong_ecoinvent_ef31",
+  "graph": {
+    "functionalUnit": "1 kg final product",
+    "nodes": [
+      {
+        "id": "node-custom",
+        "node_kind": "unit_process",
+        "mode": "normalized",
+        "process_uuid": "proc-custom",
+        "name": "custom mixed process",
+        "location": "GLO",
+        "reference_product": "final product",
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "out-final",
+            "flowUuid": "flow-final",
+            "name": "final product",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1.0,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          }
+        ],
+        "emissions": [
+          {
+            "id": "em-custom-co2",
+            "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+            "name": "carbon dioxide (fossil) (Mass, kg, Emissions to air, unspecified)",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 2.0,
+            "type": "biosphere",
+            "direction": "output"
+          },
+          {
+            "id": "em-custom-ch4",
+            "flowUuid": "flow-eco-ch4",
+            "name": "Methane (synthetic eco)",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1.0,
+            "type": "biosphere",
+            "direction": "output"
+          }
+        ]
+      }
+    ],
+    "exchanges": [],
+    "metadata": {}
+  }
+}
