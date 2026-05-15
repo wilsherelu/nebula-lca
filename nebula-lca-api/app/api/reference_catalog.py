@@ -190,7 +190,7 @@ def import_reference_processes(
     invalidate_management_caches = _rc.invalidate_management_caches
 
     target_kind = _validate_target_kind_or_400(payload.target_kind)
-    if target_kind != "unit_process":
+    if target_kind not in {"unit_process", "lci_dataset"}:
         raise HTTPException(
             status_code=400,
             detail={
@@ -228,6 +228,29 @@ def import_reference_processes(
         cloned_json = json.loads(json.dumps(source_json))
         raw_exchanges = cloned_json.get("exchanges")
         exchanges = [ex for ex in raw_exchanges if isinstance(ex, dict)] if isinstance(raw_exchanges, list) else []
+        if target_kind == "lci_dataset":
+            reference_flow_uuid = _safe_str(source_json.get("reference_flow_uuid")) or _safe_str(source_row.reference_flow_uuid)
+            has_reference_flow = bool(
+                reference_flow_uuid
+                and any(_safe_str(ex.get("flow_uuid")) == reference_flow_uuid for ex in exchanges)
+            )
+            if reference_flow_uuid and not has_reference_flow:
+                exchanges.insert(
+                    0,
+                    {
+                        "exchange_id": reference_flow_uuid,
+                        "exchange_internal_id": reference_flow_uuid,
+                        "flow_uuid": reference_flow_uuid,
+                        "flow_name": _safe_str(source_json.get("reference_product")) or reference_flow_uuid,
+                        "unit": _safe_str(source_json.get("reference_product_unit")),
+                        "amount": source_json.get("reference_product_amount") or 1,
+                        "direction": "output",
+                        "flow_type": "Product flow",
+                        "is_allocated_product": True,
+                        "is_reference_flow": True,
+                        "isProduct": True,
+                    },
+                )
 
         if payload.import_mode == "locked":
             target_uuid = source_process_uuid
@@ -245,6 +268,20 @@ def import_reference_processes(
             process_json=cloned_json,
             exchanges=kept_exchanges,
         )
+        if target_kind == "lci_dataset":
+            scoped_exchanges: list[dict] = []
+            for ex in kept_exchanges:
+                flow_uuid = _safe_str(ex.get("flow_uuid"))
+                flow_type = _safe_str(ex.get("flow_type"))
+                if flow_uuid and flow_uuid in flow_meta_by_uuid:
+                    _, _, db_flow_type, _ = flow_meta_by_uuid.get(flow_uuid) or (None, None, None, None)
+                    flow_type = flow_type or _safe_str(db_flow_type)
+                normalized_flow_type = (flow_type or "").strip().lower()
+                is_reference_product = bool(ex.get("isProduct") or ex.get("is_reference_flow"))
+                is_elementary = normalized_flow_type == "elementary flow"
+                if is_reference_product or is_elementary:
+                    scoped_exchanges.append(ex)
+            kept_exchanges = scoped_exchanges
         warning_by_process.setdefault(target_uuid, []).extend(product_warnings)
 
         cloned_json["process_uuid"] = target_uuid

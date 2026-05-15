@@ -296,6 +296,7 @@ def build_c_matrix_from_ef31(
     b_matrix: dict,
     lcia_methods: Optional[Sequence[str]] = None,
     issues: Optional[List[str]] = None,
+    report_missing: bool = True,
 ) -> dict:
     if issues is None:
         issues = []
@@ -351,13 +352,28 @@ def build_c_matrix_from_ef31(
         if str(method).strip()
     }
     if selected_methods:
-        indicator_lookup = {
-            idx: info
+        matched_indicator_ids = [
+            idx
             for idx, info in indicator_lookup.items()
             if str(info.get("method_en", "")).strip() in selected_methods
             or str(info.get("method_zh", "")).strip() in selected_methods
-        }
-        indicator_ids = [idx for idx in indicator_ids if idx in indicator_lookup]
+        ]
+        # Legacy Tiangong EF3.1 runtime stores LCIA categories such as
+        # "Climate change" in method_en instead of the family name "EF v3.1".
+        # Treat EF v3.1 as the whole built-in method family when no explicit
+        # method row matches, while still filtering generated ecoinvent runtime
+        # CSVs where method_en is "EF v3.1" / "EF v3.1 no LT".
+        if matched_indicator_ids:
+            matched_set = set(matched_indicator_ids)
+            indicator_lookup = {
+                idx: info
+                for idx, info in indicator_lookup.items()
+                if idx in matched_set
+            }
+            indicator_ids = [idx for idx in indicator_ids if idx in indicator_lookup]
+        elif "EF v3.1" not in selected_methods:
+            indicator_lookup = {}
+            indicator_ids = []
 
     indicator_ids.sort()
     indicator_id_set = set(indicator_ids)
@@ -401,12 +417,138 @@ def build_c_matrix_from_ef31(
                 c_entries[key] = c_entries.get(key, 0.0) + coeff
 
     missing = [flow_uuid for flow_uuid in b_flow_ids if flow_uuid not in flow_uuid_to_index]
-    if missing:
+    if missing and report_missing:
         issues.append(f"EF3.1 missing {len(missing)} flow_uuids from B matrix")
 
     return {
         "C": _build_matrix(indicator_ids, b_flow_ids, c_entries),
         "indicator_lookup": indicator_lookup,
+        "matched_flow_uuids": set(flow_index_to_uuid.values()),
+        "runtime_flow_uuids": set(flow_uuid_to_index.keys()),
+    }
+
+
+def build_c_matrix_from_ef31_sources(
+    ef_dirs: Sequence[str],
+    b_matrix: dict,
+    lcia_methods: Optional[Sequence[str]] = None,
+    issues: Optional[List[str]] = None,
+) -> dict:
+    """Build one canonical EF3.1 C matrix from multiple runtime CSV sources.
+
+    This lets Tiangong/TIDAS EF3.1 elementary flows and ecoinvent elementary
+    flows contribute to the same 25 EF3.1 indicator rows when their flow UUID
+    libraries differ.  Indicator rows are canonicalized by ecoinvent_category.
+    """
+    if issues is None:
+        issues = []
+
+    existing_dirs: List[str] = []
+    seen_dirs: set[str] = set()
+    for ef_dir in ef_dirs:
+        path = os.path.abspath(str(ef_dir))
+        if path in seen_dirs:
+            continue
+        if not os.path.exists(path):
+            continue
+        seen_dirs.add(path)
+        existing_dirs.append(path)
+
+    canonical_order: List[str] = []
+    canonical_lookup: Dict[str, dict] = {}
+    canonical_entries: Dict[Tuple[str, str], float] = {}
+    matched_flow_uuids: set[str] = set()
+    runtime_flow_uuids: set[str] = set()
+
+    for ef_dir in existing_dirs:
+        pack = build_c_matrix_from_ef31(
+            ef_dir,
+            b_matrix,
+            lcia_methods=lcia_methods,
+            issues=issues,
+            report_missing=False,
+        )
+        runtime_flow_uuids.update(pack.get("runtime_flow_uuids", set()))
+        matched_flow_uuids.update(pack.get("matched_flow_uuids", set()))
+        lookup = pack.get("indicator_lookup", {})
+        c_matrix = pack.get("C", {})
+
+        for row_id in c_matrix.get("rows", []) or []:
+            info = lookup.get(row_id, {})
+            canonical_key = _canonical_ef31_indicator_key(info)
+            if not canonical_key:
+                continue
+            if canonical_key not in canonical_lookup:
+                canonical_order.append(canonical_key)
+                canonical_lookup[canonical_key] = _canonical_ef31_indicator_info(info)
+
+        for entry in c_matrix.get("data", []) or []:
+            row_id = entry.get("row")
+            flow_uuid = str(entry.get("col") or "")
+            info = lookup.get(row_id, {})
+            canonical_key = _canonical_ef31_indicator_key(info)
+            if not canonical_key or not flow_uuid:
+                continue
+            key = (canonical_key, flow_uuid)
+            if key in canonical_entries:
+                continue
+            value = _to_float(entry.get("value"))
+            if value is None or value == 0:
+                continue
+            canonical_entries[key] = value
+
+    b_flow_ids = b_matrix.get("rows", []) or []
+    missing = [flow_uuid for flow_uuid in b_flow_ids if flow_uuid not in runtime_flow_uuids]
+    if missing:
+        issues.append(f"EF3.1 missing {len(missing)} flow_uuids from B matrix")
+
+    canonical_index = {key: idx for idx, key in enumerate(canonical_order)}
+    row_ids = list(range(len(canonical_order)))
+    c_entries_by_index: Dict[Tuple[int, str], float] = {}
+    for (canonical_key, flow_uuid), value in canonical_entries.items():
+        row_idx = canonical_index.get(canonical_key)
+        if row_idx is None:
+            continue
+        c_entries_by_index[(row_idx, flow_uuid)] = value
+
+    indicator_lookup = {
+        idx: {
+            **canonical_lookup[canonical_key],
+            "indicator_index": idx,
+            "canonical_indicator_key": canonical_key,
+        }
+        for canonical_key, idx in canonical_index.items()
+    }
+
+    return {
+        "C": _build_matrix(row_ids, b_flow_ids, c_entries_by_index),
+        "indicator_lookup": indicator_lookup,
+        "matched_flow_uuids": matched_flow_uuids,
+        "runtime_flow_uuids": runtime_flow_uuids,
+    }
+
+
+def _canonical_ef31_indicator_key(info: dict) -> str:
+    category = str(info.get("ecoinvent_category") or "").strip().lower()
+    if category:
+        return category
+    method = str(info.get("method_en") or info.get("method_zh") or "").strip().lower()
+    indicator = str(info.get("indicator_en") or info.get("indicator_zh") or "").strip().lower()
+    return f"{method}|{indicator}" if method or indicator else ""
+
+
+def _canonical_ef31_indicator_info(info: dict) -> dict:
+    category = str(info.get("ecoinvent_category") or "").strip()
+    method_en = str(info.get("method_en") or "").strip()
+    indicator_en = str(info.get("indicator_en") or "").strip()
+    method_zh = str(info.get("method_zh") or "").strip()
+    indicator_zh = str(info.get("indicator_zh") or "").strip()
+    return {
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": indicator_en or method_en or category,
+        "indicator_zh": indicator_zh or method_zh or indicator_en or method_en or category,
+        "ecoinvent_category": category,
     }
 
 

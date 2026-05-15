@@ -239,7 +239,7 @@ def _build_imported_process_ports(
     exchanges: list[dict],
     flow_meta_by_uuid: dict[str, tuple[str | None, str | None, str | None, str | None]],
 ) -> tuple[list[ImportedProcessPortItem], list[ImportedProcessPortItem]]:
-    from .schemas import flow_semantic_to_exchange_type
+    from ..schemas import flow_semantic_to_exchange_type
 
     inputs: list[ImportedProcessPortItem] = []
     outputs: list[ImportedProcessPortItem] = []

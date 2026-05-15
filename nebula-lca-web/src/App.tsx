@@ -1354,10 +1354,19 @@ const getUnitProcessProductUnitGroupIssues = (graph: LcaGraphPayload): string[] 
     if (node.node_kind !== "unit_process" && node.node_kind !== "market_process") {
       continue;
     }
+    const allocatedProductOutputs = (node.outputs ?? []).filter(
+      (port) =>
+        port.type !== "biosphere" &&
+        Boolean(port.isProduct) &&
+        port.allocationFactor !== null &&
+        port.allocationFactor !== undefined,
+    );
+    if (allocatedProductOutputs.length <= 1) {
+      continue;
+    }
     const groups = Array.from(
       new Set(
-        (node.outputs ?? [])
-          .filter((port) => port.type !== "biosphere" && Boolean(port.isProduct))
+        allocatedProductOutputs
           .map((port) => resolvePortUnitGroup(port))
           .filter((group) => group.length > 0),
       ),
@@ -1828,6 +1837,8 @@ export default function App() {
   const [showRunAnalysis, setShowRunAnalysis] = useState(false);
   const [showRunWarnings, setShowRunWarnings] = useState(false);
   const [lciaMethodSelection, setLciaMethodSelection] = useState("EF v3.1");
+  const [draftLciaMethodSelection, setDraftLciaMethodSelection] = useState("EF v3.1");
+  const [showRunConfigDialog, setShowRunConfigDialog] = useState(false);
   const [lciaMethodOptions, setLciaMethodOptions] = useState<string[]>(["EF v3.1", "EF v3.1 no LT"]);
   const [ptsPublishWarnings, setPtsPublishWarnings] = useState<PtsModelingWarning[]>([]);
   const [showPtsPublishWarnings, setShowPtsPublishWarnings] = useState(false);
@@ -3285,7 +3296,7 @@ export default function App() {
     [autoConnectByUuid, exportGraph, importGraphWithLoadKey, persistRootModelSnapshot, projectId],
   );
 
-  const runModel = useCallback(async () => {
+  const runModel = useCallback(async (methodSelection = lciaMethodSelection) => {
     repairRootEdgeHandles();
     const graph = applyProjectTargetProductConfig(
       normalizeGraphPayload(exportGraph()),
@@ -3360,7 +3371,7 @@ export default function App() {
     setStatusText("正在运行求解...");
     setLastRun(null);
     try {
-      const lciaMethods = lciaMethodSelection === "all" ? [] : [lciaMethodSelection];
+      const lciaMethods = methodSelection === "all" ? [] : [methodSelection];
       const body = JSON.stringify({
         graph,
         model_version_id: projectId && version ? `${projectId}:${version}` : undefined,
@@ -5058,8 +5069,18 @@ export default function App() {
     <div className="layout">
       <header className="topbar">
         <div className="topbar-brand">
-          <img className="topbar-logo" src="/favicon.ico" alt="Nebula logo" />
-          <div className="title">{i18n.appTitle}</div>
+          <button
+            type="button"
+            className="topbar-home-link"
+            onClick={navigateToManagement}
+            title={uiLanguage === "zh" ? "返回主页" : "Back home"}
+          >
+            <img className="topbar-logo" src="/favicon.ico" alt="Nebula logo" />
+            <span className="topbar-brand-copy">
+              <span className="title">{i18n.appTitle}</span>
+              <span className="topbar-brand-hint">{uiLanguage === "zh" ? "点击返回主页" : "Click to return home"}</span>
+            </span>
+          </button>
           <div className="project-name-strong" title={projectName || "-"}>
             <span>{i18n.projectNameLabel}：</span>
             <strong>{projectName || "-"}</strong>
@@ -5067,9 +5088,6 @@ export default function App() {
         </div>
         {activeCanvasKind === "pts_internal" && <span className="topbar-mode-badge">{i18n.ptsMode}</span>}
         <div className="topbar-actions">
-          <button type="button" onClick={navigateToManagement}>
-            {i18n.backHome}
-          </button>
           {activeCanvasKind === "pts_internal" ? (
             <>
               <button onClick={() => void saveCurrentPts()} disabled={busy}>
@@ -5083,18 +5101,13 @@ export default function App() {
           ) : (
             <>
               <button onClick={() => void persistModel("manual")} disabled={busy}>{i18n.save}</button>
-              <select
-                value={lciaMethodSelection}
-                onChange={(event) => setLciaMethodSelection(event.target.value)}
+              <button
+                onClick={() => {
+                  setDraftLciaMethodSelection(lciaMethodSelection);
+                  setShowRunConfigDialog(true);
+                }}
                 disabled={busy}
-                title={uiLanguage === "zh" ? "LCIA 方法；TIDAS 导出仅支持 EF v3.1" : "LCIA method; TIDAS export supports EF v3.1 only"}
               >
-                {lciaMethodOptions.map((method) => (
-                  <option key={method} value={method}>{method}</option>
-                ))}
-                <option value="all">{uiLanguage === "zh" ? "全部方法" : "All methods"}</option>
-              </select>
-              <button onClick={() => void runModel()} disabled={busy}>
                 {i18n.run}
               </button>
             </>
@@ -5456,6 +5469,68 @@ export default function App() {
             </div>
           )}
         </section>
+        </div>
+      )}
+      {showRunConfigDialog && (
+        <div className="overlay-modal" onClick={() => setShowRunConfigDialog(false)}>
+          <section className="pm-modal run-config-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="pm-modal-head">
+              <strong>{uiLanguage === "zh" ? "计算参数" : "Run Parameters"}</strong>
+              <button type="button" className="drawer-close-btn" onClick={() => setShowRunConfigDialog(false)}>
+                {i18n.close}
+              </button>
+            </div>
+            <div className="target-product-form">
+              <label className="span-2">
+                {uiLanguage === "zh" ? "LCIA 方法" : "LCIA method"}
+                <select
+                  value={draftLciaMethodSelection}
+                  onChange={(event) => setDraftLciaMethodSelection(event.target.value)}
+                  disabled={busy}
+                >
+                  {lciaMethodOptions.map((method) => (
+                    <option key={method} value={method}>{method}</option>
+                  ))}
+                  <option value="all">{uiLanguage === "zh" ? "全部方法" : "All methods"}</option>
+                </select>
+              </label>
+              <div className="target-product-preview span-2">
+                <span className="target-product-preview-label">
+                  {uiLanguage === "zh" ? "基本流兼容性" : "Elementary flow compatibility"}
+                </span>
+                <strong>
+                  {uiLanguage === "zh"
+                    ? "默认使用 EF v3.1；天工基本流只能计算 EF v3.1。"
+                    : "EF v3.1 is the default; Tiangong elementary flows only support EF v3.1."}
+                </strong>
+                <span>
+                  {draftLciaMethodSelection === "EF v3.1"
+                    ? uiLanguage === "zh"
+                      ? "如果模型使用天工基本流，可以直接计算 EF v3.1。"
+                      : "Models using Tiangong elementary flows can calculate EF v3.1 directly."
+                    : uiLanguage === "zh"
+                      ? "选择其他 LCIA 方法时，请确认清单使用 ecoinvent 同源基本流，并已生成对应 runtime CSV；否则会出现缺失 CF、结果偏低或不可比。"
+                      : "For other LCIA methods, use source-compatible ecoinvent elementary flows and generated runtime CSVs, or characterization factors may be missing and results may be incomplete."}
+                </span>
+              </div>
+            </div>
+            <div className="pm-modal-actions">
+              <button type="button" className="pm-ghost-btn" onClick={() => setShowRunConfigDialog(false)}>
+                {uiLanguage === "zh" ? "取消" : "Cancel"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLciaMethodSelection(draftLciaMethodSelection);
+                  setShowRunConfigDialog(false);
+                  void runModel(draftLciaMethodSelection);
+                }}
+                disabled={busy}
+              >
+                {i18n.run}
+              </button>
+            </div>
+          </section>
         </div>
       )}
       {showProjectIntegrityDialog && (

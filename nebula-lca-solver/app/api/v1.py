@@ -13,7 +13,11 @@ from app.core.schema import (
     PtsCompileResponse,
 )
 from app.core.lcia import compute_lcia
-from app.core.matrix_builder import build_c_matrix_from_ef31, build_matrices_from_snapshot
+from app.core.matrix_builder import (
+    build_c_matrix_from_ef31,
+    build_c_matrix_from_ef31_sources,
+    build_matrices_from_snapshot,
+)
 from app.core.pts_compile import compile_pts_from_payload
 from app.core.solver import solve_compute
 
@@ -39,12 +43,24 @@ def lcia(payload: LciaPayload) -> LciaResponse:
             status_code=400,
             detail=f"EF3.1 dir not found: {ef31_dir}; set NEBULA_LCA_EF31_DIR to a runtime CSV directory",
         )
-    c_pack = build_c_matrix_from_ef31(
-        ef31_dir,
-        b_matrix,
-        lcia_methods=payload.lcia_methods,
-        issues=base.get("issues"),
-    )
+    selected_methods = {str(method).strip() for method in payload.lcia_methods if str(method).strip()}
+    legacy_ef31_dir = Path(os.environ.get("NEBULA_LCA_LEGACY_EF31_DIR", "data/EF3.1"))
+    if not legacy_ef31_dir.is_absolute():
+        legacy_ef31_dir = Path(__file__).resolve().parents[2] / legacy_ef31_dir
+    if selected_methods and selected_methods.issubset({"EF v3.1"}):
+        c_pack = build_c_matrix_from_ef31_sources(
+            [str(legacy_ef31_dir), ef31_dir],
+            b_matrix,
+            lcia_methods=payload.lcia_methods,
+            issues=base.get("issues"),
+        )
+    else:
+        c_pack = build_c_matrix_from_ef31(
+            ef31_dir,
+            b_matrix,
+            lcia_methods=payload.lcia_methods,
+            issues=base.get("issues"),
+        )
     c_matrix = c_pack["C"]
 
     try:
@@ -54,21 +70,22 @@ def lcia(payload: LciaPayload) -> LciaResponse:
 
     indicator_lookup = c_pack.get("indicator_lookup", {})
     b_flow_rows = b_matrix.get("rows", []) or []
-    ef_flow_uuid_set: set[str] = set()
-    flow_index_path = Path(ef31_dir) / "flow_index.csv"
-    with flow_index_path.open("r", encoding="utf-8") as handle:
-        reader = csv.reader(handle, delimiter=";")
-        header = next(reader, [])
-        if header:
-            header[0] = header[0].lstrip("\ufeff")
-        col_map = {name: idx for idx, name in enumerate(header)}
-        uuid_idx = col_map.get("FlowUUID")
-        if uuid_idx is not None:
-            for row in reader:
-                if uuid_idx < len(row):
-                    flow_uuid = row[uuid_idx].strip()
-                    if flow_uuid:
-                        ef_flow_uuid_set.add(flow_uuid)
+    ef_flow_uuid_set: set[str] = set(c_pack.get("runtime_flow_uuids", set()))
+    if not ef_flow_uuid_set:
+        flow_index_path = Path(ef31_dir) / "flow_index.csv"
+        with flow_index_path.open("r", encoding="utf-8") as handle:
+            reader = csv.reader(handle, delimiter=";")
+            header = next(reader, [])
+            if header:
+                header[0] = header[0].lstrip("\ufeff")
+            col_map = {name: idx for idx, name in enumerate(header)}
+            uuid_idx = col_map.get("FlowUUID")
+            if uuid_idx is not None:
+                for row in reader:
+                    if uuid_idx < len(row):
+                        flow_uuid = row[uuid_idx].strip()
+                        if flow_uuid:
+                            ef_flow_uuid_set.add(flow_uuid)
 
     flows = snapshot.get("flows", []) or []
     flow_name_map = {

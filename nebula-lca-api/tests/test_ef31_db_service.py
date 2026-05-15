@@ -462,8 +462,12 @@ class TestCommitWithDbSession:
             assert isinstance(pj, dict)
             assert "exchanges" in pj
             assert "elementary_exchanges" in pj
-            assert len(pj["exchanges"]) == 1
+            assert len(pj["exchanges"]) == 2
             assert pj["reference_flow_uuid"] == "rp-001"
+            assert pj["reference_flow_internal_id"] == "rp-001"
+            assert pj["exchanges"][0]["flow_uuid"] == "rp-001"
+            assert pj["exchanges"][0]["isProduct"] is True
+            assert pj["exchanges"][1]["flow_uuid"] == "flow-001"
         finally:
             db.close()
 

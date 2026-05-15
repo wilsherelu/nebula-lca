@@ -21,6 +21,7 @@ export type FlowPort = {
   unitGroup?: string;
   amount: number;
   isProduct?: boolean;
+  allocationFactor?: number | null;
   externalSaleAmount?: number;
   type: ExchangeType;
   direction: FlowDirection;

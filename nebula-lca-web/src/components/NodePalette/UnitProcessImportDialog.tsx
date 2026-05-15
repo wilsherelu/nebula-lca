@@ -120,6 +120,7 @@ const parseImportedRows = (
   payload: Record<string, unknown>,
   importMode: ProcessImportMode,
   uiLanguage: "zh" | "en",
+  nodeKind: "unit_process" | "lci_dataset" = "unit_process",
 ): ImportedUnitProcessPayload[] => {
   const rawRows = Array.isArray(payload.imported_processes)
     ? payload.imported_processes
@@ -165,6 +166,7 @@ const parseImportedRows = (
       }
 
       return {
+        nodeKind,
         processUuid,
         sourceProcessUuid: sourceProcessUuid || undefined,
         importMode,
@@ -551,8 +553,8 @@ export function UnitProcessImportDialog() {
       const filteredExchanges = Array.isArray(payload.filtered_exchanges)
         ? (payload.filtered_exchanges as FilteredExchangeEvidence[])
         : [];
-      if (targetKind === "unit_process") {
-        const parsedRows = parseImportedRows(payload, importMode, uiLanguage);
+      if (targetKind === "unit_process" || targetKind === "lci_dataset") {
+        const parsedRows = parseImportedRows(payload, importMode, uiLanguage, targetKind);
         const groupedFiltered = new Map<string, FilteredExchangeEvidence[]>();
         for (const evidence of filteredExchanges) {
           const key = String(evidence.process_uuid ?? "");

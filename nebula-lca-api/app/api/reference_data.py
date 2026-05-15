@@ -14,6 +14,7 @@ registered routes. They will be handled in a future migration if ever needed.
 from __future__ import annotations
 
 import csv
+import json
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
@@ -90,6 +91,17 @@ def list_units(unit_group: str | None = None, db: Session = Depends(get_db)) -> 
 @_api_router.get("/api/reference/lcia-methods")
 @_base_router.get("/reference/lcia-methods")
 def list_lcia_methods() -> dict:
+    def _read_runtime_summary(csv_path: Path) -> dict:
+        summary_path = csv_path.parent / "runtime_summary.json"
+        if not summary_path.exists():
+            return {}
+        try:
+            with summary_path.open("r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            return data if isinstance(data, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
     def _read_methods(csv_path: Path) -> set[str]:
         rows: set[str] = set()
         if csv_path.exists():
@@ -113,8 +125,25 @@ def list_lcia_methods() -> dict:
             if (candidate / "indicator_index.csv").exists()
         ]
     if runtime_candidates:
-        scored = [(path, _read_methods(path)) for path in runtime_candidates]
-        csv_path, methods = max(scored, key=lambda item: (len(item[1]), item[0].stat().st_mtime))
+        scored = []
+        for path in runtime_candidates:
+            methods_for_path = _read_methods(path)
+            summary = _read_runtime_summary(path)
+            indicators_count = int(summary.get("indicators_count") or len(methods_for_path))
+            flows_count = int(summary.get("flows_count") or 0)
+            factors_count = int(summary.get("factors_count") or 0)
+            if indicators_count < 10 or flows_count < 100:
+                continue
+            scored.append((path, methods_for_path, indicators_count, flows_count, factors_count))
+        if scored:
+            csv_path, methods, _, _, _ = max(
+                scored,
+                key=lambda item: (item[2], item[3], item[4], item[0].stat().st_mtime),
+            )
+        else:
+            base = Path(settings.nebula_lca_ef31_dir)
+            csv_path = base if base.is_file() else base / "indicator_index.csv"
+            methods = _read_methods(csv_path)
     else:
         base = Path(settings.nebula_lca_ef31_dir)
         csv_path = base if base.is_file() else base / "indicator_index.csv"
