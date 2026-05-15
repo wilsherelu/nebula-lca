@@ -752,9 +752,9 @@ const parseLegacyPayloadHandleBinding = (
   }
   const rest =
     raw.startsWith("outl:") ? raw.slice("outl:".length) :
-    raw.startsWith("outr:") ? raw.slice("outr:".length) :
-    raw.startsWith("out:") ? raw.slice("out:".length) :
-    "";
+      raw.startsWith("outr:") ? raw.slice("outr:".length) :
+        raw.startsWith("out:") ? raw.slice("out:".length) :
+          "";
   if (!rest.includes("::")) {
     return {};
   }
@@ -816,9 +816,9 @@ const normalizeGraphPayload = (graph: LcaGraphPayload): LcaGraphPayload => {
     const normalizePorts = (ports: NonNullable<typeof node.inputs>) =>
       (ports ?? []).map((port) => {
         const raw = port as Record<string, unknown>;
-          const displayName = String(raw.display_name ?? "").trim();
-          const displayNameEn = String(raw.display_name_en ?? raw.displayNameEn ?? "").trim();
-          const processName = String(raw.process_name ?? "").trim();
+        const displayName = String(raw.display_name ?? "").trim();
+        const displayNameEn = String(raw.display_name_en ?? raw.displayNameEn ?? "").trim();
+        const processName = String(raw.process_name ?? "").trim();
         const sourceProcessName = String(raw.source_process_name ?? raw.sourceProcessName ?? "").trim();
         const nestedSourceProcessName = String(
           raw.nested_source_process_name ?? raw.nestedSourceProcessName ?? "",
@@ -859,11 +859,11 @@ const normalizeGraphPayload = (graph: LcaGraphPayload): LcaGraphPayload => {
           productKey: productKey || port.productKey,
           sourceProcessUuid: sourceProcessUuid || port.sourceProcessUuid,
           nestedSourceProcessName: nestedSourceProcessName || port.nestedSourceProcessName,
-            sourceNodeId: sourceNodeId || port.sourceNodeId,
-            name: resolvedName || baseName,
-            displayNameEn: displayNameEn || port.displayNameEn,
-            sourceProcessName: sourceProcessName || port.sourceProcessName,
-            amount: Number(raw.amount ?? port.amount ?? 0),
+          sourceNodeId: sourceNodeId || port.sourceNodeId,
+          name: resolvedName || baseName,
+          displayNameEn: displayNameEn || port.displayNameEn,
+          sourceProcessName: sourceProcessName || port.sourceProcessName,
+          amount: Number(raw.amount ?? port.amount ?? 0),
           externalSaleAmount: Number(raw.external_sale_amount ?? raw.externalSaleAmount ?? port.externalSaleAmount ?? 0),
           type,
           direction,
@@ -897,10 +897,10 @@ const normalizeGraphPayload = (graph: LcaGraphPayload): LcaGraphPayload => {
       let nextEdge = edge;
       const sourcePort = sourceNode
         ? resolvePayloadEdgePort(sourceNode.outputs ?? [], "output", {
-            handle: edge.sourceHandle ?? edge.source_handle,
-            portId: edge.source_port_id,
-            flowUuid,
-          })
+          handle: edge.sourceHandle ?? edge.source_handle,
+          portId: edge.source_port_id,
+          flowUuid,
+        })
         : undefined;
       if (sourcePort) {
         nextEdge = {
@@ -916,10 +916,10 @@ const normalizeGraphPayload = (graph: LcaGraphPayload): LcaGraphPayload => {
 
       const targetPort = targetNode
         ? resolvePayloadEdgePort(targetNode.inputs ?? [], "input", {
-            handle: edge.targetHandle ?? edge.target_handle,
-            portId: edge.target_port_id,
-            flowUuid,
-          })
+          handle: edge.targetHandle ?? edge.target_handle,
+          portId: edge.target_port_id,
+          flowUuid,
+        })
         : undefined;
       if (targetPort) {
         nextEdge = {
@@ -1507,11 +1507,11 @@ const getPtsOutputSourceBindingIssues = (graph: LcaGraphPayload): string[] => {
 const toFlowNameSyncState = (
   payload:
     | {
-        flow_name_sync_needed?: boolean;
-        outdated_flow_refs_count?: number;
-        outdated_flow_ref_examples?: Array<Record<string, unknown>>;
-        evidence?: Array<Record<string, unknown>>;
-      }
+      flow_name_sync_needed?: boolean;
+      outdated_flow_refs_count?: number;
+      outdated_flow_ref_examples?: Array<Record<string, unknown>>;
+      evidence?: Array<Record<string, unknown>>;
+    }
     | null
     | undefined,
 ): FlowNameSyncState => ({
@@ -1538,19 +1538,19 @@ const toProjectIntegritySummary = (payload: { project_integrity?: Record<string,
   }
   const issuesRaw = Array.isArray((raw as { issues?: unknown[] }).issues) ? ((raw as { issues?: unknown[] }).issues ?? []) : [];
   const issues: ProjectIntegrityIssue[] = issuesRaw.flatMap((item) => {
-      if (!item || typeof item !== "object") {
-        return [];
-      }
-      const obj = item as Record<string, unknown>;
-      return [{
-        kind: String(obj.kind ?? "").trim(),
-        reason: String(obj.reason ?? "").trim(),
-        nodeId: String(obj.node_id ?? obj.nodeId ?? "").trim() || undefined,
-        nodeName: String(obj.node_name ?? obj.nodeName ?? "").trim() || undefined,
-        ptsUuid: String(obj.pts_uuid ?? obj.ptsUuid ?? "").trim() || undefined,
-        autoRepairable: Boolean(obj.auto_repairable ?? obj.autoRepairable),
-      } satisfies ProjectIntegrityIssue];
-    });
+    if (!item || typeof item !== "object") {
+      return [];
+    }
+    const obj = item as Record<string, unknown>;
+    return [{
+      kind: String(obj.kind ?? "").trim(),
+      reason: String(obj.reason ?? "").trim(),
+      nodeId: String(obj.node_id ?? obj.nodeId ?? "").trim() || undefined,
+      nodeName: String(obj.node_name ?? obj.nodeName ?? "").trim() || undefined,
+      ptsUuid: String(obj.pts_uuid ?? obj.ptsUuid ?? "").trim() || undefined,
+      autoRepairable: Boolean(obj.auto_repairable ?? obj.autoRepairable),
+    } satisfies ProjectIntegrityIssue];
+  });
   return {
     ok: Boolean((raw as { ok?: unknown }).ok),
     issueCount: Number((raw as { issue_count?: unknown }).issue_count ?? issues.length),
@@ -1562,9 +1562,9 @@ const toProjectIntegritySummary = (payload: { project_integrity?: Record<string,
 const formatPtsPublishedArtifactEvidence = (payload: unknown): string => {
   const parsedPayload = payload as
     | {
-        evidence?: Array<Record<string, unknown>>;
-        detail?: { evidence?: Array<Record<string, unknown>> };
-      }
+      evidence?: Array<Record<string, unknown>>;
+      detail?: { evidence?: Array<Record<string, unknown>> };
+    }
     | null
     | undefined;
   const evidence = Array.isArray(parsedPayload?.detail?.evidence)
@@ -1598,6 +1598,57 @@ const getLciaGroupLabel = (method: string): string => {
   const climatePrefix = firstSplit.split(/[-—]/)[0]?.trim() ?? firstSplit;
   return climatePrefix || text;
 };
+
+/**
+ * Scan graph biosphere ports to check if any elementary flow is non-ecoinvent.
+ * Uses a cached lookup to avoid repeated API calls.
+ */
+const _flowSourceCache: Record<string, string> = {};
+async function _checkGraphHasNonEcoElementaryFlows(graph: any): Promise<boolean> {
+  const nodes = graph?.nodes || [];
+  const biosphereUuids = new Set<string>();
+  for (const node of nodes) {
+    const ports = [
+      ...(node?.inputs || []),
+      ...(node?.outputs || []),
+    ];
+    for (const port of ports) {
+      if (port?.type === "biosphere") {
+        const uuid = String(port?.flowUuid || port?.flow_uuid || "");
+        if (uuid) biosphereUuids.add(uuid.toLowerCase().trim());
+      }
+    }
+  }
+  if (biosphereUuids.size === 0) return false;
+  // Check cached first
+  for (const uuid of biosphereUuids) {
+    if (_flowSourceCache[uuid]?.startsWith("ecoinvent")) continue;
+    if (_flowSourceCache[uuid] !== undefined) return true; // cached non-eco
+  }
+  // Fetch any uncached sources
+  const uncached = Array.from(biosphereUuids).filter((u) => _flowSourceCache[u] === undefined);
+  try {
+    const promises = uncached.map((uuid) =>
+      fetch(`${API_BASE}/reference/flows/${encodeURIComponent(uuid)}`, { cache: "no-store" })
+        .then((r) => r.json())
+        .then((data: { source?: string }) => {
+          _flowSourceCache[uuid] = String(data?.source || "").toLowerCase().trim();
+        })
+        .catch(() => {
+          _flowSourceCache[uuid] = "unknown";
+        }),
+    );
+    await Promise.allSettled(promises);
+  } catch {
+    // ignore
+  }
+  // Check if any is non-ecoinvent
+  for (const uuid of biosphereUuids) {
+    const source = _flowSourceCache[uuid] || "unknown";
+    if (!source.startsWith("ecoinvent")) return true;
+  }
+  return false;
+}
 
 const formatApiError = (raw: unknown): string => {
   const text = String(raw ?? "");
@@ -1840,8 +1891,9 @@ export default function App() {
   const [lciaMethodSelection, setLciaMethodSelection] = useState("EF v3.1");
   const [draftLciaMethodSelection, setDraftLciaMethodSelection] = useState("EF v3.1");
   const [showRunConfigDialog, setShowRunConfigDialog] = useState(false);
+  const [hasNonEcoElementaryFlows, setHasNonEcoElementaryFlows] = useState(false);
   const [productDetailViewKey, setProductDetailViewKey] = useState("");
-  const [lciaMethodOptions, setLciaMethodOptions] = useState<string[]>(["EF v3.1", "EF v3.1 no LT"]);
+  const [lciaMethodOptions, setLciaMethodOptions] = useState<string[]>(["EF v3.1"]);
   const [ptsPublishWarnings, setPtsPublishWarnings] = useState<PtsModelingWarning[]>([]);
   const [showPtsPublishWarnings, setShowPtsPublishWarnings] = useState(false);
   const [showTargetProductDialog, setShowTargetProductDialog] = useState(false);
@@ -1906,7 +1958,7 @@ export default function App() {
 
   const startLoadPerformanceSpan = useCallback((label: string) => {
     if (typeof performance === "undefined" || typeof performance.mark !== "function") {
-      return () => {};
+      return () => { };
     }
     const spanId = `${label}:${Date.now()}:${++loadPerformanceSpanCounterRef.current}`;
     const startMark = `${spanId}:start`;
@@ -2035,25 +2087,25 @@ export default function App() {
         ),
       },
       nodes: canvas.nodes.map((node) => ({
-          id: node.id,
-          node_kind: node.data.nodeKind,
-          mode: node.data.mode,
-          market_allow_mixed_flows: node.data.marketAllowMixedFlows,
-          lci_role: node.data.lciRole,
-          pts_uuid: node.data.ptsUuid,
-          process_uuid: node.data.processUuid,
-          name: node.data.name,
-          location: node.data.location,
-          reference_product: node.data.referenceProduct,
-          reference_product_flow_uuid: node.data.referenceProductFlowUuid,
-          reference_product_direction: node.data.referenceProductDirection,
-          inputs: node.data.inputs,
-          outputs: node.data.outputs,
-          position: {
-            x: node.position.x,
-            y: node.position.y,
-          },
-        })) as LcaGraphPayload["nodes"],
+        id: node.id,
+        node_kind: node.data.nodeKind,
+        mode: node.data.mode,
+        market_allow_mixed_flows: node.data.marketAllowMixedFlows,
+        lci_role: node.data.lciRole,
+        pts_uuid: node.data.ptsUuid,
+        process_uuid: node.data.processUuid,
+        name: node.data.name,
+        location: node.data.location,
+        reference_product: node.data.referenceProduct,
+        reference_product_flow_uuid: node.data.referenceProductFlowUuid,
+        reference_product_direction: node.data.referenceProductDirection,
+        inputs: node.data.inputs,
+        outputs: node.data.outputs,
+        position: {
+          x: node.position.x,
+          y: node.position.y,
+        },
+      })) as LcaGraphPayload["nodes"],
       exchanges: canvas.edges.map((edge) => ({
         id: edge.id,
         fromNode: edge.source,
@@ -2199,11 +2251,11 @@ export default function App() {
       pts_graph: ptsGraph,
       ...(includePortsPolicy
         ? {
-            ports_policy: {
-              inputs: portsPolicyInputs ?? [],
-              outputs: portsPolicyOutputs ?? [],
-            },
-          }
+          ports_policy: {
+            inputs: portsPolicyInputs ?? [],
+            outputs: portsPolicyOutputs ?? [],
+          },
+        }
         : {}),
       shell_node: {
         id: ptsNode.id,
@@ -2300,27 +2352,27 @@ export default function App() {
         return;
       }
       const portsPayload = (await portsResp.json()) as PtsPortsResponse;
-        const nextInputsRaw = (portsPayload.ports?.inputs ?? []).map((port) => normalizePtsProjectedPort(port, "inputs")).filter(Boolean);
-        const nextOutputsRaw = (portsPayload.ports?.outputs ?? []).map((port) => normalizePtsProjectedPort(port, "outputs")).filter(Boolean);
+      const nextInputsRaw = (portsPayload.ports?.inputs ?? []).map((port) => normalizePtsProjectedPort(port, "inputs")).filter(Boolean);
+      const nextOutputsRaw = (portsPayload.ports?.outputs ?? []).map((port) => normalizePtsProjectedPort(port, "outputs")).filter(Boolean);
       const shellNode = resourcePayload.shell_node ?? {};
       const shellPublishedArtifactId =
         typeof shellNode.pts_published_artifact_id === "string" ? shellNode.pts_published_artifact_id : undefined;
-        const shellPatch = buildRootPtsShellPatch(
-          currentNode,
-          shellNode,
-          mergeProjectedPortsWithRootVisibility(currentNode.data.inputs, nextInputsRaw, {
-            resetVisibility: options?.resetVisibility,
-            preferredVisiblePortIds: options?.preferredVisiblePortIds,
-            debugLabel: "refreshSingleRootPtsProjectionFromBackend:mergeInputs",
-          }),
-          mergeProjectedPortsWithRootVisibility(currentNode.data.outputs, nextOutputsRaw, {
-            resetVisibility: options?.resetVisibility,
-            preferredVisiblePortIds: options?.preferredVisiblePortIds,
-            debugLabel: "refreshSingleRootPtsProjectionFromBackend:mergeOutputs",
-          }),
-          resourcePayload.active_published_version ?? portsPayload.published_version ?? currentNode.data.ptsPublishedVersion,
-          shellPublishedArtifactId ?? currentNode.data.ptsPublishedArtifactId,
-        );
+      const shellPatch = buildRootPtsShellPatch(
+        currentNode,
+        shellNode,
+        mergeProjectedPortsWithRootVisibility(currentNode.data.inputs, nextInputsRaw, {
+          resetVisibility: options?.resetVisibility,
+          preferredVisiblePortIds: options?.preferredVisiblePortIds,
+          debugLabel: "refreshSingleRootPtsProjectionFromBackend:mergeInputs",
+        }),
+        mergeProjectedPortsWithRootVisibility(currentNode.data.outputs, nextOutputsRaw, {
+          resetVisibility: options?.resetVisibility,
+          preferredVisiblePortIds: options?.preferredVisiblePortIds,
+          debugLabel: "refreshSingleRootPtsProjectionFromBackend:mergeOutputs",
+        }),
+        resourcePayload.active_published_version ?? portsPayload.published_version ?? currentNode.data.ptsPublishedVersion,
+        shellPublishedArtifactId ?? currentNode.data.ptsPublishedArtifactId,
+      );
       replaceRootPtsShell(ptsNodeId, {
         nodeKind: shellPatch.nodeKind,
         mode: shellPatch.mode,
@@ -2408,43 +2460,43 @@ export default function App() {
     () =>
       uiLanguage === "zh"
         ? {
-            appTitle: "星云LCA",
-            projectNameLabel: "项目名称",
-            backHome: "返回主页",
-            createProject: "新建项目",
-            deleteProject: "删除项目",
-            atLeastOneProject: "至少保留一个项目",
-            deleteCurrentProject: "删除当前项目",
-            ptsMode: "PTS模块编辑模式",
-            save: "保存",
-            publish: "发布",
-            history: "版本历史",
-            saveBack: "返回主图",
-            run: "计算",
-            result: "结果分析",
-            close: "关闭",
-            summary: "Summary",
-            issues: "内容",
-          }
+          appTitle: "星云LCA",
+          projectNameLabel: "项目名称",
+          backHome: "返回主页",
+          createProject: "新建项目",
+          deleteProject: "删除项目",
+          atLeastOneProject: "至少保留一个项目",
+          deleteCurrentProject: "删除当前项目",
+          ptsMode: "PTS模块编辑模式",
+          save: "保存",
+          publish: "发布",
+          history: "版本历史",
+          saveBack: "返回主图",
+          run: "计算",
+          result: "结果分析",
+          close: "关闭",
+          summary: "Summary",
+          issues: "内容",
+        }
         : {
-            appTitle: "Nebula LCA",
-            projectNameLabel: "Project",
-            backHome: "Back Home",
-            createProject: "New Project",
-            deleteProject: "Delete Project",
-            atLeastOneProject: "Keep at least one project",
-            deleteCurrentProject: "Delete current project",
-            ptsMode: "PTS Module Edit Mode",
-            save: "Save",
-            publish: "Publish",
-            history: "History",
-            saveBack: "Back To Model",
-            run: "Compute",
-            result: "Run Analysis",
-            close: "Close",
-            summary: "Summary",
-            issues: "Message",
-          },
+          appTitle: "Nebula LCA",
+          projectNameLabel: "Project",
+          backHome: "Back Home",
+          createProject: "New Project",
+          deleteProject: "Delete Project",
+          atLeastOneProject: "Keep at least one project",
+          deleteCurrentProject: "Delete current project",
+          ptsMode: "PTS Module Edit Mode",
+          save: "Save",
+          publish: "Publish",
+          history: "History",
+          saveBack: "Back To Model",
+          run: "Compute",
+          result: "Run Analysis",
+          close: "Close",
+          summary: "Summary",
+          issues: "Message",
+        },
     [uiLanguage],
   );
 
@@ -2848,6 +2900,19 @@ export default function App() {
     })();
   }, []);
 
+  // Scan elementary flow sources whenever the run config dialog opens.
+  useEffect(() => {
+    if (!showRunConfigDialog) return;
+    void (async () => {
+      try {
+        const hasNonEco = await _checkGraphHasNonEcoElementaryFlows(exportGraph());
+        setHasNonEcoElementaryFlows(hasNonEco);
+      } catch {
+        // ignore
+      }
+    })();
+  }, [showRunConfigDialog]);
+
   const repairProjectIntegrity = useCallback(async () => {
     if (!projectId) {
       return;
@@ -2917,19 +2982,19 @@ export default function App() {
       if (mode === "manual" && versionTraveling) {
         setVersionTraveling(false);
       }
-        if (!projectIntegrity.ok) {
-          const warningText =
-            mode === "manual"
-              ? uiLanguage === "zh"
-                ? `未保存：当前项目存在 ${projectIntegrity.issueCount || "部分"} 项完整性问题，请先修复。`
-                : `Not saved: the current project has ${projectIntegrity.issueCount || "some"} integrity issues. Please repair them first.`
-              : uiLanguage === "zh"
-                ? "自动保存已跳过：当前项目存在待修复的完整性问题。"
-                : "Autosave skipped: the current project has integrity issues that need repair.";
-          setStatusText(warningText);
-          setShowProjectIntegrityDialog(true);
-          return;
-        }
+      if (!projectIntegrity.ok) {
+        const warningText =
+          mode === "manual"
+            ? uiLanguage === "zh"
+              ? `未保存：当前项目存在 ${projectIntegrity.issueCount || "部分"} 项完整性问题，请先修复。`
+              : `Not saved: the current project has ${projectIntegrity.issueCount || "some"} integrity issues. Please repair them first.`
+            : uiLanguage === "zh"
+              ? "自动保存已跳过：当前项目存在待修复的完整性问题。"
+              : "Autosave skipped: the current project has integrity issues that need repair.";
+        setStatusText(warningText);
+        setShowProjectIntegrityDialog(true);
+        return;
+      }
       if (strictValidation && activeCanvasKind === "pts_internal") {
         const ptsWarnings = getBalancedWarningsForCanvas(activeCanvasId);
         if (ptsWarnings.length > 0) {
@@ -2976,11 +3041,11 @@ export default function App() {
         normalizeGraphPayload(exportGraph()),
         selectedProductKey
           ? {
-              processUuid: selectedProductKey.split("::")[0] ?? "",
-              flowUuid: selectedProductKey.split("::")[1] ?? "",
-              quantityMode: targetProductQuantityMode,
-              quantity: parseTargetProductQuantity(targetProductQuantity),
-            }
+            processUuid: selectedProductKey.split("::")[0] ?? "",
+            flowUuid: selectedProductKey.split("::")[1] ?? "",
+            quantityMode: targetProductQuantityMode,
+            quantity: parseTargetProductQuantity(targetProductQuantity),
+          }
           : null,
       );
       if (strictValidation) {
@@ -3269,9 +3334,9 @@ export default function App() {
           ...(currentGraph.metadata ?? {}),
           canvases: Array.isArray((currentGraph.metadata as { canvases?: Array<Record<string, unknown>> } | undefined)?.canvases)
             ? (((currentGraph.metadata as { canvases?: Array<Record<string, unknown>> } | undefined)?.canvases ?? []).filter(
-                (canvas) =>
-                  !(canvas.kind === "pts_internal" && String(canvas.parentPtsNodeId ?? "") === ptsNodeId),
-              ))
+              (canvas) =>
+                !(canvas.kind === "pts_internal" && String(canvas.parentPtsNodeId ?? "") === ptsNodeId),
+            ))
             : undefined,
         };
         if (!nextMetadata.canvases || nextMetadata.canvases.length === 0) {
@@ -3304,11 +3369,11 @@ export default function App() {
       normalizeGraphPayload(exportGraph()),
       selectedProductKey
         ? {
-            processUuid: selectedProductKey.split("::")[0] ?? "",
-            flowUuid: selectedProductKey.split("::")[1] ?? "",
-            quantityMode: targetProductQuantityMode,
-            quantity: parseTargetProductQuantity(targetProductQuantity),
-          }
+          processUuid: selectedProductKey.split("::")[0] ?? "",
+          flowUuid: selectedProductKey.split("::")[1] ?? "",
+          quantityMode: targetProductQuantityMode,
+          quantity: parseTargetProductQuantity(targetProductQuantity),
+        }
         : null,
     );
     const nodesMissingProduct = (graph.nodes ?? [])
@@ -3660,22 +3725,22 @@ export default function App() {
   void openPtsHistory;
 
   const saveAndReturnToModeling = useCallback(async () => {
-      const ok = await saveCurrentPts();
-      if (!ok) {
-        return;
+    const ok = await saveCurrentPts();
+    if (!ok) {
+      return;
+    }
+    try {
+      if (projectId && activePtsNode?.id && activePtsUuid) {
+        await refreshSingleRootPtsProjectionFromBackend(activePtsNode.id, activePtsUuid, projectId, {
+          rebindEdges: true,
+        });
       }
-      try {
-        if (projectId && activePtsNode?.id && activePtsUuid) {
-          await refreshSingleRootPtsProjectionFromBackend(activePtsNode.id, activePtsUuid, projectId, {
-            rebindEdges: true,
-          });
-        }
-      } catch (error) {
-        setStatusText(`返回主图前刷新 PTS 投影失败: ${formatApiError(error)}`);
-        return;
-      }
-      goToParentCanvas();
-    }, [activePtsNode?.id, activePtsUuid, goToParentCanvas, projectId, refreshSingleRootPtsProjectionFromBackend, saveCurrentPts]);
+    } catch (error) {
+      setStatusText(`返回主图前刷新 PTS 投影失败: ${formatApiError(error)}`);
+      return;
+    }
+    goToParentCanvas();
+  }, [activePtsNode?.id, activePtsUuid, goToParentCanvas, projectId, refreshSingleRootPtsProjectionFromBackend, saveCurrentPts]);
 
   useEffect(() => {
     if (!pendingPtsCompileNodeId) {
@@ -3871,16 +3936,16 @@ export default function App() {
       } catch {
         // ignore
       }
-        await refreshProjects();
-        await loadProjectGraph(created.project_id, created.name);
-        setAppMode("editor");
-        setStatusText(`已创建项目: ${created.name}`);
-      } catch (error) {
-        setStatusText(`新建项目失败: ${String(error)}`);
-      } finally {
-        setBusy(false);
-      }
-    }, [loadProjectGraph, refreshProjects]);
+      await refreshProjects();
+      await loadProjectGraph(created.project_id, created.name);
+      setAppMode("editor");
+      setStatusText(`已创建项目: ${created.name}`);
+    } catch (error) {
+      setStatusText(`新建项目失败: ${String(error)}`);
+    } finally {
+      setBusy(false);
+    }
+  }, [loadProjectGraph, refreshProjects]);
 
   const handleDeleteProjectById = useCallback(async (targetProjectId: string) => {
     if (!targetProjectId) {
@@ -4297,11 +4362,11 @@ export default function App() {
               exportGraph(),
               selectedProductKey
                 ? {
-                    processUuid: selectedProductKey.split("::")[0] ?? "",
-                    flowUuid: selectedProductKey.split("::")[1] ?? "",
-                    quantityMode: targetProductQuantityMode,
-                    quantity: parseTargetProductQuantity(targetProductQuantity),
-                  }
+                  processUuid: selectedProductKey.split("::")[0] ?? "",
+                  flowUuid: selectedProductKey.split("::")[1] ?? "",
+                  quantityMode: targetProductQuantityMode,
+                  quantity: parseTargetProductQuantity(targetProductQuantity),
+                }
                 : null,
             ),
           ),
@@ -4564,13 +4629,13 @@ export default function App() {
             const matchedPortBaseName =
               uiLanguage === "en"
                 ? String(matchedPort.flowNameEn ?? "").trim() ||
-                  String(obj.product_name_en ?? "").trim() ||
-                  String(matchedPort.name ?? "").trim() ||
-                  String(obj.product_name ?? "").trim()
+                String(obj.product_name_en ?? "").trim() ||
+                String(matchedPort.name ?? "").trim() ||
+                String(obj.product_name ?? "").trim()
                 : String(matchedPort.name ?? "").trim() ||
-                  String(obj.product_name ?? "").trim() ||
-                  String(matchedPort.flowNameEn ?? "").trim() ||
-                  String(obj.product_name_en ?? "").trim();
+                String(obj.product_name ?? "").trim() ||
+                String(matchedPort.flowNameEn ?? "").trim() ||
+                String(obj.product_name_en ?? "").trim();
             const resolvedBaseName =
               matchedPortBaseName ||
               String(matchedPort.productKey ?? "").trim() ||
@@ -4708,10 +4773,10 @@ export default function App() {
       const normalizedValue = Number.isFinite(selectedValue) ? selectedValue : 0;
       const displayValue = viewedProduct
         ? toDisplayResultValueByUnit(
-            normalizedValue * viewedProductQuantityValue,
-            viewedProduct.unit,
-            viewedProduct.unitGroup,
-          ).value
+          normalizedValue * viewedProductQuantityValue,
+          viewedProduct.unit,
+          viewedProduct.unitGroup,
+        ).value
         : normalizedValue;
       return {
         idx: i + 1,
@@ -5112,8 +5177,15 @@ export default function App() {
             <>
               <button onClick={() => void persistModel("manual")} disabled={busy}>{i18n.save}</button>
               <button
-                onClick={() => {
+                onClick={async () => {
                   setDraftLciaMethodSelection(lciaMethodSelection);
+                  // Scan graph biosphere ports for source info (async, result updates dialog on next open)
+                  try {
+                    const hasNonEco = await _checkGraphHasNonEcoElementaryFlows(exportGraph());
+                    setHasNonEcoElementaryFlows(hasNonEco);
+                  } catch {
+                    // ignore scan errors; dialog will default to showing all methods
+                  }
                   setShowRunConfigDialog(true);
                 }}
                 disabled={busy}
@@ -5175,150 +5247,150 @@ export default function App() {
             setShowRunAnalysis(false);
           }}
         >
-        <section className="run-analysis run-analysis-modal" onClick={(event) => event.stopPropagation()}>
-          <div className="run-analysis-head">
-            <strong>{i18n.result}</strong>
-            <div className="run-analysis-head-actions">
-              <span className="run-analysis-head-status">
-                {lastRun.status === "completed"
-                  ? uiLanguage === "zh"
-                    ? "计算已完成"
-                    : "Run completed"
-                  : lastRun.status}
-              </span>
+          <section className="run-analysis run-analysis-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="run-analysis-head">
+              <strong>{i18n.result}</strong>
+              <div className="run-analysis-head-actions">
+                <span className="run-analysis-head-status">
+                  {lastRun.status === "completed"
+                    ? uiLanguage === "zh"
+                      ? "计算已完成"
+                      : "Run completed"
+                    : lastRun.status}
+                </span>
+                <button
+                  type="button"
+                  className="drawer-close-btn"
+                  onClick={() => {
+                    setShowRunWarnings(false);
+                    setShowRunAnalysis(false);
+                  }}
+                >
+                  {i18n.close}
+                </button>
+              </div>
+            </div>
+            {warningBannerText && <div className="run-analysis-warning-banner">{warningBannerText}</div>}
+            <div className="run-analysis-summary">
+              <div className="run-analysis-summary-card">
+                <span className="run-analysis-summary-label">{uiLanguage === "zh" ? "LCIA 方法" : "LCIA Method"}</span>
+                <strong className="run-analysis-summary-value">
+                  {lciaMethodSelection === "all" ? (uiLanguage === "zh" ? "全部" : "All") : lciaMethodSelection}
+                </strong>
+              </div>
+              <div className="run-analysis-summary-card">
+                <span className="run-analysis-summary-label">{uiLanguage === "zh" ? "过程数" : "Processes"}</span>
+                <strong className="run-analysis-summary-value">{groupedProductCfpRows.length}</strong>
+              </div>
+              <div className="run-analysis-summary-card">
+                <span className="run-analysis-summary-label">{uiLanguage === "zh" ? "产品数" : "Products"}</span>
+                <strong className="run-analysis-summary-value">{productColumns.length}</strong>
+              </div>
+              <div className="run-analysis-summary-card">
+                <span className="run-analysis-summary-label">{uiLanguage === "zh" ? "警告数" : "Warnings"}</span>
+                <strong className="run-analysis-summary-value">{runIssues.length}</strong>
+                <button
+                  type="button"
+                  className="run-analysis-summary-link"
+                  onClick={() => setShowRunWarnings(true)}
+                  disabled={runIssues.length === 0}
+                >
+                  {uiLanguage === "zh" ? "查看详情" : "View details"}
+                </button>
+              </div>
               <button
                 type="button"
-                className="drawer-close-btn"
-                onClick={() => {
-                  setShowRunWarnings(false);
-                  setShowRunAnalysis(false);
-                }}
+                className="run-analysis-summary-card run-analysis-summary-card--result run-analysis-summary-card--clickable"
+                onClick={focusTargetProductTotalView}
               >
-                {i18n.close}
-              </button>
-            </div>
-          </div>
-          {warningBannerText && <div className="run-analysis-warning-banner">{warningBannerText}</div>}
-          <div className="run-analysis-summary">
-            <div className="run-analysis-summary-card">
-              <span className="run-analysis-summary-label">{uiLanguage === "zh" ? "LCIA 方法" : "LCIA Method"}</span>
-              <strong className="run-analysis-summary-value">
-                {lciaMethodSelection === "all" ? (uiLanguage === "zh" ? "全部" : "All") : lciaMethodSelection}
-              </strong>
-            </div>
-            <div className="run-analysis-summary-card">
-              <span className="run-analysis-summary-label">{uiLanguage === "zh" ? "过程数" : "Processes"}</span>
-              <strong className="run-analysis-summary-value">{groupedProductCfpRows.length}</strong>
-            </div>
-            <div className="run-analysis-summary-card">
-              <span className="run-analysis-summary-label">{uiLanguage === "zh" ? "产品数" : "Products"}</span>
-              <strong className="run-analysis-summary-value">{productColumns.length}</strong>
-            </div>
-            <div className="run-analysis-summary-card">
-              <span className="run-analysis-summary-label">{uiLanguage === "zh" ? "警告数" : "Warnings"}</span>
-              <strong className="run-analysis-summary-value">{runIssues.length}</strong>
-              <button
-                type="button"
-                className="run-analysis-summary-link"
-                onClick={() => setShowRunWarnings(true)}
-                disabled={runIssues.length === 0}
-              >
-                {uiLanguage === "zh" ? "查看详情" : "View details"}
-              </button>
-            </div>
-            <button
-              type="button"
-              className="run-analysis-summary-card run-analysis-summary-card--result run-analysis-summary-card--clickable"
-              onClick={focusTargetProductTotalView}
-            >
                 <span className="run-analysis-summary-label">
                   {uiLanguage === "zh" ? "目标产品 / 目标产量" : "Target Product / Target Quantity"}
                 </span>
-              <strong className="run-analysis-summary-value">
-                {selectedProductClimateTotal !== null
-                  ? `${selectedProductClimateTotal.toExponential(3)} ${targetProductClimateUnitLabel || ""}`.trim()
-                  : "-"}
-              </strong>
-              <span
-                className="run-analysis-summary-meta"
-                title={targetProductSummaryLabel}
-              >
-                {targetProductSummaryLabel}
-              </span>
-            </button>
-          </div>
-          <div className="run-analysis-grid">
-            <div className="run-analysis-card run-analysis-card--wide">
-              <div className="run-analysis-title run-analysis-title-flex">
-                <span>
-                  {uiLanguage === "zh"
-                    ? "单位产品碳足迹结果（Climate change）"
-                    : "Unit Product CFP Results (Climate change)"}
+                <strong className="run-analysis-summary-value">
+                  {selectedProductClimateTotal !== null
+                    ? `${selectedProductClimateTotal.toExponential(3)} ${targetProductClimateUnitLabel || ""}`.trim()
+                    : "-"}
+                </strong>
+                <span
+                  className="run-analysis-summary-meta"
+                  title={targetProductSummaryLabel}
+                >
+                  {targetProductSummaryLabel}
                 </span>
-                <span className="run-analysis-segment">
-                  <button
-                    type="button"
-                    onClick={() => setResultUnitMode("defined")}
-                    className={resultUnitMode === "defined" ? "active" : ""}
-                  >
-                    {uiLanguage === "zh" ? "清单定义单位" : "Inventory unit"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={switchToReferenceUnits}
-                    className={resultUnitMode === "reference" ? "active" : ""}
-                  >
-                    {uiLanguage === "zh" ? "单位组默认单位" : "Default unit group unit"}
-                  </button>
-                </span>
-              </div>
-              <div className="run-analysis-table-wrap run-analysis-table-wrap-tall">
-                <table className="run-analysis-table run-analysis-table--product-cfp">
-                  <colgroup>
-                    <col className="run-analysis-col-process" />
-                    <col className="run-analysis-col-product" />
-                    <col className="run-analysis-col-value" />
-                    <col className="run-analysis-col-unit" />
-                    <col className="run-analysis-col-actions" />
-                  </colgroup>
-                  <thead>
-                    <tr>
-                      <th>{uiLanguage === "zh" ? "过程" : "Process"}</th>
-                      <th>{uiLanguage === "zh" ? "产品" : "Product"}</th>
-                      <th className="numeric">{uiLanguage === "zh" ? "单位产品结果" : "Unit product result"}</th>
-                      <th>{uiLanguage === "zh" ? "单位" : "Unit"}</th>
-                      <th>{uiLanguage === "zh" ? "操作" : "Actions"}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {groupedProductCfpRows.map((group) => {
-                      const expanded = expandedResultProcesses.includes(group.processUuid);
-                      return [
-                        <tr key={`group-${group.processUuid}`} className="run-analysis-process-group-row">
-                          <td colSpan={5}>
-                            <button
-                              type="button"
-                              className="run-analysis-process-toggle"
-                              onClick={() =>
-                                setExpandedResultProcesses((prev) =>
-                                  prev.includes(group.processUuid)
-                                    ? prev.filter((key) => key !== group.processUuid)
-                                    : [...prev, group.processUuid],
-                                )
-                              }
-                            >
-                              <span className="run-analysis-process-toggle-icon">{expanded ? "▾" : "▸"}</span>
-                              <span className="run-analysis-process-toggle-label" title={group.processName}>
-                                {group.processName}
-                              </span>
-                              <span className="run-analysis-process-toggle-count">
-                                {uiLanguage === "zh" ? `${group.items.length} 个产品` : `${group.items.length} product(s)`}
-                              </span>
-                            </button>
-                          </td>
-                        </tr>,
-                        ...(expanded
-                          ? group.items.map((row) => (
+              </button>
+            </div>
+            <div className="run-analysis-grid">
+              <div className="run-analysis-card run-analysis-card--wide">
+                <div className="run-analysis-title run-analysis-title-flex">
+                  <span>
+                    {uiLanguage === "zh"
+                      ? "单位产品碳足迹结果（Climate change）"
+                      : "Unit Product CFP Results (Climate change)"}
+                  </span>
+                  <span className="run-analysis-segment">
+                    <button
+                      type="button"
+                      onClick={() => setResultUnitMode("defined")}
+                      className={resultUnitMode === "defined" ? "active" : ""}
+                    >
+                      {uiLanguage === "zh" ? "清单定义单位" : "Inventory unit"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={switchToReferenceUnits}
+                      className={resultUnitMode === "reference" ? "active" : ""}
+                    >
+                      {uiLanguage === "zh" ? "单位组默认单位" : "Default unit group unit"}
+                    </button>
+                  </span>
+                </div>
+                <div className="run-analysis-table-wrap run-analysis-table-wrap-tall">
+                  <table className="run-analysis-table run-analysis-table--product-cfp">
+                    <colgroup>
+                      <col className="run-analysis-col-process" />
+                      <col className="run-analysis-col-product" />
+                      <col className="run-analysis-col-value" />
+                      <col className="run-analysis-col-unit" />
+                      <col className="run-analysis-col-actions" />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <th>{uiLanguage === "zh" ? "过程" : "Process"}</th>
+                        <th>{uiLanguage === "zh" ? "产品" : "Product"}</th>
+                        <th className="numeric">{uiLanguage === "zh" ? "单位产品结果" : "Unit product result"}</th>
+                        <th>{uiLanguage === "zh" ? "单位" : "Unit"}</th>
+                        <th>{uiLanguage === "zh" ? "操作" : "Actions"}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {groupedProductCfpRows.map((group) => {
+                        const expanded = expandedResultProcesses.includes(group.processUuid);
+                        return [
+                          <tr key={`group-${group.processUuid}`} className="run-analysis-process-group-row">
+                            <td colSpan={5}>
+                              <button
+                                type="button"
+                                className="run-analysis-process-toggle"
+                                onClick={() =>
+                                  setExpandedResultProcesses((prev) =>
+                                    prev.includes(group.processUuid)
+                                      ? prev.filter((key) => key !== group.processUuid)
+                                      : [...prev, group.processUuid],
+                                  )
+                                }
+                              >
+                                <span className="run-analysis-process-toggle-icon">{expanded ? "▾" : "▸"}</span>
+                                <span className="run-analysis-process-toggle-label" title={group.processName}>
+                                  {group.processName}
+                                </span>
+                                <span className="run-analysis-process-toggle-count">
+                                  {uiLanguage === "zh" ? `${group.items.length} 个产品` : `${group.items.length} product(s)`}
+                                </span>
+                              </button>
+                            </td>
+                          </tr>,
+                          ...(expanded
+                            ? group.items.map((row) => (
                               <tr key={row.productKey}>
                                 <td title={row.processName}>
                                   <span className="run-analysis-process-cell">{row.processName}</span>
@@ -5339,13 +5411,12 @@ export default function App() {
                                   <div className="run-analysis-row-actions">
                                     <button
                                       type="button"
-                                      className={`run-analysis-view-switch${
-                                        resultProductViewMode === "unit_product" &&
+                                      className={`run-analysis-view-switch${resultProductViewMode === "unit_product" &&
                                         viewedProduct &&
                                         row.viewKey === viewedProduct.viewKey
-                                          ? " active"
-                                          : ""
-                                      }`}
+                                        ? " active"
+                                        : ""
+                                        }`}
                                       onClick={() => {
                                         setResultProductViewKey(row.viewKey);
                                         setResultProductViewMode("unit_product");
@@ -5357,8 +5428,8 @@ export default function App() {
                                       }
                                     >
                                       {resultProductViewMode === "unit_product" &&
-                                      viewedProduct &&
-                                      row.viewKey === viewedProduct.viewKey
+                                        viewedProduct &&
+                                        row.viewKey === viewedProduct.viewKey
                                         ? uiLanguage === "zh"
                                           ? "查看中"
                                           : "Viewing"
@@ -5378,148 +5449,147 @@ export default function App() {
                                 </td>
                               </tr>
                             ))
-                          : []),
-                      ];
-                    })}
-                    {groupedProductCfpRows.length === 0 && (
-                      <tr>
-                        <td colSpan={5}>
-                          {!hasProductResultView
-                            ? "后端尚未返回产品结果视图（product_result_index / product_values）。"
-                            : "未找到 Climate change 结果"}
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-            <div className="run-analysis-card run-analysis-indicators">
-              <div className="run-analysis-title">
-                {`${uiLanguage === "zh" ? "指标结果" : "Indicator Results"} (${indicatorRows.length})${
-                  viewedProduct
-                    ? resultProductViewMode === "target_total"
-                      ? ` · ${uiLanguage === "zh" ? "目标产品总量全指标" : "Target-total full indicators"}：${viewedProduct.productName}`
-                      : ` · ${uiLanguage === "zh" ? "单位产品全指标" : "Unit-product full indicators"}：${viewedProduct.productName}`
-                    : ""
-                }`}
-              </div>
-              <div className="run-analysis-table-wrap">
-                <table className="run-analysis-table">
-                  <thead>
-                    <tr>
-                      <th>#</th>
-                      <th>{uiLanguage === "zh" ? "方法" : "Method"}</th>
-                      <th>{uiLanguage === "zh" ? "指标" : "Indicator"}</th>
-                      <th>{uiLanguage === "zh" ? "单位" : "Unit"}</th>
-                      <th className="numeric">
-                        {resultProductViewMode === "target_total"
-                          ? uiLanguage === "zh"
-                            ? "目标产品总量结果"
-                            : "Target-total result"
-                          : uiLanguage === "zh"
-                            ? "该单位产品结果"
-                            : "This unit-product result"}
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {groupedIndicatorRows.map((row, rowIndex) =>
-                      row.type === "group" ? (
-                        <tr key={`group-${row.method}-${rowIndex}`} className="run-analysis-group-row">
-                          <td colSpan={5}>{row.method}</td>
-                        </tr>
-                      ) : (
-                        <tr key={`${row.idx}-${row.method}-${row.name}`}>
-                          <td>{row.idx}</td>
-                          <td title={row.method}>
-                            <span className="run-analysis-method-cell">{row.method}</span>
-                          </td>
-                          <td title={row.name}>
-                            <span className="run-analysis-indicator-cell">{row.name}</span>
-                          </td>
-                          <td className="run-analysis-unit-cell">{row.unit || "-"}</td>
-                          <td className={`numeric ${row.selectedValue === 0 ? "run-analysis-value--zero" : ""}`}>
-                            {row.selectedValue.toExponential(3)}
-                          </td>
-                        </tr>
-                      ),
-                    )}
-                    {indicatorRows.length === 0 && (
-                      <tr>
-                        <td colSpan={5}>
-                          {!hasProductResultView
-                            ? "后端尚未返回产品结果视图，暂不展示产品指标。"
-                            : "无指标数值"}
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-          {showRunWarnings && (
-            <div className="run-analysis-subdialog-mask" onClick={() => setShowRunWarnings(false)}>
-              <section className="run-analysis-subdialog" onClick={(event) => event.stopPropagation()}>
-                <div className="run-analysis-subdialog-head">
-                  <strong>{`警告列表 (${runIssues.length})`}</strong>
-                  <button type="button" className="drawer-close-btn" onClick={() => setShowRunWarnings(false)}>
-                    {i18n.close}
-                  </button>
-                </div>
-                <div className="run-analysis-table-wrap run-analysis-table-wrap-warning-dialog">
-                  <table className="run-analysis-table">
-                    <thead>
-                      <tr>
-                        <th style={{ width: 64 }}>#</th>
-                        <th>内容</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {runIssues.map((issue, idx) => {
-                        const text = typeof issue === "object" ? JSON.stringify(issue) : String(issue);
-                        return (
-                          <tr key={`warn_dialog_${idx}`}>
-                            <td className="run-analysis-warning-index">{idx + 1}</td>
-                            <td title={text}>{text}</td>
-                          </tr>
-                        );
+                            : []),
+                        ];
                       })}
-                      {runIssues.length === 0 && (
+                      {groupedProductCfpRows.length === 0 && (
                         <tr>
-                          <td colSpan={2}>无警告</td>
+                          <td colSpan={5}>
+                            {!hasProductResultView
+                              ? "后端尚未返回产品结果视图（product_result_index / product_values）。"
+                              : "未找到 Climate change 结果"}
+                          </td>
                         </tr>
                       )}
                     </tbody>
                   </table>
                 </div>
-              </section>
-            </div>
-          )}
-          {productDetailRow && (
-            <div className="run-analysis-subdialog-mask" onClick={() => setProductDetailViewKey("")}>
-              <section className="run-analysis-subdialog" onClick={(event) => event.stopPropagation()}>
-                <div className="run-analysis-subdialog-head">
-                  <strong>{uiLanguage === "zh" ? "产品详情" : "Product Details"}</strong>
-                  <button type="button" className="drawer-close-btn" onClick={() => setProductDetailViewKey("")}>
-                    {i18n.close}
-                  </button>
+              </div>
+              <div className="run-analysis-card run-analysis-indicators">
+                <div className="run-analysis-title">
+                  {`${uiLanguage === "zh" ? "指标结果" : "Indicator Results"} (${indicatorRows.length})${viewedProduct
+                    ? resultProductViewMode === "target_total"
+                      ? ` · ${uiLanguage === "zh" ? "目标产品总量全指标" : "Target-total full indicators"}：${viewedProduct.productName}`
+                      : ` · ${uiLanguage === "zh" ? "单位产品全指标" : "Unit-product full indicators"}：${viewedProduct.productName}`
+                    : ""
+                    }`}
                 </div>
-                <div className="run-analysis-detail-list">
-                  <div><span>{uiLanguage === "zh" ? "产品" : "Product"}</span><strong>{productDetailRow.productName || "-"}</strong></div>
-                  <div><span>{uiLanguage === "zh" ? "过程" : "Process"}</span><strong>{productDetailRow.processName || "-"}</strong></div>
-                  <div><span>{uiLanguage === "zh" ? "地区" : "Location"}</span><code>{productDetailRow.processLocation || "-"}</code></div>
-                  <div><span>process UUID</span><code>{productDetailRow.processUuid || "-"}</code></div>
-                  <div><span>flow UUID</span><code>{productDetailRow.productFlowUuid || "-"}</code></div>
-                  <div><span>port ID</span><code>{productDetailRow.productPortId || "-"}</code></div>
-                  <div><span>{uiLanguage === "zh" ? "单位" : "Unit"}</span><code>{productDetailRow.unit || "-"}</code></div>
-                  <div><span>{uiLanguage === "zh" ? "单位组" : "Unit group"}</span><code>{productDetailRow.unitGroup || "-"}</code></div>
+                <div className="run-analysis-table-wrap">
+                  <table className="run-analysis-table">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>{uiLanguage === "zh" ? "方法" : "Method"}</th>
+                        <th>{uiLanguage === "zh" ? "指标" : "Indicator"}</th>
+                        <th>{uiLanguage === "zh" ? "单位" : "Unit"}</th>
+                        <th className="numeric">
+                          {resultProductViewMode === "target_total"
+                            ? uiLanguage === "zh"
+                              ? "目标产品总量结果"
+                              : "Target-total result"
+                            : uiLanguage === "zh"
+                              ? "该单位产品结果"
+                              : "This unit-product result"}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {groupedIndicatorRows.map((row, rowIndex) =>
+                        row.type === "group" ? (
+                          <tr key={`group-${row.method}-${rowIndex}`} className="run-analysis-group-row">
+                            <td colSpan={5}>{row.method}</td>
+                          </tr>
+                        ) : (
+                          <tr key={`${row.idx}-${row.method}-${row.name}`}>
+                            <td>{row.idx}</td>
+                            <td title={row.method}>
+                              <span className="run-analysis-method-cell">{row.method}</span>
+                            </td>
+                            <td title={row.name}>
+                              <span className="run-analysis-indicator-cell">{row.name}</span>
+                            </td>
+                            <td className="run-analysis-unit-cell">{row.unit || "-"}</td>
+                            <td className={`numeric ${row.selectedValue === 0 ? "run-analysis-value--zero" : ""}`}>
+                              {row.selectedValue.toExponential(3)}
+                            </td>
+                          </tr>
+                        ),
+                      )}
+                      {indicatorRows.length === 0 && (
+                        <tr>
+                          <td colSpan={5}>
+                            {!hasProductResultView
+                              ? "后端尚未返回产品结果视图，暂不展示产品指标。"
+                              : "无指标数值"}
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
                 </div>
-              </section>
+              </div>
             </div>
-          )}
-        </section>
+            {showRunWarnings && (
+              <div className="run-analysis-subdialog-mask" onClick={() => setShowRunWarnings(false)}>
+                <section className="run-analysis-subdialog" onClick={(event) => event.stopPropagation()}>
+                  <div className="run-analysis-subdialog-head">
+                    <strong>{`警告列表 (${runIssues.length})`}</strong>
+                    <button type="button" className="drawer-close-btn" onClick={() => setShowRunWarnings(false)}>
+                      {i18n.close}
+                    </button>
+                  </div>
+                  <div className="run-analysis-table-wrap run-analysis-table-wrap-warning-dialog">
+                    <table className="run-analysis-table">
+                      <thead>
+                        <tr>
+                          <th style={{ width: 64 }}>#</th>
+                          <th>内容</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {runIssues.map((issue, idx) => {
+                          const text = typeof issue === "object" ? JSON.stringify(issue) : String(issue);
+                          return (
+                            <tr key={`warn_dialog_${idx}`}>
+                              <td className="run-analysis-warning-index">{idx + 1}</td>
+                              <td title={text}>{text}</td>
+                            </tr>
+                          );
+                        })}
+                        {runIssues.length === 0 && (
+                          <tr>
+                            <td colSpan={2}>无警告</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              </div>
+            )}
+            {productDetailRow && (
+              <div className="run-analysis-subdialog-mask" onClick={() => setProductDetailViewKey("")}>
+                <section className="run-analysis-subdialog" onClick={(event) => event.stopPropagation()}>
+                  <div className="run-analysis-subdialog-head">
+                    <strong>{uiLanguage === "zh" ? "产品详情" : "Product Details"}</strong>
+                    <button type="button" className="drawer-close-btn" onClick={() => setProductDetailViewKey("")}>
+                      {i18n.close}
+                    </button>
+                  </div>
+                  <div className="run-analysis-detail-list">
+                    <div><span>{uiLanguage === "zh" ? "产品" : "Product"}</span><strong>{productDetailRow.productName || "-"}</strong></div>
+                    <div><span>{uiLanguage === "zh" ? "过程" : "Process"}</span><strong>{productDetailRow.processName || "-"}</strong></div>
+                    <div><span>{uiLanguage === "zh" ? "地区" : "Location"}</span><code>{productDetailRow.processLocation || "-"}</code></div>
+                    <div><span>process UUID</span><code>{productDetailRow.processUuid || "-"}</code></div>
+                    <div><span>flow UUID</span><code>{productDetailRow.productFlowUuid || "-"}</code></div>
+                    <div><span>port ID</span><code>{productDetailRow.productPortId || "-"}</code></div>
+                    <div><span>{uiLanguage === "zh" ? "单位" : "Unit"}</span><code>{productDetailRow.unit || "-"}</code></div>
+                    <div><span>{uiLanguage === "zh" ? "单位组" : "Unit group"}</span><code>{productDetailRow.unitGroup || "-"}</code></div>
+                  </div>
+                </section>
+              </div>
+            )}
+          </section>
         </div>
       )}
       {showRunConfigDialog && (
@@ -5539,10 +5609,13 @@ export default function App() {
                   onChange={(event) => setDraftLciaMethodSelection(event.target.value)}
                   disabled={busy}
                 >
-                  {lciaMethodOptions.map((method) => (
-                    <option key={method} value={method}>{method}</option>
-                  ))}
-                  <option value="all">{uiLanguage === "zh" ? "全部方法" : "All methods"}</option>
+                  {hasNonEcoElementaryFlows
+                    ? <option key="ef31" value="EF v3.1">EF v3.1</option>
+                    : lciaMethodOptions.map((method) => (
+                      <option key={method} value={method}>{method}</option>
+                    ))
+                  }
+                  {!hasNonEcoElementaryFlows && <option value="all">{uiLanguage === "zh" ? "全部方法" : "All methods"}</option>}
                 </select>
               </label>
               <div className="target-product-preview span-2">
@@ -5550,18 +5623,22 @@ export default function App() {
                   {uiLanguage === "zh" ? "基本流兼容性" : "Elementary flow compatibility"}
                 </span>
                 <strong>
-                  {uiLanguage === "zh"
-                    ? "默认使用 EF v3.1；天工基本流只能计算 EF v3.1。"
-                    : "EF v3.1 is the default; Tiangong elementary flows only support EF v3.1."}
+                  {hasNonEcoElementaryFlows
+                    ? uiLanguage === "zh"
+                      ? "模型包含 TIDAS/EF/天工基本流，只能使用 EF v3.1"
+                      : "Model contains non-ecoinvent elementary flows: only EF v3.1 available"
+                    : uiLanguage === "zh"
+                      ? "当前可使用全部 LCIA 方法；默认 EF v3.1"
+                      : "All LCIA methods available; default EF v3.1"}
                 </strong>
                 <span>
-                  {draftLciaMethodSelection === "EF v3.1"
+                  {hasNonEcoElementaryFlows
                     ? uiLanguage === "zh"
-                      ? "如果模型使用天工基本流，可以直接计算 EF v3.1。"
-                      : "Models using Tiangong elementary flows can calculate EF v3.1 directly."
+                      ? "非 ecoinvent 基本流需要 EF v3.1 指标集。选择其他方法将导致结果偏低或不可比。"
+                      : "Non-ecoinvent elementary flows require EF v3.1 indicators. Using other methods will produce incomplete results."
                     : uiLanguage === "zh"
-                      ? "选择其他 LCIA 方法时，请确认清单使用 ecoinvent 同源基本流，并已生成对应 runtime CSV；否则会出现缺失 CF、结果偏低或不可比。"
-                      : "For other LCIA methods, use source-compatible ecoinvent elementary flows and generated runtime CSVs, or characterization factors may be missing and results may be incomplete."}
+                      ? "当前模型基本流来源兼容全部 LCIA 方法。"
+                      : "Elementary flow sources in this model are compatible with all LCIA methods."}
                 </span>
               </div>
             </div>
@@ -5685,10 +5762,10 @@ export default function App() {
                 <strong>
                   {draftTargetProduct
                     ? `${draftTargetProduct.processName} / ${formatTargetProductDisplayLabel(
-                        draftTargetProduct.productName,
-                        draftTargetProduct.processName,
-                        draftTargetProduct.ptsProcessName,
-                      )}`
+                      draftTargetProduct.productName,
+                      draftTargetProduct.processName,
+                      draftTargetProduct.ptsProcessName,
+                    )}`
                     : uiLanguage === "zh"
                       ? "默认首个产品"
                       : "Default first product"}

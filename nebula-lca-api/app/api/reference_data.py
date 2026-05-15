@@ -92,6 +92,9 @@ def list_units(unit_group: str | None = None, db: Session = Depends(get_db)) -> 
 @_api_router.get("/api/reference/lcia-methods")
 @_base_router.get("/reference/lcia-methods")
 def list_lcia_methods() -> dict:
+    EF31_CANONICAL_METHODS = {"EF v3.1"}
+    LEGACY_INDICATORS_AS_METHODS = {"Acidification", "Climate change"}
+
     def _read_runtime_summary(csv_path: Path) -> dict:
         manifest_path = csv_path.parent / "manifest.json"
         summary_path = csv_path.parent / "runtime_summary.json"
@@ -118,6 +121,25 @@ def list_lcia_methods() -> dict:
                     if method:
                         rows.add(method)
         return rows
+
+    def _is_legacy_ef31_indicator_set(methods: set[str]) -> bool:
+        """Detect if method names look like legacy EF3.1 indicator names rather than real method names.
+
+        Legacy EF3.1 indicator_index.csv has each row's method_en = indicator name
+        (e.g. 'Climate change', 'Acidification') instead of a consistent method name
+        (e.g. 'EF v3.1').  We detect this by checking if top-level names overlap with
+        known EF3.1 indicator categories.
+        """
+        return bool(LEGACY_INDICATORS_AS_METHODS & methods)
+
+    def _collapse_to_canonical(methods: set[str]) -> tuple[set[str], str]:
+        """Collapse legacy indicator-based methods to canonical EF v3.1.
+
+        Returns (methods_set, source_label).
+        """
+        if _is_legacy_ef31_indicator_set(methods):
+            return set(EF31_CANONICAL_METHODS), "legacy_ef3.1_indicator_index"
+        return methods, "runtime_indicator_index"
 
     runtime_root = DEFAULT_EF31_RUNTIME_ROOT
     runtime_candidates = []
@@ -161,12 +183,16 @@ def list_lcia_methods() -> dict:
         base = Path(settings.nebula_lca_ef31_dir)
         csv_path = base if base.is_file() else base / "indicator_index.csv"
         methods = _read_methods(csv_path)
+
+    methods, source_label = _collapse_to_canonical(methods)
     if not methods:
-        methods.update(["EF v3.1", "EF v3.1 no LT"])
+        methods = set(EF31_CANONICAL_METHODS)
+
     return {
         "default_method": "EF v3.1",
         "methods": sorted(methods),
         "source": str(csv_path) if csv_path.exists() else "",
+        "source_label": source_label,
     }
 
 

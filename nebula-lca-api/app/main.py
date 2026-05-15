@@ -7,6 +7,7 @@ import zipfile
 import re
 from collections import Counter, defaultdict
 from datetime import datetime
+from itertools import chain
 from pathlib import Path
 import time
 import traceback
@@ -1627,6 +1628,41 @@ def _flow_name_en_by_uuid_cached(db: Session) -> dict[str, str]:
     }
     _cache_set(cache_key, value)
     return value
+
+
+def _has_non_ecoinvent_elementary_flows(graph: HybridGraph, db: Session) -> bool:
+    """Check if any biosphere port references a non-ecoinvent elementary flow.
+
+    Returns True if any elementary flow in the graph has source != 'ecoinvent'.
+    Flows with source=None or source in {'tiangong', 'ef3.1', 'tidas', 'user_custom'}
+    are all considered non-ecoinvent.
+    """
+    # Collect all biosphere flow UUIDs from the graph
+    biosphere_uuids: set[str] = set()
+    for node in (graph.nodes or []):
+        for port in chain(getattr(node, "inputs", []) or [], getattr(node, "outputs", []) or []):
+            port_type = getattr(port, "type", None)
+            if port_type == "biosphere":
+                uuid_val = str(getattr(port, "flowUuid", getattr(port, "flow_uuid", "") or ""))
+                if uuid_val:
+                    biosphere_uuids.add(uuid_val.lower().strip())
+
+    if not biosphere_uuids:
+        return False
+
+    # Batch lookup sources from DB
+    uuid_list = list(biosphere_uuids)
+    queries = [
+        db.query(FlowRecord.source).filter(func.lower(FlowRecord.flow_uuid) == uuid).first()
+        for uuid in uuid_list
+    ]
+    for source_val in queries:
+        source = str(source_val.source if source_val else "").strip().lower() if source_val else ""
+        # Only "ecoinvent" is considered eco-compatible
+        if not source.startswith("ecoinvent"):
+            return True
+    return False
+
 
 def _solver_flow_type_by_uuid_cached(db: Session) -> dict[str, str]:
     return {
@@ -3838,6 +3874,25 @@ def run_model(payload: RunRequest, db: Session = Depends(get_db)) -> RunResponse
     validate_graph_contract(payload.graph, require_non_empty=False, allow_pts_nodes=True)
     validate_graph_flow_type_contract(payload.graph, db=db, stage="run_model")
     validate_graph_port_names_against_flow_catalog(payload.graph, db=db, stage="run_model")
+
+    # Validate LCIA method compatibility with elementary flow sources.
+    lcia_methods = payload.lcia_methods or ["EF v3.1"]
+    has_non_eco_elementary = _has_non_ecoinvent_elementary_flows(payload.graph, db)
+    if has_non_eco_elementary:
+        non_ef31 = [m for m in lcia_methods if m != "EF v3.1"]
+        if non_ef31:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "LCIA_METHOD_INCOMPATIBLE_WITH_ELEMENTARY_FLOWS",
+                    "message": "模型包含天工/TIDAS/EF 来源基本流，只能使用 EF v3.1。非 ecoinvent 基本流无法匹配 ecoinvent 专属 LCIA 方法。",
+                    "evidence": {
+                        "requested_methods": non_ef31,
+                        "allowed_methods": ["EF v3.1"],
+                    },
+                },
+            )
+
     try:
         pts_nodes = [node for node in payload.graph.nodes if node.node_kind == "pts_module"]
         effective_payload = payload
