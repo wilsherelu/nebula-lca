@@ -853,17 +853,18 @@ body,
 
 .run-analysis-detail-list {
   display: grid;
-  gap: 8px;
-  padding: 14px;
+  gap: 0;
+  padding: 6px 14px 14px;
+  overflow: auto;
 }
 
 .run-analysis-detail-list div {
   display: grid;
-  grid-template-columns: 120px minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 12px;
   align-items: start;
   border-bottom: 1px solid #edf3f6;
-  padding-bottom: 8px;
+  padding: 10px 0;
 }
 
 .run-analysis-detail-list span {
@@ -876,6 +877,16 @@ body,
   min-width: 0;
   overflow-wrap: anywhere;
   color: #244b5c;
+}
+
+.run-analysis-detail-list code {
+  display: block;
+  border: 1px solid #e0ebf0;
+  border-radius: 6px;
+  background: #f7fbfd;
+  padding: 5px 7px;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .run-analysis-view-switch.active {
@@ -953,12 +964,15 @@ body,
 }
 
 .run-analysis-subdialog {
-  width: min(760px, calc(100vw - 96px));
+  width: min(720px, calc(100vw - 96px));
+  max-height: min(72vh, 680px);
   border: 1px solid #d7e4ea;
   border-radius: 12px;
   background: #fff;
   box-shadow: 0 24px 56px rgba(9, 24, 33, 0.22);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .run-analysis-subdialog-head {
@@ -966,6 +980,7 @@ body,
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex: 0 0 auto;
   padding: 10px 12px;
   border-bottom: 1px solid #e2edf2;
   background: #f2f8fb;
