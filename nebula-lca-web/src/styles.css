@@ -954,12 +954,13 @@ body,
 }
 
 .run-analysis-subdialog-mask {
-  position: absolute;
+  position: fixed;
   inset: 0;
+  z-index: 1200;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(15, 28, 34, 0.22);
+  background: rgba(15, 28, 34, 0.36);
   padding: 20px;
 }
 
