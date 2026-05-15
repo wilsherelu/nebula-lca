@@ -593,6 +593,7 @@ def _build_product_result_view_from_graph(
     for node in graph.nodes:
         process_uuid = str(node.process_uuid or "")
         process_name = str(node.name or process_uuid or node.id)
+        process_location = str(node.location or "")
         if not process_uuid:
             continue
         reference_port = next((port for port in node.outputs if port.type != "biosphere" and bool(port.isProduct)), None)
@@ -610,6 +611,7 @@ def _build_product_result_view_from_graph(
                     "product_key": product_key,
                     "process_uuid": process_uuid,
                     "process_name": process_name,
+                    "process_location": process_location,
                     "product_port_id": product_port_id,
                     "product_flow_uuid": product_flow_uuid,
                     "product_name": str(port.name or product_flow_uuid),
@@ -635,6 +637,7 @@ def _build_product_result_view_from_graph(
                     "product_key": item["product_key"],
                     "process_uuid": process_uuid,
                     "process_name": item["process_name"],
+                    "process_location": item["process_location"],
                     "product_port_id": item["product_port_id"],
                     "product_flow_uuid": item["product_flow_uuid"],
                     "product_name": item["product_name"],
