@@ -34,6 +34,8 @@ type CatalogFlow = {
   default_unit: string;
   unit_group: string;
   compartment?: string | null;
+  source?: string | null;
+  is_custom?: boolean;
 };
 
 type UnitDefinition = {
@@ -109,6 +111,20 @@ function getCatalogFlowDisplayName(flow: CatalogFlow, uiLanguage: "zh" | "en"): 
     return String(flow.flow_name_en ?? "").trim() || flow.flow_name;
   }
   return flow.flow_name;
+}
+
+function flowSourceGroup(flow: CatalogFlow): "ecoinvent" | "custom" | "tiangong" | "unknown" {
+  const source = String(flow.source ?? "").trim().toLowerCase();
+  if (source.startsWith("ecoinvent")) {
+    return "ecoinvent";
+  }
+  if (flow.is_custom || source.includes("custom")) {
+    return "custom";
+  }
+  if (source.includes("tidas") || source.includes("tiangong") || source.includes("ef3.1") || source === "ef") {
+    return "tiangong";
+  }
+  return source ? "tiangong" : "unknown";
 }
 
 function toPortFromReference(flow: CatalogFlow, direction: "input" | "output", type: "technosphere" | "biosphere"): FlowPort {
@@ -257,6 +273,7 @@ export function NodeInspector({ node, onStatus }: Props) {
   const [flowSearchInput, setFlowSearchInput] = useState("");
   const [flowSearchQuery, setFlowSearchQuery] = useState("");
   const [flowCategoryLevel1, setFlowCategoryLevel1] = useState("");
+  const [flowSourceFilter, setFlowSourceFilter] = useState("");
   const [flowCategoryOptions, setFlowCategoryOptions] = useState<Array<{ category: string; count: number }>>([]);
   const [catalogFlows, setCatalogFlows] = useState<CatalogFlow[]>([]);
   const [unitDefinitions, setUnitDefinitions] = useState<UnitDefinition[]>([]);
@@ -641,6 +658,7 @@ export function NodeInspector({ node, onStatus }: Props) {
     setFlowCategoryLevel1("");
     setFlowSearchInput("");
     setFlowSearchQuery("");
+    setFlowSourceFilter("");
     setFlowLoadError("");
     setFlowPage(1);
     setFlowTotal(0);
@@ -719,6 +737,8 @@ export function NodeInspector({ node, onStatus }: Props) {
                 (row.compartment as string | null | undefined) ??
                 (row.category as string | null | undefined) ??
                 null,
+              source: (row.source as string | null | undefined) ?? null,
+              is_custom: Boolean(row.is_custom),
             };
           });
           setCatalogFlows(rows);
@@ -892,9 +912,18 @@ export function NodeInspector({ node, onStatus }: Props) {
         if (target === "in_elementary" || target === "out_elementary") {
           return elementary;
         }
-        return !elementary;
+        if (!elementary) {
+          return true;
+        }
+        return false;
+      })
+      .filter((flow) => {
+        if (!flowSourceFilter) {
+          return true;
+        }
+        return flowSourceGroup(flow) === flowSourceFilter;
       });
-  }, [flowPicker.target, catalogFlows]);
+  }, [flowPicker.target, catalogFlows, flowSourceFilter]);
 
   const applyFlowSearch = () => {
     setFlowSearchQuery(flowSearchInput);
@@ -1735,6 +1764,18 @@ export function NodeInspector({ node, onStatus }: Props) {
                     </option>
                   ))}
                 </select>
+                <select
+                  value={flowSourceFilter}
+                  onChange={(event) => {
+                    setFlowSourceFilter(event.target.value);
+                    setFlowPage(1);
+                  }}
+                >
+                  <option value="">{t("全部来源", "All Sources")}</option>
+                  <option value="ecoinvent">ecoinvent</option>
+                  <option value="tiangong">TIDAS/EF</option>
+                  <option value="custom">custom</option>
+                </select>
                 <button type="button" className="search-btn" onClick={applyFlowSearch}>
                   {t("检索", "Search")}
                 </button>
@@ -1763,6 +1804,7 @@ export function NodeInspector({ node, onStatus }: Props) {
                       <th className="flow-picker-name-col">{t("流名称", "Flow Name")}</th>
                       <th className="flow-picker-unit-col">{t("单位", "Unit")}</th>
                       <th className="flow-picker-category-col">{t("分类", "Category")}</th>
+                      <th className="flow-picker-source-col">{t("来源", "Source")}</th>
                       <th className="flow-picker-action-col">{t("操作", "Action")}</th>
                     </tr>
                   </thead>
@@ -1776,6 +1818,9 @@ export function NodeInspector({ node, onStatus }: Props) {
                         <td>{flow.default_unit}</td>
                         <td className="flow-picker-category-cell" title={flow.compartment || "-"}>
                           {flow.compartment || "-"}
+                        </td>
+                        <td className="flow-picker-source-cell" title={flow.source || "unknown"}>
+                          {flow.source || "unknown"}
                         </td>
                         <td className="flow-picker-action-cell">
                           <button type="button" className="flow-picker-use-btn" onClick={() => addCatalogFlow(flow)}>

@@ -349,6 +349,8 @@ def list_flows_api(
                 type=normalized_type,
                 unit=row.default_unit,
                 category=row.compartment,
+                source=row.source,
+                is_custom=bool(row.is_custom),
                 used_in_processes=int(used_in_processes.get(row.flow_uuid, 0)),
                 last_modified=row.source_updated_at,
             )

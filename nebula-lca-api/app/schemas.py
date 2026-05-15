@@ -488,6 +488,8 @@ class FlowListItem(BaseModel):
     type: str
     unit: str | None = None
     category: str | None = None
+    source: str | None = None
+    is_custom: bool = False
     used_in_processes: int = 0
     last_modified: str | None = None
 
@@ -590,6 +592,8 @@ class FlowOut(BaseModel):
     default_unit: str
     unit_group: str
     compartment: str | None = None
+    source: str | None = None
+    is_custom: bool = False
     source_updated_at: str | None = None
 
 
