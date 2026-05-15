@@ -7,8 +7,8 @@ ef31 import job into the three CSV files that the solver expects:
     indicator_index.csv  — indicator_index, method_en, method_zh, indicator_en, indicator_zh, ecoinvent_category
     lcia_factors.csv     — row, column, coefficient
 
-Output directory is placed under ``agent-memory/local-ef31-runtime/{job_id}/``
-so that the solver can be pointed at it via ``NEBULA_LCA_EF31_DIR``.
+Output directory is placed under ``nebula-lca-api/runtime/ef31/{job_id}/`` by
+default.  This directory is a managed local runtime artifact, not source data.
 """
 from __future__ import annotations
 
@@ -19,9 +19,12 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from app.config import WORKSPACE_ROOT
+from app.config import PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_EF31_RUNTIME_ROOT = PROJECT_ROOT / "runtime" / "ef31"
+ACTIVE_MANIFEST_NAME = "active_manifest.json"
 
 
 def generate_ef31_runtime_csvs(
@@ -35,7 +38,7 @@ def generate_ef31_runtime_csvs(
     Args:
         job_id: The ef31 import job id (used to find artifacts).
         output_root: Where to write the CSVs.  Defaults to
-            ``agent-memory/local-ef31-runtime/{job_id}/``.
+            ``nebula-lca-api/runtime/ef31/{job_id}/``.
         overwrite: If False, raises ValueError when output dir already exists.
         _job_dir_override: Internal test-only parameter to override where
             job artifacts are read from (bypasses _IMPORT_CACHE_ROOT).
@@ -70,7 +73,7 @@ def generate_ef31_runtime_csvs(
 
     # Resolve output path
     if output_root is None:
-        output_root = WORKSPACE_ROOT / "agent-memory" / "local-ef31-runtime"
+        output_root = DEFAULT_EF31_RUNTIME_ROOT
     output_dir = output_root / job_id
     if output_dir.exists() and not overwrite:
         raise FileExistsError(
@@ -204,10 +207,21 @@ def generate_ef31_runtime_csvs(
             writer.writerow([row_idx, flow_idx, cf_value])
             factor_count += 1
 
-    # Write summary
+    # Write manifest / summary.  runtime_summary.json is kept for backward
+    # compatibility with existing UI/tests; manifest.json is the managed
+    # artifact contract going forward.
     summary = {
+        "runtime_schema_version": "ef31-runtime-artifact-v1",
+        "runtime_id": job_id,
         "job_id": job_id,
         "output_dir": str(output_dir),
+        "artifact_dir": str(output_dir),
+        "active": True,
+        "files": {
+            "flow_index": "flow_index.csv",
+            "indicator_index": "indicator_index.csv",
+            "lcia_factors": "lcia_factors.csv",
+        },
         "flows_count": len(flow_uuids),
         "indicators_count": len(indicator_keys),
         "factors_count": factor_count,
@@ -216,6 +230,10 @@ def generate_ef31_runtime_csvs(
         "cf_ambiguous": len(ambiguous),
     }
     with open(output_dir / "runtime_summary.json", "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2, ensure_ascii=False)
+    with open(output_dir / "manifest.json", "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2, ensure_ascii=False)
+    with open(output_root / ACTIVE_MANIFEST_NAME, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
 
     logger.info(

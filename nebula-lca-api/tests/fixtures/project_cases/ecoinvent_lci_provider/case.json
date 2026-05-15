@@ -1,0 +1,46 @@
+{
+  "name": "case_ecoinvent_lci_provider",
+  "graph": {
+    "functionalUnit": "1 kg eco product",
+    "nodes": [
+      {
+        "id": "node-eco",
+        "node_kind": "lci_dataset",
+        "mode": "normalized",
+        "lci_role": "provider",
+        "process_uuid": "proc-eco-lci",
+        "name": "ecoinvent LCI provider",
+        "location": "GLO",
+        "reference_product": "eco product",
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "out-eco-product",
+            "flowUuid": "flow-eco-product",
+            "name": "eco product",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1.0,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          }
+        ],
+        "emissions": [
+          {
+            "id": "em-eco-ch4",
+            "flowUuid": "flow-eco-ch4",
+            "name": "Methane",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1.0,
+            "type": "biosphere",
+            "direction": "output"
+          }
+        ]
+      }
+    ],
+    "exchanges": [],
+    "metadata": {}
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "target_product": "eco product",
+  "target_process_uuid": "proc-eco-lci",
+  "climate_change": 27.0,
+  "summary": {
+    "indicator_count": 25,
+    "missing_ef31_flow_count": 0
+  },
+  "snapshot": {
+    "process_count": 1,
+    "link_count": 0
+  }
+}

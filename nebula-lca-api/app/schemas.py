@@ -1226,8 +1226,13 @@ class Ef31ImportCommitResponse(BaseModel):
 
 class Ef31RuntimeCsvResponse(BaseModel):
     """Response after generating solver runtime CSVs for an EF 3.1 job."""
+    runtime_schema_version: str = Field(default="ef31-runtime-artifact-v1", description="Runtime artifact schema version")
+    runtime_id: str | None = Field(default=None, description="Runtime artifact ID")
     job_id: str = Field(..., description="EF 3.1 import job ID")
     output_dir: str = Field(..., description="Directory containing solver runtime CSVs")
+    artifact_dir: str | None = Field(default=None, description="Managed runtime artifact directory")
+    active: bool = Field(default=True, description="Whether this runtime is the active generated runtime")
+    files: dict = Field(default_factory=dict, description="Runtime artifact file names")
     flows_count: int = Field(..., description="Rows written to flow_index.csv")
     indicators_count: int = Field(..., description="Rows written to indicator_index.csv")
     factors_count: int = Field(..., description="Rows written to lcia_factors.csv")

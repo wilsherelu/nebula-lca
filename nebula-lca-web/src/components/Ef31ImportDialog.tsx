@@ -64,8 +64,13 @@ interface Ef31CommitResponse {
 }
 
 interface Ef31RuntimeCsvResponse {
+  runtime_schema_version?: string;
+  runtime_id?: string;
   job_id: string;
   output_dir: string;
+  artifact_dir?: string;
+  active?: boolean;
+  files?: Record<string, string>;
   flows_count: number;
   indicators_count: number;
   factors_count: number;
@@ -469,7 +474,7 @@ export default function Ef31ImportDialog(props: {
                   <span style={{ fontWeight: 600 }}>Solver runtime CSV</span>
                   <div style={{ display: "grid", gap: 4, fontSize: 12, color: "#496675" }}>
                     <div>
-                      {runtimeCsv.env_var}: <b>{runtimeCsv.output_dir}</b>
+                      runtime artifact: <b>{runtimeCsv.artifact_dir ?? runtimeCsv.output_dir}</b>
                     </div>
                     <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                       <span>flows: <b>{runtimeCsv.flows_count}</b></span>
@@ -478,6 +483,7 @@ export default function Ef31ImportDialog(props: {
                       <span>matched: <b>{runtimeCsv.cf_matched}</b></span>
                       <span>unmatched: <b>{runtimeCsv.cf_unmatched}</b></span>
                       <span>ambiguous: <b>{runtimeCsv.cf_ambiguous}</b></span>
+                      <span>active: <b>{runtimeCsv.active === false ? "no" : "yes"}</b></span>
                     </div>
                   </div>
                 </label>
@@ -555,7 +561,7 @@ export default function Ef31ImportDialog(props: {
                 {runtimeCsv && (
                   <div style={{ display: "grid", gap: 4, marginTop: 6, fontSize: 12, color: "#496675" }}>
                     <div>
-                      {runtimeCsv.env_var}: <b>{runtimeCsv.output_dir}</b>
+                      runtime artifact: <b>{runtimeCsv.artifact_dir ?? runtimeCsv.output_dir}</b>
                     </div>
                     <div>
                       runtime CSV: {runtimeCsv.flows_count} flows / {runtimeCsv.indicators_count} indicators / {runtimeCsv.factors_count} factors

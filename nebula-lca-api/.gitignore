@@ -26,6 +26,7 @@ docs/
 
 # temp/work files
 tmp/
+runtime/
 archive/
 _tmp*
 _write_test*
