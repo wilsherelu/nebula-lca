@@ -5360,8 +5360,8 @@ export default function App() {
                                       viewedProduct &&
                                       row.viewKey === viewedProduct.viewKey
                                         ? uiLanguage === "zh"
-                                          ? "展示全指标中"
-                                          : "Showing full indicators"
+                                          ? "查看中"
+                                          : "Viewing"
                                         : uiLanguage === "zh"
                                           ? "查看"
                                           : "View"}
