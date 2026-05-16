@@ -140,6 +140,8 @@ def _ensure_projects_management_schema() -> dict:
             "time_representativeness": "TEXT",
             "geography": "TEXT",
             "description": "TEXT",
+            "source_policy": "VARCHAR(32) DEFAULT 'open_mixed'",
+            "allowed_lcia_scope": "VARCHAR(32) DEFAULT 'ef31_only'",
             "status": "VARCHAR(32) DEFAULT 'active'",
             "updated_at": "DATETIME",
         }
@@ -150,12 +152,18 @@ def _ensure_projects_management_schema() -> dict:
             added_columns.append(name)
 
         conn.execute(_sqla_text("UPDATE models SET status='active' WHERE status IS NULL OR TRIM(status)=''"))
+        conn.execute(_sqla_text("UPDATE models SET source_policy='open_mixed' WHERE source_policy IS NULL OR TRIM(source_policy)=''"))
+        conn.execute(_sqla_text("UPDATE models SET allowed_lcia_scope='ef31_only' WHERE allowed_lcia_scope IS NULL OR TRIM(allowed_lcia_scope)=''"))
         conn.execute(_sqla_text("UPDATE models SET updated_at=created_at WHERE updated_at IS NULL"))
 
         conn.execute(_sqla_text("CREATE INDEX IF NOT EXISTS ix_models_name ON models (name)"))
         created_indexes.append("ix_models_name")
         conn.execute(_sqla_text("CREATE INDEX IF NOT EXISTS ix_models_status ON models (status)"))
         created_indexes.append("ix_models_status")
+        conn.execute(_sqla_text("CREATE INDEX IF NOT EXISTS ix_models_source_policy ON models (source_policy)"))
+        created_indexes.append("ix_models_source_policy")
+        conn.execute(_sqla_text("CREATE INDEX IF NOT EXISTS ix_models_allowed_lcia_scope ON models (allowed_lcia_scope)"))
+        created_indexes.append("ix_models_allowed_lcia_scope")
 
     return {
         "table": "models",
@@ -235,6 +243,8 @@ def create_project(
         time_representativeness=_safe_str(payload.time_representativeness),
         geography=_safe_str(payload.geography),
         description=_safe_str(payload.description),
+        source_policy=_safe_str(payload.source_policy) or "open_mixed",
+        allowed_lcia_scope=_safe_str(payload.allowed_lcia_scope) or "ef31_only",
         status=_normalize_project_status("active"),
         updated_at=now,
     )
@@ -318,9 +328,38 @@ def create_project_version(
     validate_graph_flow_type_contract(payload.graph, db=db, stage="save_version")
     validate_graph_port_names_against_flow_catalog(payload.graph, db=db, stage="save_version")
 
+    # Phase 1: source-policy validation
     model = db.query(Model).filter(Model.id == project_id).first()
     if model is None:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    source_policy = model.source_policy or "open_mixed"
+
+    # Run source-policy validation on the graph.
+    # For TIDAS compliant and ecoinvent strict, this will block incompatible flows.
+    # For open_mixed, this is a soft scan that records warnings only.
+    from ..source_policy import validate_project_source_policy
+    _source_validation = validate_project_source_policy(
+        model_id=project_id,
+        graph=payload.graph.model_dump(mode="python"),
+        db=db,
+        source_policy=source_policy,
+    )
+    if not _source_validation.ok:
+        # Log warnings/info but only block for non-open_mixed policies.
+        # For open_mixed, warnings are informational.
+        if source_policy != "open_mixed":
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "SOURCE_POLICY_VIOLATION",
+                    "message": f"Project {model.id} policy={source_policy} validation failed",
+                    "evidence": {
+                        "errors": _source_validation.errors,
+                        "warnings": _source_validation.warnings,
+                    },
+                },
+            )
 
     normalized_graph = _get_pts_helpers["_normalize_graph_json_for_storage"](
         payload.graph.model_dump(mode="python")
@@ -602,6 +641,8 @@ def update_project_api(
         "time_representativeness",
         "geography",
         "description",
+        "source_policy",
+        "allowed_lcia_scope",
     ):
         value = getattr(payload, field_name)
         if value is not None:
@@ -658,6 +699,8 @@ def duplicate_project_api(
         time_representativeness=source.time_representativeness,
         geography=source.geography,
         description=source.description,
+        source_policy=source.source_policy or "open_mixed",
+        allowed_lcia_scope=source.allowed_lcia_scope or "ef31_only",
         status=source.status or "active",
         updated_at=now,
     )

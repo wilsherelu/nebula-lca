@@ -1104,8 +1104,10 @@ function TidasExportModal(props: {
             )}
             {hasWarnings && (
               <div className="pm-tidas-warnings">
-                <h4>{zh ? "警告" : "Warnings"}</h4>
-                <ul>
+                <h4>
+                  {zh ? "警告" : "Warnings"} ({preview.warnings.length + preview.allocation_warnings.length})
+                </h4>
+                <ul className="pm-tidas-scroll-list">
                   {preview.warnings.map((w, i) => <li key={`w-${i}`}>{formatTidasWarning(w)}</li>)}
                   {preview.allocation_warnings.map((w, i) => <li key={`alloc-${i}`}>{formatTidasWarning(w)}</li>)}
                 </ul>

@@ -1104,6 +1104,8 @@ def _ensure_projects_management_schema() -> dict:
             "time_representativeness": "TEXT",
             "geography": "TEXT",
             "description": "TEXT",
+            "source_policy": "VARCHAR(32) DEFAULT 'open_mixed'",
+            "allowed_lcia_scope": "VARCHAR(32) DEFAULT 'ef31_only'",
             "status": "VARCHAR(32) DEFAULT 'active'",
             "updated_at": "DATETIME",
         }
@@ -1114,12 +1116,18 @@ def _ensure_projects_management_schema() -> dict:
             added_columns.append(name)
 
         conn.execute(text("UPDATE models SET status='active' WHERE status IS NULL OR TRIM(status)=''"))
+        conn.execute(text("UPDATE models SET source_policy='open_mixed' WHERE source_policy IS NULL OR TRIM(source_policy)=''"))
+        conn.execute(text("UPDATE models SET allowed_lcia_scope='ef31_only' WHERE allowed_lcia_scope IS NULL OR TRIM(allowed_lcia_scope)=''"))
         conn.execute(text("UPDATE models SET updated_at=created_at WHERE updated_at IS NULL"))
 
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_models_name ON models (name)"))
         created_indexes.append("ix_models_name")
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_models_status ON models (status)"))
         created_indexes.append("ix_models_status")
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_models_source_policy ON models (source_policy)"))
+        created_indexes.append("ix_models_source_policy")
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_models_allowed_lcia_scope ON models (allowed_lcia_scope)"))
+        created_indexes.append("ix_models_allowed_lcia_scope")
 
     return {
         "table": "models",
@@ -3875,7 +3883,28 @@ def run_model(payload: RunRequest, db: Session = Depends(get_db)) -> RunResponse
     validate_graph_flow_type_contract(payload.graph, db=db, stage="run_model")
     validate_graph_port_names_against_flow_catalog(payload.graph, db=db, stage="run_model")
 
-    # Validate LCIA method compatibility with elementary flow sources.
+    # Resolve project_id for source-policy checks (prefer payload project_id, fall back to model_version lookup)
+    project_id = resolve_project_id_for_run(payload, db) if payload.model_version_id else getattr(payload, "project_id", None)
+
+    # Phase 1: source-policy LCIA scope validation
+    if project_id:
+        try:
+            from .source_policy import validate_lcia_scope_compatibility
+            lcia_methods = payload.lcia_methods or ["EF v3.1"]
+            validate_lcia_scope_compatibility(
+                model_id=project_id,
+                graph=payload.graph.model_dump(mode="python"),
+                lcia_methods=lcia_methods,
+                db=db,
+            )
+        except HTTPException:
+            raise
+        except Exception:
+            # If source-policy validation fails, fall through to existing legacy check
+            pass
+
+    # Legacy LCIA method compatibility check (still active for open_mixed projects
+    # and when source-policy validation didn't catch the issue).
     lcia_methods = payload.lcia_methods or ["EF v3.1"]
     has_non_eco_elementary = _has_non_ecoinvent_elementary_flows(payload.graph, db)
     if has_non_eco_elementary:

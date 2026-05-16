@@ -73,6 +73,11 @@ class Model(Base):
     time_representativeness: Mapped[str | None] = mapped_column(Text, nullable=True)
     geography: Mapped[str | None] = mapped_column(Text, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Source policy: which source-system compliance mode this project uses.
+    # Defaults to "open_mixed" for backward compatibility with existing projects.
+    source_policy: Mapped[str] = mapped_column(String(32), nullable=False, default="open_mixed", index=True)
+    # Allowed LCIA scope: which LCIA runtimes may be used.
+    allowed_lcia_scope: Mapped[str] = mapped_column(String(32), nullable=False, default="ef31_only", index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
