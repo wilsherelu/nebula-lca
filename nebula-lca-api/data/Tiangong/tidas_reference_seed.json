@@ -1,0 +1,824 @@
+{
+  "source_package_version": "Tiangong 1.0 (ILCD reference seed v2)",
+  "generated_by": "export_tidas_seed_candidate_v2.py",
+  "unit_groups": [
+    {
+      "uuid": "03cc996d-7177-4738-aa32-1572a5172ccc",
+      "name": "Unit of currency",
+      "version": "03.00.003",
+      "default_unit": "EUR",
+      "reference_unit": "EUR",
+      "units": [
+        {
+          "name": "EUR",
+          "meanValue": 1.0,
+          "@dataSetInternalID": "0"
+        },
+        {
+          "name": "$",
+          "meanValue": 1.1573037276,
+          "@dataSetInternalID": "1"
+        },
+        {
+          "name": "DM",
+          "meanValue": 1.95583,
+          "@dataSetInternalID": "2"
+        },
+        {
+          "name": "sFr",
+          "meanValue": 1.6617122846,
+          "@dataSetInternalID": "3"
+        },
+        {
+          "name": "Yen",
+          "meanValue": 100.0,
+          "@dataSetInternalID": "4"
+        }
+      ]
+    },
+    {
+      "uuid": "3620148f-c5db-48ce-9065-a10092089aca",
+      "name": "Unit of kg*km",
+      "version": "29.00.000",
+      "default_unit": "kg*km",
+      "reference_unit": "kg*km",
+      "units": [
+        {
+          "name": "kg*km",
+          "meanValue": 1.0,
+          "@dataSetInternalID": "0"
+        },
+        {
+          "name": "t*km",
+          "meanValue": 1000.0,
+          "@dataSetInternalID": "1"
+        }
+      ]
+    },
+    {
+      "uuid": "59f191d6-5dd3-4553-af88-1a32accfe308",
+      "name": "Units of mass*time",
+      "version": "03.00.003",
+      "default_unit": "kg*a",
+      "reference_unit": "kg*a",
+      "units": [
+        {
+          "name": "kg*a",
+          "meanValue": 1.0,
+          "@dataSetInternalID": "0"
+        },
+        {
+          "name": "t*a",
+          "meanValue": 1000.0,
+          "@dataSetInternalID": "1"
+        },
+        {
+          "name": "kg*d",
+          "meanValue": 0.002739726,
+          "@dataSetInternalID": "2"
+        },
+        {
+          "name": "t*d",
+          "meanValue": 2.739726,
+          "@dataSetInternalID": "3"
+        }
+      ]
+    },
+    {
+      "uuid": "5beb6eed-33a9-47b8-9ede-1dfe8f679159",
+      "name": "Units of items",
+      "version": "03.00.003",
+      "default_unit": "Item(s)",
+      "reference_unit": "Item(s)",
+      "units": [
+        {
+          "name": "Item(s)",
+          "meanValue": 1.0,
+          "@dataSetInternalID": "0"
+        },
+        {
+          "name": "Dozen(s)",
+          "meanValue": 12.0,
+          "@dataSetInternalID": "1"
+        }
+      ]
+    },
+    {
+      "uuid": "838aaa22-0117-11db-92e3-0800200c9a66",
+      "name": "Units of length",
+      "version": "03.00.000",
+      "default_unit": "m",
+      "reference_unit": "m",
+      "units": [
+        {
+          "name": "m",
+          "meanValue": 1.0,
+          "@dataSetInternalID": "0"
+        },
+        {
+          "name": "km",
+          "meanValue": 1000.0,
+          "@dataSetInternalID": "1"
+        },
+        {
+          "name": "cm",
+          "meanValue": 0.01,
+          "@dataSetInternalID": "2"
+        },
+        {
+          "name": "mm",
+          "meanValue": 0.001,
+          "@dataSetInternalID": "3"
+        },
+        {
+          "name": "ft",
+          "meanValue": 0.3048,
+          "@dataSetInternalID": "4"
+        },
+        {
+          "name": "mi",
+          "meanValue": 1609.347,
+          "@dataSetInternalID": "5"
+        },
+        {
+          "name": "in",
+          "meanValue": 0.0254,
+          "@dataSetInternalID": "6"
+        },
+        {
+          "name": "u",
+          "meanValue": 1e-06,
+          "@dataSetInternalID": "7"
+        },
+        {
+          "name": "nmi",
+          "meanValue": 1852.0,
+          "@dataSetInternalID": "8"
+        },
+        {
+          "name": "yd",
+          "meanValue": 0.9144,
+          "@dataSetInternalID": "9"
+        }
+      ]
+    },
+    {
+      "uuid": "93a60a57-a3c8-11da-a746-0800200c9a66",
+      "name": "Units of energy",
+      "version": "03.00.003",
+      "default_unit": "MJ",
+      "reference_unit": "MJ",
+      "units": [
+        {
+          "name": "MJ",
+          "meanValue": 1.0,
+          "@dataSetInternalID": "0"
+        },
+        {
+          "name": "kWh",
+          "meanValue": 3.6,
+          "@dataSetInternalID": "1"
+        },
+        {
+          "name": "TOE",
+          "meanValue": 41868.0,
+          "@dataSetInternalID": "2"
+        },
+        {
+          "name": "J",
+          "meanValue": 1e-06,
+          "@dataSetInternalID": "3"
+        },
+        {
+          "name": "kcal",
+          "meanValue": 0.0041867,
+          "@dataSetInternalID": "4"
+        },
+        {
+          "name": "btu",
+          "meanValue": 0.001055056,
+          "@dataSetInternalID": "5"
+        },
+        {
+          "name": "MWh",
+          "meanValue": 3600.0,
+          "@dataSetInternalID": "6"
+        },
+        {
+          "name": "TCE",
+          "meanValue": 29307.6,
+          "@dataSetInternalID": "7"
+        },
+        {
+          "name": "GJ",
+          "meanValue": 1000.0,
+          "@dataSetInternalID": "8"
+        }
+      ]
+    },
+    {
+      "uuid": "93a60a57-a3c8-12da-a746-0800200c9a66",
+      "name": "Units of volume",
+      "version": "03.00.003",
+      "default_unit": "m3",
+      "reference_unit": "m3",
+      "units": [
+        {
+          "name": "m3",
+          "meanValue": 1.0,
+          "@dataSetInternalID": "0"
+        },
+        {
+          "name": "l",
+          "meanValue": 0.001,
+          "@dataSetInternalID": "1"
+        },
+        {
+          "name": "gal (US dry)",
+          "meanValue": 0.00440488377086,
+          "@dataSetInternalID": "2"
+        },
+        {
+          "name": "gal (US liq)",
+          "meanValue": 0.003785412,
+          "@dataSetInternalID": "3"
+        },
+        {
+          "name": "cu ft",
+          "meanValue": 0.028316846592,
+          "@dataSetInternalID": "4"
+        },
+        {
+          "name": "fl oz (Imp)",
+          "meanValue": 2.84130625e-05,
+          "@dataSetInternalID": "5"
+        },
+        {
+          "name": "US fl oz",
+          "meanValue": 2.95735295625e-05,
+          "@dataSetInternalID": "6"
+        },
+        {
+          "name": "pt (Imp)",
+          "meanValue": 0.00056826125,
+          "@dataSetInternalID": "7"
+        },
+        {
+          "name": "pt (US fl)",
+          "meanValue": 0.000473176473,
+          "@dataSetInternalID": "8"
+        },
+        {
+          "name": "pt (US dry)",
+          "meanValue": 0.0005506104713575,
+          "@dataSetInternalID": "9"
+        },
+        {
+          "name": "gal (US fl)",
+          "meanValue": 0.003785411784,
+          "@dataSetInternalID": "10"
+        },
+        {
+          "name": "gal (Imp)",
+          "meanValue": 0.00454609,
+          "@dataSetInternalID": "11"
+        },
+        {
+          "name": "bsh (US)",
+          "meanValue": 0.03523907017,
+          "@dataSetInternalID": "12"
+        },
+        {
+          "name": "bsh (Imp)",
+          "meanValue": 0.03636872,
+          "@dataSetInternalID": "13"
+        },
+        {
+          "name": "ml",
+          "meanValue": 1e-06,
+          "@dataSetInternalID": "14"
+        },
+        {
+          "name": "ul",
+          "meanValue": 1e-09,
+          "@dataSetInternalID": "15"
+        },
+        {
+          "name": "bbl",
+          "meanValue": 0.158987294928,
+          "@dataSetInternalID": "16"
+        },
+        {
+          "name": "bl (US beer)",
+          "meanValue": 0.1173477,
+          "@dataSetInternalID": "17"
+        },
+        {
+          "name": "bl (US fl)",
+          "meanValue": 0.119240471196,
+          "@dataSetInternalID": "18"
+        },
+        {
+          "name": "bl (Imp)",
+          "meanValue": 0.16365924,
+          "@dataSetInternalID": "19"
+        },
+        {
+          "name": "bl (US dry)",
+          "meanValue": 0.115628198985075,
+          "@dataSetInternalID": "20"
+        }
+      ]
+    },
+    {
+      "uuid": "93a60a57-a3c8-16da-a746-0800200c9a66",
+      "name": "Units of radioactivity",
+      "version": "03.00.003",
+      "default_unit": "kBq",
+      "reference_unit": "kBq",
+      "units": [
+        {
+          "name": "kBq",
+          "meanValue": 1.0,
+          "@dataSetInternalID": "0"
+        },
+        {
+          "name": "Bq",
+          "meanValue": 0.001,
+          "@dataSetInternalID": "1"
+        },
+        {
+          "name": "Ci",
+          "meanValue": 37000000.0,
+          "@dataSetInternalID": "2"
+        },
+        {
+          "name": "Rutherford",
+          "meanValue": 1000.0,
+          "@dataSetInternalID": "3"
+        }
+      ]
+    },
+    {
+      "uuid": "93a60a57-a3c8-18da-a746-0800200c9a66",
+      "name": "Units of area",
+      "version": "03.00.003",
+      "default_unit": "m2",
+      "reference_unit": "m2",
+      "units": [
+        {
+          "name": "m2",
+          "meanValue": 1.0,
+          "@dataSetInternalID": "0"
+        },
+        {
+          "name": "km2",
+          "meanValue": 1000000.0,
+          "@dataSetInternalID": "1"
+        },
+        {
+          "name": "ha",
+          "meanValue": 10000.0,
+          "@dataSetInternalID": "2"
+        },
+        {
+          "name": "ft2",
+          "meanValue": 0.09290304,
+          "@dataSetInternalID": "3"
+        },
+        {
+          "name": "mi2",
+          "meanValue": 2589988.11,
+          "@dataSetInternalID": "4"
+        },
+        {
+          "name": "ac",
+          "meanValue": 4046.856,
+          "@dataSetInternalID": "5"
+        },
+        {
+          "name": "yd2",
+          "meanValue": 0.83612736,
+          "@dataSetInternalID": "6"
+        },
+        {
+          "name": "a",
+          "meanValue": 100.0,
+          "@dataSetInternalID": "7"
+        },
+        {
+          "name": "cm2",
+          "meanValue": 0.0001,
+          "@dataSetInternalID": "8"
+        },
+        {
+          "name": "nmi2",
+          "meanValue": 3429904.0,
+          "@dataSetInternalID": "9"
+        }
+      ]
+    },
+    {
+      "uuid": "93a60a57-a3c8-20da-a746-0800200c9a66",
+      "name": "Units of area*time",
+      "version": "03.00.003",
+      "default_unit": "m2*a",
+      "reference_unit": "m2*a",
+      "units": [
+        {
+          "name": "m2*a",
+          "meanValue": 1.0,
+          "@dataSetInternalID": "0"
+        },
+        {
+          "name": "km2*a",
+          "meanValue": 1000000.0,
+          "@dataSetInternalID": "1"
+        },
+        {
+          "name": "ha*a",
+          "meanValue": 10000.0,
+          "@dataSetInternalID": "2"
+        },
+        {
+          "name": "ft2*a",
+          "meanValue": 0.09290304,
+          "@dataSetInternalID": "3"
+        },
+        {
+          "name": "mi2*a",
+          "meanValue": 2589988.1,
+          "@dataSetInternalID": "4"
+        },
+        {
+          "name": "m2*d",
+          "meanValue": 0.002739726,
+          "@dataSetInternalID": "5"
+        }
+      ]
+    },
+    {
+      "uuid": "93a60a57-a3c8-23da-a746-0800200c9a66",
+      "name": "Units of volume*time",
+      "version": "03.00.003",
+      "default_unit": "m3*a",
+      "reference_unit": "m3*a",
+      "units": [
+        {
+          "name": "m3*a",
+          "meanValue": 1.0,
+          "@dataSetInternalID": "0"
+        },
+        {
+          "name": "l*a",
+          "meanValue": 0.001,
+          "@dataSetInternalID": "1"
+        }
+      ]
+    },
+    {
+      "uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+      "name": "Units of mass",
+      "version": "03.00.003",
+      "default_unit": "kg",
+      "reference_unit": "kg",
+      "units": [
+        {
+          "name": "kg",
+          "meanValue": 1.0,
+          "@dataSetInternalID": "0"
+        },
+        {
+          "name": "t",
+          "meanValue": 1000.0,
+          "@dataSetInternalID": "1"
+        },
+        {
+          "name": "lb av",
+          "meanValue": 0.45359237,
+          "@dataSetInternalID": "2"
+        },
+        {
+          "name": "Mg",
+          "meanValue": 1000.0,
+          "@dataSetInternalID": "3"
+        },
+        {
+          "name": "kt",
+          "meanValue": 0.0002,
+          "@dataSetInternalID": "4"
+        },
+        {
+          "name": "oz av",
+          "meanValue": 0.028349523125,
+          "@dataSetInternalID": "5"
+        },
+        {
+          "name": "oz t",
+          "meanValue": 0.0311034768,
+          "@dataSetInternalID": "6"
+        },
+        {
+          "name": "sh tn",
+          "meanValue": 907.18474,
+          "@dataSetInternalID": "7"
+        },
+        {
+          "name": "long tn",
+          "meanValue": 1016.0469088,
+          "@dataSetInternalID": "8"
+        },
+        {
+          "name": "g",
+          "meanValue": 0.001,
+          "@dataSetInternalID": "9"
+        },
+        {
+          "name": "mg",
+          "meanValue": 1e-06,
+          "@dataSetInternalID": "10"
+        },
+        {
+          "name": "ug",
+          "meanValue": 1e-09,
+          "@dataSetInternalID": "11"
+        },
+        {
+          "name": "ng",
+          "meanValue": 1e-12,
+          "@dataSetInternalID": "12"
+        },
+        {
+          "name": "pg",
+          "meanValue": 1e-15,
+          "@dataSetInternalID": "13"
+        }
+      ]
+    },
+    {
+      "uuid": "f170abd3-f010-45f4-8e7c-9871a5c0421b",
+      "name": "Units of mole",
+      "version": "03.00.003",
+      "default_unit": "mol",
+      "reference_unit": "mol",
+      "units": [
+        {
+          "name": "mol",
+          "meanValue": 1.0,
+          "@dataSetInternalID": "0"
+        }
+      ]
+    },
+    {
+      "uuid": "f25260a8-f7b3-425b-877a-3b0b00287bd3",
+      "name": "sej",
+      "version": "01.01.000",
+      "default_unit": "sej",
+      "reference_unit": "sej",
+      "units": [
+        {
+          "name": "sej",
+          "meanValue": 1.0,
+          "@dataSetInternalID": "0"
+        }
+      ]
+    }
+  ],
+  "flow_properties": [
+    {
+      "flow_property_uuid": "52df30be-afb3-4e75-a3d8-35f97aba925b",
+      "name_en": "Price FBG",
+      "version": "22.00.000",
+      "ref_uri": "../flowproperties/52df30be-afb3-4e75-a3d8-35f97aba925b.xml"
+    },
+    {
+      "flow_property_uuid": "4e10f566-0358-489a-8e3a-d687b66c50e6",
+      "name_en": "Mass*time",
+      "version": "00.00.000",
+      "ref_uri": "../flowproperties/4e10f566-0358-489a-8e3a-d687b66c50e6.xml"
+    },
+    {
+      "flow_property_uuid": "01846770-4cfe-4a25-8ad9-919d8d378345",
+      "name_en": "Number of items",
+      "version": "03.00.004",
+      "ref_uri": "../flowproperties/01846770-4cfe-4a25-8ad9-919d8d378345.xml"
+    },
+    {
+      "flow_property_uuid": "838aaa23-0117-11db-92e3-0800200c9a66",
+      "name_en": "Length",
+      "version": "03.00.000",
+      "ref_uri": "../flowproperties/838aaa23-0117-11db-92e3-0800200c9a66.xml"
+    },
+    {
+      "flow_property_uuid": "f6811440-ee37-11de-8a39-0800200c9a66",
+      "name_en": "Energy",
+      "version": "00.00.000",
+      "ref_uri": "../flowproperties/f6811440-ee37-11de-8a39-0800200c9a66.xml"
+    },
+    {
+      "flow_property_uuid": "93a60a56-a3c8-22da-a746-0800200c9a66",
+      "name_en": "Volume",
+      "version": "03.00.003",
+      "ref_uri": "../flowproperties/93a60a56-a3c8-22da-a746-0800200c9a66.xml"
+    },
+    {
+      "flow_property_uuid": "93a60a56-a3c8-17da-a746-0800200c9a66",
+      "name_en": "Radioactivity",
+      "version": "03.00.003",
+      "ref_uri": "../flowproperties/93a60a56-a3c8-17da-a746-0800200c9a66.xml"
+    },
+    {
+      "flow_property_uuid": "93a60a56-a3c8-19da-a746-0800200c9a66",
+      "name_en": "Area",
+      "version": "03.00.003",
+      "ref_uri": "../flowproperties/93a60a56-a3c8-19da-a746-0800200c9a66.xml"
+    },
+    {
+      "flow_property_uuid": "93a60a56-a3c8-21da-a746-0800200c9a66",
+      "name_en": "Area*time",
+      "version": "03.00.003",
+      "ref_uri": "../flowproperties/93a60a56-a3c8-21da-a746-0800200c9a66.xml"
+    },
+    {
+      "flow_property_uuid": "441238a3-ba09-46ec-b35b-c30cfba746d1",
+      "name_en": "Volume*time",
+      "version": "02.00.003",
+      "ref_uri": "../flowproperties/441238a3-ba09-46ec-b35b-c30cfba746d1.xml"
+    },
+    {
+      "flow_property_uuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+      "name_en": "Mass",
+      "version": "03.00.003",
+      "ref_uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml"
+    },
+    {
+      "flow_property_uuid": "341fd786-b2ad-4552-a762-5eafcab45dee",
+      "name_en": "Moles",
+      "version": "01.00.003",
+      "ref_uri": "../flowproperties/341fd786-b2ad-4552-a762-5eafcab45dee.xml"
+    }
+  ],
+  "unit_group_mappings": [
+    {
+      "source_unit_group": "Unit of currency",
+      "tidas_unit_group": "Unit of currency",
+      "flow_property_uuid": "52df30be-afb3-4e75-a3d8-35f97aba925b",
+      "ref_uri": "../flowproperties/52df30be-afb3-4e75-a3d8-35f97aba925b.xml",
+      "version": "22.00.000",
+      "mapping_status": "allowed",
+      "aliases": [
+        "Unit of currency",
+        "Unit_of_currency"
+      ]
+    },
+    {
+      "source_unit_group": "Units of mass*time",
+      "tidas_unit_group": "Units of mass*time",
+      "flow_property_uuid": "4e10f566-0358-489a-8e3a-d687b66c50e6",
+      "ref_uri": "../flowproperties/4e10f566-0358-489a-8e3a-d687b66c50e6.xml",
+      "version": "00.00.000",
+      "mapping_status": "allowed",
+      "aliases": [
+        "Units of mass*time",
+        "Units of mass_time",
+        "Units_of_mass_time"
+      ]
+    },
+    {
+      "source_unit_group": "Units of items",
+      "tidas_unit_group": "Units of items",
+      "flow_property_uuid": "01846770-4cfe-4a25-8ad9-919d8d378345",
+      "ref_uri": "../flowproperties/01846770-4cfe-4a25-8ad9-919d8d378345.xml",
+      "version": "03.00.004",
+      "mapping_status": "allowed",
+      "aliases": [
+        "Units of items",
+        "Units_of_items",
+        "Units of item",
+        "Units_of_item"
+      ]
+    },
+    {
+      "source_unit_group": "Units of length",
+      "tidas_unit_group": "Units of length",
+      "flow_property_uuid": "838aaa23-0117-11db-92e3-0800200c9a66",
+      "ref_uri": "../flowproperties/838aaa23-0117-11db-92e3-0800200c9a66.xml",
+      "version": "03.00.000",
+      "mapping_status": "allowed",
+      "aliases": [
+        "Units of length",
+        "Units_of_length"
+      ]
+    },
+    {
+      "source_unit_group": "Units of energy",
+      "tidas_unit_group": "Units of energy",
+      "flow_property_uuid": "f6811440-ee37-11de-8a39-0800200c9a66",
+      "ref_uri": "../flowproperties/f6811440-ee37-11de-8a39-0800200c9a66.xml",
+      "version": "00.00.000",
+      "mapping_status": "allowed",
+      "aliases": [
+        "Units of energy",
+        "Units_of_energy"
+      ]
+    },
+    {
+      "source_unit_group": "Units of volume",
+      "tidas_unit_group": "Units of volume",
+      "flow_property_uuid": "93a60a56-a3c8-22da-a746-0800200c9a66",
+      "ref_uri": "../flowproperties/93a60a56-a3c8-22da-a746-0800200c9a66.xml",
+      "version": "03.00.003",
+      "mapping_status": "allowed",
+      "aliases": [
+        "Units of volume",
+        "Units_of_volume"
+      ]
+    },
+    {
+      "source_unit_group": "Units of radioactivity",
+      "tidas_unit_group": "Units of radioactivity",
+      "flow_property_uuid": "93a60a56-a3c8-17da-a746-0800200c9a66",
+      "ref_uri": "../flowproperties/93a60a56-a3c8-17da-a746-0800200c9a66.xml",
+      "version": "03.00.003",
+      "mapping_status": "allowed",
+      "aliases": [
+        "Units of radioactivity",
+        "Units_of_radioactivity"
+      ]
+    },
+    {
+      "source_unit_group": "Units of area",
+      "tidas_unit_group": "Units of area",
+      "flow_property_uuid": "93a60a56-a3c8-19da-a746-0800200c9a66",
+      "ref_uri": "../flowproperties/93a60a56-a3c8-19da-a746-0800200c9a66.xml",
+      "version": "03.00.003",
+      "mapping_status": "allowed",
+      "aliases": [
+        "Units of area",
+        "Units_of_area"
+      ]
+    },
+    {
+      "source_unit_group": "Units of area*time",
+      "tidas_unit_group": "Units of area*time",
+      "flow_property_uuid": "93a60a56-a3c8-21da-a746-0800200c9a66",
+      "ref_uri": "../flowproperties/93a60a56-a3c8-21da-a746-0800200c9a66.xml",
+      "version": "03.00.003",
+      "mapping_status": "allowed",
+      "aliases": [
+        "Units of area*time",
+        "Units of area_time",
+        "Units_of_area_time"
+      ]
+    },
+    {
+      "source_unit_group": "Units of volume*time",
+      "tidas_unit_group": "Units of volume*time",
+      "flow_property_uuid": "441238a3-ba09-46ec-b35b-c30cfba746d1",
+      "ref_uri": "../flowproperties/441238a3-ba09-46ec-b35b-c30cfba746d1.xml",
+      "version": "02.00.003",
+      "mapping_status": "allowed",
+      "aliases": [
+        "Units of volume*time",
+        "Units of volume_time",
+        "Units_of_volume_time"
+      ]
+    },
+    {
+      "source_unit_group": "Units of mass",
+      "tidas_unit_group": "Units of mass",
+      "flow_property_uuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+      "ref_uri": "../flowproperties/93a60a56-a3c8-11da-a746-0800200b9a66.xml",
+      "version": "03.00.003",
+      "mapping_status": "allowed",
+      "aliases": [
+        "Units of mass",
+        "Units_of_mass"
+      ]
+    },
+    {
+      "source_unit_group": "Units of mole",
+      "tidas_unit_group": "Units of mole",
+      "flow_property_uuid": "341fd786-b2ad-4552-a762-5eafcab45dee",
+      "ref_uri": "../flowproperties/341fd786-b2ad-4552-a762-5eafcab45dee.xml",
+      "version": "01.00.003",
+      "mapping_status": "allowed",
+      "aliases": [
+        "Units of mole",
+        "Units_of_mole"
+      ]
+    }
+  ],
+  "missing_flow_property_mappings": [
+    {
+      "source_unit_group": "Unit of kg*km",
+      "uuid": "3620148f-c5db-48ce-9065-a10092089aca",
+      "note": "No flow properties reference this unit group in ILCD XML data"
+    },
+    {
+      "source_unit_group": "sej",
+      "uuid": "f25260a8-f7b3-425b-877a-3b0b00287bd3",
+      "note": "No flow properties reference this unit group in ILCD XML data"
+    }
+  ]
+}

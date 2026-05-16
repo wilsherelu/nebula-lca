@@ -162,7 +162,9 @@ def set_tidas_allowed_unit_groups(groups: list[str] | None) -> None:
     if groups is None:
         _TIDAS_ALLOWED_UNIT_GROUPS = None
     else:
-        _TIDAS_ALLOWED_UNIT_GROUPS = [g.strip().lower() for g in groups]
+        from app.tidas_reference import normalize_tidas_unit_group
+
+        _TIDAS_ALLOWED_UNIT_GROUPS = [normalize_tidas_unit_group(g) for g in groups]
 
 
 def get_tidas_allowed_unit_groups() -> list[str]:
@@ -172,7 +174,9 @@ def get_tidas_allowed_unit_groups() -> list[str]:
     """
     if _TIDAS_ALLOWED_UNIT_GROUPS is not None:
         return _TIDAS_ALLOWED_UNIT_GROUPS
-    return []
+    from app.tidas_reference import get_tidas_allowed_unit_groups as _get_seed_allowed_unit_groups
+
+    return _get_seed_allowed_unit_groups()
 
 
 # ---------------------------------------------------------------------------
@@ -354,8 +358,10 @@ def _validate_tidas_compliant(
 
     # --- Unit group check ---
     if allowed_ug:
+        from app.tidas_reference import normalize_tidas_unit_group
+
         for ug in unit_groups:
-            if ug not in allowed_ug:
+            if normalize_tidas_unit_group(ug) not in allowed_ug:
                 result.add_error(
                     "unsupported_unit_group",
                     f"Unit group {ug!r} is not allowed in TIDAS compliant mode.",

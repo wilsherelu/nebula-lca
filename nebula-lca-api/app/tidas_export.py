@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from .models import Model, ModelVersion, FlowRecord, ReferenceProcess, UnitDefinition
 from .schemas import HybridGraph
+from .tidas_reference import get_tidas_flow_property_reference
 
 TIDAS_DEFAULT_DATASET_VERSION = "01.01.000"
 TIDAS_ILCD_SCHEMA_VERSION = "1.1"
@@ -737,12 +738,21 @@ def _flow_property_description(unit_group: str | None) -> list[dict]:
 
 def _flow_property(flow_uuid: str, unit_group: str | None, report: ExportReport) -> dict:
     label = str(unit_group or "").strip()
+    reference = get_tidas_flow_property_reference(label) if label else None
     if not label:
         report.add_warning(
             "tidas_placeholder",
             f"Flow {flow_uuid} missing unit_group; using generic Mass flow property placeholder",
             {"flow_uuid": flow_uuid},
         )
+    elif reference:
+        return {
+            "flowProperty": {
+                "@dataSetInternalID": "0",
+                "meanValue": "1.0",
+                "referenceToFlowPropertyDataSet": reference,
+            }
+        }
     elif "mass" not in label.lower() and "质量" not in label:
         report.add_warning(
             "tidas_placeholder",

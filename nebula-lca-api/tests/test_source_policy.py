@@ -12,6 +12,8 @@ Covered scenarios:
 9. Open mixed default for old projects — no regression.
 """
 
+import json
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -522,10 +524,17 @@ class TestUnitGroupHelpers:
         groups = _collect_unit_groups(graph)
         assert groups == {"kg", "liter"}
 
-    def test_get_tidas_allowed_unit_groups_fallback(self):
-        # Reset sentinel
+    def test_get_tidas_allowed_unit_groups_fallback(self, monkeypatch, tmp_path):
+        from app.tidas_reference import load_tidas_reference_seed
+
+        empty_seed = tmp_path / "missing_tidas_reference_seed.json"
+        monkeypatch.setenv("NEBULA_TIDAS_REFERENCE_SEED", str(empty_seed))
+        load_tidas_reference_seed.cache_clear()
         set_tidas_allowed_unit_groups(None)
-        assert get_tidas_allowed_unit_groups() == []
+        try:
+            assert get_tidas_allowed_unit_groups() == []
+        finally:
+            load_tidas_reference_seed.cache_clear()
 
     def test_set_and_get_tidas_allowed_unit_groups(self):
         allowed = ["kg", "liter", "m3"]
@@ -534,3 +543,32 @@ class TestUnitGroupHelpers:
             assert get_tidas_allowed_unit_groups() == [g.lower() for g in allowed]
         finally:
             set_tidas_allowed_unit_groups(None)
+
+    def test_get_tidas_allowed_unit_groups_from_seed(self, monkeypatch, tmp_path):
+        from app.tidas_reference import load_tidas_reference_seed
+
+        seed_path = tmp_path / "tidas_reference_seed.json"
+        seed_path.write_text(
+            json.dumps(
+                {
+                    "unit_group_mappings": [
+                        {
+                            "source_unit_group": "Units of mass*time",
+                            "tidas_unit_group": "Units of mass*time",
+                            "aliases": ["Units of mass_time"],
+                            "flow_property_uuid": "fp-1",
+                            "mapping_status": "allowed",
+                        }
+                    ],
+                    "flow_properties": [{"flow_property_uuid": "fp-1"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("NEBULA_TIDAS_REFERENCE_SEED", str(seed_path))
+        load_tidas_reference_seed.cache_clear()
+        set_tidas_allowed_unit_groups(None)
+        try:
+            assert "units_of_mass_time" in get_tidas_allowed_unit_groups()
+        finally:
+            load_tidas_reference_seed.cache_clear()
