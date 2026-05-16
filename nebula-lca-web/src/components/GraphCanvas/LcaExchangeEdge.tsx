@@ -6,11 +6,17 @@ import { useLcaGraphStore } from "../../store/lcaGraphStore";
 type Point = { x: number; y: number };
 
 type HorizontalSide = "left" | "right";
+type LcaEdgeRenderData = Partial<LcaEdgeData> & {
+  renderSourceHandle?: string | null;
+  renderTargetHandle?: string | null;
+  renderTotalEdgeCount?: number;
+};
 
 const HORIZONTAL_OFFSET = 20;
 const CORNER_RADIUS = 10;
 const HEAVY_EDGE_ANIMATION_THRESHOLD = 160;
 const LIGHT_EDGE_SWAY = 18;
+const LARGE_GRAPH_EDGE_THRESHOLD = 100;
 
 const hashEdgeId = (value: string): number => {
   let hash = 0;
@@ -131,18 +137,30 @@ export function LcaExchangeEdge({
   const flowAnimationEnabled = useLcaGraphStore((state) => state.flowAnimationEnabled);
   const flowAnimationEpoch = useLcaGraphStore((state) => state.flowAnimationEpoch);
   const edgeRoutingStyle = useLcaGraphStore((state) => state.edgeRoutingStyle);
-  const totalEdgeCount = useLcaGraphStore((state) => state.graphRelations.edgeById.size);
-  const currentEdge = useLcaGraphStore((state) => state.graphRelations.edgeById.get(id));
   const isNodeDragging = useLcaGraphStore((state) => state.isNodeDragging);
   const dragAffectedEdgeIds = useLcaGraphStore((state) => state.dragAffectedEdgeIds);
-  const sourceSide = resolveSourceHorizontalSide(currentEdge?.sourceHandle ?? undefined, sourcePosition);
-  const targetSide = resolveTargetHorizontalSide(currentEdge?.targetHandle ?? undefined, targetPosition);
-  const edgeData = (data ?? {}) as Partial<LcaEdgeData>;
+  const edgeData = (data ?? {}) as LcaEdgeRenderData;
+  const totalEdgeCount = edgeData.renderTotalEdgeCount ?? 0;
+  const sourceSide = resolveSourceHorizontalSide(edgeData.renderSourceHandle ?? undefined, sourcePosition);
+  const targetSide = resolveTargetHorizontalSide(edgeData.renderTargetHandle ?? undefined, targetPosition);
   const quantityMode = edgeData.quantityMode ?? "single";
   const strokeColor = quantityMode === "single" ? "#2ea44f" : "#8a94a6";
   const pulseColor = quantityMode === "single" ? "#22c55e" : "#94a3b8";
   const stableEdgeSway = useMemo(() => getStableEdgeSway(id), [id]);
-  const orthogonalPath = useMemo(() => {
+  const isLargeGraph = totalEdgeCount >= LARGE_GRAPH_EDGE_THRESHOLD;
+  const livePath = useMemo(() => {
+    const classicCurvePath = buildClassicCurvePath(
+      sourceX,
+      sourceY,
+      targetX,
+      targetY,
+      sourceSide,
+      targetSide,
+      HORIZONTAL_OFFSET,
+    );
+    if (isLargeGraph || edgeRoutingStyle === "classic_curve") {
+      return classicCurvePath;
+    }
     const sourceStubX = sourceX + (sourceSide === "right" ? HORIZONTAL_OFFSET : -HORIZONTAL_OFFSET);
     const targetStubX = targetX + (targetSide === "left" ? -HORIZONTAL_OFFSET : HORIZONTAL_OFFSET);
     const baseMidX = (sourceStubX + targetStubX) / 2;
@@ -161,17 +179,7 @@ export function LcaExchangeEdge({
       ],
       CORNER_RADIUS,
     );
-  }, [sourceSide, sourceX, sourceY, stableEdgeSway, targetSide, targetX, targetY]);
-  const classicCurvePath = buildClassicCurvePath(
-    sourceX,
-    sourceY,
-    targetX,
-    targetY,
-    sourceSide,
-    targetSide,
-    HORIZONTAL_OFFSET,
-  );
-  const livePath = edgeRoutingStyle === "classic_curve" ? classicCurvePath : orthogonalPath;
+  }, [edgeRoutingStyle, isLargeGraph, sourceSide, sourceX, sourceY, stableEdgeSway, targetSide, targetX, targetY]);
   const stablePathRef = useRef(livePath);
   const isDragAffected = !isNodeDragging || dragAffectedEdgeIds.has(id);
 
@@ -202,7 +210,7 @@ export function LcaExchangeEdge({
   const effectiveFlowAnimationEnabled = flowAnimationEnabled && !heavyAnimationMode && !isNodeDragging;
   return (
     <>
-      <BaseEdge id={id} path={path} style={lineStyle} />
+      <BaseEdge id={id} path={path} style={lineStyle} interactionWidth={isLargeGraph ? 0 : 20} />
       {effectiveFlowAnimationEnabled && (
         <g className="edge-flow-animation" style={{ pointerEvents: "none" }}>
           <path id={motionPathId} d={path} fill="none" stroke="none" />
