@@ -14,7 +14,12 @@ from sqlalchemy.orm import Session
 
 from .models import Model, ModelVersion, FlowRecord, ReferenceProcess, UnitDefinition
 from .schemas import HybridGraph
-from .tidas_reference import get_tidas_flow_property_reference
+from .tidas_reference import get_tidas_flow_property_reference, load_tidas_reference_seed
+from .source_policy import (
+    classify_flow_source,
+    _collect_biosphere_flow_uuids,
+    _batch_lookup_flow_sources,
+)
 
 TIDAS_DEFAULT_DATASET_VERSION = "01.01.000"
 TIDAS_ILCD_SCHEMA_VERSION = "1.1"
@@ -1311,134 +1316,339 @@ def _build_manifest(
     }
 
 
-def preview_export(
+def build_tidas_readiness(
     db: Session, project_id: str, version: int | None = None
 ) -> dict[str, Any]:
-    """Preview export without generating ZIP.
+    """Build TIDAS export readiness report.
 
-    Returns:
-        Dictionary with:
+    This is the single shared readiness builder called by both
+    ``preview_export()`` and ``export_bundle()``.
+
+    Returns a dict with:
         - can_export: bool
-        - flow_count: int
-        - process_count: int
-        - model_count: int
-        - warnings: list[dict]
-        - errors: list[str]
-        - missing_flows: list[str]
-        - missing_processes: list[str]
+        - source_policy: str
+        - blocking: list[dict]   (blocking issues)
+        - warnings: list[dict]   (non-blocking warnings)
+        - info: list[dict]       (informational summary)
+        - flow_count, process_count, exported_model_count
+        - multi_product_process_count
+        - allocation_warnings, manual_allocation_required_processes
+        - reference_flow_by_process
+        - missing_flows, missing_processes
+
+    Blocking rules:
+        - no model version / empty graph
+        - PTS nodes
+        - missing flows / missing processes
+        - unsupported elementary source-space for TIDAS export
+        - validate_project_source_policy() errors when project policy is tidas_compliant
+        - unsupported unit groups (e.g. kg*km, sej) in TIDAS compliant projects
+
+    Warnings:
+        - existing exporter warnings (geography fallback, allocation warnings)
+        - open-mixed source warnings and unknown-source warnings
+
+    Info:
+        - project source policy
+        - source mix summary
+        - TIDAS reference seed status/version
     """
-    report = ExportReport()
+    blocking: list[dict] = []
+    warnings: list[dict] = []
+    info: list[dict] = []
 
-    # Fetch model version
+    # ── Fetch model and version ────────────────────────────────────────
+    model = db.get(Model, project_id)
+    if model is None:
+        blocking.append({
+            "code": "PROJECT_NOT_FOUND",
+            "message": f"Project {project_id} not found",
+        })
+        return _readiness_result(blocking, warnings, info, model)
+
+    source_policy = str(model.source_policy or "open_mixed")
+    info.append({
+        "code": "source_policy",
+        "message": f"Source policy: {source_policy}",
+        "details": {"source_policy": source_policy},
+    })
+
+    # ── Fetch model version ────────────────────────────────────────────
     model_version = _get_model_version(db, project_id, version)
-
     if model_version is None:
         version_info = f" version {version}" if version else ""
-        report.add_error(f"No model version found for project {project_id}{version_info}")
-        return {
-            "can_export": False,
-            "flow_count": 0,
-            "process_count": 0,
-            "exported_model_count": 0,
-            "warnings": [],
-            "errors": report.errors,
-            "missing_flows": [],
-            "missing_processes": [],
-        }
+        blocking.append({
+            "code": "NO_MODEL_VERSION",
+            "message": f"No model version found for project {project_id}{version_info}",
+        })
+        return _readiness_result(blocking, warnings, info, model)
 
-    # Extract graph data
+    # ── Empty graph check ──────────────────────────────────────────────
     graph_json = model_version.hybrid_graph_json
     if not graph_json:
-        report.add_error(f"Empty graph for project {project_id}")
-        return {
-            "can_export": False,
-            "flow_count": 0,
-            "process_count": 0,
-            "exported_model_count": 0,
-            "warnings": [],
-            "errors": report.errors,
-            "missing_flows": [],
-            "missing_processes": [],
-        }
+        blocking.append({
+            "code": "EMPTY_GRAPH",
+            "message": f"Empty graph for project {project_id}",
+        })
+        return _readiness_result(blocking, warnings, info, model)
 
+    # ── PTS node check ─────────────────────────────────────────────────
     pts_nodes = _find_pts_nodes(graph_json)
     if pts_nodes:
-        _add_pts_export_blocker(report, pts_nodes)
-        return {
-            "can_export": False,
-            "flow_count": 0,
-            "process_count": 0,
-            "exported_model_count": 0,
-            "multi_product_process_count": 0,
-            "allocation_warnings": [w.to_dict() for w in report.allocation_warnings],
-            "manual_allocation_required_processes": report.manual_allocation_required_processes,
-            "reference_flow_by_process": report.reference_flow_by_process,
-            "warnings": [w.to_dict() for w in report.warnings],
-            "errors": report.errors,
-            "missing_flows": [],
-            "missing_processes": [],
-        }
+        pts_refs = [
+            str(n.get("process_uuid") or n.get("pts_uuid") or n.get("id") or "").strip()
+            for n in pts_nodes
+        ]
+        pts_refs = [r for r in pts_refs if r]
+        blocking.append({
+            "code": PTS_TIDAS_EXPORT_ERROR_CODE,
+            "message": f"{PTS_TIDAS_EXPORT_MESSAGE} PTS nodes: {', '.join(pts_refs[:5])}",
+            "details": {"pts_nodes": pts_refs},
+        })
+        return _readiness_result(blocking, warnings, info, model)
 
+    # ── Extract graph data ─────────────────────────────────────────────
     flow_uuids, process_uuids = _extract_graph_data(graph_json)
 
-    # Source-space check: block if unsupported elementary flow sources are found
-    _scan_source_space(db, flow_uuids, report)
+    # ── Source-space check (elementary flows only) ─────────────────────
+    _scan_source_space(db, flow_uuids, _report_as_readiness(blocking, warnings))
 
-    # Validate flows exist
+    # ── Flow validation ────────────────────────────────────────────────
     missing_flows: list[str] = []
     for flow_uuid in flow_uuids:
         flow_record = db.get(FlowRecord, flow_uuid)
         if flow_record is None:
             missing_flows.append(flow_uuid)
-            report.add_error(f"Missing flow: {flow_uuid}")
 
-    # Build flow type map for product output identification
-    flow_type_map = _build_flow_type_map(db, flow_uuids)
+    if missing_flows:
+        blocking.append({
+            "code": "MISSING_FLOWS",
+            "message": f"{len(missing_flows)} flow(s) not found in database",
+            "details": {"missing_flow_uuids": missing_flows},
+        })
 
-    # Validate processes exist (either in ReferenceProcess or graph)
+    # ── Process validation ─────────────────────────────────────────────
     missing_processes: list[str] = []
     for process_uuid in process_uuids:
         ref_process = db.get(ReferenceProcess, process_uuid)
         if ref_process is None:
-            # Check if node exists in graph
-            node_found = False
-            for node in graph_json.get("nodes", []):
-                if isinstance(node, dict) and (node.get("process_uuid") or node.get("id")) == process_uuid:
-                    node_found = True
-                    break
+            node_found = any(
+                isinstance(node, dict)
+                and (node.get("process_uuid") or node.get("id")) == process_uuid
+                for node in graph_json.get("nodes", [])
+            )
             if not node_found:
                 missing_processes.append(process_uuid)
-                report.add_error(f"Missing process: {process_uuid}")
 
-    # Dry-run build to collect all structural warnings (flow/process/model fields)
+    if missing_processes:
+        blocking.append({
+            "code": "MISSING_PROCESSES",
+            "message": f"{len(missing_processes)} process(es) not found",
+            "details": {"missing_process_uuids": missing_processes},
+        })
+
+    # ── Source-policy validation ───────────────────────────────────────
+    policy_result = _validate_project_source_policy_readiness(model, graph_json, source_policy, db)
+    for err in policy_result.errors:
+        blocking.append(err)
+    for warn in policy_result.warnings:
+        warnings.append(warn)
+    for inf in policy_result.info:
+        info.append(inf)
+
+    # ── Dry-run build to collect structural warnings ───────────────────
+    flow_type_map = _build_flow_type_map(db, flow_uuids)
+    export_report = ExportReport()
+
     for flow_uuid in sorted(flow_uuids):
-        _build_flow_data(db, flow_uuid, report)
-
-    # Get model for reference_product lookup
-    model = db.get(Model, project_id)
-
+        _build_flow_data(db, flow_uuid, export_report)
     for process_uuid in sorted(process_uuids):
-        _build_process_data(db, process_uuid, graph_json, report, model, flow_type_map)
+        _build_process_data(db, process_uuid, graph_json, export_report, model, flow_type_map)
+    _build_model_data(db, model, graph_json, export_report)
 
-    # Build model to collect model warnings and count
-    if model:
-        _build_model_data(db, model, graph_json, report)
+    # Merge structural warnings
+    for w in export_report.warnings:
+        wd = w.to_dict()
+        if wd not in warnings:
+            warnings.append(wd)
 
-    can_export = not report.has_errors()
+    # ── Source policy info ─────────────────────────────────────────────
+    biosphere_uuids = _collect_biosphere_flow_uuids(graph_json)
+    sources_by_uuid = _batch_lookup_flow_sources(db, biosphere_uuids)
+    source_counts: dict[str, int] = {}
+    for uuid_val, source in sources_by_uuid.items():
+        space = classify_flow_source(source)
+        source_counts[space] = source_counts.get(space, 0) + 1
+
+    if source_counts:
+        info.append({
+            "code": "source_mix_summary",
+            "message": f"Source distribution: {source_counts}",
+            "details": {"source_distribution": source_counts},
+        })
+
+    # ── Seed status info ───────────────────────────────────────────────
+    try:
+        seed = load_tidas_reference_seed()
+        pkg_version = seed.get("source_package_version", "")
+        fp_count = len(seed.get("flow_properties") or [])
+        mapping_count = len(seed.get("unit_group_mappings") or [])
+        missing_fp_count = len(seed.get("missing_flow_property_mappings") or [])
+        info.append({
+            "code": "tidas_seed_status",
+            "message": f"Reference seed: {pkg_version}",
+            "details": {
+                "flow_properties": fp_count,
+                "unit_group_mappings": mapping_count,
+                "missing_flow_property_mappings": missing_fp_count,
+            },
+        })
+    except Exception:
+        info.append({
+            "code": "tidas_seed_status",
+            "message": "No TIDAS reference seed loaded",
+            "details": {},
+        })
+
+    can_export = not blocking and not (
+        source_policy == "tidas_compliant"
+        and policy_result.errors
+    )
 
     return {
         "can_export": can_export,
-        "flow_count": report.flow_count,
-        "process_count": report.process_count,
-        "exported_model_count": report.exported_model_count,
-        "multi_product_process_count": report.multi_product_process_count,
-        "allocation_warnings": [w.to_dict() for w in report.allocation_warnings],
-        "manual_allocation_required_processes": report.manual_allocation_required_processes,
-        "reference_flow_by_process": report.reference_flow_by_process,
-        "warnings": [w.to_dict() for w in report.warnings],
-        "errors": report.errors,
+        "source_policy": source_policy,
+        "blocking": blocking,
+        "warnings": warnings,
+        "info": info,
+        "flow_count": export_report.flow_count,
+        "process_count": export_report.process_count,
+        "exported_model_count": export_report.exported_model_count,
+        "multi_product_process_count": export_report.multi_product_process_count,
+        "allocation_warnings": [w.to_dict() for w in export_report.allocation_warnings],
+        "manual_allocation_required_processes": export_report.manual_allocation_required_processes,
+        "reference_flow_by_process": export_report.reference_flow_by_process,
         "missing_flows": missing_flows,
         "missing_processes": missing_processes,
+    }
+
+
+def _readiness_result(
+    blocking: list[dict],
+    warnings: list[dict],
+    info: list[dict],
+    model: Model | None,
+) -> dict[str, Any]:
+    """Build a minimal readiness result when an early block occurs."""
+    return {
+        "can_export": not blocking,
+        "source_policy": str(model.source_policy or "open_mixed") if model else "open_mixed",
+        "blocking": blocking,
+        "warnings": warnings,
+        "info": info,
+        "flow_count": 0,
+        "process_count": 0,
+        "exported_model_count": 0,
+        "multi_product_process_count": 0,
+        "allocation_warnings": [],
+        "manual_allocation_required_processes": [],
+        "reference_flow_by_process": {},
+        "missing_flows": [],
+        "missing_processes": [],
+    }
+
+
+class _report_as_readiness:
+    """Thin ExportReport substitute that writes blocking/warnings into lists."""
+
+    def __init__(self, blocking_list: list[dict], warnings_list: list[dict]):
+        self._blocking = blocking_list
+        self._warnings = warnings_list
+        self.flow_count = 0
+        self.process_count = 0
+        self.exported_model_count = 0
+        self.multi_product_process_count = 0
+        self.allocation_warnings: list[ExportWarning] = []
+        self.manual_allocation_required_processes: list[str] = []
+        self.reference_flow_by_process: dict[str, str] = {}
+
+    def add_error(self, message: str):
+        code = "UNSPECIFIED_BLOCK"
+        if "ecoinvent" in message.lower():
+            code = "SOURCE_SPACE_ECOSPREAD_BLOCKED"
+        elif "source" in message.lower():
+            code = "SOURCE_SPACE_UNKNOWN_BLOCKED"
+        self._blocking.append({"code": code, "message": message})
+
+    def add_warning(self, category: str, message: str, context: dict | None = None):
+        self._warnings.append({
+            "category": category,
+            "message": message,
+            "context": context or {},
+        })
+
+    def has_errors(self) -> bool:
+        return len(self._blocking) > 0
+
+
+def _validate_project_source_policy_readiness(
+    model: Model,
+    graph: dict,
+    source_policy: str,
+    db: Session,
+) -> "ValidationResult":
+    """Run source-policy validation and return ValidationResult.
+
+    This wraps validate_project_source_policy to catch errors that are
+    already in blocking/warning format.
+    """
+    from app.source_policy import validate_project_source_policy
+
+    try:
+        return validate_project_source_policy(
+            model_id=model.id,
+            graph=graph,
+            db=db,
+            source_policy=source_policy,
+        )
+    except HTTPException as exc:
+        result = _empty_result()
+        for e in exc.detail.get("evidence", {}).get("errors", []):
+            result.errors.append(e)
+        return result
+
+
+def _empty_result():
+    """Return an empty ValidationResult for error handling."""
+    from app.source_policy import ValidationResult
+    return ValidationResult()
+
+
+def preview_export(
+    db: Session, project_id: str, version: int | None = None
+) -> dict[str, Any]:
+    """Preview export without generating ZIP.
+
+    Delegates to ``build_tidas_readiness()`` and returns the same shape
+    for compatibility (can_export, flow_count, process_count, etc.).
+    """
+    readiness = build_tidas_readiness(db, project_id, version)
+
+    # Map readiness fields back to the existing preview shape for compatibility
+    errors_as_strings = [e["message"] for e in readiness.get("blocking", [])]
+    return {
+        "can_export": readiness["can_export"],
+        "flow_count": readiness["flow_count"],
+        "process_count": readiness["process_count"],
+        "exported_model_count": readiness["exported_model_count"],
+        "multi_product_process_count": readiness["multi_product_process_count"],
+        "allocation_warnings": readiness.get("allocation_warnings", []),
+        "manual_allocation_required_processes": readiness.get("manual_allocation_required_processes", []),
+        "reference_flow_by_process": readiness.get("reference_flow_by_process", {}),
+        "warnings": readiness.get("warnings", []),
+        "errors": errors_as_strings,
+        "missing_flows": readiness.get("missing_flows", []),
+        "missing_processes": readiness.get("missing_processes", []),
     }
 
 
@@ -1449,6 +1659,9 @@ def export_bundle(
     display_lang: str = "zh",
 ) -> tuple[bytes, ExportReport]:
     """Export project to TIDAS bundle ZIP.
+
+    Runs readiness check first; raises ``ExportError`` if blocking
+    issues are found.  On success, reuses the same ZIP-build logic.
 
     Args:
         db: Database session
@@ -1464,34 +1677,29 @@ def export_bundle(
     """
     report = ExportReport()
 
-    # Fetch model
+    # ── Readiness check (short-circuit if blocking) ────────────────────
+    readiness = build_tidas_readiness(db, project_id, version)
+    if readiness["blocking"]:
+        raise ExportError(readiness["blocking"][0]["message"])
+
+    # ── Re-fetch model and version for ZIP build ───────────────────────
     model = db.get(Model, project_id)
     if model is None:
         raise ExportError(f"Project not found: {project_id}")
 
-    # Fetch model version
     model_version = _get_model_version(db, project_id, version)
     if model_version is None:
         version_info = f" version {version}" if version else ""
         raise ExportError(f"No model version found for project {project_id}{version_info}")
 
-    # Extract graph data
     graph_json = model_version.hybrid_graph_json
     if not graph_json:
         raise ExportError(f"Empty graph for project {project_id}")
 
-    pts_nodes = _find_pts_nodes(graph_json)
-    if pts_nodes:
-        _add_pts_export_blocker(report, pts_nodes)
-        raise ExportError(report.errors[-1])
-
+    # ── Extract graph data ─────────────────────────────────────────────
     flow_uuids, process_uuids = _extract_graph_data(graph_json)
 
-    # Source-space check: same logic as preview — block if unsupported sources found
-    if not _scan_source_space(db, flow_uuids, report):
-        raise ExportError(report.errors[-1])
-
-    # Validate flows
+    # ── Validate flows ─────────────────────────────────────────────────
     missing_flows: list[str] = []
     for flow_uuid in flow_uuids:
         flow_record = db.get(FlowRecord, flow_uuid)
@@ -1502,10 +1710,10 @@ def export_bundle(
     if missing_flows:
         raise ExportError(f"Cannot export: {len(missing_flows)} flow(s) not found in database")
 
-    # Build flow type map for product output identification
+    # ── Build flow type map ────────────────────────────────────────────
     flow_type_map = _build_flow_type_map(db, flow_uuids)
 
-    # Build ZIP in memory
+    # ── Build ZIP in memory ────────────────────────────────────────────
     zip_buffer = io.BytesIO()
 
     with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
