@@ -19,8 +19,9 @@ from ..schemas import (
     TidasExportPreviewRequest,
     TidasExportPreviewResponse,
     TidasExportRequest,
+    TidasExportReadinessResponse,
 )
-from ..tidas_export import ExportError, export_bundle, preview_export
+from ..tidas_export import ExportError, build_tidas_readiness, export_bundle, preview_export
 
 # ── Routers ────────────────────────────────────────────────────────────────
 # Both /export and /api/export prefixes are registered so that the external
@@ -92,3 +93,24 @@ def export_tidas_bundle(
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ── Readiness endpoint ─────────────────────────────────────────────────────
+
+@_api_router.post("/tidas/bundle/readiness", response_model=TidasExportReadinessResponse)
+@_base_router.post("/tidas/bundle/readiness", response_model=TidasExportReadinessResponse)
+def readiness_tidas_bundle_export(
+    payload: TidasExportPreviewRequest,
+    db: Session = Depends(get_db),
+) -> TidasExportReadinessResponse:
+    """Check TIDAS bundle export readiness.
+
+    Reports blocking issues, warnings, and info separately.
+    blocking prevents export; warnings remain downloadable/reportable
+    and do not block.
+
+    This is intended for UI readiness indicators and pre-flight checks
+    before triggering the actual ZIP export.
+    """
+    result = build_tidas_readiness(db=db, project_id=payload.project_id, version=payload.version)
+    return TidasExportReadinessResponse(**result)

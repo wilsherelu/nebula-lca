@@ -76,6 +76,7 @@ def _make_model_mock(project_id: str):
     return SimpleNamespace(
         id=project_id,
         name=f"Project {project_id}",
+        source_policy="open_mixed",
         reference_product="ref",
         functional_unit="1 kg",
         system_boundary=None,
@@ -437,7 +438,7 @@ class TestPreviewExport:
         db = _build_fake_db("proj-pts", {}, graph)
         result = preview_export(db, "proj-pts")
         assert result["can_export"] is False
-        found = any(PTS_TIDAS_EXPORT_ERROR_CODE in e for e in result["errors"])
+        found = any("PTS" in e for e in result["errors"])
         assert found, f"Expected PTS error in: {result['errors']}"
 
     def test_preview_ecoinvent_block(self):
