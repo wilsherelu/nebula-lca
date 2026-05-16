@@ -20,6 +20,9 @@ const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) 
 const API_BASE = RAW_API_BASE.endsWith("/api") ? RAW_API_BASE : `${RAW_API_BASE}/api`;
 const ENABLE_LARGE_GRAPH_EDGE_STAGING = true;
 const ENABLE_LARGE_GRAPH_VISIBLE_CULLING = false;
+const ENABLE_LARGE_GRAPH_VIEWPORT_DEGRADE = true;
+const VIEWPORT_DEGRADE_RESTORE_DELAY_MS = 120;
+const VIEWPORT_DEGRADE_FAILSAFE_DELAY_MS = 420;
 const LARGE_GRAPH_NODE_THRESHOLD = 40;
 const LARGE_GRAPH_EDGE_THRESHOLD = 100;
 const EDGE_RENDER_BATCH_SIZE = 120;
@@ -115,23 +118,23 @@ function GraphCanvasInner(props: {
   } = useLcaGraphStore();
   const [menu, setMenu] = useState<
     | {
-        x: number;
-        y: number;
-        kind: "pane";
-        flowPos: { x: number; y: number };
-      }
+      x: number;
+      y: number;
+      kind: "pane";
+      flowPos: { x: number; y: number };
+    }
     | {
-        x: number;
-        y: number;
-        kind: "node";
-        nodeId: string;
-      }
+      x: number;
+      y: number;
+      kind: "node";
+      nodeId: string;
+    }
     | {
-        x: number;
-        y: number;
-        kind: "edge";
-        edgeId: string;
-      }
+      x: number;
+      y: number;
+      kind: "edge";
+      edgeId: string;
+    }
     | null
   >(null);
   const [copiedNodeId, setCopiedNodeId] = useState<string | null>(null);
@@ -142,6 +145,8 @@ function GraphCanvasInner(props: {
   const edgeRenderLimitByCanvasRef = useRef<Record<string, number>>({});
   const hiddenDisplayMetricsRef = useRef<{ width: number; height: number; dpr: number } | null>(null);
   const [edgeRenderLimit, setEdgeRenderLimit] = useState(0);
+  const [isViewportMoving, setIsViewportMoving] = useState(false);
+  const viewportDegradeRestoreTimerRef = useRef<number | null>(null);
 
   const flushBufferedNodeChanges = useCallback(() => {
     if (pendingNodeChangesFrameRef.current !== null) {
@@ -182,6 +187,10 @@ function GraphCanvasInner(props: {
     () => () => {
       if (pendingNodeChangesFrameRef.current !== null) {
         window.cancelAnimationFrame(pendingNodeChangesFrameRef.current);
+      }
+      if (viewportDegradeRestoreTimerRef.current !== null) {
+        window.clearTimeout(viewportDegradeRestoreTimerRef.current);
+        viewportDegradeRestoreTimerRef.current = null;
       }
     },
     [],
@@ -350,10 +359,18 @@ function GraphCanvasInner(props: {
         continue;
       }
 
+      const sourceHandle = buildHandleWithSameSide(edge.sourceHandle, "out:", sourcePort.id);
+      const targetHandle = buildHandleWithSameSide(edge.targetHandle, "in:", targetPort.id);
       next.push({
         ...edge,
-        sourceHandle: buildHandleWithSameSide(edge.sourceHandle, "out:", sourcePort.id),
-        targetHandle: buildHandleWithSameSide(edge.targetHandle, "in:", targetPort.id),
+        sourceHandle,
+        targetHandle,
+        data: {
+          ...edge.data,
+          renderSourceHandle: sourceHandle,
+          renderTargetHandle: targetHandle,
+          renderTotalEdgeCount: edges.length,
+        } as typeof edge.data,
       });
     }
     return next;
@@ -402,10 +419,19 @@ function GraphCanvasInner(props: {
     };
   }, [activeCanvasId, edgeRenderLimit, largeGraphMode, renderedEdges.length]);
 
-  const mountedEdges = useMemo(
+  const stagedEdges = useMemo(
     () => (largeGraphMode ? renderedEdges.slice(0, edgeRenderLimit) : renderedEdges),
     [edgeRenderLimit, largeGraphMode, renderedEdges],
   );
+
+  const isViewportDegraded = ENABLE_LARGE_GRAPH_VIEWPORT_DEGRADE && largeGraphMode && isViewportMoving && !isConnecting && !isNodeDragging;
+
+  const mountedEdges = useMemo(() => {
+    if (isViewportDegraded) {
+      return [];
+    }
+    return stagedEdges;
+  }, [isViewportDegraded, stagedEdges]);
 
   useEffect(() => {
     if (pendingEdges.length === 0) {
@@ -534,7 +560,7 @@ function GraphCanvasInner(props: {
         edges={mountedEdges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
-        onlyRenderVisibleElements={ENABLE_LARGE_GRAPH_VISIBLE_CULLING && largeGraphMode}
+        onlyRenderVisibleElements={ENABLE_LARGE_GRAPH_VISIBLE_CULLING && largeGraphMode && !isViewportDegraded}
         defaultViewport={viewport}
         minZoom={0.3}
         deleteKeyCode={["Backspace", "Delete"]}
@@ -542,8 +568,8 @@ function GraphCanvasInner(props: {
         selectionOnDrag={interactionMode === "cursor"}
         panOnDrag={interactionMode === "hand"}
         nodesDraggable
-        nodesConnectable={!isNodeDragging}
-        elementsSelectable
+        nodesConnectable={!isNodeDragging && !isViewportDegraded}
+        elementsSelectable={!isViewportDegraded}
         onConnect={onConnect}
         onNodesChange={bufferedOnNodesChange}
         onEdgesChange={onEdgesChange}
@@ -565,20 +591,18 @@ function GraphCanvasInner(props: {
           setNodeDragging(false);
           clearDraggingSubgraph();
         }}
-        onSelectionChange={({ nodes: sNodes, edges: sEdges }) =>
-          {
-            const now = Date.now();
-            if (now < suppressNodeSelectionUntilRef.current && sEdges.length === 0 && sNodes.length > 0) {
-              return;
-            }
-            setSelection({
-              nodeIds: sNodes.map((n) => n.id),
-              edgeIds: [],
-              nodeId: sNodes[0]?.id,
-              edgeId: undefined,
-            });
+        onSelectionChange={({ nodes: sNodes, edges: sEdges }) => {
+          const now = Date.now();
+          if (now < suppressNodeSelectionUntilRef.current && sEdges.length === 0 && sNodes.length > 0) {
+            return;
           }
-        }
+          setSelection({
+            nodeIds: sNodes.map((n) => n.id),
+            edgeIds: [],
+            nodeId: sNodes[0]?.id,
+            edgeId: undefined,
+          });
+        }}
         onNodeDoubleClick={(event, node) => {
           if (node.data.nodeKind === "pts_module" && !event.altKey) {
             enterPtsNode(node.id);
@@ -644,8 +668,33 @@ function GraphCanvasInner(props: {
           };
           onConnect(fallbackConnection);
         }}
+        onMoveStart={() => {
+          if (!largeGraphMode) {
+            return;
+          }
+          if (viewportDegradeRestoreTimerRef.current !== null) {
+            window.clearTimeout(viewportDegradeRestoreTimerRef.current);
+            viewportDegradeRestoreTimerRef.current = null;
+          }
+          setIsViewportMoving(true);
+          viewportDegradeRestoreTimerRef.current = window.setTimeout(() => {
+            viewportDegradeRestoreTimerRef.current = null;
+            setIsViewportMoving(false);
+          }, VIEWPORT_DEGRADE_FAILSAFE_DELAY_MS);
+        }}
         onMoveEnd={(_, nextViewport: Viewport) => {
           setViewport(nextViewport);
+          if (!largeGraphMode) {
+            setIsViewportMoving(false);
+            return;
+          }
+          if (viewportDegradeRestoreTimerRef.current !== null) {
+            window.clearTimeout(viewportDegradeRestoreTimerRef.current);
+          }
+          viewportDegradeRestoreTimerRef.current = window.setTimeout(() => {
+            viewportDegradeRestoreTimerRef.current = null;
+            setIsViewportMoving(false);
+          }, VIEWPORT_DEGRADE_RESTORE_DELAY_MS);
         }}
       >
         <Background gap={18} size={1} color="#d6dde2" />
@@ -774,21 +823,21 @@ function GraphCanvasInner(props: {
               </button>
             </>
           )}
-            {menu.kind === "node" && (
-              <>
-                {!nodes.find((n) => n.id === menu.nodeId && n.data.nodeKind === "pts_module") && (
-                  <button
-                    onClick={() => {
-                      openNodeInspector(menu.nodeId);
-                      setMenu(null);
-                    }}
-                  >
-                    {uiLanguage === "zh" ? "编辑" : "Edit"}
-                  </button>
-                )}
+          {menu.kind === "node" && (
+            <>
+              {!nodes.find((n) => n.id === menu.nodeId && n.data.nodeKind === "pts_module") && (
                 <button
-                  disabled={activeCanvasKind !== "root" || !nodes.find((n) => n.id === menu.nodeId && n.data.nodeKind === "pts_module")}
                   onClick={() => {
+                    openNodeInspector(menu.nodeId);
+                    setMenu(null);
+                  }}
+                >
+                  {uiLanguage === "zh" ? "编辑" : "Edit"}
+                </button>
+              )}
+              <button
+                disabled={activeCanvasKind !== "root" || !nodes.find((n) => n.id === menu.nodeId && n.data.nodeKind === "pts_module")}
+                onClick={() => {
                   openPtsPortEditor(menu.nodeId);
                   setMenu(null);
                 }}
@@ -978,13 +1027,3 @@ export function GraphCanvas(props: {
     </ReactFlowProvider>
   );
 }
-
-
-
-
-
-
-
-
-
-
