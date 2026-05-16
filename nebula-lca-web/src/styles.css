@@ -3724,6 +3724,12 @@ body,
   line-height: 1.4;
 }
 
+.pm-tidas-scroll-list {
+  max-height: 180px;
+  overflow: auto;
+  padding-right: 6px;
+}
+
 .pm-tidas-warnings {
   margin: 8px 0;
   padding: 10px 12px;

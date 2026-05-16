@@ -346,6 +346,8 @@ class ProjectCreateRequest(BaseModel):
     time_representativeness: str | None = None
     geography: str | None = None
     description: str | None = None
+    source_policy: Literal["open_mixed", "tidas_compliant", "ecoinvent_strict", "explicit_mapped_mixed"] | None = None
+    allowed_lcia_scope: Literal["ef31_only", "ecoinvent_runtime", "mapped_runtime"] | None = None
 
 
 class ProjectOut(BaseModel):
@@ -357,6 +359,8 @@ class ProjectOut(BaseModel):
     time_representativeness: str | None = None
     geography: str | None = None
     description: str | None = None
+    source_policy: str = "open_mixed"
+    allowed_lcia_scope: str = "ef31_only"
     status: str = "active"
     process_count: int = 0
     flow_count: int = 0
@@ -388,6 +392,8 @@ class ProjectUpdateRequest(BaseModel):
     time_representativeness: str | None = None
     geography: str | None = None
     description: str | None = None
+    source_policy: Literal["open_mixed", "tidas_compliant", "ecoinvent_strict", "explicit_mapped_mixed"] | None = None
+    allowed_lcia_scope: Literal["ef31_only", "ecoinvent_runtime", "mapped_runtime"] | None = None
     status: str | None = None
 
 
