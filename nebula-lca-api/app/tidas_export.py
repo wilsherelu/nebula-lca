@@ -12,6 +12,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from .allocation import calculate_product_allocation
 from .models import Model, ModelVersion, FlowRecord, ReferenceProcess, UnitDefinition
 from .schemas import HybridGraph
 from .tidas_reference import get_tidas_flow_property_reference, load_tidas_reference_seed
@@ -488,128 +489,26 @@ def _calculate_allocation_factors(
     Returns:
         Dict mapping port_id -> allocation_factor (0.0 to 1.0)
     """
-    if not product_outputs or len(product_outputs) == 1:
-        # Single product - full allocation to reference
-        if product_outputs:
-            return {product_outputs[0].get("id"): 1.0}
-        return {}
+    unit_factor_by_group_and_name: dict[tuple[str, str], float] | None = None
+    if db is not None:
+        try:
+            unit_factor_by_group_and_name = {
+                (str(row.unit_group), str(row.unit_name)): float(row.factor_to_reference)
+                for row in db.query(UnitDefinition).all()
+            }
+        except Exception:
+            unit_factor_by_group_and_name = None
 
-    # Check if user already specified allocation factors
-    user_allocation = {}
-    for port in product_outputs:
-        alloc_factor = port.get("allocationFactor")
-        if alloc_factor is not None:
-            user_allocation[port.get("id")] = float(alloc_factor)
-
-    if user_allocation:
-        if len(user_allocation) != len(product_outputs):
-            report.add_warning(
-                "allocation",
-                f"Multi-product process {process_uuid}: user-specified allocation factors are incomplete, manual allocation required",
-                {
-                    "process_uuid": process_uuid,
-                    "user_allocation": user_allocation,
-                    "product_count": len(product_outputs),
-                },
-            )
-            report.manual_allocation_required_processes.append(process_uuid)
-            return None
-        user_sum = sum(user_allocation.values())
-        if abs(user_sum - 1.0) < 0.01:
-            # User-specified allocation sums to ~1.0, use it
-            return user_allocation
-        report.add_warning(
-            "allocation",
-            f"Multi-product process {process_uuid}: user-specified allocation factors sum to {user_sum:.4f} (expected 1.0), manual allocation required",
-            {
-                "process_uuid": process_uuid,
-                "user_allocation": user_allocation,
-                "sum": user_sum,
-            },
-        )
-        report.manual_allocation_required_processes.append(process_uuid)
-        return None
-
-    # Group products by unit group and convert to reference units
-    unit_groups: dict[str, list[tuple[dict, float]]] = {}  # ug -> [(port, converted_amount)]
-    conversion_failed = False
-
-    for port in product_outputs:
-        ug = port.get("unitGroup", port.get("unit", "unknown"))
-        unit = port.get("unit", "")
-        amount = abs(port.get("amount", 0) or 0)
-
-        # Convert to reference unit if db is available
-        converted_amount = amount
-        if db and ug and unit:
-            try:
-                # Find unit definition to get conversion factor
-                unit_def = db.query(UnitDefinition).filter(
-                    UnitDefinition.unit_group == ug,
-                    UnitDefinition.unit_name == unit,
-                ).first()
-
-                if unit_def and unit_def.factor_to_reference:
-                    # Convert to reference unit
-                    converted_amount = amount * unit_def.factor_to_reference
-                elif unit_def is None:
-                    # Unit definition not found - cannot safely auto-allocate
-                    conversion_failed = True
-                # else: unit_def exists but no factor_to_reference, use original amount
-            except Exception:
-                # DB query failed - cannot safely auto-allocate
-                conversion_failed = True
-        elif ug and unit:
-            # No db available but has unit info - mark for manual allocation
-            conversion_failed = True
-
-        if ug not in unit_groups:
-            unit_groups[ug] = []
-        unit_groups[ug].append((port, converted_amount))
-
-    # If unit conversion failed for any product, cannot auto-allocate safely
-    if conversion_failed and len(unit_groups) > 0:
-        report.add_warning(
-            "allocation",
-            f"Multi-product process {process_uuid}: unit conversion failed for one or more products, manual allocation required",
-            {
-                "process_uuid": process_uuid,
-                "unit_groups": list(unit_groups.keys()),
-            },
-        )
-        report.manual_allocation_required_processes.append(process_uuid)
-        return None
-
-    # If all products share the same unit group, allocate by converted quantity
-    if len(unit_groups) == 1:
-        group = list(unit_groups.values())[0]
-        total_amount = sum(amt for _, amt in group)
-        
-        if total_amount > 0:
-            allocation = {}
-            for port, amt in group:
-                port_id = port.get("id")
-                allocation[port_id] = amt / total_amount
-            
-            # Verify allocation sums to ~1.0
-            if abs(sum(allocation.values()) - 1.0) < 0.01:
-                return allocation
-
-    # Different unit groups - cannot auto-allocate physically
-    # Do NOT return fake allocation factors; let caller skip @allocatedFraction
-    report.add_warning(
-        "allocation",
-        f"Multi-product process {process_uuid}: products have different unit groups, manual allocation required",
-        {
-            "process_uuid": process_uuid,
-            "unit_groups": list(unit_groups.keys()),
-            "product_count": len(product_outputs),
-        },
+    result = calculate_product_allocation(
+        product_outputs,
+        process_uuid=process_uuid,
+        unit_factor_by_group_and_name=unit_factor_by_group_and_name,
     )
-    report.manual_allocation_required_processes.append(process_uuid)
-
-    # Return None to signal: no automatic allocation possible
-    return None
+    for warning in result.warnings:
+        report.add_warning("allocation", warning.message, warning.context)
+    if result.manual_required and process_uuid not in report.manual_allocation_required_processes:
+        report.manual_allocation_required_processes.append(process_uuid)
+    return result.factors
 
 
 def _utc_timestamp() -> str:
@@ -1001,6 +900,7 @@ def _build_process_data(
                 "port_name": port.name,
                 "amount": port.amount,
                 "unit": port.unit,
+                "unit_group": port.unitGroup,
             })
         for port in node_data.outputs:
             exchanges.append({
@@ -1010,6 +910,9 @@ def _build_process_data(
                 "port_name": port.name,
                 "amount": port.amount,
                 "unit": port.unit,
+                "unit_group": port.unitGroup,
+                "allocationFactor": port.allocationFactor,
+                "allocationBasis": port.allocationBasis,
             })
 
         product_outputs = _identify_product_outputs(
@@ -1041,6 +944,7 @@ def _build_process_data(
             "amount": exc.get("amount"),
             "isProduct": exc.get("direction") == "output",
             "allocationFactor": exc.get("allocationFactor"),
+            "allocationBasis": exc.get("allocationBasis") or exc.get("allocation_basis"),
         }
         for exc in exchanges
         if exc.get("direction") == "output"

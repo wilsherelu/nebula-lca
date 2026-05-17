@@ -8,7 +8,9 @@ export type ProjectListItem = {
   created_at: string;
   latest_version: number | null;
   latest_version_created_at: string | null;
+  source_policy?: SourcePolicy | null;
 };
+export type SourcePolicy = "open_mixed" | "tidas_compliant" | "ecoinvent_strict" | "explicit_mapped_mixed";
 type ProjectApiItem = {
   project_id: string;
   name: string;
@@ -23,6 +25,7 @@ type ProjectApiItem = {
   latest_version?: number | null;
   latest_version_created_at?: string | null;
   created_at?: string | null;
+  source_policy?: SourcePolicy | null;
   status?: string | null;
 };
 type PagedResponse<T> = {
@@ -41,6 +44,7 @@ type StatsResponse = {
 
 export type CreateProjectForm = {
   projectName: string;
+  sourcePolicy: SourcePolicy;
   referenceProduct: string;
   functionalUnit: string;
   systemBoundary: string;
@@ -52,6 +56,7 @@ export type CreateProjectForm = {
 type ProjectRow = {
   projectId: string;
   projectName: string;
+  sourcePolicy: SourcePolicy;
   referenceProduct: string;
   functionalUnit: string;
   systemBoundary: string;
@@ -162,12 +167,24 @@ type Props = {
 
 const defaultForm: CreateProjectForm = {
   projectName: "",
+  sourcePolicy: "open_mixed",
   referenceProduct: "",
   functionalUnit: "",
   systemBoundary: "",
   timeRepresentativeness: "",
   geography: "",
   description: "",
+};
+const sourcePolicyOptions: Array<{ value: SourcePolicy; zh: string; en: string }> = [
+  { value: "open_mixed", zh: "混合模式", en: "Open Mixed" },
+  { value: "tidas_compliant", zh: "天工/TIDAS 合规模式", en: "TIDAS Compliant" },
+  { value: "ecoinvent_strict", zh: "ecoinvent 严格模式", en: "ecoinvent Strict" },
+];
+const normalizeSourcePolicy = (value: unknown): SourcePolicy => {
+  if (value === "tidas_compliant" || value === "ecoinvent_strict" || value === "explicit_mapped_mixed") {
+    return value;
+  }
+  return "open_mixed";
 };
 const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
 const API_BASE = RAW_API_BASE.endsWith("/api") ? RAW_API_BASE : `${RAW_API_BASE}/api`;
@@ -370,6 +387,7 @@ const toProjectRows = (projects: ProjectListItem[]): ProjectRow[] =>
   projects.map((item, index) => ({
     projectId: item.project_id,
     projectName: item.name,
+    sourcePolicy: normalizeSourcePolicy(item.source_policy),
     referenceProduct: ["柴油", "电力", "蒸汽", "乙烯"][index % 4],
     functionalUnit: "",
     systemBoundary: ["从摇篮到工厂", "从工厂到工厂"][index % 2],
@@ -436,6 +454,16 @@ function CreateProjectModal(props: {
           <label>
             <span>{zh ? "项目名称" : "Project Name"}</span>
             <input value={form.projectName} onChange={(e) => setField("projectName", e.target.value)} />
+          </label>
+          <label>
+            <span>{zh ? "数据源合规模式" : "Source Policy"}</span>
+            <select value={form.sourcePolicy} onChange={(e) => setField("sourcePolicy", e.target.value)}>
+              {sourcePolicyOptions.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {zh ? item.zh : item.en}
+                </option>
+              ))}
+            </select>
           </label>
           <label>
             <span>{zh ? "参考产品" : "Reference Product"}</span>
@@ -1252,6 +1280,7 @@ export function ProjectManagement(props: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: form.projectName.trim(),
+          source_policy: form.sourcePolicy,
           reference_product: form.referenceProduct.trim() || null,
           functional_unit: form.functionalUnit.trim() || null,
           system_boundary: form.systemBoundary.trim() || null,
@@ -1458,6 +1487,7 @@ export function ProjectManagement(props: Props) {
         const mapped: ProjectRow[] = items.map((item) => ({
           projectId: item.project_id,
           projectName: item.name,
+          sourcePolicy: normalizeSourcePolicy(item.source_policy),
           referenceProduct: String(item.reference_product ?? ""),
           functionalUnit: String(item.functional_unit ?? ""),
           systemBoundary: mapSystemBoundary(item.system_boundary, zh),
@@ -2242,6 +2272,7 @@ export function ProjectManagement(props: Props) {
         mode={editingProject ? "edit" : "create"}
         initialForm={editingProject ? {
           projectName: editingProject.projectName,
+          sourcePolicy: editingProject.sourcePolicy,
           referenceProduct: editingProject.referenceProduct,
           functionalUnit: editingProject.functionalUnit,
           systemBoundary: editingProject.systemBoundary,

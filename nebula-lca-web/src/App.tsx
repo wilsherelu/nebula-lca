@@ -8,7 +8,7 @@ import { PtsVersionHistoryDialog } from "./components/Inspector/PtsVersionHistor
 import { NodeCreatorDrawer } from "./components/NodePalette/NodeCreatorDrawer";
 import { NodePalette } from "./components/NodePalette/NodePalette";
 import { UnitProcessImportDialog } from "./components/NodePalette/UnitProcessImportDialog";
-import { ProjectManagement, type CreateProjectForm } from "./components/ProjectManagement/ProjectManagement";
+import { ProjectManagement, type CreateProjectForm, type SourcePolicy } from "./components/ProjectManagement/ProjectManagement";
 import type { LcaGraphPayload } from "./model/exchange";
 import type { FlowPort, LcaNodeKind, ProcessMode } from "./model/node";
 import { useLcaGraphStore } from "./store/lcaGraphStore";
@@ -32,6 +32,8 @@ type ModelVersionResponse = {
   graph: LcaGraphPayload;
   created_at: string;
   name?: string | null;
+  source_policy?: SourcePolicy | null;
+  allowed_lcia_scope?: string | null;
   flow_name_sync_needed?: boolean;
   outdated_flow_refs_count?: number;
   outdated_flow_ref_examples?: Array<Record<string, unknown>>;
@@ -143,6 +145,7 @@ type ProjectResponse = {
   created_at: string;
   latest_version: number | null;
   latest_version_created_at: string | null;
+  source_policy?: SourcePolicy | null;
 };
 type ProjectListPagedResponse = {
   items: ProjectResponse[];
@@ -348,6 +351,12 @@ const buildProjectPathname = (projectId: string): string =>
 
 const buildProjectTargetMatchKey = (processUuid: string, flowUuid: string): string =>
   `${String(processUuid ?? "").trim()}::${String(flowUuid ?? "").trim()}`;
+const normalizeSourcePolicy = (value: unknown): SourcePolicy => {
+  if (value === "tidas_compliant" || value === "ecoinvent_strict" || value === "explicit_mapped_mixed") {
+    return value;
+  }
+  return "open_mixed";
+};
 
 const formatTargetProductDisplayLabel = (
   productName: string,
@@ -1877,6 +1886,7 @@ export default function App() {
   const [projectId, setProjectId] = useState("");
   const [version, setVersion] = useState("1");
   const [projectName, setProjectName] = useState(DEFAULT_PROJECT_NAME);
+  const [currentSourcePolicy, setCurrentSourcePolicy] = useState<SourcePolicy>("open_mixed");
   const [projects, setProjects] = useState<ProjectResponse[]>([]);
   const [busy, setBusy] = useState(false);
   const [statusText, setStatusText] = useState("");
@@ -2622,6 +2632,7 @@ export default function App() {
           setTargetProductQuantity("1");
           setProjectId(latest.project_id);
           setProjectName(resolvedProjectName);
+          setCurrentSourcePolicy(normalizeSourcePolicy(latest.source_policy));
           setVersion(String(latest.version));
           setVersionTraveling(false);
           setStatusText(`已恢复项目: ${resolvedProjectName} (version=${latest.version})`);
@@ -2682,6 +2693,7 @@ export default function App() {
           setTargetProductQuantity("1");
           setProjectId(targetProjectId);
           setProjectName(targetProjectName ?? targetProjectId);
+          setCurrentSourcePolicy(normalizeSourcePolicy(projects.find((item) => item.project_id === targetProjectId)?.source_policy));
           setVersion("0");
           setVersionTraveling(false);
           setStatusText(`已恢复草稿: ${targetProjectName ?? targetProjectId}`);
@@ -2718,6 +2730,7 @@ export default function App() {
         setTargetProductQuantity("1");
         setProjectId(targetProjectId);
         setProjectName(targetProjectName ?? targetProjectId);
+        setCurrentSourcePolicy(normalizeSourcePolicy(projects.find((item) => item.project_id === targetProjectId)?.source_policy));
         setVersion("0");
         setVersionTraveling(false);
         setStatusText(`项目为空: ${targetProjectName ?? targetProjectId}`);
@@ -2750,6 +2763,7 @@ export default function App() {
       importGraphWithLoadKey,
       measureLoadPerformanceAsync,
       measureLoadPerformanceSync,
+      projects,
       scheduleAfterNextPaint,
       schedulePostLoadUiTask,
       startLoadPerformanceSpan,
@@ -2812,6 +2826,7 @@ export default function App() {
             setTargetProductQuantity(String(targetProductConfig?.quantity ?? 1));
           }
           setProjectId(payload.project_id);
+          setCurrentSourcePolicy(normalizeSourcePolicy(payload.source_policy));
           setVersion(String(payload.version));
           localStorage.setItem(CURRENT_PROJECT_KEY, payload.project_id);
           localStorage.setItem(
@@ -3924,7 +3939,7 @@ export default function App() {
       const response = await fetch(`${API_BASE}/projects`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, source_policy: form.sourcePolicy }),
       });
       if (!response.ok) {
         throw new Error(await response.text());
@@ -3938,6 +3953,7 @@ export default function App() {
       }
       await refreshProjects();
       await loadProjectGraph(created.project_id, created.name);
+      setCurrentSourcePolicy(normalizeSourcePolicy(created.source_policy ?? form.sourcePolicy));
       setAppMode("editor");
       setStatusText(`已创建项目: ${created.name}`);
     } catch (error) {
@@ -3966,6 +3982,7 @@ export default function App() {
       if (!rows.length) {
         setProjectId("");
         setProjectName("");
+        setCurrentSourcePolicy("open_mixed");
         setVersion("0");
         setAppMode("management");
         syncProjectRoute("", "management", true);
@@ -5911,7 +5928,7 @@ export default function App() {
                   </section>
                 </div>
               )}
-              <InspectorPanel onStatus={setStatusText} />
+              <InspectorPanel onStatus={setStatusText} sourcePolicy={currentSourcePolicy} />
               <FlowBalanceDialog />
               <PtsPortEditorDialog />
               <PtsVersionHistoryDialog

@@ -1,9 +1,10 @@
 ﻿import type { Node } from "@xyflow/react";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import type { FlowPort, LcaNodeData, ProcessMode } from "../../model/node";
+import type { AllocationBasisMethod, FlowPort, LcaNodeData, ProcessMode } from "../../model/node";
 import { useLcaGraphStore } from "../../store/lcaGraphStore";
 import { CreateFlowDialog } from "../CreateFlowDialog";
+import type { SourcePolicy } from "../ProjectManagement/ProjectManagement";
 
 const DEV_NODE_DEBUG = Boolean(import.meta.env.DEV);
 const debugNode = (scope: string, payload?: unknown) => {
@@ -20,6 +21,7 @@ const debugNode = (scope: string, payload?: unknown) => {
 type Props = {
   node: Node<LcaNodeData>;
   onStatus?: (text: string) => void;
+  sourcePolicy?: SourcePolicy;
 };
 
 type TabKey = "external_in" | "external_out";
@@ -43,6 +45,14 @@ type UnitDefinition = {
   unit_name: string;
   factor_to_reference: number;
   is_reference: boolean;
+};
+
+type AllocationPreview = {
+  factors: Record<string, number> | null;
+  weights: Record<string, number>;
+  method: string;
+  message: string;
+  ok: boolean;
 };
 
 const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
@@ -125,6 +135,29 @@ function flowSourceGroup(flow: CatalogFlow): "ecoinvent" | "custom" | "tiangong"
     return "tiangong";
   }
   return source ? "tiangong" : "unknown";
+}
+
+function normalizeUnitGroup(value: string | null | undefined): string {
+  return String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function isFlowAllowedBySourcePolicy(flow: CatalogFlow, target: FlowTarget | null, sourcePolicy: SourcePolicy, tidasAllowedUnitGroups: Set<string>): boolean {
+  if (!target) {
+    return true;
+  }
+  const sourceGroup = flowSourceGroup(flow);
+  const isElementaryTarget = target === "in_elementary" || target === "out_elementary";
+  if (sourcePolicy === "tidas_compliant") {
+    const unitGroup = normalizeUnitGroup(flow.unit_group);
+    if (unitGroup && tidasAllowedUnitGroups.size > 0 && !tidasAllowedUnitGroups.has(unitGroup)) {
+      return false;
+    }
+    return isElementaryTarget ? sourceGroup === "tiangong" : sourceGroup === "tiangong" || sourceGroup === "custom";
+  }
+  if (sourcePolicy === "ecoinvent_strict" && isElementaryTarget) {
+    return sourceGroup === "ecoinvent";
+  }
+  return true;
 }
 
 function toPortFromReference(flow: CatalogFlow, direction: "input" | "output", type: "technosphere" | "biosphere"): FlowPort {
@@ -266,7 +299,7 @@ function FlowSection({
   );
 }
 
-export function NodeInspector({ node, onStatus }: Props) {
+export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed" }: Props) {
   const [tab, setTab] = useState<TabKey>("external_in");
   const [flowPicker, setFlowPicker] = useState<{ open: boolean; target: FlowTarget | null }>({ open: false, target: null });
   const [createFlowDialog, setCreateFlowDialog] = useState<{ open: boolean; target: FlowTarget | null }>({ open: false, target: null });
@@ -276,6 +309,7 @@ export function NodeInspector({ node, onStatus }: Props) {
   const [flowSourceFilter, setFlowSourceFilter] = useState("");
   const [flowCategoryOptions, setFlowCategoryOptions] = useState<Array<{ category: string; count: number }>>([]);
   const [catalogFlows, setCatalogFlows] = useState<CatalogFlow[]>([]);
+  const [tidasAllowedUnitGroups, setTidasAllowedUnitGroups] = useState<Set<string>>(new Set());
   const [unitDefinitions, setUnitDefinitions] = useState<UnitDefinition[]>([]);
   const [flowUnitGroupByUuid, setFlowUnitGroupByUuid] = useState<Record<string, string>>({});
   const [flowTypeByUuid, setFlowTypeByUuid] = useState<Record<string, string>>({});
@@ -392,6 +426,137 @@ export function NodeInspector({ node, onStatus }: Props) {
     }
     return result;
   }, [node.data.inputs, node.data.outputs, resolvePortUnitGroup, resolveUnitGroupKey, unitOptionsByGroup]);
+
+  const unitFactorByGroupAndName = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const row of unitDefinitions) {
+      map.set(`${row.unit_group}||${row.unit_name}`, Number(row.factor_to_reference) || 1);
+    }
+    return map;
+  }, [unitDefinitions]);
+
+  const convertedPortAmount = (port: FlowPort): number => {
+    const group = resolveUnitGroupKey(resolvePortUnitGroup(port)) ?? port.unitGroup ?? "";
+    const factor = unitFactorByGroupAndName.get(`${group}||${port.unit}`) ?? 1;
+    return Math.abs(Number(port.amount) || 0) * factor;
+  };
+
+  const normalizeAllocationWeights = (weights: Record<string, number>): Record<string, number> | null => {
+    const total = Object.values(weights).reduce((sum, value) => sum + (value > 0 ? value : 0), 0);
+    if (total <= 0) {
+      return null;
+    }
+    return Object.fromEntries(
+      Object.entries(weights)
+        .filter(([, value]) => value > 0)
+        .map(([id, value]) => [id, value / total]),
+    );
+  };
+
+  const calculateAllocationPreview = (ports: FlowPort[]): AllocationPreview => {
+    if (ports.length <= 1) {
+      return {
+        factors: ports[0] ? { [ports[0].id]: 1 } : {},
+        weights: ports[0] ? { [ports[0].id]: 1 } : {},
+        method: "single_product",
+        message: t("单产品过程无需分配", "Single product process does not need allocation"),
+        ok: true,
+      };
+    }
+
+    const manualFactors = ports.filter((port) => port.allocationFactor !== null && port.allocationFactor !== undefined);
+    if (manualFactors.length > 0) {
+      const factors: Record<string, number> = {};
+      for (const port of ports) {
+        factors[port.id] = Number(port.allocationFactor);
+      }
+      const complete = manualFactors.length === ports.length && Object.values(factors).every((value) => Number.isFinite(value) && value >= 0);
+      const total = Object.values(factors).reduce((sum, value) => sum + (Number.isFinite(value) ? value : 0), 0);
+      if (complete && Math.abs(total - 1) < 0.01) {
+        return {
+          factors,
+          weights: factors,
+          method: "manual_factor",
+          message: t("手动分配系数有效", "Manual allocation factors are valid"),
+          ok: true,
+        };
+      }
+      return {
+        factors: null,
+        weights: factors,
+        method: "manual_factor",
+        message: t("手动分配系数必须完整填写且合计为 1", "Manual allocation factors must be complete and sum to 1"),
+        ok: false,
+      };
+    }
+
+    const groups = Array.from(new Set(ports.map((port) => resolveUnitGroupKey(resolvePortUnitGroup(port)) ?? port.unitGroup ?? "").filter(Boolean)));
+    if (groups.length === 1) {
+      const weights = Object.fromEntries(ports.map((port) => [port.id, convertedPortAmount(port)]));
+      const factors = normalizeAllocationWeights(weights);
+      return {
+        factors,
+        weights,
+        method: "quantity",
+        message: factors ? t("按同单位组产量自动分配", "Auto allocated by same-unit-group quantities") : t("产量必须大于 0", "Product amounts must be greater than 0"),
+        ok: Boolean(factors),
+      };
+    }
+
+    const methods = ports.map((port) => port.allocationBasis?.method).filter(Boolean) as AllocationBasisMethod[];
+    const preferredMethod: AllocationBasisMethod | undefined =
+      methods.includes("density")
+        ? "density"
+        : methods.includes("heating_value")
+          ? "heating_value"
+          : methods.includes("custom_conversion")
+            ? "custom_conversion"
+            : undefined;
+    if (!preferredMethod) {
+      return {
+        factors: null,
+        weights: {},
+        method: "manual_required",
+        message: t("不同单位组需要手动系数或密度/热值/自定义换算依据", "Different unit groups need manual factors or density/heating/custom basis"),
+        ok: false,
+      };
+    }
+
+    const targetGroup = preferredMethod === "density"
+      ? "Units of mass"
+      : preferredMethod === "heating_value"
+        ? "Units of energy"
+        : (ports.find((port) => port.allocationBasis?.targetUnitGroup)?.allocationBasis?.targetUnitGroup ?? "custom");
+    const weights: Record<string, number> = {};
+    for (const port of ports) {
+      const group = resolveUnitGroupKey(resolvePortUnitGroup(port)) ?? port.unitGroup ?? "";
+      const converted = convertedPortAmount(port);
+      if (group === targetGroup) {
+        weights[port.id] = converted;
+        continue;
+      }
+      const basis = port.allocationBasis;
+      const value = Number(basis?.value ?? basis?.factor ?? basis?.conversionFactor);
+      if (!basis || basis.method !== preferredMethod || !Number.isFinite(value) || value <= 0) {
+        return {
+          factors: null,
+          weights,
+          method: preferredMethod,
+          message: t("换算依据不完整或不是正数", "Allocation basis is incomplete or not positive"),
+          ok: false,
+        };
+      }
+      weights[port.id] = converted * value;
+    }
+    const factors = normalizeAllocationWeights(weights);
+    return {
+      factors,
+      weights,
+      method: preferredMethod,
+      message: factors ? t("换算分配系数有效", "Converted allocation factors are valid") : t("换算后权重必须大于 0", "Converted weights must be greater than 0"),
+      ok: Boolean(factors),
+    };
+  };
 
   const convertValue = async (
     value: number,
@@ -570,6 +735,44 @@ export function NodeInspector({ node, onStatus }: Props) {
   const externalInElementary = node.data.inputs.filter((p) => p.type === "biosphere");
   const externalOutIntermediate = node.data.outputs.filter((p) => p.type !== "biosphere");
   const externalOutElementary = node.data.outputs.filter((p) => p.type === "biosphere");
+  const productOutputs = externalOutIntermediate.filter((port) => Boolean(port.isProduct));
+  const allocationPreview = useMemo(
+    () => calculateAllocationPreview(productOutputs),
+    [productOutputs, unitFactorByGroupAndName, resolvePortUnitGroup, resolveUnitGroupKey, uiLanguage],
+  );
+
+  const updateOutputPortAllocation = (portId: string, patch: Partial<FlowPort>) => {
+    updateNode(node.id, (current) => ({
+      ...current,
+      data: {
+        ...current.data,
+        outputs: current.data.outputs.map((port) => (port.id === portId ? { ...port, ...patch } : port)),
+      },
+    }));
+  };
+
+  const applyAllocationFactors = (factors: Record<string, number> | null, method: AllocationBasisMethod) => {
+    if (!factors) {
+      setProductRuleHint(t("分配依据还不完整，无法写入分配系数。", "Allocation basis is incomplete; factors were not applied."));
+      return;
+    }
+    updateNode(node.id, (current) => ({
+      ...current,
+      data: {
+        ...current.data,
+        outputs: current.data.outputs.map((port) => {
+          if (factors[port.id] === undefined) {
+            return port;
+          }
+          return {
+            ...port,
+            allocationFactor: Number(factors[port.id].toFixed(8)),
+            allocationBasis: { ...(port.allocationBasis ?? {}), method },
+          };
+        }),
+      },
+    }));
+  };
 
   useEffect(() => {
     debugNode("inventory:nodePorts", {
@@ -831,6 +1034,31 @@ export function NodeInspector({ node, onStatus }: Props) {
   }, []);
 
   useEffect(() => {
+    let canceled = false;
+    fetch(`${API_BASE}/reference/tidas-policy`, { cache: "no-store" })
+      .then((resp) => {
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}`);
+        }
+        return resp.json() as Promise<{ allowed_unit_groups?: string[] }>;
+      })
+      .then((payload) => {
+        if (!canceled) {
+          const allowed = Array.isArray(payload.allowed_unit_groups) ? payload.allowed_unit_groups : [];
+          setTidasAllowedUnitGroups(new Set(allowed.map(normalizeUnitGroup).filter(Boolean)));
+        }
+      })
+      .catch(() => {
+        if (!canceled) {
+          setTidasAllowedUnitGroups(new Set());
+        }
+      });
+    return () => {
+      canceled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     const visiblePorts = [...node.data.inputs, ...node.data.outputs].filter((port) => port.flowUuid);
     const needFetch = Array.from(new Set(visiblePorts.map((port) => port.flowUuid))).filter((uuid) => {
       if (!flowUnitGroupByUuid[uuid]) {
@@ -918,12 +1146,18 @@ export function NodeInspector({ node, onStatus }: Props) {
         return false;
       })
       .filter((flow) => {
+        if (!isFlowAllowedBySourcePolicy(flow, target, sourcePolicy, tidasAllowedUnitGroups)) {
+          return false;
+        }
+        return true;
+      })
+      .filter((flow) => {
         if (!flowSourceFilter) {
           return true;
         }
         return flowSourceGroup(flow) === flowSourceFilter;
       });
-  }, [flowPicker.target, catalogFlows, flowSourceFilter]);
+  }, [flowPicker.target, catalogFlows, flowSourceFilter, sourcePolicy, tidasAllowedUnitGroups]);
 
   const applyFlowSearch = () => {
     setFlowSearchQuery(flowSearchInput);
@@ -1212,8 +1446,8 @@ export function NodeInspector({ node, onStatus }: Props) {
   };
 
   const applyProductToggle = (direction: AssocDirection, portId: string, checked: boolean) => {
-    let blocked = false;
     let inputProductWarning = "";
+    let productAllocationWarning = "";
     updateNode(node.id, (current) => {
       const patchPorts = (ports: FlowPort[], portDirection: AssocDirection) =>
         ports.map((port) => {
@@ -1228,8 +1462,7 @@ export function NodeInspector({ node, onStatus }: Props) {
       if (current.data.nodeKind === "unit_process" && !isMarketProcess(current)) {
         const groups = getProductUnitGroupMismatches(nextOutputs);
         if (groups.length > 1) {
-          blocked = true;
-          return current;
+          productAllocationWarning = t("多产品存在不同单位组，请填写手动分配系数或密度/热值换算依据。", "Products use different unit groups; enter manual allocation factors or density/heating-value basis.");
         }
       }
       const toggledPort =
@@ -1262,16 +1495,7 @@ export function NodeInspector({ node, onStatus }: Props) {
         },
       };
     });
-    if (blocked) {
-      setProductRuleHint(
-        t(
-          "当前版本仅支持同单位组多产品分配。请先统一该单元过程产品流的单位组。",
-          "This version only supports multi-product allocation within the same unit group. Please align the unit groups of this unit process product flow first.",
-        ),
-      );
-      return;
-    }
-    setProductRuleHint("");
+    setProductRuleHint(productAllocationWarning);
     if (inputProductWarning) {
       setConnectionHint(inputProductWarning);
     }
@@ -1506,6 +1730,138 @@ export function NodeInspector({ node, onStatus }: Props) {
                   }))
                 }
               />
+              {!marketProcess && !ptsNode && productOutputs.length > 1 && (
+                <section className="inventory-section allocation-section">
+                  <div className="inventory-section-head">
+                    <h4>{t("多产品分配", "Multi-product Allocation")}</h4>
+                    <div className="allocation-actions">
+                      <button
+                        type="button"
+                        className="text-btn"
+                        disabled={!allocationPreview.factors}
+                        onClick={() => applyAllocationFactors(allocationPreview.factors, allocationPreview.method === "quantity" ? "quantity" : (allocationPreview.method as AllocationBasisMethod))}
+                      >
+                        {t("写入计算系数", "Apply Factors")}
+                      </button>
+                      <button
+                        type="button"
+                        className="text-btn"
+                        onClick={() => {
+                          updateNode(node.id, (current) => ({
+                            ...current,
+                            data: {
+                              ...current.data,
+                              outputs: current.data.outputs.map((port) =>
+                                port.isProduct
+                                  ? {
+                                    ...port,
+                                    allocationFactor: null,
+                                    allocationBasis: { method: "quantity" },
+                                  }
+                                  : port,
+                              ),
+                            },
+                          }));
+                        }}
+                      >
+                        {t("按产量", "By Quantity")}
+                      </button>
+                    </div>
+                  </div>
+                  <div className={allocationPreview.ok ? "mode-lock-hint" : "mode-lock-hint warning"}>
+                    {allocationPreview.message}
+                  </div>
+                  <div className="allocation-grid allocation-grid-head">
+                    <div>{t("产品", "Product")}</div>
+                    <div>{t("模式", "Mode")}</div>
+                    <div>{t("换算值", "Basis Value")}</div>
+                    <div>{t("权重", "Weight")}</div>
+                    <div>{t("分配系数", "Factor")}</div>
+                  </div>
+                  {productOutputs.map((port) => {
+                    const method = port.allocationBasis?.method ?? "manual_factor";
+                    const weight = allocationPreview.weights[port.id];
+                    const calculated = allocationPreview.factors?.[port.id];
+                    return (
+                      <div key={port.id} className="allocation-grid">
+                        <div className="flow-name-readonly" title={getPortDisplayName(port)}>
+                          {getPortDisplayName(port)}
+                        </div>
+                        <select
+                          value={method}
+                          disabled={importedLocked || lciNode}
+                          onChange={(event) => {
+                            const nextMethod = event.target.value as AllocationBasisMethod;
+                            updateNode(node.id, (current) => ({
+                              ...current,
+                              data: {
+                                ...current.data,
+                                outputs: current.data.outputs.map((item) => {
+                                  if (!item.isProduct) {
+                                    return item;
+                                  }
+                                  if (item.id !== port.id) {
+                                    return nextMethod === "manual_factor" ? item : { ...item, allocationFactor: null };
+                                  }
+                                  return {
+                                    ...item,
+                                    allocationFactor: nextMethod === "manual_factor" ? item.allocationFactor ?? 0 : null,
+                                    allocationBasis: { ...(item.allocationBasis ?? {}), method: nextMethod },
+                                  };
+                                }),
+                              },
+                            }));
+                          }}
+                        >
+                          <option value="manual_factor">{t("手填系数", "Manual")}</option>
+                          <option value="quantity">{t("按产量", "Quantity")}</option>
+                          <option value="density">{t("密度", "Density")}</option>
+                          <option value="heating_value">{t("热值", "Heating Value")}</option>
+                          <option value="custom_conversion">{t("自定义换算", "Custom")}</option>
+                        </select>
+                        <input
+                          type="number"
+                          min={0}
+                          disabled={importedLocked || lciNode || method === "manual_factor" || method === "quantity"}
+                          value={Number(port.allocationBasis?.value ?? port.allocationBasis?.factor ?? port.allocationBasis?.conversionFactor ?? 0)}
+                          onChange={(event) => {
+                            const value = Number(event.target.value);
+                            updateOutputPortAllocation(port.id, {
+                              allocationBasis: {
+                                ...(port.allocationBasis ?? { method }),
+                                method,
+                                value: Number.isFinite(value) ? Math.max(0, value) : 0,
+                                targetUnitGroup:
+                                  method === "density"
+                                    ? "Units of mass"
+                                    : method === "heating_value"
+                                      ? "Units of energy"
+                                      : port.allocationBasis?.targetUnitGroup,
+                              },
+                            });
+                          }}
+                        />
+                        <div>{Number.isFinite(weight) ? Number(weight).toPrecision(6) : "-"}</div>
+                        <input
+                          type="number"
+                          min={0}
+                          max={1}
+                          step={0.0001}
+                          disabled={importedLocked || lciNode}
+                          value={Number.isFinite(port.allocationFactor ?? NaN) ? port.allocationFactor ?? 0 : calculated ?? 0}
+                          onChange={(event) => {
+                            const value = Number(event.target.value);
+                            updateOutputPortAllocation(port.id, {
+                              allocationFactor: Number.isFinite(value) ? Math.max(0, value) : 0,
+                              allocationBasis: { ...(port.allocationBasis ?? {}), method: "manual_factor" },
+                            });
+                          }}
+                        />
+                      </div>
+                    );
+                  })}
+                </section>
+              )}
               {!marketProcess && !ptsNode && (
                 <FlowSection
                   title={t("基本流", "Elementary Flows")}

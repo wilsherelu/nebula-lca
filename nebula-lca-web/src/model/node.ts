@@ -3,6 +3,16 @@ export type ExchangeType = "technosphere" | "biosphere" | "energy";
 export type LcaNodeKind = "unit_process" | "market_process" | "pts_module" | "lci_dataset";
 export type LciRole = "provider" | "waste_sink";
 export type ProcessMode = "balanced" | "normalized";
+export type AllocationBasisMethod = "manual_factor" | "quantity" | "density" | "heating_value" | "custom_conversion";
+
+export type AllocationBasis = {
+  method: AllocationBasisMethod;
+  value?: number;
+  factor?: number;
+  conversionFactor?: number;
+  targetUnitGroup?: string;
+  note?: string;
+};
 
 export type FlowPort = {
   id: string;
@@ -22,6 +32,7 @@ export type FlowPort = {
   amount: number;
   isProduct?: boolean;
   allocationFactor?: number | null;
+  allocationBasis?: AllocationBasis | null;
   externalSaleAmount?: number;
   type: ExchangeType;
   direction: FlowDirection;

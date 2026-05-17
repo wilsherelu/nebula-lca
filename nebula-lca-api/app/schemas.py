@@ -86,6 +86,7 @@ class FlowPort(BaseModel):
     source_node_id: str | None = Field(default=None, alias="sourceNodeId")
     isProduct: bool | None = False
     allocationFactor: float | None = None
+    allocationBasis: dict | None = None
     product_key: str | None = None
     port_key: str | None = None
     reference_product_flow_uuid: str | None = None
@@ -536,6 +537,8 @@ class ModelVersionOut(BaseModel):
     version: int
     created_at: datetime
     graph: HybridGraph
+    source_policy: str = "open_mixed"
+    allowed_lcia_scope: str = "ef31_only"
     handle_validation: dict | None = None
     flow_name_sync_needed: bool = False
     outdated_flow_refs_count: int = 0
