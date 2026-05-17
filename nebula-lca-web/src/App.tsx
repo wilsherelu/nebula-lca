@@ -215,7 +215,7 @@ type PtsDefaultVisiblePortHint = {
   sourceProcessName?: string;
   sourceNodeId?: string;
 };
-type ResultUnitMode = "defined" | "reference" | "flow_default";
+type ResultUnitMode = "defined" | "reference";
 type ResultProductViewMode = "target_total" | "unit_product";
 
 type SaveMode = "manual" | "auto" | "interval";
@@ -4163,16 +4163,13 @@ export default function App() {
       if (resultUnitMode === "defined") {
         return { value: rawValue, unitLabel: `kg CO2-eq / ${unit}` };
       }
-      if (resultUnitMode === "flow_default") {
-        const sourceUnit = String(switchSnapshot?.sourceReferenceUnit ?? "").trim();
-        const factor = Number(switchSnapshot?.factor);
-        if (sourceUnit && Number.isFinite(factor) && factor > 0) {
-          return {
-            value: rawValue * factor,
-            unitLabel: `kg CO2-eq / ${sourceUnit}`,
-          };
-        }
-        return { value: rawValue, unitLabel: `kg CO2-eq / ${unit}` };
+      const sourceUnit = String(switchSnapshot?.sourceReferenceUnit ?? "").trim();
+      const switchFactor = Number(switchSnapshot?.factor);
+      if (sourceUnit && Number.isFinite(switchFactor) && switchFactor > 0) {
+        return {
+          value: rawValue * switchFactor,
+          unitLabel: `kg CO2-eq / ${sourceUnit}`,
+        };
       }
       const referenceUnit = unitGroup ? referenceUnitByGroup.get(unitGroup) : undefined;
       if (!unitGroup || !referenceUnit) {
@@ -4810,19 +4807,23 @@ export default function App() {
         }
       }
       const matchedRootPortById = rootProductPortByPortKey.get(`${processUuid}::${productPortId}`);
+      const productFlowKey = String(productFlowUuid ?? unitRow.flow_uuid ?? "");
       const rootPortsByFlow =
-        rootProductPortsByMatchKey.get(buildProjectTargetMatchKey(processUuid, String(productFlowUuid ?? unitRow.flow_uuid ?? ""))) ?? [];
+        rootProductPortsByMatchKey.get(buildProjectTargetMatchKey(processUuid, productFlowKey)) ?? [];
+      const switchedRootPortsByFlow = rootProductPortsByFlowUuid.get(productFlowKey)?.filter((port) => port.unitGroupSwitch) ?? [];
+      const switchedRootPortByFlow = switchedRootPortsByFlow.length === 1 ? switchedRootPortsByFlow[0] : undefined;
       const matchedRootPort =
+        (matchedRootPortById?.unitGroupSwitch ? matchedRootPortById : undefined) ??
+        rootPortsByFlow.find((port) => port.unitGroupSwitch) ??
+        switchedRootPortByFlow ??
         matchedRootPortById ??
         (parsedPtsProduct
           ? rootPortsByFlow.length === 1
             ? rootPortsByFlow[0]
             : undefined
           : rootPortsByFlow[0]) ??
-        (rootProductPortsByFlowUuid.get(String(productFlowUuid ?? unitRow.flow_uuid ?? ""))?.filter((port) => port.unitGroupSwitch)?.length === 1
-          ? rootProductPortsByFlowUuid.get(String(productFlowUuid ?? unitRow.flow_uuid ?? ""))?.filter((port) => port.unitGroupSwitch)[0]
-          : rootProductPortsByFlowUuid.get(String(productFlowUuid ?? unitRow.flow_uuid ?? ""))?.length === 1
-            ? rootProductPortsByFlowUuid.get(String(productFlowUuid ?? unitRow.flow_uuid ?? ""))?.[0]
+        (rootProductPortsByFlowUuid.get(productFlowKey)?.length === 1
+          ? rootProductPortsByFlowUuid.get(productFlowKey)?.[0]
           : undefined);
       if (matchedRootPort) {
         const rootProductName =
@@ -4837,13 +4838,13 @@ export default function App() {
       return {
         productKey,
         viewKey: productPortId || productKey,
-        matchKey: buildProjectTargetMatchKey(processUuid, String(productFlowUuid ?? unitRow.flow_uuid ?? "")),
+        matchKey: buildProjectTargetMatchKey(processUuid, productFlowKey),
         processUuid,
         rawProcessUuid,
         processName,
         processLocation,
         productPortId,
-        productFlowUuid: String(productFlowUuid ?? unitRow.flow_uuid ?? ""),
+        productFlowUuid: productFlowKey,
         productName,
         isReferenceProduct: Boolean(obj.is_reference_product),
         unit: String(unitRow.unit ?? obj.unit ?? "").trim(),
@@ -5523,13 +5524,6 @@ export default function App() {
                       className={resultUnitMode === "reference" ? "active" : ""}
                     >
                       {uiLanguage === "zh" ? "单位组默认单位" : "Default unit group unit"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setResultUnitMode("flow_default")}
-                      className={resultUnitMode === "flow_default" ? "active" : ""}
-                    >
-                      {uiLanguage === "zh" ? "Flow 默认单位" : "Flow default unit"}
                     </button>
                   </span>
                 </div>
