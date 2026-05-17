@@ -1902,6 +1902,7 @@ export default function App() {
   const [draftLciaMethodSelection, setDraftLciaMethodSelection] = useState("EF v3.1");
   const [showRunConfigDialog, setShowRunConfigDialog] = useState(false);
   const [hasNonEcoElementaryFlows, setHasNonEcoElementaryFlows] = useState(false);
+  const [repairInspectorTab, setRepairInspectorTab] = useState<"external_in" | "external_out" | undefined>(undefined);
   const [productDetailViewKey, setProductDetailViewKey] = useState("");
   const [lciaMethodOptions, setLciaMethodOptions] = useState<string[]>(["EF v3.1"]);
   const lciaMethodRestrictsToEf31 = currentSourcePolicy === "tidas_compliant"
@@ -5169,6 +5170,8 @@ export default function App() {
               setAppMode("editor");
               const nodeId = String(repairTarget?.node_id ?? repairTarget?.process_uuid ?? "");
               if (nodeId) {
+                const desiredTab = repairTarget?.desired_inspector_tab;
+                setRepairInspectorTab(desiredTab === "external_out" ? "external_out" : desiredTab === "external_in" ? "external_in" : undefined);
                 window.setTimeout(() => openNodeInspector(nodeId), 0);
               }
             })();
@@ -5959,7 +5962,7 @@ export default function App() {
                   </section>
                 </div>
               )}
-              <InspectorPanel onStatus={setStatusText} sourcePolicy={currentSourcePolicy} />
+              <InspectorPanel onStatus={setStatusText} sourcePolicy={currentSourcePolicy} initialNodeTab={repairInspectorTab} />
               <FlowBalanceDialog />
               <PtsPortEditorDialog />
               <PtsVersionHistoryDialog

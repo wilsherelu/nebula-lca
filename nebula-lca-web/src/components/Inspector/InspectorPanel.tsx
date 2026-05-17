@@ -6,9 +6,10 @@ import type { SourcePolicy } from "../ProjectManagement/ProjectManagement";
 type InspectorPanelProps = {
   onStatus?: (text: string) => void;
   sourcePolicy?: SourcePolicy;
+  initialNodeTab?: "external_in" | "external_out";
 };
 
-export function InspectorPanel({ onStatus, sourcePolicy = "open_mixed" }: InspectorPanelProps) {
+export function InspectorPanel({ onStatus, sourcePolicy = "open_mixed", initialNodeTab }: InspectorPanelProps) {
   const selection = useLcaGraphStore((state) => state.selection);
   const nodes = useLcaGraphStore((state) => state.nodes);
   const edges = useLcaGraphStore((state) => state.edges);
@@ -50,7 +51,7 @@ export function InspectorPanel({ onStatus, sourcePolicy = "open_mixed" }: Inspec
         <div>{t("清单分析", "Inventory Analysis")}</div>
         <button className="drawer-close-btn" onClick={() => closeInspector({ requireProductConfirm: true })}>{t("关闭", "Close")}</button>
       </div>
-      {node && <NodeInspector node={node} onStatus={onStatus} sourcePolicy={sourcePolicy} />}
+      {node && <NodeInspector node={node} onStatus={onStatus} sourcePolicy={sourcePolicy} initialTab={initialNodeTab} />}
       {edge && <EdgeInspector edge={edge} />}
     </aside>
   );

@@ -33,6 +33,7 @@ from ..schemas import (
     FlowOut,
     FlowOutExtended,
     PaginatedFlowsResponse,
+    TidasFlowCompatibilityUpdateRequest,
     normalize_flow_semantic,
 )
 from ..services.catalog_cache import (
@@ -52,6 +53,25 @@ api_router = APIRouter()
 _CACHE_TTL_SECONDS: float = 30.0
 _CACHE_TTL_FLOWS_SECONDS: float = 3600.0
 _CACHE_TTL_FLOW_CATEGORIES_SECONDS: float = 3600.0
+
+
+def _flow_out_extended(row: FlowRecord) -> FlowOutExtended:
+    return FlowOutExtended(
+        flow_uuid=row.flow_uuid,
+        flow_name=row.flow_name,
+        flow_name_en=row.flow_name_en,
+        flow_type=row.flow_type,
+        default_unit=row.default_unit,
+        unit_group=row.unit_group,
+        compartment=row.compartment,
+        source_updated_at=row.source_updated_at,
+        source=row.source,
+        is_custom=bool(row.is_custom),
+        tidas_compatible=bool(getattr(row, "tidas_compatible", False)),
+        tidas_unit_group=getattr(row, "tidas_unit_group", None),
+        tidas_flow_property_uuid=getattr(row, "tidas_flow_property_uuid", None),
+        tidas_reference_source=getattr(row, "tidas_reference_source", None),
+    )
 
 
 # ── Reference flow lookup ───────────────────────────────────────────────
@@ -197,22 +217,7 @@ def create_flow(payload: CreateFlowRequest, db: Session = Depends(get_db)) -> Cr
 
     invalidate_management_caches(flows=True, stats=True)
 
-    flow_out = FlowOutExtended(
-        flow_uuid=flow_record.flow_uuid,
-        flow_name=flow_record.flow_name,
-        flow_name_en=flow_record.flow_name_en,
-        flow_type=flow_record.flow_type,
-        default_unit=flow_record.default_unit,
-        unit_group=flow_record.unit_group,
-        compartment=flow_record.compartment,
-        source_updated_at=flow_record.source_updated_at,
-        source=flow_record.source,
-        is_custom=flow_record.is_custom,
-        tidas_compatible=flow_record.tidas_compatible,
-        tidas_unit_group=flow_record.tidas_unit_group,
-        tidas_flow_property_uuid=flow_record.tidas_flow_property_uuid,
-        tidas_reference_source=flow_record.tidas_reference_source,
-    )
+    flow_out = _flow_out_extended(flow_record)
 
     warnings = []
     reuse_candidates = []
@@ -239,6 +244,59 @@ def create_flow(payload: CreateFlowRequest, db: Session = Depends(get_db)) -> Cr
         } for f in candidate_flows]
 
     return CreateFlowResponse(flow=flow_out, warnings=warnings, reuse_candidates=reuse_candidates)
+
+
+@api_router.patch("/api/flows/{flow_uuid}/tidas-compatibility", response_model=FlowOutExtended)
+def update_flow_tidas_compatibility(
+    flow_uuid: str,
+    payload: TidasFlowCompatibilityUpdateRequest,
+    db: Session = Depends(get_db),
+) -> FlowOutExtended:
+    normalized_uuid = (flow_uuid or "").strip().lower()
+    row = db.get(FlowRecord, normalized_uuid) if normalized_uuid else None
+    if row is None and normalized_uuid:
+        row = db.query(FlowRecord).filter(sqla_func.lower(FlowRecord.flow_uuid) == normalized_uuid).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Flow not found")
+
+    semantic_type = normalize_flow_semantic(row.flow_type)
+    if not bool(row.is_custom) or semantic_type == "elementary_flow":
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "TIDAS_COMPATIBILITY_NOT_EDITABLE",
+                "message": "Only custom non-elementary flows can be marked TIDAS compatible.",
+            },
+        )
+
+    if payload.tidas_compatible:
+        tidas_unit_group = (payload.tidas_unit_group or row.unit_group or "").strip()
+        from ..tidas_reference import normalize_tidas_unit_group
+
+        allowed = set(get_tidas_allowed_unit_groups())
+        if allowed and normalize_tidas_unit_group(tidas_unit_group) not in allowed:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "TIDAS_UNIT_GROUP_NOT_ALLOWED",
+                    "message": f"Unit group '{tidas_unit_group}' is not allowed for TIDAS-compatible custom flows.",
+                    "unit_group": tidas_unit_group,
+                },
+            )
+        row.tidas_compatible = True
+        row.tidas_unit_group = tidas_unit_group
+        row.tidas_flow_property_uuid = (payload.tidas_flow_property_uuid or "").strip() or None
+        row.tidas_reference_source = (payload.tidas_reference_source or "user_declared").strip() or "user_declared"
+    else:
+        row.tidas_compatible = False
+        row.tidas_unit_group = None
+        row.tidas_flow_property_uuid = None
+        row.tidas_reference_source = None
+
+    db.commit()
+    db.refresh(row)
+    invalidate_management_caches(flows=True, stats=True)
+    return _flow_out_extended(row)
 
 
 # ── Paginated flows list ────────────────────────────────────────────────

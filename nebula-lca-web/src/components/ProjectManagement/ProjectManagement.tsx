@@ -116,6 +116,12 @@ type FlowRow = {
   type: "intermediate_flow" | "elementary_flow" | "product_flow" | "waste_flow";
   unit: string;
   category: string;
+  source?: string;
+  isCustom?: boolean;
+  tidasCompatible?: boolean;
+  tidasUnitGroup?: string | null;
+  tidasFlowPropertyUuid?: string | null;
+  tidasReferenceSource?: string | null;
   usedInProcesses: number;
   lastModified: string;
 };
@@ -152,7 +158,9 @@ const getDisplayProcessName = (
 
 type NavModule = "project" | "process" | "flow";
 type NavItem = "recent_projects" | "all_projects" | "all_processes" | "all_flows";
-export type TidasRepairTarget = Record<string, unknown>;
+export type TidasRepairTarget = Record<string, unknown> & {
+  desired_inspector_tab?: "external_in" | "external_out";
+};
 
 type Props = {
   projects: ProjectListItem[];
@@ -314,6 +322,12 @@ type TidasExportPreviewResponse = {
   missing_processes: string[];
 };
 
+type TidasUnitDefinition = {
+  unit_group: string;
+  unit_name: string;
+  is_reference?: boolean;
+};
+
 const PTS_TIDAS_EXPORT_ERROR_CODE = "PTS_MODULE_NOT_SUPPORTED_FOR_TIDAS_EXPORT";
 const SOURCE_SPACE_TIDAS_BLOCKED_CODE = "TIANGONG_TIDAS_BLOCKED_BY_SOURCE_SPACE";
 
@@ -376,6 +390,13 @@ const inferFlowBusinessType = (
   const nameText = String(flowName ?? "").toLowerCase();
   const isWaste = categoryText.includes("waste") || categoryText.includes("废") || nameText.includes("废");
   return isWaste ? "waste" : "product";
+};
+const normalizeFlowType = (value: string | null | undefined): FlowRow["type"] => {
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (raw.includes("elementary") || raw.includes("basic")) return "elementary_flow";
+  if (raw.includes("waste")) return "waste_flow";
+  if (raw.includes("product")) return "product_flow";
+  return "intermediate_flow";
 };
 const mapFlowTypeLabel = (businessType: FlowBusinessType, zh: boolean): string => {
   if (zh) {
@@ -504,6 +525,176 @@ function CreateProjectModal(props: {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function normalizeUnitGroupKey(value: string | null | undefined): string {
+  return String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function TidasCompatibilityModal(props: {
+  open: boolean;
+  uiLanguage: "zh" | "en";
+  flow: FlowRow | null;
+  onClose: () => void;
+  onSaved: (flow: FlowRow) => void;
+  onStatus?: (text: string) => void;
+}) {
+  const { open, uiLanguage, flow, onClose, onSaved, onStatus } = props;
+  const zh = uiLanguage === "zh";
+  const [unitDefinitions, setUnitDefinitions] = useState<TidasUnitDefinition[]>([]);
+  const [allowedUnitGroups, setAllowedUnitGroups] = useState<Set<string>>(new Set());
+  const [tidasCompatible, setTidasCompatible] = useState(false);
+  const [tidasUnitGroup, setTidasUnitGroup] = useState("");
+  const [tidasFlowPropertyUuid, setTidasFlowPropertyUuid] = useState("");
+  const [tidasReferenceSource, setTidasReferenceSource] = useState("user_declared");
+  const [busy, setBusy] = useState(false);
+  const [errorText, setErrorText] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    Promise.all([
+      fetch(`${API_BASE}/reference/units`).then((resp) => (resp.ok ? resp.json() : [])),
+      fetch(`${API_BASE}/reference/tidas-policy`).then((resp) => (resp.ok ? resp.json() : null)),
+    ])
+      .then(([unitRows, policy]) => {
+        if (cancelled) return;
+        setUnitDefinitions(Array.isArray(unitRows) ? unitRows : []);
+        const allowed = Array.isArray(policy?.allowed_unit_groups) ? policy.allowed_unit_groups : [];
+        setAllowedUnitGroups(new Set(allowed.map((item: unknown) => normalizeUnitGroupKey(String(item)))));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setUnitDefinitions([]);
+          setAllowedUnitGroups(new Set());
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !flow) return;
+    setTidasCompatible(Boolean(flow.tidasCompatible));
+    setTidasUnitGroup(String(flow.tidasUnitGroup ?? ""));
+    setTidasFlowPropertyUuid(String(flow.tidasFlowPropertyUuid ?? ""));
+    setTidasReferenceSource(String(flow.tidasReferenceSource ?? "user_declared"));
+    setErrorText("");
+  }, [flow, open]);
+
+  if (!open || !flow) {
+    return null;
+  }
+
+  const unitGroups = Array.from(new Set(unitDefinitions.map((item) => item.unit_group).filter(Boolean)))
+    .filter((group) => allowedUnitGroups.size === 0 || allowedUnitGroups.has(normalizeUnitGroupKey(group)));
+
+  const save = async () => {
+    if (tidasCompatible && allowedUnitGroups.size > 0 && !allowedUnitGroups.has(normalizeUnitGroupKey(tidasUnitGroup))) {
+      setErrorText(zh ? "该单位组不在 TIDAS 允许范围内。" : "This unit group is not allowed by TIDAS.");
+      return;
+    }
+    setBusy(true);
+    setErrorText("");
+    try {
+      const resp = await fetch(`${API_BASE}/flows/${encodeURIComponent(flow.id)}/tidas-compatibility`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tidasCompatible,
+          tidasUnitGroup: tidasCompatible ? tidasUnitGroup : undefined,
+          tidasFlowPropertyUuid: tidasCompatible ? tidasFlowPropertyUuid : undefined,
+          tidasReferenceSource: tidasCompatible ? tidasReferenceSource : undefined,
+        }),
+      });
+      if (!resp.ok) {
+        const payload = (await resp.json().catch(() => ({}))) as { detail?: { message?: string }; message?: string };
+        throw new Error(payload.detail?.message ?? payload.message ?? `HTTP ${resp.status}`);
+      }
+      const payload = await resp.json() as {
+        flow_uuid: string;
+        flow_name: string;
+        flow_name_en?: string | null;
+        flow_type: FlowRow["type"];
+        default_unit?: string;
+        compartment?: string | null;
+        source?: string | null;
+        is_custom?: boolean;
+        tidas_compatible?: boolean;
+        tidas_unit_group?: string | null;
+        tidas_flow_property_uuid?: string | null;
+        tidas_reference_source?: string | null;
+        source_updated_at?: string | null;
+      };
+      onSaved({
+        id: payload.flow_uuid,
+        flowName: payload.flow_name,
+        flowNameEn: String(payload.flow_name_en ?? "").trim() || undefined,
+        type: payload.flow_type,
+        unit: String(payload.default_unit ?? flow.unit),
+        category: String(payload.compartment ?? flow.category ?? "-"),
+        source: String(payload.source ?? flow.source ?? ""),
+        isCustom: Boolean(payload.is_custom),
+        tidasCompatible: Boolean(payload.tidas_compatible),
+        tidasUnitGroup: payload.tidas_unit_group ?? null,
+        tidasFlowPropertyUuid: payload.tidas_flow_property_uuid ?? null,
+        tidasReferenceSource: payload.tidas_reference_source ?? null,
+        usedInProcesses: flow.usedInProcesses,
+        lastModified: formatTime(String(payload.source_updated_at ?? "")),
+      });
+      onStatus?.(zh ? "TIDAS 兼容信息已保存，请重新运行 readiness。" : "TIDAS compatibility saved. Re-run readiness.");
+      onClose();
+    } catch (error) {
+      setErrorText(error instanceof Error ? error.message : zh ? "保存失败" : "Save failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="overlay-modal" onClick={onClose}>
+      <section className="pm-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="pm-modal-head">
+          <strong>{zh ? "TIDAS 兼容补录" : "TIDAS Compatibility"}</strong>
+          <button type="button" className="drawer-close-btn" onClick={onClose}>{zh ? "关闭" : "Close"}</button>
+        </div>
+        <div className="target-product-form">
+          <label className="span-2">
+            {zh ? "Flow" : "Flow"}
+            <input value={getDisplayFlowName(flow, uiLanguage)} disabled />
+          </label>
+          <label>
+            {zh ? "TIDAS 兼容" : "TIDAS compatible"}
+            <select value={tidasCompatible ? "yes" : "no"} onChange={(event) => setTidasCompatible(event.target.value === "yes")}>
+              <option value="yes">{zh ? "是" : "Yes"}</option>
+              <option value="no">{zh ? "否" : "No"}</option>
+            </select>
+          </label>
+          <label>
+            {zh ? "TIDAS 单位组" : "TIDAS unit group"}
+            <select disabled={!tidasCompatible} value={tidasUnitGroup} onChange={(event) => setTidasUnitGroup(event.target.value)}>
+              <option value="">{zh ? "请选择" : "Select"}</option>
+              {unitGroups.map((group) => <option key={group} value={group}>{group}</option>)}
+            </select>
+          </label>
+          <label>
+            {zh ? "Flow property UUID" : "Flow property UUID"}
+            <input disabled={!tidasCompatible} value={tidasFlowPropertyUuid} onChange={(event) => setTidasFlowPropertyUuid(event.target.value)} />
+          </label>
+          <label>
+            {zh ? "来源" : "Source"}
+            <input disabled={!tidasCompatible} value={tidasReferenceSource} onChange={(event) => setTidasReferenceSource(event.target.value)} />
+          </label>
+        </div>
+        {errorText && <div className="pm-form-error">{errorText}</div>}
+        <div className="pm-modal-actions">
+          <button type="button" className="pm-ghost-btn" onClick={onClose}>{zh ? "取消" : "Cancel"}</button>
+          <button type="button" disabled={busy} onClick={() => void save()}>{zh ? "保存" : "Save"}</button>
+        </div>
+      </section>
     </div>
   );
 }
@@ -1242,6 +1433,7 @@ export function ProjectManagement(props: Props) {
   const [forceFlowRefresh, setForceFlowRefresh] = useState(false);
   const [forceStatsRefresh, setForceStatsRefresh] = useState(false);
   const [createFlowDialogOpen, setCreateFlowDialogOpen] = useState(false);
+  const [tidasCompatibilityFlow, setTidasCompatibilityFlow] = useState<FlowRow | null>(null);
   const [ef31ImportOpen, setEf31ImportOpen] = useState(false);
   const projectPageSize = 20;
   const processPageSize = 20;
@@ -1422,16 +1614,88 @@ export function ProjectManagement(props: Props) {
     }
   };
 
+  const refreshFlowAfterTidasCompatibilitySave = (flow: FlowRow) => {
+    clearPmCacheByPrefix("pm:flows:");
+    setForceFlowRefresh(true);
+    setServerFlowRows((prev) => prev.map((item) => (item.id === flow.id ? { ...item, ...flow } : item)));
+  };
+
+  const openTidasCompatibilityForFlowId = async (flowUuid: string) => {
+    const existing = serverFlowRows.find((item) => item.id === flowUuid);
+    if (existing) {
+      setTidasCompatibilityFlow(existing);
+      return;
+    }
+    try {
+      const resp = await fetch(`${API_BASE}/reference/flows/${encodeURIComponent(flowUuid)}`, { cache: "no-store" });
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status}`);
+      }
+      const payload = await resp.json() as {
+        flow_uuid: string;
+        flow_name: string;
+        flow_name_en?: string | null;
+        flow_type?: string;
+        default_unit?: string;
+        unit_group?: string;
+        compartment?: string | null;
+        source?: string | null;
+        is_custom?: boolean;
+        tidas_compatible?: boolean;
+        tidas_unit_group?: string | null;
+        tidas_flow_property_uuid?: string | null;
+        tidas_reference_source?: string | null;
+      };
+      setTidasCompatibilityFlow({
+        id: payload.flow_uuid,
+        flowName: payload.flow_name,
+        flowNameEn: String(payload.flow_name_en ?? "").trim() || undefined,
+        type: normalizeFlowType(payload.flow_type),
+        unit: String(payload.default_unit ?? "-"),
+        category: String(payload.compartment ?? "-"),
+        source: String(payload.source ?? ""),
+        isCustom: Boolean(payload.is_custom),
+        tidasCompatible: Boolean(payload.tidas_compatible),
+        tidasUnitGroup: payload.tidas_unit_group ?? null,
+        tidasFlowPropertyUuid: payload.tidas_flow_property_uuid ?? null,
+        tidasReferenceSource: payload.tidas_reference_source ?? null,
+        usedInProcesses: 0,
+        lastModified: "-",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "flow load failed";
+      onStatus?.(zh ? `Flow 补录入口打开失败：${message}` : `Failed to open flow repair: ${message}`);
+    }
+  };
+
   const repairTidasIssue = (issue: string | TidasExportWarning) => {
     if (!exportTargetProject) {
       return;
     }
     const details = typeof issue === "string" ? {} : issue.details ?? issue.context ?? {};
+    const code = typeof issue === "string" ? "" : String(issue.code ?? "");
     const target = String(details.repair_target ?? "");
     const processUuid = String(details.process_uuid ?? details.node_id ?? "");
     const flowUuid = String(details.flow_uuid ?? "");
     setTidasExportOpen(false);
-    onOpenProject(exportTargetProject.projectId, exportTargetProject.projectName, details);
+    if (target === "project_settings") {
+      const row = rows.find((item) => item.projectId === exportTargetProject.projectId);
+      if (row) {
+        openProjectEdit(row);
+      }
+      onStatus?.(zh ? "请补全项目设置后重新运行 readiness。" : "Complete project settings, then re-run readiness.");
+      return;
+    }
+    if (flowUuid && code.startsWith("custom_flow_")) {
+      void openTidasCompatibilityForFlowId(flowUuid);
+      onStatus?.(zh ? `请补录 Flow ${flowUuid} 的 TIDAS 兼容信息。` : `Complete TIDAS compatibility for flow ${flowUuid}.`);
+      return;
+    }
+    const repairTarget: TidasRepairTarget = {
+      ...details,
+      desired_inspector_tab: target === "allocation" ? "external_out" : undefined,
+    };
+    onOpenProject(exportTargetProject.projectId, exportTargetProject.projectName, repairTarget);
     if (target === "allocation" || processUuid) {
       onStatus?.(zh ? `已打开项目，请在过程 ${processUuid || "-"} 的输出面板补充分配。` : `Project opened. Edit allocation in process ${processUuid || "-"}.`);
     } else if (flowUuid) {
@@ -1636,6 +1900,12 @@ export function ProjectManagement(props: Props) {
           type?: "intermediate_flow" | "elementary_flow" | "product_flow" | "waste_flow";
           unit?: string;
           category?: string;
+          source?: string | null;
+          is_custom?: boolean;
+          tidas_compatible?: boolean;
+          tidas_unit_group?: string | null;
+          tidas_flow_property_uuid?: string | null;
+          tidas_reference_source?: string | null;
           used_in_processes?: number;
           last_modified?: string;
         };
@@ -1680,6 +1950,12 @@ export function ProjectManagement(props: Props) {
           type: (item.type as "intermediate_flow" | "elementary_flow" | "product_flow" | "waste_flow") ?? "intermediate_flow",
           unit: String(item.unit ?? "-"),
           category: String(item.category ?? "-"),
+          source: String(item.source ?? ""),
+          isCustom: Boolean(item.is_custom),
+          tidasCompatible: Boolean(item.tidas_compatible),
+          tidasUnitGroup: item.tidas_unit_group ?? null,
+          tidasFlowPropertyUuid: item.tidas_flow_property_uuid ?? null,
+          tidasReferenceSource: item.tidas_reference_source ?? null,
           usedInProcesses: Number(item.used_in_processes ?? 0),
           lastModified: formatTime(String(item.last_modified ?? "")),
         }));
@@ -2248,9 +2524,11 @@ export function ProjectManagement(props: Props) {
                       <th>{zh ? "流名称" : "Flow Name"}</th>
                       <th>{zh ? "类型" : "Type"}</th>
                       <th>{zh ? "单位" : "Unit"}</th>
+                      <th>TIDAS</th>
                       <th>{zh ? "分类" : "Category"}</th>
                       <th>{zh ? "应用过程数" : "Used In Processes"}</th>
                       <th>{zh ? "最近修改" : "Last Modified"}</th>
+                      <th>{zh ? "操作" : "Actions"}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2259,14 +2537,22 @@ export function ProjectManagement(props: Props) {
                         <td>{getDisplayFlowName(row, uiLanguage)}</td>
                         <td>{mapFlowTypeLabel(inferFlowBusinessType(row.type, row.category, getDisplayFlowName(row, uiLanguage)), zh)}</td>
                         <td>{row.unit}</td>
+                        <td>{row.tidasCompatible ? (row.tidasUnitGroup || "OK") : "-"}</td>
                         <td>{row.category}</td>
                         <td>{row.usedInProcesses}</td>
                         <td>{row.lastModified}</td>
+                        <td>
+                          {row.isCustom && row.type !== "elementary_flow" ? (
+                            <button type="button" className="pm-link-btn" onClick={() => setTidasCompatibilityFlow(row)}>
+                              {zh ? "补录" : "Edit"}
+                            </button>
+                          ) : "-"}
+                        </td>
                       </tr>
                     ))}
                     {flowRows.length === 0 && (
                       <tr>
-                        <td colSpan={6}>{zh ? "暂无流。" : "No flows found."}</td>
+                        <td colSpan={8}>{zh ? "暂无流。" : "No flows found."}</td>
                       </tr>
                     )}
                   </tbody>
@@ -2356,6 +2642,14 @@ export function ProjectManagement(props: Props) {
           onStatus?.(zh ? `已复用已有 Flow：${flow.flow_name}` : `Reused existing flow: ${flow.flow_name}`);
         }}
         onClose={() => setCreateFlowDialogOpen(false)}
+        onStatus={onStatus}
+      />
+      <TidasCompatibilityModal
+        open={Boolean(tidasCompatibilityFlow)}
+        uiLanguage={uiLanguage}
+        flow={tidasCompatibilityFlow}
+        onClose={() => setTidasCompatibilityFlow(null)}
+        onSaved={refreshFlowAfterTidasCompatibilitySave}
         onStatus={onStatus}
       />
       <Ef31ImportDialog

@@ -22,6 +22,7 @@ type Props = {
   node: Node<LcaNodeData>;
   onStatus?: (text: string) => void;
   sourcePolicy?: SourcePolicy;
+  initialTab?: TabKey;
 };
 
 type TabKey = "external_in" | "external_out";
@@ -299,7 +300,7 @@ function FlowSection({
   );
 }
 
-export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed" }: Props) {
+export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", initialTab }: Props) {
   const [tab, setTab] = useState<TabKey>("external_in");
   const [flowPicker, setFlowPicker] = useState<{ open: boolean; target: FlowTarget | null }>({ open: false, target: null });
   const [createFlowDialog, setCreateFlowDialog] = useState<{ open: boolean; target: FlowTarget | null }>({ open: false, target: null });
@@ -362,6 +363,12 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed" }: P
   const unitAutoScaleEnabled = useLcaGraphStore((state) => state.unitAutoScaleEnabled);
   const setUnitAutoScaleEnabled = useLcaGraphStore((state) => state.setUnitAutoScaleEnabled);
   const t = (zh: string, en: string) => (uiLanguage === "zh" ? zh : en);
+
+  useEffect(() => {
+    if (initialTab) {
+      setTab(initialTab);
+    }
+  }, [initialTab, node.id]);
 
   const unitOptionsByGroup = useMemo(() => {
     const map = new Map<string, string[]>();
