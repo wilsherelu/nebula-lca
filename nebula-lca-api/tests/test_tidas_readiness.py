@@ -267,6 +267,64 @@ def test_readiness_accepts_density_based_cross_unit_allocation():
 # ── Tests: blocking issues ────────────────────────────────────────────────
 
 
+def test_readiness_manual_allocation_warning_has_repair_target():
+    """Manual allocation warnings include node/process metadata for frontend repair."""
+    project_id = "proj-manual-allocation-target"
+    flows = {
+        "prod-volume": _make_flow_mock("prod-volume", "Product flow", "Tiangong 1.0", unit_group="Units of volume"),
+        "prod-mass": _make_flow_mock("prod-mass", "Product flow", "Tiangong 1.0", unit_group="Units of mass"),
+    }
+    graph = {
+        "functionalUnit": "1 kg",
+        "nodes": [
+            {
+                "id": "node-manual",
+                "process_uuid": "process-manual",
+                "node_kind": "unit_process",
+                "mode": "balanced",
+                "reference_product": "prod-volume",
+                "name": "Manual Allocation Process",
+                "location": "CN",
+                "inputs": [],
+                "outputs": [
+                    {
+                        "id": "out-volume",
+                        "flowUuid": "prod-volume",
+                        "name": "Volume product",
+                        "amount": 2.0,
+                        "unit": "m3",
+                        "unitGroup": "Units of volume",
+                        "isProduct": True,
+                        "type": "technosphere",
+                        "direction": "output",
+                    },
+                    {
+                        "id": "out-mass",
+                        "flowUuid": "prod-mass",
+                        "name": "Mass product",
+                        "amount": 400.0,
+                        "unit": "kg",
+                        "unitGroup": "Units of mass",
+                        "isProduct": True,
+                        "type": "technosphere",
+                        "direction": "output",
+                    },
+                ],
+            }
+        ],
+        "exchanges": [],
+    }
+    db = _build_fake_db(project_id, flows, graph, source_policy="open_mixed")
+
+    result = build_tidas_readiness(db, project_id)
+
+    assert "process-manual" in result["manual_allocation_required_processes"]
+    issue = result["allocation_warnings"][0]
+    assert issue["details"]["repair_target"] == "allocation"
+    assert issue["details"]["node_id"] == "node-manual"
+    assert issue["details"]["process_uuid"] == "process-manual"
+
+
 def test_readiness_no_model_version():
     """Project with no model version returns blocking NO_MODEL_VERSION."""
     project_id = "proj-noversion"

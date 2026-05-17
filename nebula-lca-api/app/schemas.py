@@ -1144,6 +1144,15 @@ class CreateFlowRequest(BaseModel):
         return str(value)  # keep original string; DB stores canonical form like "Product flow"
 
 
+class TidasFlowCompatibilityUpdateRequest(BaseModel):
+    tidas_compatible: bool = Field(alias="tidasCompatible")
+    tidas_unit_group: str | None = Field(default=None, alias="tidasUnitGroup", max_length=128)
+    tidas_flow_property_uuid: str | None = Field(default=None, alias="tidasFlowPropertyUuid", max_length=64)
+    tidas_reference_source: str | None = Field(default=None, alias="tidasReferenceSource", max_length=128)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class FlowOutExtended(FlowOut):
     """FlowOut with added custom-flow metadata fields."""
 

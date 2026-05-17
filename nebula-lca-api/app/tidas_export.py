@@ -394,19 +394,65 @@ def _repair_target_for_unit_group(graph_json: dict, unit_group: str) -> dict:
     return target
 
 
+def _repair_target_for_flow_uuid(graph_json: dict, flow_uuid: str) -> dict:
+    target = {"flow_uuid": flow_uuid, "repair_target": "flow"}
+    needle = str(flow_uuid or "").strip().lower()
+    for node in graph_json.get("nodes", []) or []:
+        if not isinstance(node, dict):
+            continue
+        for port in (node.get("inputs") or []) + (node.get("outputs") or []):
+            current = str(port.get("flowUuid") or port.get("flow_uuid") or "").strip().lower()
+            if current == needle:
+                target.update({
+                    "node_id": node.get("id"),
+                    "process_uuid": node.get("process_uuid"),
+                    "port_id": port.get("id"),
+                    "unit_group": port.get("unitGroup") or port.get("unit_group"),
+                })
+                return target
+    return target
+
+
+def _repair_target_for_process(graph_json: dict, process_uuid: str, repair_target: str = "node") -> dict:
+    target = {"process_uuid": process_uuid, "repair_target": repair_target}
+    needle = str(process_uuid or "").strip()
+    for node in graph_json.get("nodes", []) or []:
+        if not isinstance(node, dict):
+            continue
+        if str(node.get("process_uuid") or node.get("id") or "").strip() == needle:
+            target["node_id"] = node.get("id")
+            return target
+    return target
+
+
 def _enrich_readiness_issue_targets(graph_json: dict, issues: list[dict]) -> None:
     for issue in issues:
         details = issue.setdefault("details", {})
         if not isinstance(details, dict):
             continue
-        if details.get("repair_target"):
-            continue
+        context = issue.get("context")
+        lookup = {**context, **details} if isinstance(context, dict) else details
         code = str(issue.get("code") or "")
-        if code == "unsupported_unit_group" and details.get("unit_group"):
-            details.update(_repair_target_for_unit_group(graph_json, str(details.get("unit_group"))))
-        elif details.get("flow_uuid"):
+        category = str(issue.get("category") or "")
+        if code in {"MISSING_FLOWS", "missing_flow"}:
             details.setdefault("repair_target", "flow")
-        elif details.get("process_uuid") or details.get("node_id"):
+            missing = lookup.get("missing_flow_uuids")
+            if isinstance(missing, list) and missing:
+                details.update(_repair_target_for_flow_uuid(graph_json, str(missing[0])))
+                details["missing_flow_uuids"] = missing
+        elif code in {"missing_tiangong_field"} and "geography" in str(issue.get("message") or "").lower():
+            details.setdefault("repair_target", "project_settings")
+        elif category == "allocation" or code == "manual_allocation_required":
+            process_uuid = str(lookup.get("process_uuid") or "")
+            if process_uuid:
+                details.update(_repair_target_for_process(graph_json, process_uuid, "allocation"))
+            else:
+                details.setdefault("repair_target", "allocation")
+        elif code == "unsupported_unit_group" and lookup.get("unit_group"):
+            details.update(_repair_target_for_unit_group(graph_json, str(lookup.get("unit_group"))))
+        elif lookup.get("flow_uuid"):
+            details.update(_repair_target_for_flow_uuid(graph_json, str(lookup.get("flow_uuid"))))
+        elif lookup.get("process_uuid") or lookup.get("node_id"):
             details.setdefault("repair_target", "node")
 
 
@@ -1365,6 +1411,7 @@ def build_tidas_readiness(
             "message": f"{len(missing_flows)} flow(s) not found in database",
             "details": {"missing_flow_uuids": missing_flows},
         })
+        _enrich_readiness_issue_targets(graph_json, blocking)
 
     # ── Process validation ─────────────────────────────────────────────
     missing_processes: list[str] = []
@@ -1412,6 +1459,9 @@ def build_tidas_readiness(
         wd = w.to_dict()
         if wd not in warnings:
             warnings.append(wd)
+    _enrich_readiness_issue_targets(graph_json, warnings)
+    allocation_warnings = [w.to_dict() for w in export_report.allocation_warnings]
+    _enrich_readiness_issue_targets(graph_json, allocation_warnings)
 
     # ── Source policy info ─────────────────────────────────────────────
     biosphere_uuids = _collect_biosphere_flow_uuids(graph_json)
@@ -1466,7 +1516,7 @@ def build_tidas_readiness(
         "process_count": export_report.process_count,
         "exported_model_count": export_report.exported_model_count,
         "multi_product_process_count": export_report.multi_product_process_count,
-        "allocation_warnings": [w.to_dict() for w in export_report.allocation_warnings],
+        "allocation_warnings": allocation_warnings,
         "manual_allocation_required_processes": export_report.manual_allocation_required_processes,
         "reference_flow_by_process": export_report.reference_flow_by_process,
         "missing_flows": missing_flows,
