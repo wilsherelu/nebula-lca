@@ -7,7 +7,7 @@ type UnitDefinition = {
   is_reference: boolean;
 };
 
-type CustomFlowType = "product_flow" | "waste_flow";
+type CustomFlowType = "product_flow" | "intermediate_flow" | "waste_flow";
 
 type CreateFlowPayload = {
   flow_name: string;
@@ -17,6 +17,11 @@ type CreateFlowPayload = {
   default_unit: string;
   category?: string;
   confirmCreate?: boolean;
+  sourcePolicy?: string;
+  tidasCompatible?: boolean;
+  tidasUnitGroup?: string;
+  tidasFlowPropertyUuid?: string;
+  tidasReferenceSource?: string;
 };
 
 type CreateFlowResponse = {
@@ -29,6 +34,10 @@ type CreateFlowResponse = {
     unit_group: string;
     category?: string | null;
     compartment?: string | null;
+    tidas_compatible?: boolean;
+    tidas_unit_group?: string | null;
+    tidas_flow_property_uuid?: string | null;
+    tidas_reference_source?: string | null;
   };
   warnings?: string[];
   reuseCandidates?: Array<{
@@ -40,6 +49,10 @@ type CreateFlowResponse = {
     unit_group: string;
     category?: string | null;
     compartment?: string | null;
+    tidas_compatible?: boolean;
+    tidas_unit_group?: string | null;
+    tidas_flow_property_uuid?: string | null;
+    tidas_reference_source?: string | null;
   }>;
 };
 
@@ -50,6 +63,7 @@ type CreateFlowDialogProps = {
   uiLanguage: "zh" | "en";
   defaultFlowType?: CustomFlowType;
   defaultCategory?: string;
+  sourcePolicy?: string;
   onSuccess: (flow: CreateFlowResponse["flow"]) => void;
   onReuse?: (flow: CreateFlowResponse["flow"]) => void;
   onClose: () => void;
@@ -58,6 +72,8 @@ type CreateFlowDialogProps = {
 
 const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
 const API_BASE = RAW_API_BASE.endsWith("/api") ? RAW_API_BASE : `${RAW_API_BASE}/api`;
+
+const normalizeUnitGroupKey = (value: string): string => value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 
 // Unit group Chinese mapping – static for now, switch to backend i18n later
 const UNIT_GROUP_ZH: Record<string, string> = {
@@ -276,6 +292,7 @@ export function CreateFlowDialog({
   uiLanguage,
   defaultFlowType = "product_flow",
   defaultCategory = "",
+  sourcePolicy = "open_mixed",
   onSuccess,
   onReuse,
   onClose,
@@ -289,6 +306,8 @@ export function CreateFlowDialog({
   const [defaultUnit, setDefaultUnit] = useState("");
   const [category, setCategory] = useState(defaultCategory);
   const [unitDefinitions, setUnitDefinitions] = useState<UnitDefinition[]>([]);
+  const [tidasAllowedUnitGroups, setTidasAllowedUnitGroups] = useState<Set<string>>(new Set());
+  const [tidasCompatible, setTidasCompatible] = useState(sourcePolicy === "tidas_compliant");
   const [categories, setCategories] = useState<string[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -303,10 +322,11 @@ export function CreateFlowDialog({
       setUnitGroupUuid("");
       setDefaultUnit("");
       setCategory(defaultCategory);
+      setTidasCompatible(sourcePolicy === "tidas_compliant");
       setErrorText("");
       setCandidates([]);
     }
-  }, [open, defaultFlowType, defaultCategory]);
+  }, [open, defaultFlowType, defaultCategory, sourcePolicy]);
 
   // Load unit definitions
   useEffect(() => {
@@ -322,6 +342,24 @@ export function CreateFlowDialog({
       })
       .catch(() => {
         if (!canceled) setUnitDefinitions([]);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    let canceled = false;
+    fetch(`${API_BASE}/reference/tidas-policy`)
+      .then((resp) => (resp.ok ? resp.json() : null))
+      .then((payload) => {
+        if (canceled || !payload) return;
+        const allowed = Array.isArray(payload.allowed_unit_groups) ? payload.allowed_unit_groups : [];
+        setTidasAllowedUnitGroups(new Set(allowed.map((item: unknown) => normalizeUnitGroupKey(String(item)))));
+      })
+      .catch(() => {
+        if (!canceled) setTidasAllowedUnitGroups(new Set());
       });
     return () => {
       canceled = true;
@@ -364,8 +402,14 @@ export function CreateFlowDialog({
 
   const availableUnitGroups = useMemo(() => {
     const groups = Array.from(new Set(unitDefinitions.map((u) => u.unit_group).filter(Boolean)));
-    return groups;
-  }, [unitDefinitions]);
+    if (sourcePolicy !== "tidas_compliant" && !tidasCompatible) {
+      return groups;
+    }
+    if (tidasAllowedUnitGroups.size === 0) {
+      return groups;
+    }
+    return groups.filter((group) => tidasAllowedUnitGroups.has(normalizeUnitGroupKey(group)));
+  }, [sourcePolicy, tidasAllowedUnitGroups, tidasCompatible, unitDefinitions]);
 
   const unitsForGroup = (group: string) =>
     unitDefinitions.filter((u) => u.unit_group === group);
@@ -390,10 +434,12 @@ export function CreateFlowDialog({
 
   const tFlowType = (type: string): string => {
     const zhMap: Record<string, string> = {
+      intermediate_flow: "中间流",
       product_flow: "产品流",
       waste_flow: "废物流",
     };
     const enMap: Record<string, string> = {
+      intermediate_flow: "Intermediate Flow",
       product_flow: "Product Flow",
       waste_flow: "Waste Flow",
     };
@@ -418,6 +464,10 @@ export function CreateFlowDialog({
       setErrorText(zh ? "请选择默认单位。" : "Please select a default unit.");
       return;
     }
+    if ((sourcePolicy === "tidas_compliant" || tidasCompatible) && tidasAllowedUnitGroups.size > 0 && !tidasAllowedUnitGroups.has(normalizeUnitGroupKey(unitGroupUuid))) {
+      setErrorText(zh ? "该单位组不在 TIDAS 允许范围内。" : "This unit group is not allowed by TIDAS policy.");
+      return;
+    }
 
     setLoading(true);
     setErrorText("");
@@ -430,6 +480,10 @@ export function CreateFlowDialog({
       default_unit: defaultUnit,
       category: category?.trim() || undefined,
       confirmCreate: payloadOverride?.confirmCreate ?? false,
+      sourcePolicy,
+      tidasCompatible: tidasCompatible || sourcePolicy === "tidas_compliant",
+      tidasUnitGroup: unitGroupUuid,
+      tidasReferenceSource: tidasCompatible || sourcePolicy === "tidas_compliant" ? "user_declared" : undefined,
     };
 
     try {
@@ -491,6 +545,10 @@ export function CreateFlowDialog({
       unit_group: candidate.unit_group,
       category: candidate.category ?? candidate.compartment,
       compartment: candidate.compartment ?? candidate.category,
+      tidas_compatible: candidate.tidas_compatible,
+      tidas_unit_group: candidate.tidas_unit_group,
+      tidas_flow_property_uuid: candidate.tidas_flow_property_uuid,
+      tidas_reference_source: candidate.tidas_reference_source,
     };
     if (onReuse) {
       onReuse(flowData);
@@ -544,8 +602,21 @@ export function CreateFlowDialog({
           <label>
             <span>{zh ? "流类型" : "Flow Type"}</span>
             <select value={flowType} onChange={(e) => { setFlowType(e.target.value as CustomFlowType); clearCandidatesOnError(); }}>
+              <option value="intermediate_flow">{uiLanguage === "zh" ? "中间流" : "Intermediate Flow"}</option>
               <option value="product_flow">{tFlowType("product_flow")}</option>
               <option value="waste_flow">{tFlowType("waste_flow")}</option>
+            </select>
+          </label>
+
+          <label>
+            <span>{zh ? "TIDAS 兼容" : "TIDAS Compatible"}</span>
+            <select
+              value={tidasCompatible || sourcePolicy === "tidas_compliant" ? "yes" : "no"}
+              disabled={sourcePolicy === "tidas_compliant"}
+              onChange={(e) => setTidasCompatible(e.target.value === "yes")}
+            >
+              <option value="no">{zh ? "否" : "No"}</option>
+              <option value="yes">{zh ? "是" : "Yes"}</option>
             </select>
           </label>
 

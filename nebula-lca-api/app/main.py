@@ -132,6 +132,11 @@ from .ingest import import_processes_from_json
 from .preprocess import normalize_graph_units_to_reference
 from .solver import to_tiangong_like
 from .solver_adapter import run_tiangong_lcia
+from .schema_maintenance import (
+    backfill_tidas_unit_group_sources,
+    ensure_flow_catalog_tidas_columns,
+    ensure_unit_group_source_columns,
+)
 from .pts_validate import validate_pts_compile
 from .pts_compile import PTS_COMPILE_SCHEMA_VERSION, compile_pts, compute_pts_graph_hash
 from .services import graph_contract as _gc
@@ -1182,6 +1187,10 @@ def _ensure_custom_flow_columns() -> dict:
         for col_name, col_type in [
             ("source", "VARCHAR(64)"),
             ("is_custom", "BOOLEAN NOT NULL DEFAULT false"),
+            ("tidas_compatible", "BOOLEAN NOT NULL DEFAULT false"),
+            ("tidas_unit_group", "VARCHAR(128)"),
+            ("tidas_flow_property_uuid", "VARCHAR(64)"),
+            ("tidas_reference_source", "VARCHAR(128)"),
         ]:
             if col_name in columns:
                 continue
@@ -1203,6 +1212,21 @@ def _ensure_custom_flow_columns() -> dict:
     else:
         status = "ok" if table_exists else "skipped_table_missing"
     return {"table": "flow_catalog", "added_columns": added_columns, "status": status}
+
+
+def _ensure_unit_group_source_columns() -> dict:
+    return ensure_unit_group_source_columns(engine)
+
+
+@app.on_event("startup")
+def _ensure_source_compliance_schema_on_startup() -> None:
+    _ensure_custom_flow_columns()
+    _ensure_unit_group_source_columns()
+    db = SessionLocal()
+    try:
+        backfill_tidas_unit_group_sources(db)
+    finally:
+        db.close()
 
 def _ensure_flow_catalog_fts_triggers(*, db: Session | None = None) -> dict:
     """Ensure SQLite triggers exist to keep flow_catalog_fts in sync with flow_catalog.

@@ -375,6 +375,41 @@ def _extract_graph_data(graph_json: dict) -> tuple[set[str], set[str]]:
     return flow_uuids, process_uuids
 
 
+def _repair_target_for_unit_group(graph_json: dict, unit_group: str) -> dict:
+    target = {"unit_group": unit_group, "repair_target": "unit_group"}
+    needle = str(unit_group or "").strip().lower()
+    for node in graph_json.get("nodes", []) or []:
+        if not isinstance(node, dict):
+            continue
+        for port in (node.get("inputs") or []) + (node.get("outputs") or []):
+            current = str(port.get("unitGroup") or port.get("unit_group") or "").strip().lower()
+            if current == needle:
+                target.update({
+                    "node_id": node.get("id"),
+                    "process_uuid": node.get("process_uuid"),
+                    "port_id": port.get("id"),
+                    "flow_uuid": port.get("flowUuid") or port.get("flow_uuid"),
+                })
+                return target
+    return target
+
+
+def _enrich_readiness_issue_targets(graph_json: dict, issues: list[dict]) -> None:
+    for issue in issues:
+        details = issue.setdefault("details", {})
+        if not isinstance(details, dict):
+            continue
+        if details.get("repair_target"):
+            continue
+        code = str(issue.get("code") or "")
+        if code == "unsupported_unit_group" and details.get("unit_group"):
+            details.update(_repair_target_for_unit_group(graph_json, str(details.get("unit_group"))))
+        elif details.get("flow_uuid"):
+            details.setdefault("repair_target", "flow")
+        elif details.get("process_uuid") or details.get("node_id"):
+            details.setdefault("repair_target", "node")
+
+
 def _identify_product_outputs(
     outputs: list,
     flow_type_map: dict[str, str] | None = None,
@@ -1353,6 +1388,8 @@ def build_tidas_readiness(
 
     # ── Source-policy validation ───────────────────────────────────────
     policy_result = _validate_project_source_policy_readiness(model, graph_json, source_policy, db)
+    _enrich_readiness_issue_targets(graph_json, policy_result.errors)
+    _enrich_readiness_issue_targets(graph_json, policy_result.warnings)
     for err in policy_result.errors:
         blocking.append(err)
     for warn in policy_result.warnings:

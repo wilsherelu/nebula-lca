@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import get_db
-from ..models import UnitDefinition
+from ..models import UnitDefinition, UnitGroup
 from ..services.ef31_runtime_csv import ACTIVE_MANIFEST_NAME, DEFAULT_EF31_RUNTIME_ROOT
 from ..schemas import (
     StatsResponse,
@@ -82,11 +82,28 @@ def get_stats_api(db: Session = Depends(get_db)) -> StatsResponse:
 
 @_api_router.get("/api/reference/units", response_model=list[UnitDefinitionOut])
 @_base_router.get("/reference/units", response_model=list[UnitDefinitionOut])
-def list_units(unit_group: str | None = None, db: Session = Depends(get_db)) -> list[UnitDefinition]:
+def list_units(unit_group: str | None = None, db: Session = Depends(get_db)) -> list[dict]:
     query = db.query(UnitDefinition)
     if unit_group:
         query = query.filter(UnitDefinition.unit_group == unit_group)
-    return query.order_by(UnitDefinition.unit_group.asc(), UnitDefinition.factor_to_reference.asc()).all()
+    rows = query.order_by(UnitDefinition.unit_group.asc(), UnitDefinition.factor_to_reference.asc()).all()
+    groups = {
+        row.name: row
+        for row in db.query(UnitGroup).filter(UnitGroup.name.in_({r.unit_group for r in rows})).all()
+    } if rows else {}
+    return [
+        {
+            "unit_group": row.unit_group,
+            "unit_name": row.unit_name,
+            "factor_to_reference": row.factor_to_reference,
+            "is_reference": row.is_reference,
+            "source_uuid": getattr(groups.get(row.unit_group), "source_uuid", None),
+            "source_version": getattr(groups.get(row.unit_group), "source_version", None),
+            "source_package_version": getattr(groups.get(row.unit_group), "source_package_version", None),
+            "source_file": getattr(groups.get(row.unit_group), "source_file", None),
+        }
+        for row in rows
+    ]
 
 
 @_api_router.get("/api/reference/tidas-policy")

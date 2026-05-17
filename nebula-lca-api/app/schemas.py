@@ -497,6 +497,10 @@ class FlowListItem(BaseModel):
     category: str | None = None
     source: str | None = None
     is_custom: bool = False
+    tidas_compatible: bool = False
+    tidas_unit_group: str | None = None
+    tidas_flow_property_uuid: str | None = None
+    tidas_reference_source: str | None = None
     used_in_processes: int = 0
     last_modified: str | None = None
 
@@ -603,6 +607,10 @@ class FlowOut(BaseModel):
     compartment: str | None = None
     source: str | None = None
     is_custom: bool = False
+    tidas_compatible: bool = False
+    tidas_unit_group: str | None = None
+    tidas_flow_property_uuid: str | None = None
+    tidas_reference_source: str | None = None
     source_updated_at: str | None = None
 
 
@@ -806,6 +814,10 @@ class ResetModelsResponse(BaseModel):
 class UnitGroupOut(BaseModel):
     name: str
     reference_unit: str | None = None
+    source_uuid: str | None = None
+    source_version: str | None = None
+    source_package_version: str | None = None
+    source_file: str | None = None
 
 
 class UnitDefinitionOut(BaseModel):
@@ -813,6 +825,10 @@ class UnitDefinitionOut(BaseModel):
     unit_name: str
     factor_to_reference: float
     is_reference: bool
+    source_uuid: str | None = None
+    source_version: str | None = None
+    source_package_version: str | None = None
+    source_file: str | None = None
 
 
 class ImportUnitGroupsRequest(BaseModel):
@@ -1089,9 +1105,11 @@ class HandleValidationResponse(BaseModel):
 _ALLOWED_CREATE_FLOW_TYPES: set[str] = frozenset(
     {
         "product_flow",
+        "intermediate_flow",
         "waste_flow",
         # Accept common user-facing aliases and let backend normalize
         "Product flow",
+        "Intermediate flow",
         "Waste flow",
     }
 )
@@ -1102,11 +1120,16 @@ class CreateFlowRequest(BaseModel):
 
     flow_name: str = Field(min_length=1, max_length=255, description="Display name of the flow")
     flow_name_en: str | None = Field(default=None, max_length=255, description="English display name")
-    flow_type: str = Field(description="Semantic flow type; accepted values: product_flow, waste_flow (and compatible aliases)")
+    flow_type: str = Field(description="Semantic flow type; accepted values: product_flow, intermediate_flow, waste_flow (and compatible aliases)")
     unit_group_uuid: str = Field(alias="unitGroupUuid", min_length=1, description="UUID / name of an existing unit group")
     default_unit: str = Field(min_length=1, max_length=64, description="Unit name belonging to unit_group_uuid")
     category: str | None = Field(default=None, max_length=255, description="Compartment / category path (e.g. 'Emission; Air; GHG')")
     confirm_create: bool = Field(default=False, alias="confirmCreate", description="If true, allow creation even when duplicate names exist")
+    tidas_compatible: bool = Field(default=False, alias="tidasCompatible")
+    tidas_unit_group: str | None = Field(default=None, alias="tidasUnitGroup", max_length=128)
+    tidas_flow_property_uuid: str | None = Field(default=None, alias="tidasFlowPropertyUuid", max_length=64)
+    tidas_reference_source: str | None = Field(default=None, alias="tidasReferenceSource", max_length=128)
+    source_policy: str | None = Field(default=None, alias="sourcePolicy", max_length=32)
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -1114,9 +1137,9 @@ class CreateFlowRequest(BaseModel):
     @classmethod
     def validate_flow_type(cls, value: object) -> str:
         normalized = normalize_flow_semantic(value)
-        if normalized not in {"product_flow", "waste_flow"}:
+        if normalized not in {"product_flow", "intermediate_flow", "waste_flow"}:
             raise ValueError(
-                f"Unsupported flow_type '{value}'. Allowed: product_flow, waste_flow (and compatible aliases)"
+                f"Unsupported flow_type '{value}'. Allowed: product_flow, intermediate_flow, waste_flow (and compatible aliases)"
             )
         return str(value)  # keep original string; DB stores canonical form like "Product flow"
 
@@ -1126,6 +1149,10 @@ class FlowOutExtended(FlowOut):
 
     source: str | None = None
     is_custom: bool = False
+    tidas_compatible: bool = False
+    tidas_unit_group: str | None = None
+    tidas_flow_property_uuid: str | None = None
+    tidas_reference_source: str | None = None
 
 
 class FlowCandidate(BaseModel):

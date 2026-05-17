@@ -371,6 +371,9 @@ def test_readiness_tidas_compliant_unsupported_unit_group():
     assert result["can_export"] is False
     blocking_codes = [b["code"] for b in result["blocking"]]
     assert "unsupported_unit_group" in blocking_codes
+    issue = next(b for b in result["blocking"] if b["code"] == "unsupported_unit_group")
+    assert issue["details"]["repair_target"] == "unit_group"
+    assert issue["details"]["unit_group"] == "unsupported-unit-group"
 
 
 # ── Tests: warnings ────────────────────────────────────────────────────────

@@ -47,12 +47,16 @@ def _make_flow_mock(
     source: str | None,
     *,
     is_custom: bool = False,
+    tidas_compatible: bool = False,
+    tidas_unit_group: str | None = None,
 ) -> MagicMock:
     m = MagicMock()
     m.flow_uuid = uuid
     m.flow_type = flow_type
     m.source = source
     m.is_custom = is_custom
+    m.tidas_compatible = tidas_compatible
+    m.tidas_unit_group = tidas_unit_group
     m.flow_name = "dummy"
     m.flow_name_en = None
     m.default_unit = "kg"
@@ -275,6 +279,63 @@ class TestValidateTidasCompliant:
         result = validate_project_source_policy("proj-ok", graph, db)
         assert result.ok is True
 
+    def test_tidas_compliant_allows_compatible_custom_product_flow(self):
+        """TIDAS compatible custom non-elementary flows are allowed."""
+        set_tidas_allowed_unit_groups(["Units of mass"])
+        try:
+            flows = {
+                "custom-1": _make_flow_mock(
+                    "custom-1",
+                    "Product flow",
+                    "custom",
+                    is_custom=True,
+                    tidas_compatible=True,
+                    tidas_unit_group="Units of mass",
+                ),
+            }
+            graph = _make_graph(product_flow_uuids=["custom-1"])
+            db = _build_fake_db("proj-custom-ok", flows, source_policy="tidas_compliant")
+
+            result = validate_project_source_policy("proj-custom-ok", graph, db)
+            assert result.ok is True
+        finally:
+            set_tidas_allowed_unit_groups(None)
+
+    def test_tidas_compliant_blocks_custom_flow_without_compatibility_flag(self):
+        """Custom non-elementary flows must be explicitly marked compatible."""
+        flows = {
+            "custom-1": _make_flow_mock("custom-1", "Product flow", "custom", is_custom=True),
+        }
+        graph = _make_graph(product_flow_uuids=["custom-1"])
+        db = _build_fake_db("proj-custom-missing", flows, source_policy="tidas_compliant")
+
+        result = validate_project_source_policy("proj-custom-missing", graph, db)
+        assert result.ok is False
+        assert any(e["code"] == "custom_flow_not_tidas_compatible" for e in result.errors)
+
+    def test_tidas_compliant_blocks_custom_flow_with_unsupported_tidas_unit_group(self):
+        """Compatible custom flows still need an allowed TIDAS unit group."""
+        set_tidas_allowed_unit_groups(["Units of mass"])
+        try:
+            flows = {
+                "custom-1": _make_flow_mock(
+                    "custom-1",
+                    "Product flow",
+                    "custom",
+                    is_custom=True,
+                    tidas_compatible=True,
+                    tidas_unit_group="unsupported-unit-group",
+                ),
+            }
+            graph = _make_graph(product_flow_uuids=["custom-1"])
+            db = _build_fake_db("proj-custom-ug", flows, source_policy="tidas_compliant")
+
+            result = validate_project_source_policy("proj-custom-ug", graph, db)
+            assert result.ok is False
+            assert any(e["code"] == "custom_flow_unsupported_tidas_unit_group" for e in result.errors)
+        finally:
+            set_tidas_allowed_unit_groups(None)
+
     def test_tidas_compliant_blocks_lci_dataset_node(self):
         """TIDAS compliant must block ecoinvent LCI dataset nodes."""
         graph = _make_graph(elementary_flow_uuids=["ef-1"])
@@ -329,8 +390,8 @@ class TestValidateEcoinventStrict:
         result = validate_project_source_policy("proj-eco-ok", graph, db)
         assert result.ok is True
 
-    def test_ecoinvent_strict_warns_unknown_source(self):
-        """Ecoinvent strict warns on unknown source elementary flows."""
+    def test_ecoinvent_strict_blocks_unknown_source(self):
+        """Ecoinvent strict blocks unknown source elementary flows."""
         flows = {
             "unk-1": _make_flow_mock("unk-1", "Elementary flow", None),
         }
@@ -338,8 +399,8 @@ class TestValidateEcoinventStrict:
         db = _build_fake_db("proj-unk", flows, source_policy="ecoinvent_strict")
 
         result = validate_project_source_policy("proj-unk", graph, db)
-        assert result.ok is True  # warnings only, not errors
-        assert any(w["code"] == "unknown_elementary_flow_source" for w in result.warnings)
+        assert result.ok is False
+        assert any(e["code"] == "unknown_elementary_flow_source" for e in result.errors)
 
 
 # ---------------------------------------------------------------------------

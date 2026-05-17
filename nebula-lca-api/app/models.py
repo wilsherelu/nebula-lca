@@ -42,6 +42,10 @@ class FlowRecord(Base):
     # Stage 1 custom-flow metadata — columns added at startup via _ensure_custom_flow_columns()
     source: Mapped[str | None] = mapped_column(String(64), nullable=True)
     is_custom: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    tidas_compatible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    tidas_unit_group: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    tidas_flow_property_uuid: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tidas_reference_source: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
 class UnitGroup(Base):
@@ -49,6 +53,10 @@ class UnitGroup(Base):
 
     name: Mapped[str] = mapped_column(String(128), primary_key=True)
     reference_unit: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_uuid: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    source_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    source_package_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    source_file: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 
 
 class UnitDefinition(Base):
