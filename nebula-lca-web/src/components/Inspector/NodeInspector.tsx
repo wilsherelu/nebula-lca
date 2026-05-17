@@ -1,9 +1,11 @@
 ﻿import type { Node } from "@xyflow/react";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import type { AllocationBasisMethod, FlowPort, LcaNodeData, ProcessMode } from "../../model/node";
+import type { AllocationBasisMethod, FlowPort, LcaNodeData, ProcessMode, UnitGroupSwitchSnapshot } from "../../model/node";
 import { useLcaGraphStore } from "../../store/lcaGraphStore";
 import { CreateFlowDialog } from "../CreateFlowDialog";
+import { FlowAllocationPropertiesModal, type FlowAllocationProperty } from "../FlowAllocationPropertiesModal";
+import { MultiProductAllocationModal } from "./MultiProductAllocationModal";
 import type { SourcePolicy } from "../ProjectManagement/ProjectManagement";
 
 const DEV_NODE_DEBUG = Boolean(import.meta.env.DEV);
@@ -139,8 +141,39 @@ function flowSourceGroup(flow: CatalogFlow): "ecoinvent" | "custom" | "tiangong"
 }
 
 function normalizeUnitGroup(value: string | null | undefined): string {
-  return String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\*/g, "_")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
 }
+
+const PREFERRED_UNIT_GROUP_BY_UNIT: Record<string, string> = {
+  pg: "Units of mass",
+  ng: "Units of mass",
+  ug: "Units of mass",
+  mg: "Units of mass",
+  g: "Units of mass",
+  kg: "Units of mass",
+  t: "Units of mass",
+  m: "Units of length",
+  km: "Units of length",
+  mm: "Units of length",
+  cm: "Units of length",
+  m2: "Units of area",
+  "m²": "Units of area",
+  l: "Units of volume",
+  ml: "Units of volume",
+  m3: "Units of volume",
+  "m³": "Units of volume",
+  j: "Units of energy",
+  kj: "Units of energy",
+  mj: "Units of energy",
+  gj: "Units of energy",
+  wh: "Units of energy",
+  kwh: "Units of energy",
+};
 
 function isFlowAllowedBySourcePolicy(flow: CatalogFlow, target: FlowTarget | null, sourcePolicy: SourcePolicy, tidasAllowedUnitGroups: Set<string>): boolean {
   if (!target) {
@@ -196,6 +229,7 @@ type FlowSectionProps = {
   renderExtraCell2?: (port: FlowPort, idx: number) => ReactNode;
   unitOptionsByPort?: Record<string, string[]>;
   onUnitChange?: (port: FlowPort, nextUnit: string) => void;
+  onLink?: (port: FlowPort) => void;
 };
 
 function FlowSection({
@@ -216,6 +250,7 @@ function FlowSection({
   renderExtraCell2,
   unitOptionsByPort,
   onUnitChange,
+  onLink,
 }: FlowSectionProps) {
   const t = (zh: string, en: string) => (uiLanguage === "zh" ? zh : en);
   const showOnNodeLocked = readOnly || (lockFields && !allowShowOnNodeToggle);
@@ -238,7 +273,7 @@ function FlowSection({
         <div>{t("单位", "Unit")}</div>
         {hasExtra ? <div>{extraHeader}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
         {hasExtra2 ? <div>{extraHeader2}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
-        {showNodeColumn ? <div>{t("显示节点", "Show Node")}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
+        {showNodeColumn ? <div>{t("显示", "Show")}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
         <div>{t("操作", "Action")}</div>
       </div>
       {ports.map((port, idx) => (
@@ -285,14 +320,26 @@ function FlowSection({
               />
             </label>
           ) : <div className="inventory-grid-spacer" aria-hidden="true" />}
-          <button
-            type="button"
-            className="link-btn danger"
-            disabled={readOnly || lockFields || !onDelete}
-            onClick={() => onDelete?.(port.id)}
-          >
-            {t("删除", "Delete")}
-          </button>
+          <div className="inventory-action-cell">
+            {onLink && port.type !== "biosphere" && (
+              <button
+                type="button"
+                className="link-btn"
+                disabled={readOnly || lockFields}
+                onClick={() => onLink(port)}
+              >
+                {t("关联", "Link")}
+              </button>
+            )}
+            <button
+              type="button"
+              className="link-btn danger"
+              disabled={readOnly || lockFields || !onDelete}
+              onClick={() => onDelete?.(port.id)}
+            >
+              {t("删除", "Delete")}
+            </button>
+          </div>
         </div>
       ))}
       {ports.length === 0 && <div className="table-empty">{t("暂无数据", "No data")}</div>}
@@ -310,6 +357,8 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
   const [flowSourceFilter, setFlowSourceFilter] = useState("");
   const [flowCategoryOptions, setFlowCategoryOptions] = useState<Array<{ category: string; count: number }>>([]);
   const [catalogFlows, setCatalogFlows] = useState<CatalogFlow[]>([]);
+  const [allocationPropertyPort, setAllocationPropertyPort] = useState<FlowPort | null>(null);
+  const [allocationModalOpen, setAllocationModalOpen] = useState(false);
   const [tidasAllowedUnitGroups, setTidasAllowedUnitGroups] = useState<Set<string>>(new Set());
   const [unitDefinitions, setUnitDefinitions] = useState<UnitDefinition[]>([]);
   const [flowUnitGroupByUuid, setFlowUnitGroupByUuid] = useState<Record<string, string>>({});
@@ -330,17 +379,6 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     portId: null,
     value: 0,
   });
-  const [linkedDialog, setLinkedDialog] = useState<{
-    open: boolean;
-    flowUuid?: string;
-    title: string;
-    items: string[];
-  }>({
-    open: false,
-    flowUuid: undefined,
-    title: "",
-    items: [],
-  });
   const [pendingMarketOutputSelection, setPendingMarketOutputSelection] = useState(false);
   const [productRuleHint, setProductRuleHint] = useState("");
   const [selectedNodeId, setSelectedNodeId] = useState("");
@@ -360,6 +398,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
   };
   const edges = useLcaGraphStore((state) => state.edges);
   const upsertOutputLink = useLcaGraphStore((state) => state.upsertOutputLink);
+  const updateEdgeData = useLcaGraphStore((state) => state.updateEdgeData);
   const unitAutoScaleEnabled = useLcaGraphStore((state) => state.unitAutoScaleEnabled);
   const setUnitAutoScaleEnabled = useLcaGraphStore((state) => state.setUnitAutoScaleEnabled);
   const t = (zh: string, en: string) => (uiLanguage === "zh" ? zh : en);
@@ -410,6 +449,41 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     };
   }, [normalizedUnitGroupLookup, unitOptionsByGroup]);
 
+  const unitGroupsByUnitName = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const row of unitDefinitions) {
+      const unitName = String(row.unit_name ?? "").trim().toLowerCase();
+      if (!unitName || !row.unit_group) {
+        continue;
+      }
+      const groups = map.get(unitName) ?? new Set<string>();
+      groups.add(row.unit_group);
+      map.set(unitName, groups);
+    }
+    return map;
+  }, [unitDefinitions]);
+
+  const resolveUnitGroupByUnit = useMemo(() => {
+    return (unit?: string): string | undefined => {
+      const unitName = String(unit ?? "").trim().toLowerCase();
+      if (!unitName) {
+        return undefined;
+      }
+      const groups = unitGroupsByUnitName.get(unitName);
+      if (!groups || groups.size === 0) {
+        return undefined;
+      }
+      const preferred = PREFERRED_UNIT_GROUP_BY_UNIT[unitName];
+      if (preferred && groups.has(preferred)) {
+        return preferred;
+      }
+      if (groups.size === 1) {
+        return Array.from(groups)[0];
+      }
+      return undefined;
+    };
+  }, [unitGroupsByUnitName]);
+
   const resolvePortUnitGroup = useMemo(() => {
     return (port?: FlowPort): string | undefined => {
       if (!port) {
@@ -422,17 +496,30 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     };
   }, [flowUnitGroupByUuid]);
 
+  const resolvePortUnitGroupKey = useMemo(() => {
+    return (port?: FlowPort): string | undefined => {
+      if (!port) {
+        return undefined;
+      }
+      return (
+        resolveUnitGroupKey(port.unitGroupSwitch?.targetUnitGroup)
+        ?? resolveUnitGroupByUnit(port.unit)
+        ?? resolveUnitGroupKey(resolvePortUnitGroup(port))
+      );
+    };
+  }, [resolvePortUnitGroup, resolveUnitGroupByUnit, resolveUnitGroupKey]);
+
   const unitOptionsByPort = useMemo(() => {
     const allPorts = [...node.data.inputs, ...node.data.outputs];
     const result: Record<string, string[]> = {};
     for (const port of allPorts) {
-      const group = resolveUnitGroupKey(resolvePortUnitGroup(port));
+      const group = resolvePortUnitGroupKey(port);
       const groupOptions = group ? unitOptionsByGroup.get(group) : undefined;
       const options = groupOptions && groupOptions.length > 0 ? groupOptions : [port.unit];
       result[port.id] = Array.from(new Set([port.unit, ...options]));
     }
     return result;
-  }, [node.data.inputs, node.data.outputs, resolvePortUnitGroup, resolveUnitGroupKey, unitOptionsByGroup]);
+  }, [node.data.inputs, node.data.outputs, resolvePortUnitGroupKey, unitOptionsByGroup]);
 
   const unitFactorByGroupAndName = useMemo(() => {
     const map = new Map<string, number>();
@@ -442,11 +529,18 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     return map;
   }, [unitDefinitions]);
 
-  const convertedPortAmount = (port: FlowPort): number => {
-    const group = resolveUnitGroupKey(resolvePortUnitGroup(port)) ?? port.unitGroup ?? "";
-    const factor = unitFactorByGroupAndName.get(`${group}||${port.unit}`) ?? 1;
-    return Math.abs(Number(port.amount) || 0) * factor;
-  };
+  const referenceUnitByGroup = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const row of unitDefinitions) {
+      if (!row.unit_group) {
+        continue;
+      }
+      if (row.is_reference || !map.has(row.unit_group)) {
+        map.set(row.unit_group, row.unit_name);
+      }
+    }
+    return map;
+  }, [unitDefinitions]);
 
   const normalizeAllocationWeights = (weights: Record<string, number>): Record<string, number> | null => {
     const total = Object.values(weights).reduce((sum, value) => sum + (value > 0 ? value : 0), 0);
@@ -471,20 +565,24 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
       };
     }
 
-    const manualFactors = ports.filter((port) => port.allocationFactor !== null && port.allocationFactor !== undefined);
-    if (manualFactors.length > 0) {
+    const manualPorts = ports.filter((port) =>
+      port.allocationBasis?.method === "manual_factor"
+      || port.allocationFactor !== null && port.allocationFactor !== undefined
+    );
+    if (manualPorts.length > 0) {
       const factors: Record<string, number> = {};
       for (const port of ports) {
-        factors[port.id] = Number(port.allocationFactor);
+        const factorValue = Number(port.allocationFactor);
+        factors[port.id] = Number.isFinite(factorValue) ? factorValue : 0;
       }
-      const complete = manualFactors.length === ports.length && Object.values(factors).every((value) => Number.isFinite(value) && value >= 0);
+      const complete = manualPorts.length === ports.length && Object.values(factors).every((value) => Number.isFinite(value) && value >= 0);
       const total = Object.values(factors).reduce((sum, value) => sum + (Number.isFinite(value) ? value : 0), 0);
       if (complete && Math.abs(total - 1) < 0.01) {
         return {
           factors,
           weights: factors,
           method: "manual_factor",
-          message: t("手动分配系数有效", "Manual allocation factors are valid"),
+          message: t("手填分配系数有效", "Manual allocation factors are valid"),
           ok: true,
         };
       }
@@ -492,75 +590,23 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
         factors: null,
         weights: factors,
         method: "manual_factor",
-        message: t("手动分配系数必须完整填写且合计为 1", "Manual allocation factors must be complete and sum to 1"),
+        message: t("手填分配系数必须完整填写且合计为 1", "Manual allocation factors must be complete and sum to 1"),
         ok: false,
       };
     }
 
-    const groups = Array.from(new Set(ports.map((port) => resolveUnitGroupKey(resolvePortUnitGroup(port)) ?? port.unitGroup ?? "").filter(Boolean)));
-    if (groups.length === 1) {
-      const weights = Object.fromEntries(ports.map((port) => [port.id, convertedPortAmount(port)]));
-      const factors = normalizeAllocationWeights(weights);
-      return {
-        factors,
-        weights,
-        method: "quantity",
-        message: factors ? t("按同单位组产量自动分配", "Auto allocated by same-unit-group quantities") : t("产量必须大于 0", "Product amounts must be greater than 0"),
-        ok: Boolean(factors),
-      };
-    }
-
-    const methods = ports.map((port) => port.allocationBasis?.method).filter(Boolean) as AllocationBasisMethod[];
-    const preferredMethod: AllocationBasisMethod | undefined =
-      methods.includes("density")
-        ? "density"
-        : methods.includes("heating_value")
-          ? "heating_value"
-          : methods.includes("custom_conversion")
-            ? "custom_conversion"
-            : undefined;
-    if (!preferredMethod) {
-      return {
-        factors: null,
-        weights: {},
-        method: "manual_required",
-        message: t("不同单位组需要手动系数或密度/热值/自定义换算依据", "Different unit groups need manual factors or density/heating/custom basis"),
-        ok: false,
-      };
-    }
-
-    const targetGroup = preferredMethod === "density"
-      ? "Units of mass"
-      : preferredMethod === "heating_value"
-        ? "Units of energy"
-        : (ports.find((port) => port.allocationBasis?.targetUnitGroup)?.allocationBasis?.targetUnitGroup ?? "custom");
-    const weights: Record<string, number> = {};
-    for (const port of ports) {
-      const group = resolveUnitGroupKey(resolvePortUnitGroup(port)) ?? port.unitGroup ?? "";
-      const converted = convertedPortAmount(port);
-      if (group === targetGroup) {
-        weights[port.id] = converted;
-        continue;
-      }
-      const basis = port.allocationBasis;
-      const value = Number(basis?.value ?? basis?.factor ?? basis?.conversionFactor);
-      if (!basis || basis.method !== preferredMethod || !Number.isFinite(value) || value <= 0) {
-        return {
-          factors: null,
-          weights,
-          method: preferredMethod,
-          message: t("换算依据不完整或不是正数", "Allocation basis is incomplete or not positive"),
-          ok: false,
-        };
-      }
-      weights[port.id] = converted * value;
-    }
+    const groups = Array.from(new Set(ports.map((port) => resolvePortUnitGroupKey(port) ?? port.unitGroup ?? "").filter(Boolean)));
+    const weights = Object.fromEntries(ports.map((port) => [port.id, Math.abs(Number(port.amount) || 0)]));
     const factors = normalizeAllocationWeights(weights);
     return {
       factors,
       weights,
-      method: preferredMethod,
-      message: factors ? t("换算分配系数有效", "Converted allocation factors are valid") : t("换算后权重必须大于 0", "Converted weights must be greater than 0"),
+      method: "quantity",
+      message: factors
+        ? groups.length > 1
+          ? t("单位组不一致，仅按当前数值预览分配；计算和导出前仍需切换到同一单位组或手填系数。", "Unit groups differ; preview is based on current numeric amounts. Calculation and export still require one unit group or manual factors.")
+          : t("已按当前数值预览分配", "Previewing allocation by current numeric amounts.")
+        : t("产品总量必须大于 0", "Total product amount must be greater than 0"),
       ok: Boolean(factors),
     };
   };
@@ -603,12 +649,11 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     if (port.unit === nextUnit) {
       return;
     }
-    const unitGroup = resolveUnitGroupKey(resolvePortUnitGroup(port));
+    const unitGroup = resolvePortUnitGroupKey(port);
+    const nextUnitGroup = resolveUnitGroupByUnit(nextUnit) ?? unitGroup;
     if (marketProcess && (section === "inputs" || section === "outputs")) {
       const currentOutput = externalOutIntermediate[0];
-      const canonicalGroup = resolveUnitGroupKey(
-        resolvePortUnitGroup(currentOutput ?? port),
-      );
+      const canonicalGroup = nextUnitGroup ?? resolvePortUnitGroupKey(currentOutput ?? port);
       const marketInputs = externalInIntermediate;
 
       if (!unitAutoScaleEnabled) {
@@ -622,13 +667,13 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                 : {
                   ...item,
                   unit: nextUnit,
-                  unitGroup: item.unitGroup || canonicalGroup,
+                  unitGroup: canonicalGroup ?? item.unitGroup,
                 },
             ),
             outputs: current.data.outputs.map((item) => ({
               ...item,
               unit: nextUnit,
-              unitGroup: item.unitGroup || canonicalGroup,
+              unitGroup: canonicalGroup ?? item.unitGroup,
             })),
           },
         }));
@@ -659,14 +704,14 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
               : {
                 ...item,
                 unit: nextUnit,
-                unitGroup: item.unitGroup || canonicalGroup,
+                unitGroup: canonicalGroup ?? item.unitGroup,
                 amount: inputAmountById.get(item.id) ?? item.amount,
               },
           ),
           outputs: current.data.outputs.map((item) => ({
             ...item,
             unit: nextUnit,
-            unitGroup: item.unitGroup || canonicalGroup,
+            unitGroup: canonicalGroup ?? item.unitGroup,
             amount: convertedOutputAmount ?? item.amount,
             externalSaleAmount: convertedOutputSale ?? item.externalSaleAmount,
           })),
@@ -683,7 +728,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
             ? {
               ...item,
               unit: nextUnit,
-              unitGroup: item.unitGroup || unitGroup,
+              unitGroup: nextUnitGroup ?? item.unitGroup,
             }
             : item,
         );
@@ -711,7 +756,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
           ? {
             ...item,
             unit: nextUnit,
-            unitGroup: item.unitGroup || unitGroup,
+            unitGroup: nextUnitGroup ?? item.unitGroup,
             amount: nextAmount,
             externalSaleAmount: section === "outputs" ? nextExternalSale : item.externalSaleAmount,
           }
@@ -724,7 +769,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
         dataPatch.inputs = current.data.inputs.map((input) => ({
           ...input,
           unit: nextUnit,
-          unitGroup: input.unitGroup || unitGroup,
+          unitGroup: nextUnitGroup ?? input.unitGroup,
         }));
       }
       return {
@@ -737,6 +782,108 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     });
   };
 
+  const applyFlowUnitGroupSwitch = (sourcePort: FlowPort, properties: FlowAllocationProperty[]) => {
+    const property = properties[0];
+    const factor = Number(property?.value);
+    if (!property || !property.targetUnitGroup || !Number.isFinite(factor) || factor <= 0) {
+      return;
+    }
+    const buildSwitchedPort = (port: FlowPort): FlowPort => {
+      const existingSwitch = port.unitGroupSwitch;
+      const sourceUnitGroup = existingSwitch?.sourceUnitGroup ?? resolvePortUnitGroupKey(port) ?? port.unitGroup ?? sourcePort.unitGroup ?? "";
+      const sourceUnit = existingSwitch?.sourceUnit ?? port.unit;
+      const sourceReferenceUnit = existingSwitch?.sourceReferenceUnit ?? referenceUnitByGroup.get(sourceUnitGroup) ?? property.basisUnit ?? sourceUnit;
+      const previousFactor = Number(existingSwitch?.factor);
+      const sourceUnitFactor = unitFactorByGroupAndName.get(`${sourceUnitGroup}||${sourceUnit}`) ?? 1;
+      const canInferSourceAmount = existingSwitch && Number.isFinite(previousFactor) && previousFactor > 0 && sourceUnitFactor > 0;
+      const sourceAmount = Number.isFinite(existingSwitch?.sourceAmount ?? NaN)
+        ? Number(existingSwitch?.sourceAmount)
+        : canInferSourceAmount
+          ? (Number(port.amount) || 0) / (sourceUnitFactor * previousFactor)
+          : (Number(port.amount) || 0);
+      const sourceExternalSaleAmount =
+        Number.isFinite(existingSwitch?.sourceExternalSaleAmount ?? NaN)
+          ? Number(existingSwitch?.sourceExternalSaleAmount)
+          : canInferSourceAmount && port.externalSaleAmount !== undefined
+            ? (Number(port.externalSaleAmount) || 0) / (sourceUnitFactor * previousFactor)
+            : port.externalSaleAmount;
+      const targetUnit = property.targetUnit || referenceUnitByGroup.get(property.targetUnitGroup) || "";
+      const nextAmount = sourceAmount * sourceUnitFactor * factor;
+      const nextExternalSaleAmount =
+        sourceExternalSaleAmount === undefined
+          ? undefined
+          : (Number(sourceExternalSaleAmount) || 0) * sourceUnitFactor * factor;
+      const unitGroupSwitch: UnitGroupSwitchSnapshot = {
+        sourceFlowUuid: port.flowUuid,
+        sourceUnitGroup,
+        sourceUnit,
+        sourceReferenceUnit,
+        sourceAmount,
+        sourceExternalSaleAmount,
+        targetUnitGroup: property.targetUnitGroup,
+        targetUnit,
+        targetReferenceUnit: targetUnit,
+        factor,
+        source: property.source ?? undefined,
+        note: property.note ?? undefined,
+      };
+      return {
+        ...port,
+        unit: targetUnit || port.unit,
+        unitGroup: property.targetUnitGroup,
+        amount: nextAmount,
+        externalSaleAmount: nextExternalSaleAmount,
+        unitGroupSwitch,
+      };
+    };
+    const switchedSourcePort = buildSwitchedPort(sourcePort);
+
+    updateNode(node.id, (current) => {
+      const applyToPort = (port: FlowPort): FlowPort => {
+        if (port.id !== sourcePort.id) {
+          return port;
+        }
+        return buildSwitchedPort(port);
+      };
+      return {
+        ...current,
+        data: {
+          ...current.data,
+          inputs: current.data.inputs.map(applyToPort),
+          outputs: current.data.outputs.map(applyToPort),
+        },
+      };
+    });
+
+    for (const edge of edges) {
+      const sourcePortId = parseHandlePortId(edge.sourceHandle, "out:");
+      const targetPortId = parseHandlePortId(edge.targetHandle, "in:");
+      if (edge.source === node.id && sourcePortId === sourcePort.id) {
+        const patch =
+          edge.data?.quantityMode === "dual"
+            ? { unit: switchedSourcePort.unit, providerAmount: switchedSourcePort.amount }
+            : {
+              unit: switchedSourcePort.unit,
+              amount: switchedSourcePort.amount,
+              providerAmount: switchedSourcePort.amount,
+              consumerAmount: switchedSourcePort.amount,
+            };
+        updateEdgeData(edge.id, patch);
+      } else if (edge.target === node.id && targetPortId === sourcePort.id) {
+        const patch =
+          edge.data?.quantityMode === "dual"
+            ? { unit: switchedSourcePort.unit, consumerAmount: switchedSourcePort.amount }
+            : {
+              unit: switchedSourcePort.unit,
+              amount: switchedSourcePort.amount,
+              providerAmount: switchedSourcePort.amount,
+              consumerAmount: switchedSourcePort.amount,
+            };
+        updateEdgeData(edge.id, patch);
+      }
+    }
+  };
+
 
   const externalInIntermediate = node.data.inputs.filter((p) => p.type !== "biosphere");
   const externalInElementary = node.data.inputs.filter((p) => p.type === "biosphere");
@@ -745,7 +892,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
   const productOutputs = externalOutIntermediate.filter((port) => Boolean(port.isProduct));
   const allocationPreview = useMemo(
     () => calculateAllocationPreview(productOutputs),
-    [productOutputs, unitFactorByGroupAndName, resolvePortUnitGroup, resolveUnitGroupKey, uiLanguage],
+    [productOutputs, unitFactorByGroupAndName, resolvePortUnitGroupKey, uiLanguage],
   );
 
   const updateOutputPortAllocation = (portId: string, patch: Partial<FlowPort>) => {
@@ -775,6 +922,47 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
             ...port,
             allocationFactor: Number(factors[port.id].toFixed(8)),
             allocationBasis: { ...(port.allocationBasis ?? {}), method },
+          };
+        }),
+      },
+    }));
+  };
+
+  const setProductQuantityAllocationMode = () => {
+    updateNode(node.id, (current) => ({
+      ...current,
+      data: {
+        ...current.data,
+        outputs: current.data.outputs.map((port) =>
+          port.isProduct
+            ? {
+              ...port,
+              allocationFactor: null,
+              allocationBasis: { method: "quantity" },
+            }
+            : port,
+        ),
+      },
+    }));
+  };
+
+  const setProductManualAllocationMode = () => {
+    updateNode(node.id, (current) => ({
+      ...current,
+      data: {
+        ...current.data,
+        outputs: current.data.outputs.map((port) => {
+          if (!port.isProduct) {
+            return port;
+          }
+          const previewFactor = allocationPreview.factors?.[port.id];
+          return {
+            ...port,
+            allocationFactor: Number.isFinite(previewFactor ?? NaN) ? Number(previewFactor) : 0,
+            allocationBasis: {
+              ...(port.allocationBasis ?? {}),
+              method: "manual_factor",
+            },
           };
         }),
       },
@@ -826,7 +1014,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     if (!marketProcess) {
       return unitOptionsByPort;
     }
-    const group = resolveUnitGroupKey(resolvePortUnitGroup(marketOutput ?? externalInIntermediate[0]));
+    const group = resolvePortUnitGroupKey(marketOutput ?? externalInIntermediate[0]);
     if (!group) {
       return unitOptionsByPort;
     }
@@ -839,7 +1027,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
       next[port.id] = candidates;
     }
     return next;
-  }, [externalInIntermediate, marketOutput, marketProcess, resolvePortUnitGroup, resolveUnitGroupKey, unitOptionsByGroup, unitOptionsByPort]);
+  }, [externalInIntermediate, marketOutput, marketProcess, resolvePortUnitGroupKey, unitOptionsByGroup, unitOptionsByPort]);
   const marketOutputOk = Boolean(
     marketOutput &&
     externalOutIntermediate.length === 1 &&
@@ -1391,52 +1579,6 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     return outgoing.map((edge) => nodes.find((n) => n.id === edge.target)?.data.name).filter(Boolean) as string[];
   };
 
-  const ensureEnglishFlowName = async (port: FlowPort) => {
-    if (uiLanguage !== "en" || !port.flowUuid || port.flowNameEn || flowNameEnByUuid[port.flowUuid]) {
-      return;
-    }
-    try {
-      const resp = await fetch(`${API_BASE}/reference/flows/${encodeURIComponent(port.flowUuid)}`);
-      if (!resp.ok) {
-        return;
-      }
-      const row = (await resp.json()) as CatalogFlow;
-      const englishName = String(row.flow_name_en ?? "").trim();
-      if (englishName) {
-        setFlowNameEnByUuid((prev) => ({ ...prev, [port.flowUuid]: englishName }));
-      }
-    } catch {
-      // ignore
-    }
-  };
-
-  const openLinkedDialog = (port: FlowPort, items: string[]) => {
-    setLinkedDialog({
-      open: true,
-      flowUuid: port.flowUuid,
-      title: getPortDisplayName(port),
-      items,
-    });
-  };
-
-  useEffect(() => {
-    if (!linkedDialog.open || !linkedDialog.flowUuid || uiLanguage !== "en") {
-      return;
-    }
-    const englishName = String(flowNameEnByUuid[linkedDialog.flowUuid] ?? "").trim();
-    if (!englishName || linkedDialog.title === englishName) {
-      return;
-    }
-    setLinkedDialog((prev) =>
-      prev.open && prev.flowUuid === linkedDialog.flowUuid
-        ? {
-          ...prev,
-          title: englishName,
-        }
-        : prev,
-    );
-  }, [flowNameEnByUuid, linkedDialog.flowUuid, linkedDialog.open, linkedDialog.title, uiLanguage]);
-
   const isReferenceProductPort = (port: FlowPort, _direction: AssocDirection): boolean => Boolean(port.isProduct);
 
   const getProductUnitGroupMismatches = (outputs: FlowPort[]): string[] => {
@@ -1444,7 +1586,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
       new Set(
         outputs
           .filter((port) => port.type !== "biosphere" && port.isProduct)
-          .map((port) => resolveUnitGroupKey(resolvePortUnitGroup(port)) ?? port.unitGroup ?? "")
+          .map((port) => resolvePortUnitGroupKey(port) ?? port.unitGroup ?? "")
           .map((group) => group.trim())
           .filter((group) => group.length > 0),
       ),
@@ -1508,6 +1650,12 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     }
   };
 
+  const assocLinkedItems = assocDialog.port
+    ? assocDialog.direction === "input"
+      ? linkedInputNames(assocDialog.port)
+      : linkedOutputNames(assocDialog.port)
+    : [];
+
   return (
     <div className="inspector-block">
       <div className="inspector-control-row">
@@ -1548,6 +1696,15 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
             />
             {t("单位自动换算", "Unit auto conversion")}
           </label>
+          {!marketProcess && !ptsNode && (
+            <button
+              type="button"
+              className="text-btn inspector-toolbar-btn"
+              onClick={() => setAllocationModalOpen(true)}
+            >
+              {t("多产品分配", "Allocation")}
+            </button>
+          )}
           {marketProcess && (
             <label className="inline-checkbox">
               <input
@@ -1664,34 +1821,13 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                 onUnitChange={(port, nextUnit) => {
                   void updatePortUnitWithConversion("inputs", port, nextUnit);
                 }}
-                extraHeader={t("关联", "Link")}
+                extraHeader={t("单位组", "Unit Group")}
                 extraHeader2={t("定义产品", "Product Def.")}
                 renderExtraCell={(port) => (
                   <div className="row-setting-cell">
-                    {(() => {
-                      const linkedItems = linkedInputNames(port);
-                      const linkedLabel =
-                        linkedItems.length > 0
-                          ? `${t("已连接", "Linked")} (${linkedItems.length})`
-                          : t("未关联", "Not linked");
-                      return (
-                        <button
-                          type="button"
-                          className="linked-summary-btn"
-                          onClick={() => {
-                            void ensureEnglishFlowName(port);
-                            openLinkedDialog(port, linkedItems);
-                          }}
-                        >
-                          {linkedLabel}
-                        </button>
-                      );
-                    })()}
-                    {!marketProcess && (
-                      <button type="button" className="link-btn" disabled={importedLocked} onClick={() => openAssociationDialog("input", port)}>
-                        {t("关联", "Link")}
-                      </button>
-                    )}
+                    <button type="button" className="link-btn" disabled={!port.flowUuid} onClick={() => setAllocationPropertyPort(port)}>
+                      {t("切换", "Switch")}
+                    </button>
                   </div>
                 )}
                 renderExtraCell2={(port) => (
@@ -1727,6 +1863,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                   })
                 }
                 onAdd={() => setFlowPicker({ open: true, target: "in_intermediate" })}
+                onLink={!marketProcess ? (port) => openAssociationDialog("input", port) : undefined}
                 onDelete={(id) =>
                   updateNode(node.id, (current) => ({
                     ...current,
@@ -1737,138 +1874,6 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                   }))
                 }
               />
-              {!marketProcess && !ptsNode && productOutputs.length > 1 && (
-                <section className="inventory-section allocation-section">
-                  <div className="inventory-section-head">
-                    <h4>{t("多产品分配", "Multi-product Allocation")}</h4>
-                    <div className="allocation-actions">
-                      <button
-                        type="button"
-                        className="text-btn"
-                        disabled={!allocationPreview.factors}
-                        onClick={() => applyAllocationFactors(allocationPreview.factors, allocationPreview.method === "quantity" ? "quantity" : (allocationPreview.method as AllocationBasisMethod))}
-                      >
-                        {t("写入计算系数", "Apply Factors")}
-                      </button>
-                      <button
-                        type="button"
-                        className="text-btn"
-                        onClick={() => {
-                          updateNode(node.id, (current) => ({
-                            ...current,
-                            data: {
-                              ...current.data,
-                              outputs: current.data.outputs.map((port) =>
-                                port.isProduct
-                                  ? {
-                                    ...port,
-                                    allocationFactor: null,
-                                    allocationBasis: { method: "quantity" },
-                                  }
-                                  : port,
-                              ),
-                            },
-                          }));
-                        }}
-                      >
-                        {t("按产量", "By Quantity")}
-                      </button>
-                    </div>
-                  </div>
-                  <div className={allocationPreview.ok ? "mode-lock-hint" : "mode-lock-hint warning"}>
-                    {allocationPreview.message}
-                  </div>
-                  <div className="allocation-grid allocation-grid-head">
-                    <div>{t("产品", "Product")}</div>
-                    <div>{t("模式", "Mode")}</div>
-                    <div>{t("换算值", "Basis Value")}</div>
-                    <div>{t("权重", "Weight")}</div>
-                    <div>{t("分配系数", "Factor")}</div>
-                  </div>
-                  {productOutputs.map((port) => {
-                    const method = port.allocationBasis?.method ?? "manual_factor";
-                    const weight = allocationPreview.weights[port.id];
-                    const calculated = allocationPreview.factors?.[port.id];
-                    return (
-                      <div key={port.id} className="allocation-grid">
-                        <div className="flow-name-readonly" title={getPortDisplayName(port)}>
-                          {getPortDisplayName(port)}
-                        </div>
-                        <select
-                          value={method}
-                          disabled={importedLocked || lciNode}
-                          onChange={(event) => {
-                            const nextMethod = event.target.value as AllocationBasisMethod;
-                            updateNode(node.id, (current) => ({
-                              ...current,
-                              data: {
-                                ...current.data,
-                                outputs: current.data.outputs.map((item) => {
-                                  if (!item.isProduct) {
-                                    return item;
-                                  }
-                                  if (item.id !== port.id) {
-                                    return nextMethod === "manual_factor" ? item : { ...item, allocationFactor: null };
-                                  }
-                                  return {
-                                    ...item,
-                                    allocationFactor: nextMethod === "manual_factor" ? item.allocationFactor ?? 0 : null,
-                                    allocationBasis: { ...(item.allocationBasis ?? {}), method: nextMethod },
-                                  };
-                                }),
-                              },
-                            }));
-                          }}
-                        >
-                          <option value="manual_factor">{t("手填系数", "Manual")}</option>
-                          <option value="quantity">{t("按产量", "Quantity")}</option>
-                          <option value="density">{t("密度", "Density")}</option>
-                          <option value="heating_value">{t("热值", "Heating Value")}</option>
-                          <option value="custom_conversion">{t("自定义换算", "Custom")}</option>
-                        </select>
-                        <input
-                          type="number"
-                          min={0}
-                          disabled={importedLocked || lciNode || method === "manual_factor" || method === "quantity"}
-                          value={Number(port.allocationBasis?.value ?? port.allocationBasis?.factor ?? port.allocationBasis?.conversionFactor ?? 0)}
-                          onChange={(event) => {
-                            const value = Number(event.target.value);
-                            updateOutputPortAllocation(port.id, {
-                              allocationBasis: {
-                                ...(port.allocationBasis ?? { method }),
-                                method,
-                                value: Number.isFinite(value) ? Math.max(0, value) : 0,
-                                targetUnitGroup:
-                                  method === "density"
-                                    ? "Units of mass"
-                                    : method === "heating_value"
-                                      ? "Units of energy"
-                                      : port.allocationBasis?.targetUnitGroup,
-                              },
-                            });
-                          }}
-                        />
-                        <div>{Number.isFinite(weight) ? Number(weight).toPrecision(6) : "-"}</div>
-                        <input
-                          type="number"
-                          min={0}
-                          max={1}
-                          step={0.0001}
-                          disabled={importedLocked || lciNode}
-                          value={Number.isFinite(port.allocationFactor ?? NaN) ? port.allocationFactor ?? 0 : calculated ?? 0}
-                          onChange={(event) => {
-                            const value = Number(event.target.value);
-                            updateOutputPortAllocation(port.id, {
-                              allocationFactor: Number.isFinite(value) ? Math.max(0, value) : 0,
-                              allocationBasis: { ...(port.allocationBasis ?? {}), method: "manual_factor" },
-                            });
-                          }}
-                        />
-                      </div>
-                    );
-                  })}
-                </section>
-              )}
               {!marketProcess && !ptsNode && (
                 <FlowSection
                   title={t("基本流", "Elementary Flows")}
@@ -1937,31 +1942,12 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                 onUnitChange={(port, nextUnit) => {
                   void updatePortUnitWithConversion("outputs", port, nextUnit);
                 }}
-                extraHeader={t("关联", "Link")}
+                extraHeader={t("单位组", "Unit Group")}
                 extraHeader2={t("定义产品", "Product Def.")}
                 renderExtraCell={(port) => (
                   <div className="row-setting-cell">
-                    {(() => {
-                      const linkedItems = linkedOutputNames(port);
-                      const linkedLabel =
-                        linkedItems.length > 0
-                          ? `${t("已连接", "Linked")} (${linkedItems.length})`
-                          : t("未关联", "Not linked");
-                      return (
-                        <button
-                          type="button"
-                          className="linked-summary-btn"
-                          onClick={() => {
-                            void ensureEnglishFlowName(port);
-                            openLinkedDialog(port, linkedItems);
-                          }}
-                        >
-                          {linkedLabel}
-                        </button>
-                      );
-                    })()}
-                    <button type="button" className="link-btn" disabled={importedLocked} onClick={() => openAssociationDialog("output", port)}>
-                      {t("关联", "Link")}
+                    <button type="button" className="link-btn" disabled={!port.flowUuid} onClick={() => setAllocationPropertyPort(port)}>
+                      {t("切换", "Switch")}
                     </button>
                   </div>
                 )}
@@ -2025,6 +2011,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                     }
                     : () => setFlowPicker({ open: true, target: "out_intermediate" })
                 }
+                onLink={(port) => openAssociationDialog("output", port)}
                 onDelete={(id) => {
                   if (marketProcess) {
                     setPendingMarketOutputSelection(true);
@@ -2236,6 +2223,17 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
             </div>
             <div className="overlay-filters">
               <div className="flow-name-readonly" title={getPortDisplayName(assocDialog.port)}>{getPortDisplayName(assocDialog.port)}</div>
+              {assocLinkedItems.length > 0 ? (
+                <div className="linked-process-list">
+                  {assocLinkedItems.map((item, idx) => (
+                    <div key={`${item}_${idx}`} className="linked-process-item" title={item}>
+                      {item}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="table-empty">{t("当前未关联过程", "No linked processes")}</div>
+              )}
               <select value={selectedNodeId} onChange={(e) => setSelectedNodeId(e.target.value)}>
                 <option value="">{t("选择已有过程", "Select Existing Process")}</option>
                 {settingCandidates.map((candidate) => (
@@ -2312,40 +2310,40 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
         </div>
       )}
 
-      {linkedDialog.open && (
-        <div className="overlay-modal">
-          <div className="overlay-panel small">
-            <div className="overlay-head">
-              <strong>{t("已关联过程", "Linked Processes")}</strong>
-              <button type="button" className="drawer-close-btn" onClick={() => setLinkedDialog({ open: false, flowUuid: undefined, title: "", items: [] })}>
-                {t("关闭", "Close")}
-              </button>
-            </div>
-            <div className="overlay-filters">
-              <label className="linked-dialog-label">
-                <span>{t("流", "Flow")}</span>
-                <div className="flow-name-readonly" title={linkedDialog.title}>{linkedDialog.title}</div>
-              </label>
-              {linkedDialog.items.length > 0 ? (
-                <div className="linked-process-list">
-                  {linkedDialog.items.map((item, idx) => (
-                    <div key={`${item}_${idx}`} className="linked-process-item" title={item}>
-                      {item}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="table-empty">{t("当前未关联过程", "No linked processes")}</div>
-              )}
-              <div className="assoc-actions">
-                <button type="button" className="ghost-btn" onClick={() => setLinkedDialog({ open: false, flowUuid: undefined, title: "", items: [] })}>
-                  {t("关闭", "Close")}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <MultiProductAllocationModal
+        open={allocationModalOpen}
+        uiLanguage={uiLanguage}
+        products={productOutputs}
+        preview={allocationPreview}
+        importedLocked={importedLocked}
+        lciNode={lciNode}
+        getDisplayName={getPortDisplayName}
+        getUnitGroupLabel={(port) => port.unitGroupSwitch?.targetUnitGroup ?? resolveUnitGroupByUnit(port.unit) ?? resolvePortUnitGroupKey(port) ?? port.unitGroup ?? "-"}
+        onClose={() => setAllocationModalOpen(false)}
+        onApplyFactors={applyAllocationFactors}
+        onSetQuantityMode={setProductQuantityAllocationMode}
+        onSetManualMode={setProductManualAllocationMode}
+        onUpdateProduct={updateOutputPortAllocation}
+        onOpenFlowProperty={(port) => setAllocationPropertyPort(port)}
+      />
+
+      <FlowAllocationPropertiesModal
+        open={Boolean(allocationPropertyPort)}
+        uiLanguage={uiLanguage}
+        flowUuid={allocationPropertyPort?.flowUuid ?? null}
+        flowName={allocationPropertyPort ? getPortDisplayName(allocationPropertyPort) : ""}
+        sourceUnit={allocationPropertyPort?.unitGroupSwitch?.sourceReferenceUnit ?? allocationPropertyPort?.unit}
+        sourceUnitGroup={allocationPropertyPort?.unitGroupSwitch?.sourceUnitGroup ?? (allocationPropertyPort ? resolvePortUnitGroupKey(allocationPropertyPort) : undefined)}
+        sourcePolicy={sourcePolicy}
+        tidasAllowedUnitGroups={tidasAllowedUnitGroups}
+        onClose={() => setAllocationPropertyPort(null)}
+        onSaved={(properties) => {
+          if (allocationPropertyPort) {
+            applyFlowUnitGroupSwitch(allocationPropertyPort, properties);
+          }
+        }}
+        onStatus={onStatus}
+      />
 
       {createFlowDialog.open && (
         <CreateFlowDialog

@@ -143,6 +143,46 @@ def test_same_unit_group_converts_units_before_allocation():
     assert report.manual_allocation_required_processes == []
 
 
+def test_same_volume_group_converts_to_reference_unit_before_allocation():
+    report = ExportReport()
+    factors = _calculate_allocation_factors(
+        [
+            _product_port("p1", "Units of volume", 1, unit="m3"),
+            _product_port("p2", "Units of volume", 500, unit="L"),
+        ],
+        None,
+        "process-volume",
+        report,
+        db=_FakeDb([
+            _unit_def("Units of volume", "m3", 1.0),
+            _unit_def("Units of volume", "L", 0.001),
+        ]),
+    )
+
+    assert factors == {"p1": 2 / 3, "p2": 1 / 3}
+    assert report.manual_allocation_required_processes == []
+
+
+def test_same_energy_group_converts_to_reference_unit_before_allocation():
+    report = ExportReport()
+    factors = _calculate_allocation_factors(
+        [
+            _product_port("p1", "Units of energy", 1, unit="kWh"),
+            _product_port("p2", "Units of energy", 3.6, unit="MJ"),
+        ],
+        None,
+        "process-energy",
+        report,
+        db=_FakeDb([
+            _unit_def("Units of energy", "MJ", 1.0),
+            _unit_def("Units of energy", "kWh", 3.6),
+        ]),
+    )
+
+    assert factors == {"p1": 0.5, "p2": 0.5}
+    assert report.manual_allocation_required_processes == []
+
+
 def test_density_basis_allocates_volume_and_mass_products():
     report = ExportReport()
     factors = _calculate_allocation_factors(
@@ -213,3 +253,92 @@ def test_incomplete_cross_unit_basis_requires_manual_allocation():
 
     assert factors is None
     assert "process-7" in report.manual_allocation_required_processes
+
+
+def test_custom_conversion_requires_explicit_target_unit_group():
+    report = ExportReport()
+    factors = _calculate_allocation_factors(
+        [
+            _product_port(
+                "p1",
+                "Units of volume",
+                2,
+                unit="m3",
+                allocation_basis={"method": "custom_conversion", "value": 800},
+            ),
+            _product_port("p2", "Units of mass", 400, unit="kg"),
+        ],
+        None,
+        "process-custom-target",
+        report,
+        db=_FakeDb([
+            _unit_def("Units of volume", "m3", 1.0),
+            _unit_def("Units of mass", "kg", 1.0),
+        ]),
+    )
+
+    assert factors is None
+    assert "process-custom-target" in report.manual_allocation_required_processes
+
+
+def test_mixed_basis_targets_require_manual_allocation():
+    report = ExportReport()
+    factors = _calculate_allocation_factors(
+        [
+            _product_port(
+                "p1",
+                "Units of volume",
+                2,
+                unit="m3",
+                allocation_basis={"method": "density", "value": 800, "targetUnitGroup": "Units of mass"},
+            ),
+            _product_port(
+                "p2",
+                "Units of energy",
+                100,
+                unit="MJ",
+                allocation_basis={"method": "heating_value", "targetUnitGroup": "Units of energy"},
+            ),
+        ],
+        None,
+        "process-mixed-targets",
+        report,
+        db=_FakeDb([
+            _unit_def("Units of volume", "m3", 1.0),
+            _unit_def("Units of energy", "MJ", 1.0),
+        ]),
+    )
+
+    assert factors is None
+    assert "process-mixed-targets" in report.manual_allocation_required_processes
+
+
+def test_flow_property_snapshot_aliases_allocate_as_custom_conversion():
+    report = ExportReport()
+    factors = _calculate_allocation_factors(
+        [
+            _product_port(
+                "p1",
+                "Units of wet mass",
+                100,
+                unit="kg",
+                allocation_basis={
+                    "propertyType": "dry_matter",
+                    "value": 0.4,
+                    "targetUnitGroup": "Units of mass",
+                    "sourceFlowUuid": "wet-biomass",
+                },
+            ),
+            _product_port("p2", "Units of mass", 60, unit="kg"),
+        ],
+        None,
+        "process-dry-matter",
+        report,
+        db=_FakeDb([
+            _unit_def("Units of wet mass", "kg", 1.0),
+            _unit_def("Units of mass", "kg", 1.0),
+        ]),
+    )
+
+    assert factors == {"p1": 0.4, "p2": 0.6}
+    assert report.manual_allocation_required_processes == []

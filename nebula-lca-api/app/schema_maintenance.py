@@ -23,6 +23,7 @@ def ensure_flow_catalog_tidas_columns(engine: Engine) -> dict:
             ("tidas_unit_group", "VARCHAR(128)"),
             ("tidas_flow_property_uuid", "VARCHAR(64)"),
             ("tidas_reference_source", "VARCHAR(128)"),
+            ("allocation_properties", "JSONB" if engine.dialect.name == "postgresql" else "JSON"),
         ]:
             if col_name in columns:
                 continue

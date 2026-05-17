@@ -27,6 +27,8 @@ from ..source_policy import get_tidas_allowed_unit_groups
 from ..schemas import (
     CreateFlowRequest,
     CreateFlowResponse,
+    FlowAllocationPropertiesResponse,
+    FlowAllocationPropertiesUpdateRequest,
     FlowCategoriesResponse,
     FlowCategoryItem,
     FlowListItem,
@@ -71,21 +73,37 @@ def _flow_out_extended(row: FlowRecord) -> FlowOutExtended:
         tidas_unit_group=getattr(row, "tidas_unit_group", None),
         tidas_flow_property_uuid=getattr(row, "tidas_flow_property_uuid", None),
         tidas_reference_source=getattr(row, "tidas_reference_source", None),
+        allocation_properties=list(getattr(row, "allocation_properties", None) or []),
     )
+
+
+def _find_flow_or_404(flow_uuid: str, db: Session) -> FlowRecord:
+    normalized_uuid = (flow_uuid or "").strip().lower()
+    row = db.get(FlowRecord, normalized_uuid) if normalized_uuid else None
+    if row is None and normalized_uuid:
+        row = db.query(FlowRecord).filter(sqla_func.lower(FlowRecord.flow_uuid) == normalized_uuid).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Flow not found")
+    return row
+
+
+def _ensure_allocation_properties_editable(row: FlowRecord) -> None:
+    if normalize_flow_semantic(row.flow_type) == "elementary_flow":
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "ALLOCATION_PROPERTIES_NOT_EDITABLE",
+                "message": "Only non-elementary flows can define allocation conversion properties.",
+            },
+        )
 
 
 # ── Reference flow lookup ───────────────────────────────────────────────
 
 
 @api_router.get("/api/reference/flows/{flow_uuid}", response_model=FlowOut)
-def get_reference_flow(flow_uuid: str, db: Session = Depends(get_db)) -> FlowRecord:
-    normalized_uuid = (flow_uuid or "").strip().lower()
-    item = db.get(FlowRecord, normalized_uuid) if normalized_uuid else None
-    if item is None and normalized_uuid:
-        item = db.query(FlowRecord).filter(sqla_func.lower(FlowRecord.flow_uuid) == normalized_uuid).first()
-    if item is None:
-        raise HTTPException(status_code=404, detail="Flow not found")
-    return item
+def get_reference_flow(flow_uuid: str, db: Session = Depends(get_db)) -> FlowOut:
+    return _flow_out_extended(_find_flow_or_404(flow_uuid, db))
 
 
 # ── Custom flow creation ────────────────────────────────────────────────
@@ -177,6 +195,7 @@ def create_flow(payload: CreateFlowRequest, db: Session = Depends(get_db)) -> Cr
             "tidas_unit_group": getattr(f, "tidas_unit_group", None),
             "tidas_flow_property_uuid": getattr(f, "tidas_flow_property_uuid", None),
             "tidas_reference_source": getattr(f, "tidas_reference_source", None),
+            "allocation_properties": list(getattr(f, "allocation_properties", None) or []),
         } for f in candidate_flows]
         raise HTTPException(
             status_code=409,
@@ -241,6 +260,7 @@ def create_flow(payload: CreateFlowRequest, db: Session = Depends(get_db)) -> Cr
             "tidas_unit_group": getattr(f, "tidas_unit_group", None),
             "tidas_flow_property_uuid": getattr(f, "tidas_flow_property_uuid", None),
             "tidas_reference_source": getattr(f, "tidas_reference_source", None),
+            "allocation_properties": list(getattr(f, "allocation_properties", None) or []),
         } for f in candidate_flows]
 
     return CreateFlowResponse(flow=flow_out, warnings=warnings, reuse_candidates=reuse_candidates)
@@ -297,6 +317,39 @@ def update_flow_tidas_compatibility(
     db.refresh(row)
     invalidate_management_caches(flows=True, stats=True)
     return _flow_out_extended(row)
+
+
+@api_router.get("/api/flows/{flow_uuid}/allocation-properties", response_model=FlowAllocationPropertiesResponse)
+def get_flow_allocation_properties(
+    flow_uuid: str,
+    db: Session = Depends(get_db),
+) -> FlowAllocationPropertiesResponse:
+    row = _find_flow_or_404(flow_uuid, db)
+    return FlowAllocationPropertiesResponse(
+        flow_uuid=row.flow_uuid,
+        properties=list(getattr(row, "allocation_properties", None) or []),
+    )
+
+
+@api_router.patch("/api/flows/{flow_uuid}/allocation-properties", response_model=FlowAllocationPropertiesResponse)
+def update_flow_allocation_properties(
+    flow_uuid: str,
+    payload: FlowAllocationPropertiesUpdateRequest,
+    db: Session = Depends(get_db),
+) -> FlowAllocationPropertiesResponse:
+    row = _find_flow_or_404(flow_uuid, db)
+    _ensure_allocation_properties_editable(row)
+    row.allocation_properties = [
+        item.model_dump(mode="json", by_alias=True, exclude_none=True)
+        for item in payload.properties
+    ]
+    db.commit()
+    db.refresh(row)
+    invalidate_management_caches(flows=True, stats=True)
+    return FlowAllocationPropertiesResponse(
+        flow_uuid=row.flow_uuid,
+        properties=list(row.allocation_properties or []),
+    )
 
 
 # ── Paginated flows list ────────────────────────────────────────────────
@@ -448,6 +501,7 @@ def list_flows_api(
                 tidas_unit_group=getattr(row, "tidas_unit_group", None),
                 tidas_flow_property_uuid=getattr(row, "tidas_flow_property_uuid", None),
                 tidas_reference_source=getattr(row, "tidas_reference_source", None),
+                allocation_properties=list(getattr(row, "allocation_properties", None) or []),
                 used_in_processes=int(used_in_processes.get(row.flow_uuid, 0)),
                 last_modified=row.source_updated_at,
             )

@@ -7,10 +7,31 @@ export type AllocationBasisMethod = "manual_factor" | "quantity" | "density" | "
 
 export type AllocationBasis = {
   method: AllocationBasisMethod;
+  propertyType?: string;
+  sourceFlowUuid?: string;
+  sourcePropertyType?: string;
   value?: number;
   factor?: number;
   conversionFactor?: number;
   targetUnitGroup?: string;
+  targetUnit?: string;
+  basisUnit?: string;
+  source?: string;
+  note?: string;
+};
+
+export type UnitGroupSwitchSnapshot = {
+  sourceFlowUuid?: string;
+  sourceUnitGroup?: string;
+  sourceUnit?: string;
+  sourceReferenceUnit?: string;
+  sourceAmount?: number;
+  sourceExternalSaleAmount?: number;
+  targetUnitGroup: string;
+  targetUnit: string;
+  targetReferenceUnit: string;
+  factor: number;
+  source?: string;
   note?: string;
 };
 
@@ -33,6 +54,7 @@ export type FlowPort = {
   isProduct?: boolean;
   allocationFactor?: number | null;
   allocationBasis?: AllocationBasis | null;
+  unitGroupSwitch?: UnitGroupSwitchSnapshot | null;
   externalSaleAmount?: number;
   type: ExchangeType;
   direction: FlowDirection;
@@ -83,4 +105,3 @@ export type LcaProcessTemplate = {
   inputs: Array<Omit<FlowPort, "amount" | "direction" | "showOnNode"> & { amount?: number }>;
   outputs: Array<Omit<FlowPort, "amount" | "direction" | "showOnNode"> & { amount?: number }>;
 };
-

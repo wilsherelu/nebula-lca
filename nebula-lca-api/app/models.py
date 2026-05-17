@@ -46,6 +46,7 @@ class FlowRecord(Base):
     tidas_unit_group: Mapped[str | None] = mapped_column(String(128), nullable=True)
     tidas_flow_property_uuid: Mapped[str | None] = mapped_column(String(64), nullable=True)
     tidas_reference_source: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    allocation_properties: Mapped[list | None] = mapped_column(JsonType, nullable=True)
 
 
 class UnitGroup(Base):

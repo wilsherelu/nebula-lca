@@ -180,6 +180,30 @@ def test_readiness_clean_tidas_project():
     assert result["process_count"] > 0
 
 
+def test_readiness_blocks_multi_product_current_unit_group_mismatch():
+    project_id = "proj-unit-group-mismatch"
+    flows = {
+        "prod-1": _make_flow_mock("prod-1", "Product flow", "Tiangong 1.0", unit_group="Units of mass"),
+        "prod-2": _make_flow_mock("prod-2", "Product flow", "Tiangong 1.0", unit_group="Units of volume"),
+    }
+    graph = _make_graph(product_flow_uuids=["prod-1", "prod-2"])
+    graph["nodes"][0]["outputs"][0]["name"] = "Product A"
+    graph["nodes"][0]["outputs"][0]["unit"] = "kg"
+    graph["nodes"][0]["outputs"][0]["unitGroup"] = "Units of mass"
+    graph["nodes"][0]["outputs"][1]["name"] = "Product B"
+    graph["nodes"][0]["outputs"][1]["unit"] = "m3"
+    graph["nodes"][0]["outputs"][1]["unitGroup"] = "Units of volume"
+    db = _build_fake_db(project_id, flows, graph, source_policy="tidas_compliant")
+
+    result = build_tidas_readiness(db, project_id)
+
+    assert result["can_export"] is False
+    issue = next(item for item in result["blocking"] if item["code"] == "MULTI_PRODUCT_UNIT_GROUP_MISMATCH")
+    assert issue["details"]["repair_target"] == "allocation"
+    assert issue["details"]["base_flow"]["unit_group"] == "Units of mass"
+    assert issue["details"]["mismatched_flows"][0]["unit_group"] == "Units of volume"
+
+
 def test_readiness_tidas_compliant_no_errors():
     """TIDAS-compliant project with allowed unit groups passes."""
     project_id = "proj-tidas"
@@ -204,7 +228,7 @@ def test_readiness_tidas_compliant_no_errors():
     assert any(i["code"] == "tidas_seed_status" for i in result["info"])
 
 
-def test_readiness_accepts_density_based_cross_unit_allocation():
+def test_readiness_blocks_cross_unit_products_even_with_density_basis():
     project_id = "proj-density-allocation"
     flows = {
         "prod-volume": _make_flow_mock("prod-volume", "Product flow", "Tiangong 1.0", unit_group="Units of volume"),
@@ -259,7 +283,8 @@ def test_readiness_accepts_density_based_cross_unit_allocation():
 
     result = build_tidas_readiness(db, project_id)
 
-    assert result["can_export"] is True
+    assert result["can_export"] is False
+    assert any(item["code"] == "MULTI_PRODUCT_UNIT_GROUP_MISMATCH" for item in result["blocking"])
     assert result["manual_allocation_required_processes"] == []
     assert result["multi_product_process_count"] == 1
 
