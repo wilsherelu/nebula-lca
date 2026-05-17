@@ -3,8 +3,13 @@ from __future__ import annotations
 import json
 
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
+from app.database import Base
 from app.main import app
+from app.models import UnitGroup
+from app.schema_maintenance import backfill_tidas_unit_group_sources, ensure_unit_group_source_columns
 from app.tidas_export import ExportReport, _flow_property
 from app.tidas_reference import (
     get_tidas_allowed_unit_groups,
@@ -185,5 +190,68 @@ def test_tidas_policy_reference_endpoint_exposes_allowed_unit_groups(monkeypatch
         assert normalize_tidas_unit_group("Units of mass") in payload["allowed_unit_groups"]
         assert normalize_tidas_unit_group("Unit of kg*km") in payload["allowed_unit_groups"]
         assert normalize_tidas_unit_group("sej") in payload["allowed_unit_groups"]
+    finally:
+        load_tidas_reference_seed.cache_clear()
+
+
+def test_unit_group_source_backfill_updates_default_seed_uuids(monkeypatch):
+    monkeypatch.delenv("NEBULA_TIDAS_REFERENCE_SEED", raising=False)
+    load_tidas_reference_seed.cache_clear()
+    seed = load_tidas_reference_seed()
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(bind=engine)
+    ensure_unit_group_source_columns(engine)
+
+    try:
+        with Session(engine) as db:
+            for item in seed["unit_groups"]:
+                db.add(UnitGroup(name=item["name"], reference_unit=item["reference_unit"]))
+            db.commit()
+
+            result = backfill_tidas_unit_group_sources(db)
+            rows = db.query(UnitGroup).all()
+
+            assert result["seed_unit_groups"] == 14
+            assert sum(1 for row in rows if row.source_uuid) == 14
+            assert all(row.source_package_version == seed["source_package_version"] for row in rows)
+    finally:
+        load_tidas_reference_seed.cache_clear()
+
+
+def test_unit_group_source_backfill_matches_unique_reference_unit_for_truncated_name(monkeypatch, tmp_path):
+    seed_path = tmp_path / "tidas_reference_seed.json"
+    seed_path.write_text(
+        json.dumps(
+            {
+                "source_package_version": "pkg-test",
+                "unit_groups": [
+                    {
+                        "uuid": "ug-unique",
+                        "name": "Very long TIDAS unit group name beyond Excel limit",
+                        "version": "01.00.000",
+                        "reference_unit": "unique-ref-unit",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NEBULA_TIDAS_REFERENCE_SEED", str(seed_path))
+    load_tidas_reference_seed.cache_clear()
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(bind=engine)
+
+    try:
+        with Session(engine) as db:
+            db.add(UnitGroup(name="Very long TIDAS unit group nam", reference_unit="unique-ref-unit"))
+            db.commit()
+
+            result = backfill_tidas_unit_group_sources(db)
+            row = db.query(UnitGroup).first()
+
+            assert result["updated"] == 1
+            assert row.source_uuid == "ug-unique"
+            assert row.source_version == "01.00.000"
+            assert row.source_package_version == "pkg-test"
     finally:
         load_tidas_reference_seed.cache_clear()

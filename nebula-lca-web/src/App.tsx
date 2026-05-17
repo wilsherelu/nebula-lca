@@ -8,7 +8,7 @@ import { PtsVersionHistoryDialog } from "./components/Inspector/PtsVersionHistor
 import { NodeCreatorDrawer } from "./components/NodePalette/NodeCreatorDrawer";
 import { NodePalette } from "./components/NodePalette/NodePalette";
 import { UnitProcessImportDialog } from "./components/NodePalette/UnitProcessImportDialog";
-import { ProjectManagement, type CreateProjectForm, type SourcePolicy } from "./components/ProjectManagement/ProjectManagement";
+import { ProjectManagement, type CreateProjectForm, type SourcePolicy, type TidasRepairTarget } from "./components/ProjectManagement/ProjectManagement";
 import type { LcaGraphPayload } from "./model/exchange";
 import type { FlowPort, LcaNodeKind, ProcessMode } from "./model/node";
 import { useLcaGraphStore } from "./store/lcaGraphStore";
@@ -1904,6 +1904,28 @@ export default function App() {
   const [hasNonEcoElementaryFlows, setHasNonEcoElementaryFlows] = useState(false);
   const [productDetailViewKey, setProductDetailViewKey] = useState("");
   const [lciaMethodOptions, setLciaMethodOptions] = useState<string[]>(["EF v3.1"]);
+  const lciaMethodRestrictsToEf31 = currentSourcePolicy === "tidas_compliant"
+    || (currentSourcePolicy !== "ecoinvent_strict" && hasNonEcoElementaryFlows);
+  const availableLciaMethodOptions = useMemo(() => {
+    if (lciaMethodRestrictsToEf31) {
+      return ["EF v3.1"];
+    }
+    return Array.from(new Set(["EF v3.1", ...lciaMethodOptions]));
+  }, [lciaMethodOptions, lciaMethodRestrictsToEf31]);
+  const lciaRunBlockedByStrictSource = currentSourcePolicy === "ecoinvent_strict"
+    && hasNonEcoElementaryFlows
+    && draftLciaMethodSelection !== "EF v3.1";
+  useEffect(() => {
+    if (!lciaMethodRestrictsToEf31) {
+      return;
+    }
+    if (lciaMethodSelection !== "EF v3.1") {
+      setLciaMethodSelection("EF v3.1");
+    }
+    if (draftLciaMethodSelection !== "EF v3.1") {
+      setDraftLciaMethodSelection("EF v3.1");
+    }
+  }, [draftLciaMethodSelection, lciaMethodRestrictsToEf31, lciaMethodSelection]);
   const [ptsPublishWarnings, setPtsPublishWarnings] = useState<PtsModelingWarning[]>([]);
   const [showPtsPublishWarnings, setShowPtsPublishWarnings] = useState(false);
   const [showTargetProductDialog, setShowTargetProductDialog] = useState(false);
@@ -5141,10 +5163,14 @@ export default function App() {
           uiLanguage={uiLanguage}
           onChangeLanguage={setUiLanguage}
           onStatus={setStatusText}
-          onOpenProject={(targetProjectId, targetProjectName) => {
+          onOpenProject={(targetProjectId, targetProjectName, repairTarget?: TidasRepairTarget) => {
             void (async () => {
               await handleSwitchProject(targetProjectId, targetProjectName);
               setAppMode("editor");
+              const nodeId = String(repairTarget?.node_id ?? repairTarget?.process_uuid ?? "");
+              if (nodeId) {
+                window.setTimeout(() => openNodeInspector(nodeId), 0);
+              }
             })();
           }}
           onCreateProject={handleCreateProject}
@@ -5626,13 +5652,10 @@ export default function App() {
                   onChange={(event) => setDraftLciaMethodSelection(event.target.value)}
                   disabled={busy}
                 >
-                  {hasNonEcoElementaryFlows
-                    ? <option key="ef31" value="EF v3.1">EF v3.1</option>
-                    : lciaMethodOptions.map((method) => (
-                      <option key={method} value={method}>{method}</option>
-                    ))
-                  }
-                  {!hasNonEcoElementaryFlows && <option value="all">{uiLanguage === "zh" ? "全部方法" : "All methods"}</option>}
+                  {availableLciaMethodOptions.map((method) => (
+                    <option key={method} value={method}>{method}</option>
+                  ))}
+                  {!lciaMethodRestrictsToEf31 && <option value="all">{uiLanguage === "zh" ? "全部方法" : "All methods"}</option>}
                 </select>
               </label>
               <div className="target-product-preview span-2">
@@ -5641,18 +5664,26 @@ export default function App() {
                 </span>
                 <strong>
                   {hasNonEcoElementaryFlows
-                    ? uiLanguage === "zh"
-                      ? "模型包含 TIDAS/EF/天工基本流，只能使用 EF v3.1"
-                      : "Model contains non-ecoinvent elementary flows: only EF v3.1 available"
+                    ? currentSourcePolicy === "ecoinvent_strict"
+                      ? uiLanguage === "zh"
+                        ? "ecoinvent strict 下存在非 ecoinvent 基本流，非 EF v3.1 会被阻断"
+                        : "Ecoinvent strict has non-ecoinvent elementary flows: non-EF v3.1 runs are blocked"
+                      : uiLanguage === "zh"
+                        ? "模型包含 TIDAS/EF/天工基本流，只能使用 EF v3.1"
+                        : "Model contains non-ecoinvent elementary flows: only EF v3.1 available"
                     : uiLanguage === "zh"
                       ? "当前可使用全部 LCIA 方法；默认 EF v3.1"
                       : "All LCIA methods available; default EF v3.1"}
                 </strong>
                 <span>
                   {hasNonEcoElementaryFlows
-                    ? uiLanguage === "zh"
-                      ? "非 ecoinvent 基本流需要 EF v3.1 指标集。选择其他方法将导致结果偏低或不可比。"
-                      : "Non-ecoinvent elementary flows require EF v3.1 indicators. Using other methods will produce incomplete results."
+                    ? currentSourcePolicy === "ecoinvent_strict"
+                      ? uiLanguage === "zh"
+                        ? "请先替换为 ecoinvent 基本流，或改用 EF v3.1。"
+                        : "Replace these with ecoinvent elementary flows, or use EF v3.1."
+                      : uiLanguage === "zh"
+                        ? "非 ecoinvent 基本流需要 EF v3.1 指标集。选择其他方法将导致结果偏低或不可比。"
+                        : "Non-ecoinvent elementary flows require EF v3.1 indicators. Using other methods will produce incomplete results."
                     : uiLanguage === "zh"
                       ? "当前模型基本流来源兼容全部 LCIA 方法。"
                       : "Elementary flow sources in this model are compatible with all LCIA methods."}
@@ -5670,7 +5701,7 @@ export default function App() {
                   setShowRunConfigDialog(false);
                   void runModel(draftLciaMethodSelection);
                 }}
-                disabled={busy}
+                disabled={busy || lciaRunBlockedByStrictSource}
               >
                 {i18n.run}
               </button>

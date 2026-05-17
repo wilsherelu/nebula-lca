@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import FlowRecord, UnitDefinition, UnitGroup
+from ..source_policy import get_tidas_allowed_unit_groups
 from ..schemas import (
     CreateFlowRequest,
     CreateFlowResponse,
@@ -76,9 +77,27 @@ def create_flow(payload: CreateFlowRequest, db: Session = Depends(get_db)) -> Cr
     normalized_semantic = normalize_flow_semantic(payload.flow_type)
     _SEMANTIC_TO_DB_TYPE: dict[str, str] = {
         "product_flow": "Product flow",
+        "intermediate_flow": "Product flow",
         "waste_flow": "Waste flow",
     }
     db_flow_type = _SEMANTIC_TO_DB_TYPE.get(normalized_semantic, "Product flow")
+    requested_tidas_policy = str(payload.source_policy or "").strip() == "tidas_compliant"
+    tidas_compatible = bool(payload.tidas_compatible or requested_tidas_policy)
+    tidas_unit_group = (payload.tidas_unit_group or payload.unit_group_uuid).strip()
+
+    if tidas_compatible:
+        from ..tidas_reference import normalize_tidas_unit_group
+
+        allowed = set(get_tidas_allowed_unit_groups())
+        if allowed and normalize_tidas_unit_group(tidas_unit_group) not in allowed:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "TIDAS_UNIT_GROUP_NOT_ALLOWED",
+                    "message": f"Unit group '{tidas_unit_group}' is not allowed for TIDAS-compatible custom flows.",
+                    "unit_group": tidas_unit_group,
+                },
+            )
 
     unit_group = db.query(UnitGroup).filter(UnitGroup.name == payload.unit_group_uuid).first()
     if not unit_group:
@@ -134,6 +153,10 @@ def create_flow(payload: CreateFlowRequest, db: Session = Depends(get_db)) -> Cr
             "default_unit": f.default_unit,
             "source": f.source,
             "is_custom": f.is_custom,
+            "tidas_compatible": bool(getattr(f, "tidas_compatible", False)),
+            "tidas_unit_group": getattr(f, "tidas_unit_group", None),
+            "tidas_flow_property_uuid": getattr(f, "tidas_flow_property_uuid", None),
+            "tidas_reference_source": getattr(f, "tidas_reference_source", None),
         } for f in candidate_flows]
         raise HTTPException(
             status_code=409,
@@ -163,6 +186,10 @@ def create_flow(payload: CreateFlowRequest, db: Session = Depends(get_db)) -> Cr
         source_updated_at=None,
         source="user_custom",
         is_custom=True,
+        tidas_compatible=tidas_compatible,
+        tidas_unit_group=tidas_unit_group if tidas_compatible else None,
+        tidas_flow_property_uuid=(payload.tidas_flow_property_uuid or "").strip() or None,
+        tidas_reference_source=(payload.tidas_reference_source or "user_declared").strip() if tidas_compatible else None,
     )
     db.add(flow_record)
     db.commit()
@@ -181,6 +208,10 @@ def create_flow(payload: CreateFlowRequest, db: Session = Depends(get_db)) -> Cr
         source_updated_at=flow_record.source_updated_at,
         source=flow_record.source,
         is_custom=flow_record.is_custom,
+        tidas_compatible=flow_record.tidas_compatible,
+        tidas_unit_group=flow_record.tidas_unit_group,
+        tidas_flow_property_uuid=flow_record.tidas_flow_property_uuid,
+        tidas_reference_source=flow_record.tidas_reference_source,
     )
 
     warnings = []
@@ -201,6 +232,10 @@ def create_flow(payload: CreateFlowRequest, db: Session = Depends(get_db)) -> Cr
             "default_unit": f.default_unit,
             "source": f.source,
             "is_custom": f.is_custom,
+            "tidas_compatible": bool(getattr(f, "tidas_compatible", False)),
+            "tidas_unit_group": getattr(f, "tidas_unit_group", None),
+            "tidas_flow_property_uuid": getattr(f, "tidas_flow_property_uuid", None),
+            "tidas_reference_source": getattr(f, "tidas_reference_source", None),
         } for f in candidate_flows]
 
     return CreateFlowResponse(flow=flow_out, warnings=warnings, reuse_candidates=reuse_candidates)
@@ -351,6 +386,10 @@ def list_flows_api(
                 category=row.compartment,
                 source=row.source,
                 is_custom=bool(row.is_custom),
+                tidas_compatible=bool(getattr(row, "tidas_compatible", False)),
+                tidas_unit_group=getattr(row, "tidas_unit_group", None),
+                tidas_flow_property_uuid=getattr(row, "tidas_flow_property_uuid", None),
+                tidas_reference_source=getattr(row, "tidas_reference_source", None),
                 used_in_processes=int(used_in_processes.get(row.flow_uuid, 0)),
                 last_modified=row.source_updated_at,
             )

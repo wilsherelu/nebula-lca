@@ -152,6 +152,7 @@ const getDisplayProcessName = (
 
 type NavModule = "project" | "process" | "flow";
 type NavItem = "recent_projects" | "all_projects" | "all_processes" | "all_flows";
+export type TidasRepairTarget = Record<string, unknown>;
 
 type Props = {
   projects: ProjectListItem[];
@@ -159,7 +160,7 @@ type Props = {
   uiLanguage?: "zh" | "en";
   onChangeLanguage?: (lang: "zh" | "en") => void;
   onStatus?: (text: string) => void;
-  onOpenProject: (projectId: string, projectName?: string) => void;
+  onOpenProject: (projectId: string, projectName?: string, repairTarget?: TidasRepairTarget) => void;
   onCreateProject: (form: CreateProjectForm) => Promise<void>;
   onDeleteProject: (projectId: string) => void;
   onCreateProcess?: () => void;
@@ -293,6 +294,7 @@ type TidasExportWarning = {
   code?: string;
   severity?: "warning" | "error";
   category?: string;
+  details?: Record<string, unknown>;
   context?: Record<string, unknown>;
 };
 type TidasExportPreviewResponse = {
@@ -306,6 +308,8 @@ type TidasExportPreviewResponse = {
   reference_flow_by_process: Record<string, string>;
   warnings: Array<string | TidasExportWarning>;
   errors: string[];
+  blocking?: TidasExportWarning[];
+  info?: TidasExportWarning[];
   missing_flows: string[];
   missing_processes: string[];
 };
@@ -1069,8 +1073,9 @@ function TidasExportModal(props: {
   targetProject: { projectId: string; projectName: string; latestVersion: number | null } | null;
   onClose: () => void;
   onExport: () => void;
+  onRepair: (issue: string | TidasExportWarning) => void;
 }) {
-  const { open, uiLanguage, busy, previewBusy, preview, targetProject, onClose, onExport } = props;
+  const { open, uiLanguage, busy, previewBusy, preview, targetProject, onClose, onExport, onRepair } = props;
   const zh = uiLanguage === "zh";
 
   if (!open || !targetProject) return null;
@@ -1108,7 +1113,14 @@ function TidasExportModal(props: {
               <div className="pm-tidas-errors">
                 <h4>{zh ? "错误" : "Errors"}</h4>
                 <ul>
-                  {preview.errors.map((err, i) => <li key={i}>{formatTidasExportError(err, zh)}</li>)}
+                  {(preview.blocking && preview.blocking.length > 0 ? preview.blocking : preview.errors).map((err, i) => (
+                    <li key={i}>
+                      <span>{typeof err === "string" ? formatTidasExportError(err, zh) : formatTidasWarning(err)}</span>
+                      <button type="button" className="pm-link-btn" onClick={() => onRepair(err)}>
+                        {zh ? "修复" : "Fix"}
+                      </button>
+                    </li>
+                  ))}
                 </ul>
               </div>
             )}
@@ -1137,7 +1149,14 @@ function TidasExportModal(props: {
                 </h4>
                 <ul className="pm-tidas-scroll-list">
                   {preview.warnings.map((w, i) => <li key={`w-${i}`}>{formatTidasWarning(w)}</li>)}
-                  {preview.allocation_warnings.map((w, i) => <li key={`alloc-${i}`}>{formatTidasWarning(w)}</li>)}
+                  {preview.allocation_warnings.map((w, i) => (
+                    <li key={`alloc-${i}`}>
+                      <span>{formatTidasWarning(w)}</span>
+                      <button type="button" className="pm-link-btn" onClick={() => onRepair(w)}>
+                        {zh ? "修复" : "Fix"}
+                      </button>
+                    </li>
+                  ))}
                 </ul>
               </div>
             )}
@@ -1146,7 +1165,12 @@ function TidasExportModal(props: {
                 <h4>{zh ? "需要手动分配的多产品过程" : "Multi-product Processes Requiring Manual Allocation"}</h4>
                 <ul>
                   {preview.manual_allocation_required_processes.map((p, i) => (
-                    <li key={i}>{p}</li>
+                    <li key={i}>
+                      <span>{p}</span>
+                      <button type="button" className="pm-link-btn" onClick={() => onRepair({ code: "manual_allocation_required", message: p, details: { process_uuid: p, repair_target: "allocation" } })}>
+                        {zh ? "修复" : "Fix"}
+                      </button>
+                    </li>
                   ))}
                 </ul>
                 <p className="pm-tidas-allocation-note">
@@ -1311,7 +1335,7 @@ export function ProjectManagement(props: Props) {
     setExportPreviewBusy(true);
     setTidasExportOpen(true);
     try {
-      const resp = await fetch(`${API_BASE}/export/tidas/bundle/preview`, {
+      const resp = await fetch(`${API_BASE}/export/tidas/bundle/readiness`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1324,7 +1348,10 @@ export function ProjectManagement(props: Props) {
         throw new Error(err.detail?.message ?? err.message ?? `HTTP ${resp.status}`);
       }
       const payload = (await resp.json()) as TidasExportPreviewResponse;
-      setExportPreview(payload);
+      setExportPreview({
+        ...payload,
+        errors: (payload.blocking ?? []).map((item) => item.message ?? item.code ?? JSON.stringify(item)),
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : zh ? "预览失败" : "Preview failed";
       onStatus?.(zh ? `TIDAS 导出预览失败: ${message}` : `TIDAS export preview failed: ${message}`);
@@ -1341,6 +1368,7 @@ export function ProjectManagement(props: Props) {
         errors: [message],
         missing_flows: [],
         missing_processes: [],
+        blocking: [{ code: "preview_failed", message }],
       });
     } finally {
       setExportPreviewBusy(false);
@@ -1391,6 +1419,27 @@ export function ProjectManagement(props: Props) {
       onStatus?.(zh ? `TIDAS 导出失败: ${message}` : `TIDAS export failed: ${message}`);
     } finally {
       setExportBusy(false);
+    }
+  };
+
+  const repairTidasIssue = (issue: string | TidasExportWarning) => {
+    if (!exportTargetProject) {
+      return;
+    }
+    const details = typeof issue === "string" ? {} : issue.details ?? issue.context ?? {};
+    const target = String(details.repair_target ?? "");
+    const processUuid = String(details.process_uuid ?? details.node_id ?? "");
+    const flowUuid = String(details.flow_uuid ?? "");
+    setTidasExportOpen(false);
+    onOpenProject(exportTargetProject.projectId, exportTargetProject.projectName, details);
+    if (target === "allocation" || processUuid) {
+      onStatus?.(zh ? `已打开项目，请在过程 ${processUuid || "-"} 的输出面板补充分配。` : `Project opened. Edit allocation in process ${processUuid || "-"}.`);
+    } else if (flowUuid) {
+      onStatus?.(zh ? `已打开项目，请替换或补录 Flow ${flowUuid}。` : `Project opened. Replace or complete flow ${flowUuid}.`);
+    } else if (target === "unit_group") {
+      onStatus?.(zh ? "已打开项目，请检查不受支持的单位组。" : "Project opened. Check the unsupported unit group.");
+    } else {
+      onStatus?.(zh ? "已打开项目，请根据 readiness 问题修复模型。" : "Project opened. Fix the model according to readiness issues.");
     }
   };
 
@@ -2263,6 +2312,7 @@ export function ProjectManagement(props: Props) {
           setExportTargetProject(null);
           setExportPreview(null);
         }}
+        onRepair={repairTidasIssue}
         onExport={() => void runTidasExport()}
       />
       <CreateProjectModal

@@ -2346,6 +2346,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed" }: P
           uiLanguage={uiLanguage}
           defaultFlowType={createFlowDialog.target?.includes("out") ? "product_flow" : "product_flow"}
           defaultCategory={flowCategoryLevel1}
+          sourcePolicy={sourcePolicy}
           onSuccess={(flow) => {
             // 将后端返回的 flow 映射成 CatalogFlow，使用保存的 target 加入节点
             const catalogFlow: CatalogFlow = {

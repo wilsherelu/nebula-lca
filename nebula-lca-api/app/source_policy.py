@@ -261,6 +261,36 @@ def _collect_biosphere_flow_uuids(graph: dict) -> set[str]:
     return uuids
 
 
+def _collect_graph_flow_uuids(graph: dict) -> set[str]:
+    uuids: set[str] = set()
+    for node in (graph.get("nodes") or []):
+        for port in (node.get("inputs") or []) + (node.get("outputs") or []):
+            flow_uuid = (port.get("flowUuid") or port.get("flow_uuid") or "").strip().lower()
+            if flow_uuid:
+                uuids.add(flow_uuid)
+    for edge in (graph.get("exchanges") or []):
+        flow_uuid = (edge.get("flowUuid") or edge.get("flow_uuid") or "").strip().lower()
+        if flow_uuid:
+            uuids.add(flow_uuid)
+    return uuids
+
+
+def _repair_target_for_flow(graph: dict, flow_uuid: str) -> dict:
+    target = {"flow_uuid": flow_uuid, "repair_target": "flow"}
+    for node in (graph.get("nodes") or []):
+        for port in (node.get("inputs") or []) + (node.get("outputs") or []):
+            current = (port.get("flowUuid") or port.get("flow_uuid") or "").strip().lower()
+            if current == flow_uuid:
+                target.update({
+                    "node_id": node.get("id"),
+                    "process_uuid": node.get("process_uuid"),
+                    "port_id": port.get("id"),
+                    "unit_group": port.get("unitGroup") or port.get("unit_group"),
+                })
+                return target
+    return target
+
+
 def _collect_unit_groups(graph: dict) -> set[str]:
     """Collect all unit_group values from node ports (inputs + outputs)."""
     groups: set[str] = set()
@@ -292,6 +322,12 @@ def _batch_lookup_flow_sources(db: Session, flow_uuids: set[str]) -> dict[str, s
             source = str(row.source if hasattr(row, "source") else None).strip().lower()
             mapping[uuid_val] = source
     return mapping
+
+
+def _batch_lookup_flow_records(db: Session, flow_uuids: set[str]) -> dict[str, object | None]:
+    from app.models import FlowRecord
+
+    return {uuid_val: db.get(FlowRecord, uuid_val) for uuid_val in flow_uuids}
 
 
 def _is_ecoinvent_source(source: str) -> bool:
@@ -352,8 +388,10 @@ def _validate_tidas_compliant(
     - All flows must be from allowed catalog or TIDAS-compatible custom flows.
     """
     biosphere_uuids = _collect_biosphere_flow_uuids(graph)
+    all_flow_uuids = _collect_graph_flow_uuids(graph)
     unit_groups = _collect_unit_groups(graph)
     sources_by_uuid = _batch_lookup_flow_sources(db, biosphere_uuids)
+    records_by_uuid = _batch_lookup_flow_records(db, all_flow_uuids)
     allowed_ug = get_tidas_allowed_unit_groups()
 
     # --- Unit group check ---
@@ -365,8 +403,47 @@ def _validate_tidas_compliant(
                 result.add_error(
                     "unsupported_unit_group",
                     f"Unit group {ug!r} is not allowed in TIDAS compliant mode.",
-                    {"unit_group": ug},
+                    {"unit_group": ug, "repair_target": "unit_group"},
                 )
+
+        allowed_normalized = set(allowed_ug)
+    else:
+        normalize_tidas_unit_group = None
+        allowed_normalized = set()
+
+    # --- All flow source / custom compatibility check ---
+    for uuid_val, row in records_by_uuid.items():
+        if row is None:
+            continue
+        source = str(getattr(row, "source", "") or "")
+        is_custom = bool(getattr(row, "is_custom", False))
+        space = classify_flow_source(source, is_custom=is_custom)
+        if is_custom:
+            tidas_unit_group = str(getattr(row, "tidas_unit_group", None) or getattr(row, "unit_group", "") or "").strip()
+            if not bool(getattr(row, "tidas_compatible", False)):
+                result.add_error(
+                    "custom_flow_not_tidas_compatible",
+                    f"Custom flow {uuid_val} is not marked as TIDAS compatible.",
+                    {**_repair_target_for_flow(graph, uuid_val), "source": source},
+                )
+            elif allowed_normalized and normalize_tidas_unit_group and normalize_tidas_unit_group(tidas_unit_group) not in allowed_normalized:
+                result.add_error(
+                    "custom_flow_unsupported_tidas_unit_group",
+                    f"Custom flow {uuid_val} uses unsupported TIDAS unit group {tidas_unit_group!r}.",
+                    {**_repair_target_for_flow(graph, uuid_val), "unit_group": tidas_unit_group},
+                )
+        elif space == SOURCE_SPACE_ECOSPREAD:
+            result.add_error(
+                "ecoinvent_flow",
+                f"Ecoinvent flow {uuid_val} is not allowed in TIDAS compliant mode.",
+                {**_repair_target_for_flow(graph, uuid_val), "source": source},
+            )
+        elif space == SOURCE_SPACE_UNKNOWN:
+            result.add_error(
+                "unknown_flow_source",
+                f"Flow {uuid_val} has unknown source {source!r}.",
+                {**_repair_target_for_flow(graph, uuid_val), "source": source},
+            )
 
     # --- Elementary flow source check ---
     for uuid_val, source in sources_by_uuid.items():
@@ -377,13 +454,13 @@ def _validate_tidas_compliant(
             result.add_error(
                 "ecoinvent_elementary_flow",
                 f"Ecoinvent elementary flow {uuid_val} is not allowed in TIDAS compliant mode.",
-                {"flow_uuid": uuid_val, "source": source},
+                {**_repair_target_for_flow(graph, uuid_val), "source": source},
             )
         elif space == SOURCE_SPACE_UNKNOWN:
             result.add_error(
                 "unknown_flow_source",
                 f"Elementary flow {uuid_val} has unknown source {source!r}.",
-                {"flow_uuid": uuid_val, "source": source},
+                {**_repair_target_for_flow(graph, uuid_val), "source": source},
             )
 
     # --- Check for ecoinvent LCI dataset nodes ---
@@ -421,20 +498,20 @@ def _validate_ecoinvent_strict(
             result.add_error(
                 "tiangong_elementary_flow",
                 f"Tiangong/TIDAS elementary flow {uuid_val} is not allowed in ecoinvent strict mode.",
-                {"flow_uuid": uuid_val, "source": source},
+                {**_repair_target_for_flow(graph, uuid_val), "source": source},
             )
         elif space == SOURCE_SPACE_UNKNOWN:
-            result.add_warning(
+            result.add_error(
                 "unknown_elementary_flow_source",
                 f"Elementary flow {uuid_val} has unknown source {source!r} in ecoinvent strict mode.",
-                {"flow_uuid": uuid_val, "source": source},
+                {**_repair_target_for_flow(graph, uuid_val), "source": source},
             )
         elif space != SOURCE_SPACE_ECOSPREAD:
             # Custom or test source elementary flow in eco-strict
-            result.add_warning(
+            result.add_error(
                 "non_eco_elementary_flow",
                 f"Elementary flow {uuid_val} has non-ecoinvent source {source!r} in ecoinvent strict mode.",
-                {"flow_uuid": uuid_val, "source": source},
+                {**_repair_target_for_flow(graph, uuid_val), "source": source},
             )
 
     return result
