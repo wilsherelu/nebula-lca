@@ -12,7 +12,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from .allocation import calculate_product_allocation
+from .allocation import calculate_product_allocation, collect_multi_product_unit_group_violations
 from .models import Model, ModelVersion, FlowRecord, ReferenceProcess, UnitDefinition
 from .schemas import HybridGraph
 from .tidas_reference import get_tidas_flow_property_reference, load_tidas_reference_seed
@@ -1462,6 +1462,16 @@ def build_tidas_readiness(
     _enrich_readiness_issue_targets(graph_json, warnings)
     allocation_warnings = [w.to_dict() for w in export_report.allocation_warnings]
     _enrich_readiness_issue_targets(graph_json, allocation_warnings)
+
+    for violation in collect_multi_product_unit_group_violations(graph_json):
+        blocking.append({
+            "code": "MULTI_PRODUCT_UNIT_GROUP_MISMATCH",
+            "message": "Multi-product process has products in different current unit groups; switch unit groups before export.",
+            "details": {
+                **violation,
+                "repair_target": "allocation",
+            },
+        })
 
     # ── Source policy info ─────────────────────────────────────────────
     biosphere_uuids = _collect_biosphere_flow_uuids(graph_json)

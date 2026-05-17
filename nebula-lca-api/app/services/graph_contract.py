@@ -770,7 +770,6 @@ def validate_graph_contract(
     normalize_graph_edge_port_ids(graph)
     validate_port_bucket_direction_consistency(graph)
     validate_unique_process_uuid(graph)
-    validate_product_unit_group_consistency(graph)
     validate_edge_binding_and_uniqueness(graph)
     validate_edge_product_role_alignment(graph)
     validate_market_input_constraints(graph)

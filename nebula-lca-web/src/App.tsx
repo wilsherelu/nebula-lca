@@ -175,6 +175,9 @@ type ProductResultRow = {
   isReferenceProduct: boolean;
   unit: string;
   unitGroup?: string;
+  sourceUnitGroup?: string;
+  sourceReferenceUnit?: string;
+  unitGroupSwitchFactor?: number;
   ptsProcessName?: string;
 };
 
@@ -212,7 +215,7 @@ type PtsDefaultVisiblePortHint = {
   sourceProcessName?: string;
   sourceNodeId?: string;
 };
-type ResultUnitMode = "defined" | "reference";
+type ResultUnitMode = "defined" | "reference" | "flow_default";
 type ResultProductViewMode = "target_total" | "unit_product";
 
 type SaveMode = "manual" | "auto" | "interval";
@@ -1339,6 +1342,31 @@ const getLciNodeValidationIssues = (graph: LcaGraphPayload): string[] => {
 const getUnitProcessProductUnitGroupIssues = (graph: LcaGraphPayload): string[] => {
   const nodes = graph.nodes ?? [];
   const issues: string[] = [];
+  const preferredUnitGroupByUnit: Record<string, string> = {
+    pg: "Units of mass",
+    ng: "Units of mass",
+    ug: "Units of mass",
+    mg: "Units of mass",
+    g: "Units of mass",
+    kg: "Units of mass",
+    t: "Units of mass",
+    m: "Units of length",
+    km: "Units of length",
+    mm: "Units of length",
+    cm: "Units of length",
+    m2: "Units of area",
+    "m²": "Units of area",
+    l: "Units of volume",
+    ml: "Units of volume",
+    m3: "Units of volume",
+    "m³": "Units of volume",
+    j: "Units of energy",
+    kj: "Units of energy",
+    mj: "Units of energy",
+    gj: "Units of energy",
+    wh: "Units of energy",
+    kwh: "Units of energy",
+  };
   const flowUnitGroupMap = new Map<string, string>();
   nodes.forEach((node) => {
     [...(node.inputs ?? []), ...(node.outputs ?? [])].forEach((port) => {
@@ -1355,6 +1383,14 @@ const getUnitProcessProductUnitGroupIssues = (graph: LcaGraphPayload): string[] 
   ): string => {
     if (!port) {
       return "";
+    }
+    const switchTarget = String(port.unitGroupSwitch?.targetUnitGroup ?? "").trim();
+    if (switchTarget) {
+      return switchTarget;
+    }
+    const unitGroupByUnit = preferredUnitGroupByUnit[String(port.unit ?? "").trim().toLowerCase()];
+    if (unitGroupByUnit) {
+      return unitGroupByUnit;
     }
     const flowUuid = String(port.flowUuid ?? "").trim();
     return flowUuid ? flowUnitGroupMap.get(flowUuid) ?? "" : "";
@@ -1387,6 +1423,53 @@ const getUnitProcessProductUnitGroupIssues = (graph: LcaGraphPayload): string[] 
   }
   return issues;
 };
+
+const CURRENT_UNIT_GROUP_BY_UNIT: Record<string, string> = {
+  pg: "Units of mass",
+  ng: "Units of mass",
+  ug: "Units of mass",
+  mg: "Units of mass",
+  g: "Units of mass",
+  kg: "Units of mass",
+  t: "Units of mass",
+  m: "Units of length",
+  km: "Units of length",
+  mm: "Units of length",
+  cm: "Units of length",
+  m2: "Units of area",
+  "m²": "Units of area",
+  l: "Units of volume",
+  ml: "Units of volume",
+  m3: "Units of volume",
+  "m³": "Units of volume",
+  j: "Units of energy",
+  kj: "Units of energy",
+  mj: "Units of energy",
+  gj: "Units of energy",
+  wh: "Units of energy",
+  kwh: "Units of energy",
+};
+
+const normalizeCurrentPortUnitGroups = (graph: LcaGraphPayload): LcaGraphPayload => ({
+  ...graph,
+  nodes: (graph.nodes ?? []).map((node) => ({
+    ...node,
+    inputs: (node.inputs ?? []).map((port) => ({
+      ...port,
+      unitGroup:
+        String(port.unitGroupSwitch?.targetUnitGroup ?? "").trim()
+        || CURRENT_UNIT_GROUP_BY_UNIT[String(port.unit ?? "").trim().toLowerCase()]
+        || port.unitGroup,
+    })),
+    outputs: (node.outputs ?? []).map((port) => ({
+      ...port,
+      unitGroup:
+        String(port.unitGroupSwitch?.targetUnitGroup ?? "").trim()
+        || CURRENT_UNIT_GROUP_BY_UNIT[String(port.unit ?? "").trim().toLowerCase()]
+        || port.unitGroup,
+    })),
+  })),
+});
 
 const getDuplicateProcessUuidIssues = (graph: LcaGraphPayload): string[] => {
   const rows = graph.nodes ?? [];
@@ -3403,7 +3486,7 @@ export default function App() {
 
   const runModel = useCallback(async (methodSelection = lciaMethodSelection) => {
     repairRootEdgeHandles();
-    const graph = applyProjectTargetProductConfig(
+    const graph = normalizeCurrentPortUnitGroups(applyProjectTargetProductConfig(
       normalizeGraphPayload(exportGraph()),
       selectedProductKey
         ? {
@@ -3413,7 +3496,7 @@ export default function App() {
           quantity: parseTargetProductQuantity(targetProductQuantity),
         }
         : null,
-    );
+    ));
     const nodesMissingProduct = (graph.nodes ?? [])
       .filter((node) => node.node_kind === "unit_process" && !String(node.process_uuid ?? "").startsWith("market_"))
       .filter((node) => {
@@ -4068,11 +4151,27 @@ export default function App() {
   }, [unitDefinitions]);
 
   const toDisplayResultValueByUnit = useCallback(
-    (rawValue: number, unit: string, unitGroup?: string): { value: number; unitLabel: string } => {
+    (
+      rawValue: number,
+      unit: string,
+      unitGroup?: string,
+      switchSnapshot?: { sourceReferenceUnit?: string; factor?: number },
+    ): { value: number; unitLabel: string } => {
       if (!unit) {
         return { value: rawValue, unitLabel: "kg CO2-eq / reference unit" };
       }
       if (resultUnitMode === "defined") {
+        return { value: rawValue, unitLabel: `kg CO2-eq / ${unit}` };
+      }
+      if (resultUnitMode === "flow_default") {
+        const sourceUnit = String(switchSnapshot?.sourceReferenceUnit ?? "").trim();
+        const factor = Number(switchSnapshot?.factor);
+        if (sourceUnit && Number.isFinite(factor) && factor > 0) {
+          return {
+            value: rawValue * factor,
+            unitLabel: `kg CO2-eq / ${sourceUnit}`,
+          };
+        }
         return { value: rawValue, unitLabel: `kg CO2-eq / ${unit}` };
       }
       const referenceUnit = unitGroup ? referenceUnitByGroup.get(unitGroup) : undefined;
@@ -4624,6 +4723,23 @@ export default function App() {
     return map;
   }, [canvases.root?.nodes]);
 
+  const rootProductPortsByFlowUuid = useMemo(() => {
+    const map = new Map<string, FlowPort[]>();
+    const rootNodes = canvases.root?.nodes ?? [];
+    rootNodes.forEach((node) => {
+      (node.data.outputs ?? []).forEach((port) => {
+        const flowUuid = String(port.flowUuid ?? "").trim();
+        if (!flowUuid) {
+          return;
+        }
+        const list = map.get(flowUuid) ?? [];
+        list.push(port);
+        map.set(flowUuid, list);
+      });
+    });
+    return map;
+  }, [canvases.root?.nodes]);
+
   const productColumns = useMemo(() => {
     if (!lastRun) {
       return [] as ProductResultRow[];
@@ -4644,6 +4760,10 @@ export default function App() {
       const productFlowUuid = String(obj.product_flow_uuid ?? parsedPtsProduct?.flowUuid ?? "");
       const productPortId = String(obj.product_port_id ?? "").trim();
       const unitRow = unitMap[productKey] && typeof unitMap[productKey] === "object" ? unitMap[productKey] : {};
+      const unitMapSwitch =
+        unitRow.unit_group_switch && typeof unitRow.unit_group_switch === "object"
+          ? (unitRow.unit_group_switch as Record<string, unknown>)
+          : null;
       const productNameZh = String(obj.product_name ?? obj.product_flow_uuid ?? productKey).trim();
       const productNameEn = String(obj.product_name_en ?? "").trim();
       let processUuid = rawProcessUuid;
@@ -4698,7 +4818,12 @@ export default function App() {
           ? rootPortsByFlow.length === 1
             ? rootPortsByFlow[0]
             : undefined
-          : rootPortsByFlow[0]);
+          : rootPortsByFlow[0]) ??
+        (rootProductPortsByFlowUuid.get(String(productFlowUuid ?? unitRow.flow_uuid ?? ""))?.filter((port) => port.unitGroupSwitch)?.length === 1
+          ? rootProductPortsByFlowUuid.get(String(productFlowUuid ?? unitRow.flow_uuid ?? ""))?.filter((port) => port.unitGroupSwitch)[0]
+          : rootProductPortsByFlowUuid.get(String(productFlowUuid ?? unitRow.flow_uuid ?? ""))?.length === 1
+            ? rootProductPortsByFlowUuid.get(String(productFlowUuid ?? unitRow.flow_uuid ?? ""))?.[0]
+          : undefined);
       if (matchedRootPort) {
         const rootProductName =
           uiLanguage === "en"
@@ -4708,6 +4833,7 @@ export default function App() {
           productName = rootProductName;
         }
       }
+      const switchSnapshot = (unitMapSwitch ?? matchedRootPort?.unitGroupSwitch ?? null) as Record<string, unknown> | null;
       return {
         productKey,
         viewKey: productPortId || productKey,
@@ -4722,10 +4848,13 @@ export default function App() {
         isReferenceProduct: Boolean(obj.is_reference_product),
         unit: String(unitRow.unit ?? obj.unit ?? "").trim(),
         unitGroup: String(unitRow.unit_group ?? obj.unit_group ?? "").trim() || undefined,
+        sourceUnitGroup: String(switchSnapshot?.sourceUnitGroup ?? switchSnapshot?.source_unit_group ?? "").trim() || undefined,
+        sourceReferenceUnit: String(switchSnapshot?.sourceReferenceUnit ?? switchSnapshot?.source_reference_unit ?? "").trim() || undefined,
+        unitGroupSwitchFactor: Number.isFinite(Number(switchSnapshot?.factor)) ? Number(switchSnapshot?.factor) : undefined,
         ptsProcessName,
       };
     });
-  }, [lastRun, ptsResultContextByUuid, rootProductPortsByMatchKey, rootProductPortByPortKey, uiLanguage]);
+  }, [lastRun, ptsResultContextByUuid, rootProductPortsByFlowUuid, rootProductPortsByMatchKey, rootProductPortByPortKey, uiLanguage]);
 
   const effectiveTargetProductKey = useMemo(
     () => selectedProductKey || productColumns[0]?.matchKey || "",
@@ -4816,6 +4945,10 @@ export default function App() {
           normalizedValue * viewedProductQuantityValue,
           viewedProduct.unit,
           viewedProduct.unitGroup,
+          {
+            sourceReferenceUnit: viewedProduct.sourceReferenceUnit,
+            factor: viewedProduct.unitGroupSwitchFactor,
+          },
         ).value
         : normalizedValue;
       return {
@@ -4886,7 +5019,10 @@ export default function App() {
       const raw = vector[idx];
       const value = typeof raw === "number" ? raw : Number(raw ?? 0);
       const normalized = Number.isFinite(value) ? value : 0;
-      const display = toDisplayResultValueByUnit(normalized, product.unit, product.unitGroup);
+      const display = toDisplayResultValueByUnit(normalized, product.unit, product.unitGroup, {
+        sourceReferenceUnit: product.sourceReferenceUnit,
+        factor: product.unitGroupSwitchFactor,
+      });
       return {
         productKey: product.productKey,
         viewKey: product.viewKey,
@@ -5387,6 +5523,13 @@ export default function App() {
                       className={resultUnitMode === "reference" ? "active" : ""}
                     >
                       {uiLanguage === "zh" ? "单位组默认单位" : "Default unit group unit"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setResultUnitMode("flow_default")}
+                      className={resultUnitMode === "flow_default" ? "active" : ""}
+                    >
+                      {uiLanguage === "zh" ? "Flow 默认单位" : "Flow default unit"}
                     </button>
                   </span>
                 </div>

@@ -1,6 +1,6 @@
 {
-  "source_package_version": "Tiangong 1.0 (ILCD reference seed v3 + Nebula supplemental flow properties)",
-  "generated_by": "export_tidas_seed_candidate_v2.py + manual supplemental mappings for kg*km and sej",
+  "source_package_version": "Tiangong 1.0 (ILCD reference seed v4 + official open flow properties)",
+  "generated_by": "export_tidas_seed_candidate_v2.py + Tiangong open flowproperties_2026-05-17T10-44-56-102Z.json",
   "unit_groups": [
     {
       "uuid": "03cc996d-7177-4738-aa32-1572a5172ccc",
@@ -658,18 +658,18 @@
       "ref_uri": "../flowproperties/341fd786-b2ad-4552-a762-5eafcab45dee.xml"
     },
     {
-      "flow_property_uuid": "751ca877-3326-59a1-82b8-7ef88d9c2dd4",
-      "name_en": "Transport performance",
-      "version": "00.00.000",
-      "ref_uri": "../flowproperties/751ca877-3326-59a1-82b8-7ef88d9c2dd4.xml",
-      "note": "Nebula supplemental mapping; Tiangong 1.0 unit group exists but no flow property reference was found in the source XML package."
+      "flow_property_uuid": "118f2a40-50ec-457c-aa60-9bc6b6af9931",
+      "name_en": "mass*distance",
+      "version": "27.00.000",
+      "ref_uri": "../flowproperties/118f2a40-50ec-457c-aa60-9bc6b6af9931.xml",
+      "note": "Tiangong open flow property for mass*distance / Unit of kg*km."
     },
     {
-      "flow_property_uuid": "bf1b9b1d-ff62-5399-a09f-5d8eba6d5cd7",
-      "name_en": "Emergy",
-      "version": "00.00.000",
-      "ref_uri": "../flowproperties/bf1b9b1d-ff62-5399-a09f-5d8eba6d5cd7.xml",
-      "note": "Nebula supplemental mapping; Tiangong 1.0 unit group exists but no flow property reference was found in the source XML package."
+      "flow_property_uuid": "16764bbb-d1ea-4eb4-9911-13f0ecd3dfad",
+      "name_en": "sej",
+      "version": "01.01.000",
+      "ref_uri": "../flowproperties/16764bbb-d1ea-4eb4-9911-13f0ecd3dfad.xml",
+      "note": "Tiangong open flow property for sej / solar emjoule."
     }
   ],
   "unit_group_mappings": [
@@ -825,30 +825,30 @@
     {
       "source_unit_group": "Unit of kg*km",
       "tidas_unit_group": "Unit of kg*km",
-      "flow_property_uuid": "751ca877-3326-59a1-82b8-7ef88d9c2dd4",
-      "ref_uri": "../flowproperties/751ca877-3326-59a1-82b8-7ef88d9c2dd4.xml",
-      "version": "00.00.000",
+      "flow_property_uuid": "118f2a40-50ec-457c-aa60-9bc6b6af9931",
+      "ref_uri": "../flowproperties/118f2a40-50ec-457c-aa60-9bc6b6af9931.xml",
+      "version": "27.00.000",
       "mapping_status": "allowed",
       "aliases": [
         "Unit of kg*km",
         "Unit_of_kg_km",
         "kg*km"
       ],
-      "note": "Nebula supplemental mapping; no source-package flow property reference was found for this Tiangong 1.0 unit group."
+      "note": "Tiangong open flow property for mass*distance / Unit of kg*km."
     },
     {
       "source_unit_group": "sej",
       "tidas_unit_group": "sej",
-      "flow_property_uuid": "bf1b9b1d-ff62-5399-a09f-5d8eba6d5cd7",
-      "ref_uri": "../flowproperties/bf1b9b1d-ff62-5399-a09f-5d8eba6d5cd7.xml",
-      "version": "00.00.000",
+      "flow_property_uuid": "16764bbb-d1ea-4eb4-9911-13f0ecd3dfad",
+      "ref_uri": "../flowproperties/16764bbb-d1ea-4eb4-9911-13f0ecd3dfad.xml",
+      "version": "01.01.000",
       "mapping_status": "allowed",
       "aliases": [
         "sej",
         "solar emjoule",
         "solar_emjoule"
       ],
-      "note": "Nebula supplemental mapping; no source-package flow property reference was found for this Tiangong 1.0 unit group."
+      "note": "Tiangong open flow property for sej / solar emjoule."
     }
   ],
   "missing_flow_property_mappings": []

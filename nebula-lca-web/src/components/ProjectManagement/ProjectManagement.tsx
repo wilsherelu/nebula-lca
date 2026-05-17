@@ -1,6 +1,7 @@
 ﻿import { useEffect, useRef, useState } from "react";
 import { CreateFlowDialog } from "../CreateFlowDialog";
 import Ef31ImportDialog from "../Ef31ImportDialog";
+import { FlowAllocationPropertiesModal, type FlowAllocationProperty } from "../FlowAllocationPropertiesModal";
 
 export type ProjectListItem = {
   project_id: string;
@@ -122,6 +123,7 @@ type FlowRow = {
   tidasUnitGroup?: string | null;
   tidasFlowPropertyUuid?: string | null;
   tidasReferenceSource?: string | null;
+  allocationProperties?: FlowAllocationProperty[];
   usedInProcesses: number;
   lastModified: string;
 };
@@ -1434,6 +1436,7 @@ export function ProjectManagement(props: Props) {
   const [forceStatsRefresh, setForceStatsRefresh] = useState(false);
   const [createFlowDialogOpen, setCreateFlowDialogOpen] = useState(false);
   const [tidasCompatibilityFlow, setTidasCompatibilityFlow] = useState<FlowRow | null>(null);
+  const [allocationPropertiesFlow, setAllocationPropertiesFlow] = useState<FlowRow | null>(null);
   const [ef31ImportOpen, setEf31ImportOpen] = useState(false);
   const projectPageSize = 20;
   const processPageSize = 20;
@@ -1906,6 +1909,7 @@ export function ProjectManagement(props: Props) {
           tidas_unit_group?: string | null;
           tidas_flow_property_uuid?: string | null;
           tidas_reference_source?: string | null;
+          allocation_properties?: FlowAllocationProperty[];
           used_in_processes?: number;
           last_modified?: string;
         };
@@ -1956,6 +1960,7 @@ export function ProjectManagement(props: Props) {
           tidasUnitGroup: item.tidas_unit_group ?? null,
           tidasFlowPropertyUuid: item.tidas_flow_property_uuid ?? null,
           tidasReferenceSource: item.tidas_reference_source ?? null,
+          allocationProperties: Array.isArray(item.allocation_properties) ? item.allocation_properties : [],
           usedInProcesses: Number(item.used_in_processes ?? 0),
           lastModified: formatTime(String(item.last_modified ?? "")),
         }));
@@ -2542,11 +2547,18 @@ export function ProjectManagement(props: Props) {
                         <td>{row.usedInProcesses}</td>
                         <td>{row.lastModified}</td>
                         <td>
-                          {row.isCustom && row.type !== "elementary_flow" ? (
-                            <button type="button" className="pm-link-btn" onClick={() => setTidasCompatibilityFlow(row)}>
-                              {zh ? "补录" : "Edit"}
-                            </button>
-                          ) : "-"}
+                          <div className="pm-row-actions">
+                            {row.type !== "elementary_flow" && (
+                              <button type="button" className="pm-link-btn" onClick={() => setAllocationPropertiesFlow(row)}>
+                                {zh ? "换算" : "Conversion"}
+                              </button>
+                            )}
+                            {row.isCustom && row.type !== "elementary_flow" && (
+                              <button type="button" className="pm-link-btn" onClick={() => setTidasCompatibilityFlow(row)}>
+                                {zh ? "补录" : "Edit"}
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -2650,6 +2662,21 @@ export function ProjectManagement(props: Props) {
         flow={tidasCompatibilityFlow}
         onClose={() => setTidasCompatibilityFlow(null)}
         onSaved={refreshFlowAfterTidasCompatibilitySave}
+        onStatus={onStatus}
+      />
+      <FlowAllocationPropertiesModal
+        open={Boolean(allocationPropertiesFlow)}
+        uiLanguage={uiLanguage}
+        flowUuid={allocationPropertiesFlow?.id ?? null}
+        flowName={allocationPropertiesFlow ? getDisplayFlowName(allocationPropertiesFlow, uiLanguage) : ""}
+        onClose={() => setAllocationPropertiesFlow(null)}
+        onSaved={(properties) => {
+          setServerFlowRows((prev) => prev.map((item) => (
+            item.id === allocationPropertiesFlow?.id ? { ...item, allocationProperties: properties } : item
+          )));
+          clearPmCacheByPrefix("pm:flows:");
+          setForceFlowRefresh(true);
+        }}
         onStatus={onStatus}
       />
       <Ef31ImportDialog

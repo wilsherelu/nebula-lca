@@ -87,6 +87,7 @@ class FlowPort(BaseModel):
     isProduct: bool | None = False
     allocationFactor: float | None = None
     allocationBasis: dict | None = None
+    unitGroupSwitch: dict | None = None
     product_key: str | None = None
     port_key: str | None = None
     reference_product_flow_uuid: str | None = None
@@ -501,6 +502,7 @@ class FlowListItem(BaseModel):
     tidas_unit_group: str | None = None
     tidas_flow_property_uuid: str | None = None
     tidas_reference_source: str | None = None
+    allocation_properties: list[dict] = Field(default_factory=list)
     used_in_processes: int = 0
     last_modified: str | None = None
 
@@ -611,6 +613,7 @@ class FlowOut(BaseModel):
     tidas_unit_group: str | None = None
     tidas_flow_property_uuid: str | None = None
     tidas_reference_source: str | None = None
+    allocation_properties: list[dict] = Field(default_factory=list)
     source_updated_at: str | None = None
 
 
@@ -1151,6 +1154,47 @@ class TidasFlowCompatibilityUpdateRequest(BaseModel):
     tidas_reference_source: str | None = Field(default=None, alias="tidasReferenceSource", max_length=128)
 
     model_config = ConfigDict(populate_by_name=True)
+
+
+class FlowAllocationProperty(BaseModel):
+    property_type: str = Field(alias="propertyType", min_length=1, max_length=64)
+    value: float = Field(gt=0)
+    basis_unit: str | None = Field(default=None, alias="basisUnit", max_length=64)
+    target_unit_group: str = Field(alias="targetUnitGroup", min_length=1, max_length=128)
+    target_unit: str | None = Field(default=None, alias="targetUnit", max_length=64)
+    source: str | None = Field(default=None, max_length=128)
+    note: str | None = Field(default=None, max_length=512)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    @field_validator("property_type", mode="before")
+    @classmethod
+    def validate_property_type(cls, value: object) -> str:
+        normalized = str(value or "").strip()
+        allowed = {
+            "density",
+            "heating_value_lhv",
+            "heating_value_hhv",
+            "dry_matter",
+            "purity",
+            "carbon_content",
+            "economic_value",
+            "custom_conversion",
+        }
+        if normalized not in allowed:
+            raise ValueError(f"Unsupported allocation property type '{value}'.")
+        return normalized
+
+
+class FlowAllocationPropertiesUpdateRequest(BaseModel):
+    properties: list[FlowAllocationProperty] = Field(default_factory=list, max_length=32)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class FlowAllocationPropertiesResponse(BaseModel):
+    flow_uuid: str
+    properties: list[FlowAllocationProperty] = Field(default_factory=list)
 
 
 class FlowOutExtended(FlowOut):

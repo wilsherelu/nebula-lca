@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import case, func, inspect, text
 from sqlalchemy.orm import Session
 from .config import settings
+from .allocation import raise_for_multi_product_unit_group_violations
 from .database import Base, SessionLocal, engine, get_db
 from .models import (
     DebugDiagnostic,
@@ -624,6 +625,7 @@ def _build_product_result_view_from_graph(
                     "is_reference_product": bool(reference_port is not None and str(reference_port.id or "") == product_port_id),
                     "unit": str(port.unit or ""),
                     "unit_group": str(port.unitGroup or ""),
+                    "unit_group_switch": dict(port.unitGroupSwitch or {}),
                     "flow_uuid": product_flow_uuid,
                 }
             )
@@ -653,6 +655,7 @@ def _build_product_result_view_from_graph(
             product_unit_map[item["product_key"]] = {
                 "unit": item["unit"],
                 "unit_group": item["unit_group"],
+                "unit_group_switch": item.get("unit_group_switch") or {},
                 "flow_uuid": item["flow_uuid"],
             }
         process_positions.append(positions_for_process)
@@ -1191,6 +1194,7 @@ def _ensure_custom_flow_columns() -> dict:
             ("tidas_unit_group", "VARCHAR(128)"),
             ("tidas_flow_property_uuid", "VARCHAR(64)"),
             ("tidas_reference_source", "VARCHAR(128)"),
+            ("allocation_properties", "JSONB" if engine.dialect.name == "postgresql" else "JSON"),
         ]:
             if col_name in columns:
                 continue
@@ -3906,6 +3910,7 @@ def run_model(payload: RunRequest, db: Session = Depends(get_db)) -> RunResponse
     validate_graph_contract(payload.graph, require_non_empty=False, allow_pts_nodes=True)
     validate_graph_flow_type_contract(payload.graph, db=db, stage="run_model")
     validate_graph_port_names_against_flow_catalog(payload.graph, db=db, stage="run_model")
+    raise_for_multi_product_unit_group_violations(payload.graph)
 
     # Resolve project_id for source-policy checks (prefer payload project_id, fall back to model_version lookup)
     project_id = resolve_project_id_for_run(payload, db) if payload.model_version_id else getattr(payload, "project_id", None)
@@ -3984,6 +3989,7 @@ def run_model(payload: RunRequest, db: Session = Depends(get_db)) -> RunResponse
                 lcia_methods=["EF v3.1"],
             )
 
+        raise_for_multi_product_unit_group_violations(effective_payload.graph)
         status, run_id, solved, tiangong_like = run_solver_and_persist(payload=effective_payload, db=db)
     except HTTPException:
         raise

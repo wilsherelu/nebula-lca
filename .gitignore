@@ -30,6 +30,7 @@ lca_demo.backup_*
 
 node_modules/
 dist/
+nebula-lca-web/dist/
 exports/
 *.tsbuildinfo
 
@@ -44,6 +45,10 @@ import-cache/
 connector-secrets.*
 *.spold
 *.spold2
+
+# Python caches anywhere in the workspace
+__pycache__/
+**/__pycache__/
 
 # per-repo Qwen Code agent settings (non-deterministic, dev-only)
 .qwen/
