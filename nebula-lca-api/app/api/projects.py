@@ -491,6 +491,8 @@ def get_project_version(
         version=record.version,
         created_at=record.created_at,
         graph=graph_json,
+        source_policy=model.source_policy or "open_mixed",
+        allowed_lcia_scope=model.allowed_lcia_scope or "ef31_only",
         handle_validation=_safe_handle_validation(graph_json),
         flow_name_sync_needed=flow_name_sync_needed,
         outdated_flow_refs_count=outdated_flow_refs_count,
@@ -525,7 +527,7 @@ def get_project_latest_by_id(
         raise HTTPException(status_code=404, detail="No model version found")
 
     cache_key = (
-        f"project_latest:v2:rev={_cache_helpers['_cache_revision']('projects')}:project_id={model.id}:"
+        f"project_latest:v3:rev={_cache_helpers['_cache_revision']('projects')}:project_id={model.id}:"
         f"version={latest_row.version}:graph_hash={str(latest_row.graph_hash or '')}"
     )
     cached = _cache_helpers["_cache_get"](cache_key, ttl_seconds=CACHE_TTL_PROJECTS_SECONDS)
@@ -560,6 +562,8 @@ def get_project_latest_by_id(
         version=latest_row.version,
         created_at=latest_row.created_at,
         graph=graph_json,
+        source_policy=model.source_policy or "open_mixed",
+        allowed_lcia_scope=model.allowed_lcia_scope or "ef31_only",
         handle_validation=_safe_handle_validation(graph_json),
         flow_name_sync_needed=flow_name_sync_needed,
         outdated_flow_refs_count=outdated_flow_refs_count,

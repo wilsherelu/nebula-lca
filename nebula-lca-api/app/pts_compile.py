@@ -5,6 +5,7 @@ import json
 from types import SimpleNamespace
 from typing import Any
 
+from .allocation import calculate_product_allocation
 from .pts_validate import PtsValidationResult, validate_pts_compile
 from .schemas import (
     HybridGraph,
@@ -352,36 +353,19 @@ def _aggregate_exchange_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
 
 
 def _allocation_fraction_by_port_id(node: HybridNode) -> dict[str, float]:
-    allocation_fraction_by_port_id: dict[str, float] = {}
     explicit_product_outputs = [
         port
         for port in node.outputs
         if not is_elementary_flow_semantic(graph_exchange_type_to_flow_semantic(port.type)) and bool(port.isProduct)
     ]
     if not explicit_product_outputs:
-        return allocation_fraction_by_port_id
+        return {}
 
-    unit_groups = {str(port.unitGroup or "").strip() for port in explicit_product_outputs if str(port.unitGroup or "").strip()}
-    if len(unit_groups) > 1:
-        return allocation_fraction_by_port_id
-
-    custom_factors = [port.allocationFactor for port in explicit_product_outputs]
-    if any(f is not None for f in custom_factors):
-        positive_factor_sum = sum(float(f or 0.0) for f in custom_factors if float(f or 0.0) > 0)
-        if positive_factor_sum > 0:
-            for port in explicit_product_outputs:
-                factor = float(port.allocationFactor or 0.0)
-                if factor > 0:
-                    allocation_fraction_by_port_id[str(port.id or "")] = factor / positive_factor_sum
-            return allocation_fraction_by_port_id
-
-    total_amount = sum(float(port.amount or 0.0) for port in explicit_product_outputs if float(port.amount or 0.0) > 0)
-    if total_amount > 0:
-        for port in explicit_product_outputs:
-            amount = float(port.amount or 0.0)
-            if amount > 0:
-                allocation_fraction_by_port_id[str(port.id or "")] = amount / total_amount
-    return allocation_fraction_by_port_id
+    result = calculate_product_allocation(
+        explicit_product_outputs,
+        process_uuid=str(node.process_uuid or node.id or ""),
+    )
+    return result.factors or {}
 
 
 def _build_virtual_processes_from_internal_graph(

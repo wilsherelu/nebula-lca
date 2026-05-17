@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 
+from fastapi.testclient import TestClient
+
+from app.main import app
 from app.tidas_export import ExportReport, _flow_property
 from app.tidas_reference import (
     get_tidas_allowed_unit_groups,
@@ -157,7 +160,30 @@ def test_default_tidas_seed_maps_core_unit_groups(monkeypatch):
         assert volume is not None
         assert volume["@refObjectId"] == "93a60a56-a3c8-22da-a746-0800200c9a66"
         assert normalize_tidas_unit_group("Units of mass_time") in allowed
-        assert normalize_tidas_unit_group("Unit of kg*km") not in allowed
-        assert normalize_tidas_unit_group("sej") not in allowed
+        kg_km = get_tidas_flow_property_reference("Unit of kg*km")
+        sej = get_tidas_flow_property_reference("sej")
+        assert kg_km is not None
+        assert kg_km["@refObjectId"] == "751ca877-3326-59a1-82b8-7ef88d9c2dd4"
+        assert sej is not None
+        assert sej["@refObjectId"] == "bf1b9b1d-ff62-5399-a09f-5d8eba6d5cd7"
+        assert normalize_tidas_unit_group("Unit of kg*km") in allowed
+        assert normalize_tidas_unit_group("sej") in allowed
+    finally:
+        load_tidas_reference_seed.cache_clear()
+
+
+def test_tidas_policy_reference_endpoint_exposes_allowed_unit_groups(monkeypatch):
+    monkeypatch.delenv("NEBULA_TIDAS_REFERENCE_SEED", raising=False)
+    load_tidas_reference_seed.cache_clear()
+
+    try:
+        resp = TestClient(app).get("/api/reference/tidas-policy")
+
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["source_package_version"]
+        assert normalize_tidas_unit_group("Units of mass") in payload["allowed_unit_groups"]
+        assert normalize_tidas_unit_group("Unit of kg*km") in payload["allowed_unit_groups"]
+        assert normalize_tidas_unit_group("sej") in payload["allowed_unit_groups"]
     finally:
         load_tidas_reference_seed.cache_clear()

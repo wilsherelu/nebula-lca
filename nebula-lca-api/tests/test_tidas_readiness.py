@@ -204,6 +204,66 @@ def test_readiness_tidas_compliant_no_errors():
     assert any(i["code"] == "tidas_seed_status" for i in result["info"])
 
 
+def test_readiness_accepts_density_based_cross_unit_allocation():
+    project_id = "proj-density-allocation"
+    flows = {
+        "prod-volume": _make_flow_mock("prod-volume", "Product flow", "Tiangong 1.0", unit_group="Units of volume"),
+        "prod-mass": _make_flow_mock("prod-mass", "Product flow", "Tiangong 1.0", unit_group="Units of mass"),
+    }
+    graph = {
+        "functionalUnit": "1 kg",
+        "nodes": [
+            {
+                "id": "proc-density",
+                "process_uuid": "proc-density",
+                "node_kind": "unit_process",
+                "mode": "balanced",
+                "reference_product": "prod-volume",
+                "name": "Density Allocation Process",
+                "location": "CN",
+                "inputs": [],
+                "outputs": [
+                    {
+                        "id": "out-volume",
+                        "flowUuid": "prod-volume",
+                        "name": "Volume product",
+                        "amount": 2.0,
+                        "unit": "m3",
+                        "unitGroup": "Units of volume",
+                        "isProduct": True,
+                        "type": "technosphere",
+                        "direction": "output",
+                        "allocationBasis": {
+                            "method": "density",
+                            "value": 800,
+                            "targetUnitGroup": "Units of mass",
+                        },
+                    },
+                    {
+                        "id": "out-mass",
+                        "flowUuid": "prod-mass",
+                        "name": "Mass product",
+                        "amount": 400.0,
+                        "unit": "kg",
+                        "unitGroup": "Units of mass",
+                        "isProduct": True,
+                        "type": "technosphere",
+                        "direction": "output",
+                    },
+                ],
+            }
+        ],
+        "exchanges": [],
+    }
+    db = _build_fake_db(project_id, flows, graph, source_policy="open_mixed")
+
+    result = build_tidas_readiness(db, project_id)
+
+    assert result["can_export"] is True
+    assert result["manual_allocation_required_processes"] == []
+    assert result["multi_product_process_count"] == 1
+
+
 # ── Tests: blocking issues ────────────────────────────────────────────────
 
 
@@ -292,17 +352,17 @@ def test_readiness_ecoinvent_elementary_flow():
 
 
 def test_readiness_tidas_compliant_unsupported_unit_group():
-    """TIDAS compliant project with kg*km unit group returns blocking."""
+    """TIDAS compliant project with unsupported unit group returns blocking."""
     project_id = "proj-ug"
     flows = {
         "flow-1": _make_flow_mock("flow-1", "Elementary flow", "Tiangong 1.0",
-                                  unit_group="Unit of kg*km"),
+                                  unit_group="unsupported-unit-group"),
         "prod-1": _make_flow_mock("prod-1", "Product flow", "Tiangong 1.0"),
     }
     graph = _make_graph(
         product_flow_uuids=["prod-1"],
         elementary_flow_uuids=["flow-1"],
-        unit_groups=["Unit of kg*km"],
+        unit_groups=["unsupported-unit-group"],
     )
     db = _build_fake_db(project_id, flows, graph, source_policy="tidas_compliant")
 
@@ -408,7 +468,7 @@ def test_readiness_includes_seed_status():
 
     With the default seed deployed to data/Tiangong/tidas_reference_seed.json,
     the info section MUST contain a "tidas_seed_status" entry with the
-    *expected* counts (12 flow properties, 12 unit-group mappings, 2 missing
+    *expected* counts (14 flow properties, 14 unit-group mappings, 0 missing
     flow-property mappings).  The "No seed" fallback path is tested separately.
     """
     from app.tidas_reference import load_tidas_reference_seed
@@ -434,9 +494,9 @@ def test_readiness_includes_seed_status():
     assert entry["message"].startswith("Reference seed:")
     d = entry.get("details") or {}
     # Seed is loaded with the expected counts
-    assert d.get("flow_properties") == 12
-    assert d.get("unit_group_mappings") == 12
-    assert d.get("missing_flow_property_mappings") == 2
+    assert d.get("flow_properties") == 14
+    assert d.get("unit_group_mappings") == 14
+    assert d.get("missing_flow_property_mappings") == 0
 
 
 # ── Tests: allowed unit groups ─────────────────────────────────────────────
@@ -475,11 +535,11 @@ def test_allowed_unit_groups_no_placeholder_warning():
         assert "Units of volume" not in w.get("message", "")
 
 
-# ── Tests: kg*km and sej remain blocked ───────────────────────────────────
+# ── Tests: supplemental kg*km and sej mappings ─────────────────────────────
 
 
-def test_kg_km_blocked_in_tidas_compliant():
-    """kg*km unit group remains blocked in TIDAS compliant projects."""
+def test_kg_km_allowed_in_tidas_compliant():
+    """kg*km unit group is allowed by the supplemental TIDAS mapping."""
     project_id = "proj-kgkm"
     flows = {
         "flow-1": _make_flow_mock("flow-1", "Elementary flow", "Tiangong 1.0",
@@ -495,13 +555,13 @@ def test_kg_km_blocked_in_tidas_compliant():
 
     result = build_tidas_readiness(db, project_id)
 
-    assert result["can_export"] is False
+    assert result["can_export"] is True
     blocking_codes = [b["code"] for b in result["blocking"]]
-    assert "unsupported_unit_group" in blocking_codes
+    assert "unsupported_unit_group" not in blocking_codes
 
 
-def test_sej_blocked_in_tidas_compliant():
-    """sej unit group remains blocked in TIDAS compliant projects."""
+def test_sej_allowed_in_tidas_compliant():
+    """sej unit group is allowed by the supplemental TIDAS mapping."""
     project_id = "proj-sej"
     flows = {
         "flow-1": _make_flow_mock("flow-1", "Elementary flow", "Tiangong 1.0",
@@ -517,16 +577,16 @@ def test_sej_blocked_in_tidas_compliant():
 
     result = build_tidas_readiness(db, project_id)
 
-    assert result["can_export"] is False
+    assert result["can_export"] is True
     blocking_codes = [b["code"] for b in result["blocking"]]
-    assert "unsupported_unit_group" in blocking_codes
+    assert "unsupported_unit_group" not in blocking_codes
 
 
 # ── Regression: allowed unit groups from seed ──────────────────────────────
 
 
 def test_allowed_unit_groups_include_expected():
-    """get_tidas_allowed_unit_groups from seed includes core groups, excludes kg*km/sej."""
+    """get_tidas_allowed_unit_groups from seed includes core and supplemental groups."""
     from app.tidas_reference import get_tidas_allowed_unit_groups, load_tidas_reference_seed
     load_tidas_reference_seed.cache_clear()
 
@@ -534,8 +594,8 @@ def test_allowed_unit_groups_include_expected():
     assert normalize_tidas_unit_group("Units of mass") in allowed
     assert normalize_tidas_unit_group("Units of energy") in allowed
     assert normalize_tidas_unit_group("Units of volume") in allowed
-    assert normalize_tidas_unit_group("Unit of kg*km") not in allowed
-    assert normalize_tidas_unit_group("sej") not in allowed
+    assert normalize_tidas_unit_group("Unit of kg*km") in allowed
+    assert normalize_tidas_unit_group("sej") in allowed
 
 
 def test_source_policy_validation_tidas_compliant_blocks_ug():
@@ -545,12 +605,12 @@ def test_source_policy_validation_tidas_compliant_blocks_ug():
     project_id = "proj-policy"
     flows = {
         "flow-1": _make_flow_mock("flow-1", "Elementary flow", "Tiangong 1.0",
-                                  unit_group="Unit of kg*km"),
+                                  unit_group="unsupported-unit-group"),
     }
     graph = _make_graph(
         product_flow_uuids=["prod-1"],
         elementary_flow_uuids=["flow-1"],
-        unit_groups=["Unit of kg*km"],
+        unit_groups=["unsupported-unit-group"],
     )
     # We need a real DB for validate_project_source_policy (it queries Model table)
     # But we can use the mock if the function uses db.get(Model, key)

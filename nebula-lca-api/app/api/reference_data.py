@@ -89,6 +89,19 @@ def list_units(unit_group: str | None = None, db: Session = Depends(get_db)) -> 
     return query.order_by(UnitDefinition.unit_group.asc(), UnitDefinition.factor_to_reference.asc()).all()
 
 
+@_api_router.get("/api/reference/tidas-policy")
+@_base_router.get("/reference/tidas-policy")
+def get_tidas_policy_reference() -> dict:
+    from ..source_policy import get_tidas_allowed_unit_groups
+    from ..tidas_reference import load_tidas_reference_seed
+
+    seed = load_tidas_reference_seed()
+    return {
+        "source_package_version": str(seed.get("source_package_version") or ""),
+        "allowed_unit_groups": get_tidas_allowed_unit_groups(),
+    }
+
+
 @_api_router.get("/api/reference/lcia-methods")
 @_base_router.get("/reference/lcia-methods")
 def list_lcia_methods() -> dict:
