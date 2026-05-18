@@ -19,6 +19,11 @@ from sqlalchemy.orm import Session
 from .config import settings
 from .allocation import raise_for_multi_product_unit_group_violations
 from .database import Base, SessionLocal, engine, get_db
+from .flow_unit_semantics import (
+    build_unit_reference_maps,
+    collect_flow_default_unit_conversion_violations,
+    resolve_flow_port_unit_semantics,
+)
 from .models import (
     DebugDiagnostic,
     FlowRecord,
@@ -588,9 +593,12 @@ def _build_process_unit_map_from_graph(graph: HybridGraph) -> dict[str, dict]:
 
 def _build_product_result_view_from_graph(
     *,
+    db: Session,
     graph: HybridGraph,
     process_index: object,
     values: object,
+    unit_factor_by_group_and_name: dict[tuple[str, str], float],
+    reference_unit_by_group: dict[str, str],
 ) -> tuple[list[dict], dict[str, dict], object]:
     if not isinstance(process_index, list) or not process_index:
         return [], {}, values
@@ -613,6 +621,12 @@ def _build_product_result_view_from_graph(
             if not product_flow_uuid or product_key in seen_keys:
                 continue
             seen_keys.add(product_key)
+            unit_semantics = resolve_flow_port_unit_semantics(
+                db,
+                port,
+                unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+                reference_unit_by_group=reference_unit_by_group,
+            ).as_dict()
             products_by_process.setdefault(process_uuid, []).append(
                 {
                     "product_key": product_key,
@@ -626,6 +640,7 @@ def _build_product_result_view_from_graph(
                     "unit": str(port.unit or ""),
                     "unit_group": str(port.unitGroup or ""),
                     "unit_group_switch": dict(port.unitGroupSwitch or {}),
+                    "unit_semantics": unit_semantics,
                     "flow_uuid": product_flow_uuid,
                 }
             )
@@ -652,9 +667,18 @@ def _build_product_result_view_from_graph(
                     "is_reference_product": bool(item["is_reference_product"]),
                 }
             )
+            unit_semantics = item.get("unit_semantics") or {}
             product_unit_map[item["product_key"]] = {
                 "unit": item["unit"],
                 "unit_group": item["unit_group"],
+                "current_unit": unit_semantics.get("current_unit") or item["unit"],
+                "current_unit_group": unit_semantics.get("current_unit_group") or item["unit_group"],
+                "flow_default_unit": unit_semantics.get("flow_default_unit") or item["unit"],
+                "flow_default_unit_group": unit_semantics.get("flow_default_unit_group") or item["unit_group"],
+                "result_factor_to_flow_default_unit": unit_semantics.get("result_factor_to_flow_default_unit"),
+                "amount_in_flow_default_unit": unit_semantics.get("amount_in_flow_default_unit"),
+                "unit_semantics_ok": unit_semantics.get("ok"),
+                "unit_semantics_reason": unit_semantics.get("reason"),
                 "unit_group_switch": item.get("unit_group_switch") or {},
                 "flow_uuid": item["flow_uuid"],
             }
@@ -2268,16 +2292,7 @@ def debug_inspect_run_pts(
     normalize_graph_product_flags(payload.graph)
     normalize_graph_edge_port_ids(payload.graph)
 
-    unit_rows = db.query(UnitDefinition).all()
-    unit_factor_by_group_and_name: dict[tuple[str, str], float] = {}
-    reference_unit_by_group: dict[str, str] = {}
-    for row in unit_rows:
-        unit_factor_by_group_and_name[(row.unit_group, row.unit_name)] = float(row.factor_to_reference)
-        if row.is_reference and row.unit_group not in reference_unit_by_group:
-            reference_unit_by_group[row.unit_group] = row.unit_name
-    for group in db.query(UnitGroup).all():
-        if group.reference_unit and group.name not in reference_unit_by_group:
-            reference_unit_by_group[group.name] = group.reference_unit
+    unit_factor_by_group_and_name, reference_unit_by_group = build_unit_reference_maps(db)
 
     normalized_graph = normalize_graph_units_to_reference(
         payload.graph,
@@ -3865,9 +3880,12 @@ def run_solver_and_persist(
         unit_factor_by_group_and_name=unit_factor_by_group_and_name,
     )
     product_result_index, product_unit_map, product_values = _build_product_result_view_from_graph(
+        db=db,
         graph=payload.graph,
         process_index=solver_output.get("process_index", []),
         values=scaled_values,
+        unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+        reference_unit_by_group=reference_unit_by_group,
     )
 
     solved = {
@@ -3910,6 +3928,16 @@ def run_model(payload: RunRequest, db: Session = Depends(get_db)) -> RunResponse
     validate_graph_contract(payload.graph, require_non_empty=False, allow_pts_nodes=True)
     validate_graph_flow_type_contract(payload.graph, db=db, stage="run_model")
     validate_graph_port_names_against_flow_catalog(payload.graph, db=db, stage="run_model")
+    flow_default_unit_violations = collect_flow_default_unit_conversion_violations(payload.graph, db)
+    if flow_default_unit_violations:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "FLOW_DEFAULT_UNIT_CONVERSION_REQUIRED",
+                "message": "Flow current modelling units must be convertible back to each flow default unit before calculation.",
+                "violations": flow_default_unit_violations,
+            },
+        )
     raise_for_multi_product_unit_group_violations(payload.graph)
 
     # Resolve project_id for source-policy checks (prefer payload project_id, fall back to model_version lookup)
@@ -3989,6 +4017,16 @@ def run_model(payload: RunRequest, db: Session = Depends(get_db)) -> RunResponse
                 lcia_methods=["EF v3.1"],
             )
 
+        flow_default_unit_violations = collect_flow_default_unit_conversion_violations(effective_payload.graph, db)
+        if flow_default_unit_violations:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "FLOW_DEFAULT_UNIT_CONVERSION_REQUIRED",
+                    "message": "Flow current modelling units must be convertible back to each flow default unit before calculation.",
+                    "violations": flow_default_unit_violations,
+                },
+            )
         raise_for_multi_product_unit_group_violations(effective_payload.graph)
         status, run_id, solved, tiangong_like = run_solver_and_persist(payload=effective_payload, db=db)
     except HTTPException:

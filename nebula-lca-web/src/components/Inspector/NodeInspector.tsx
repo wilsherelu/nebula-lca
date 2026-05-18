@@ -362,6 +362,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
   const [tidasAllowedUnitGroups, setTidasAllowedUnitGroups] = useState<Set<string>>(new Set());
   const [unitDefinitions, setUnitDefinitions] = useState<UnitDefinition[]>([]);
   const [flowUnitGroupByUuid, setFlowUnitGroupByUuid] = useState<Record<string, string>>({});
+  const [flowDefaultUnitByUuid, setFlowDefaultUnitByUuid] = useState<Record<string, string>>({});
   const [flowTypeByUuid, setFlowTypeByUuid] = useState<Record<string, string>>({});
   const [flowNameEnByUuid, setFlowNameEnByUuid] = useState<Record<string, string>>({});
   const [loadingFlows, setLoadingFlows] = useState(false);
@@ -790,9 +791,11 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     }
     const buildSwitchedPort = (port: FlowPort): FlowPort => {
       const existingSwitch = port.unitGroupSwitch;
-      const sourceUnitGroup = existingSwitch?.sourceUnitGroup ?? resolvePortUnitGroupKey(port) ?? port.unitGroup ?? sourcePort.unitGroup ?? "";
-      const sourceUnit = existingSwitch?.sourceUnit ?? port.unit;
-      const sourceReferenceUnit = existingSwitch?.sourceReferenceUnit ?? referenceUnitByGroup.get(sourceUnitGroup) ?? property.basisUnit ?? sourceUnit;
+      const flowDefaultUnitGroup = flowUnitGroupByUuid[port.flowUuid] ?? flowUnitGroupByUuid[sourcePort.flowUuid] ?? "";
+      const flowDefaultUnit = flowDefaultUnitByUuid[port.flowUuid] ?? flowDefaultUnitByUuid[sourcePort.flowUuid] ?? "";
+      const sourceUnitGroup = flowDefaultUnitGroup || existingSwitch?.sourceUnitGroup || port.unitGroup || sourcePort.unitGroup || "";
+      const sourceUnit = flowDefaultUnit || existingSwitch?.sourceUnit || port.unit;
+      const sourceReferenceUnit = referenceUnitByGroup.get(sourceUnitGroup) || flowDefaultUnit || existingSwitch?.sourceReferenceUnit || property.basisUnit || sourceUnit;
       const previousFactor = Number(existingSwitch?.factor);
       const sourceUnitFactor = unitFactorByGroupAndName.get(`${sourceUnitGroup}||${sourceUnit}`) ?? 1;
       const canInferSourceAmount = existingSwitch && Number.isFinite(previousFactor) && previousFactor > 0 && sourceUnitFactor > 0;
@@ -1259,6 +1262,9 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
       if (!flowUnitGroupByUuid[uuid]) {
         return true;
       }
+      if (!flowDefaultUnitByUuid[uuid]) {
+        return true;
+      }
       if (!flowTypeByUuid[uuid]) {
         return true;
       }
@@ -1289,6 +1295,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
           return;
         }
         const unitPatch: Record<string, string> = {};
+        const defaultUnitPatch: Record<string, string> = {};
         const typePatch: Record<string, string> = {};
         const namePatch: Record<string, string> = {};
         rows.forEach((row) => {
@@ -1297,6 +1304,9 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
           }
           if (row.unit_group) {
             unitPatch[row.flow_uuid] = row.unit_group;
+          }
+          if (row.default_unit) {
+            defaultUnitPatch[row.flow_uuid] = row.default_unit;
           }
           if (row.flow_type) {
             typePatch[row.flow_uuid] = row.flow_type;
@@ -1308,6 +1318,9 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
         });
         if (Object.keys(unitPatch).length > 0) {
           setFlowUnitGroupByUuid((prev) => ({ ...prev, ...unitPatch }));
+        }
+        if (Object.keys(defaultUnitPatch).length > 0) {
+          setFlowDefaultUnitByUuid((prev) => ({ ...prev, ...defaultUnitPatch }));
         }
         if (Object.keys(typePatch).length > 0) {
           setFlowTypeByUuid((prev) => ({ ...prev, ...typePatch }));
@@ -1322,7 +1335,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     return () => {
       canceled = true;
     };
-  }, [flowNameEnByUuid, flowTypeByUuid, flowUnitGroupByUuid, node.data.inputs, node.data.outputs, uiLanguage]);
+  }, [flowDefaultUnitByUuid, flowNameEnByUuid, flowTypeByUuid, flowUnitGroupByUuid, node.data.inputs, node.data.outputs, uiLanguage]);
 
   const filteredFlows = useMemo(() => {
     const target = flowPicker.target;
@@ -2332,8 +2345,21 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
         uiLanguage={uiLanguage}
         flowUuid={allocationPropertyPort?.flowUuid ?? null}
         flowName={allocationPropertyPort ? getPortDisplayName(allocationPropertyPort) : ""}
-        sourceUnit={allocationPropertyPort?.unitGroupSwitch?.sourceReferenceUnit ?? allocationPropertyPort?.unit}
-        sourceUnitGroup={allocationPropertyPort?.unitGroupSwitch?.sourceUnitGroup ?? (allocationPropertyPort ? resolvePortUnitGroupKey(allocationPropertyPort) : undefined)}
+        sourceUnit={
+          allocationPropertyPort
+            ? flowDefaultUnitByUuid[allocationPropertyPort.flowUuid]
+              ?? allocationPropertyPort.unitGroupSwitch?.sourceUnit
+              ?? allocationPropertyPort.unitGroupSwitch?.sourceReferenceUnit
+              ?? allocationPropertyPort.unit
+            : undefined
+        }
+        sourceUnitGroup={
+          allocationPropertyPort
+            ? flowUnitGroupByUuid[allocationPropertyPort.flowUuid]
+              ?? allocationPropertyPort.unitGroupSwitch?.sourceUnitGroup
+              ?? allocationPropertyPort.unitGroup
+            : undefined
+        }
         sourcePolicy={sourcePolicy}
         tidasAllowedUnitGroups={tidasAllowedUnitGroups}
         onClose={() => setAllocationPropertyPort(null)}
