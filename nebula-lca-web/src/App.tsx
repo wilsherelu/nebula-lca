@@ -178,6 +178,9 @@ type ProductResultRow = {
   sourceUnitGroup?: string;
   sourceReferenceUnit?: string;
   unitGroupSwitchFactor?: number;
+  flowDefaultUnit?: string;
+  flowDefaultUnitGroup?: string;
+  resultFactorToFlowDefaultUnit?: number;
   ptsProcessName?: string;
 };
 
@@ -1749,7 +1752,8 @@ const formatApiError = (raw: unknown): string => {
     const parsed = JSON.parse(jsonText) as {
       code?: string;
       message?: string;
-      detail?: { code?: string; message?: string };
+      violations?: Array<Record<string, unknown>>;
+      detail?: { code?: string; message?: string; violations?: Array<Record<string, unknown>> };
     };
     const payload = parsed.detail && typeof parsed.detail === "object" ? parsed.detail : parsed;
     if (payload.code === "AMBIGUOUS_PTS_OUTPUT_PRODUCER") {
@@ -1782,6 +1786,16 @@ const formatApiError = (raw: unknown): string => {
     }
     if (payload.code === "PTS_MARKET_PROCESS_REQUIRES_INTERNAL_SUPPLIERS") {
       return "PTS 封装失败：市场过程必须至少包含一个内部上游供应过程，推荐将全部供应商一起封装。";
+    }
+    if (payload.code === "FLOW_DEFAULT_UNIT_CONVERSION_REQUIRED") {
+      const first = Array.isArray(payload.violations) ? payload.violations[0] : undefined;
+      if (first) {
+        const flowName = String(first.flow_name ?? first.flow_uuid ?? "未知 Flow");
+        const currentUnit = [first.current_unit_group, first.current_unit].filter(Boolean).join(" / ");
+        const defaultUnit = [first.flow_default_unit_group, first.flow_default_unit].filter(Boolean).join(" / ");
+        return `单位组切换缺少有效快照：${flowName} 当前建模单位 ${currentUnit || "-"}，Flow 默认单位 ${defaultUnit || "-"}。请重新打开该行“切换”并保存。`;
+      }
+      return "单位组切换缺少有效快照：请重新打开相关产品行的“切换”并保存。";
     }
     return payload.message ? `${payload.message}` : text;
   } catch {
@@ -4155,7 +4169,7 @@ export default function App() {
       rawValue: number,
       unit: string,
       unitGroup?: string,
-      switchSnapshot?: { sourceReferenceUnit?: string; factor?: number },
+      flowDefault?: { unit?: string; factor?: number },
     ): { value: number; unitLabel: string } => {
       if (!unit) {
         return { value: rawValue, unitLabel: "kg CO2-eq / reference unit" };
@@ -4163,12 +4177,12 @@ export default function App() {
       if (resultUnitMode === "defined") {
         return { value: rawValue, unitLabel: `kg CO2-eq / ${unit}` };
       }
-      const sourceUnit = String(switchSnapshot?.sourceReferenceUnit ?? "").trim();
-      const switchFactor = Number(switchSnapshot?.factor);
-      if (sourceUnit && Number.isFinite(switchFactor) && switchFactor > 0) {
+      const flowDefaultUnit = String(flowDefault?.unit ?? "").trim();
+      const flowDefaultFactor = Number(flowDefault?.factor);
+      if (flowDefaultUnit && Number.isFinite(flowDefaultFactor) && flowDefaultFactor > 0) {
         return {
-          value: rawValue * switchFactor,
-          unitLabel: `kg CO2-eq / ${sourceUnit}`,
+          value: rawValue * flowDefaultFactor,
+          unitLabel: `kg CO2-eq / ${flowDefaultUnit}`,
         };
       }
       const referenceUnit = unitGroup ? referenceUnitByGroup.get(unitGroup) : undefined;
@@ -4847,11 +4861,16 @@ export default function App() {
         productFlowUuid: productFlowKey,
         productName,
         isReferenceProduct: Boolean(obj.is_reference_product),
-        unit: String(unitRow.unit ?? obj.unit ?? "").trim(),
-        unitGroup: String(unitRow.unit_group ?? obj.unit_group ?? "").trim() || undefined,
+        unit: String(unitRow.current_unit ?? unitRow.unit ?? obj.unit ?? "").trim(),
+        unitGroup: String(unitRow.current_unit_group ?? unitRow.unit_group ?? obj.unit_group ?? "").trim() || undefined,
         sourceUnitGroup: String(switchSnapshot?.sourceUnitGroup ?? switchSnapshot?.source_unit_group ?? "").trim() || undefined,
         sourceReferenceUnit: String(switchSnapshot?.sourceReferenceUnit ?? switchSnapshot?.source_reference_unit ?? "").trim() || undefined,
         unitGroupSwitchFactor: Number.isFinite(Number(switchSnapshot?.factor)) ? Number(switchSnapshot?.factor) : undefined,
+        flowDefaultUnit: String(unitRow.flow_default_unit ?? "").trim() || undefined,
+        flowDefaultUnitGroup: String(unitRow.flow_default_unit_group ?? "").trim() || undefined,
+        resultFactorToFlowDefaultUnit: Number.isFinite(Number(unitRow.result_factor_to_flow_default_unit))
+          ? Number(unitRow.result_factor_to_flow_default_unit)
+          : undefined,
         ptsProcessName,
       };
     });
@@ -4947,8 +4966,8 @@ export default function App() {
           viewedProduct.unit,
           viewedProduct.unitGroup,
           {
-            sourceReferenceUnit: viewedProduct.sourceReferenceUnit,
-            factor: viewedProduct.unitGroupSwitchFactor,
+            unit: viewedProduct.flowDefaultUnit,
+            factor: viewedProduct.resultFactorToFlowDefaultUnit,
           },
         ).value
         : normalizedValue;
@@ -5021,8 +5040,8 @@ export default function App() {
       const value = typeof raw === "number" ? raw : Number(raw ?? 0);
       const normalized = Number.isFinite(value) ? value : 0;
       const display = toDisplayResultValueByUnit(normalized, product.unit, product.unitGroup, {
-        sourceReferenceUnit: product.sourceReferenceUnit,
-        factor: product.unitGroupSwitchFactor,
+        unit: product.flowDefaultUnit,
+        factor: product.resultFactorToFlowDefaultUnit,
       });
       return {
         productKey: product.productKey,

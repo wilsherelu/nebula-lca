@@ -13,6 +13,11 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from .allocation import calculate_product_allocation, collect_multi_product_unit_group_violations
+from .flow_unit_semantics import (
+    build_unit_reference_maps,
+    collect_flow_default_unit_conversion_violations,
+    resolve_flow_port_unit_semantics,
+)
 from .models import Model, ModelVersion, FlowRecord, ReferenceProcess, UnitDefinition
 from .schemas import HybridGraph
 from .tidas_reference import get_tidas_flow_property_reference, load_tidas_reference_seed
@@ -957,6 +962,20 @@ def _build_process_data(
         exchanges = pi.get("exchanges") if isinstance(pi.get("exchanges"), list) else []
         ref_internal_id = str(pi.get("reference_flow_internal_id") or "")
         ref_flow_uuid = pi.get("reference_flow_source_uuid")
+        allocation_source_ports = [
+            {
+                "id": str(exc.get("internal_id") or "0"),
+                "flowUuid": exc.get("flow_uuid"),
+                "unit": exc.get("unit"),
+                "unitGroup": exc.get("unit_group"),
+                "amount": exc.get("amount"),
+                "isProduct": exc.get("direction") == "output",
+                "allocationFactor": exc.get("allocationFactor"),
+                "allocationBasis": exc.get("allocationBasis") or exc.get("allocation_basis"),
+            }
+            for exc in exchanges
+            if exc.get("direction") == "output"
+        ]
     else:
         graph = HybridGraph.model_validate(graph_json)
         node_data = None
@@ -973,31 +992,45 @@ def _build_process_data(
         process_name_en = None
         location = node_data.location
         exchanges = []
+        unit_factor_by_group_and_name, reference_unit_by_group = build_unit_reference_maps(db)
+
+        def _port_exchange(port: Any, direction: str) -> dict:
+            semantics = resolve_flow_port_unit_semantics(
+                db,
+                port,
+                unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+                reference_unit_by_group=reference_unit_by_group,
+            )
+            if not semantics.ok:
+                report.add_error(
+                    f"Flow {semantics.flow_uuid} cannot be converted back to its default unit for TIDAS export: {semantics.reason}"
+                )
+            return {
+                "internal_id": port.id,
+                "flow_uuid": port.flowUuid,
+                "direction": direction,
+                "port_name": port.name,
+                "amount": semantics.amount_in_flow_default_unit if semantics.ok else port.amount,
+                "unit": semantics.flow_default_unit or port.unit,
+                "unit_group": semantics.flow_default_unit_group or port.unitGroup,
+                "current_amount": port.amount,
+                "current_unit": semantics.current_unit,
+                "current_unit_group": semantics.current_unit_group,
+                "unit_group_switch": semantics.unit_group_switch,
+            }
+
         for port in node_data.inputs:
-            exchanges.append({
-                "internal_id": port.id,
-                "flow_uuid": port.flowUuid,
-                "direction": "input",
-                "port_name": port.name,
-                "amount": port.amount,
-                "unit": port.unit,
-                "unit_group": port.unitGroup,
-            })
+            exchanges.append(_port_exchange(port, "input"))
         for port in node_data.outputs:
-            exchanges.append({
-                "internal_id": port.id,
-                "flow_uuid": port.flowUuid,
-                "direction": "output",
-                "port_name": port.name,
-                "amount": port.amount,
-                "unit": port.unit,
-                "unit_group": port.unitGroup,
-                "allocationFactor": port.allocationFactor,
-                "allocationBasis": port.allocationBasis,
-            })
+            output_exchange = _port_exchange(port, "output")
+            output_exchange["allocationFactor"] = port.allocationFactor
+            output_exchange["allocationBasis"] = port.allocationBasis
+            exchanges.append(output_exchange)
+
+        allocation_source_ports = [p.model_dump() if hasattr(p, "model_dump") else p for p in node_data.outputs]
 
         product_outputs = _identify_product_outputs(
-            [p.model_dump() if hasattr(p, "model_dump") else p for p in node_data.outputs],
+            allocation_source_ports,
             flow_type_map,
         )
         ref_port, ref_flow_uuid = _select_reference_flow(product_outputs, process_uuid, model, report)
@@ -1016,21 +1049,7 @@ def _build_process_data(
         None,
     )
 
-    exchange_ports = [
-        {
-            "id": str(exc.get("internal_id") or "0"),
-            "flowUuid": exc.get("flow_uuid"),
-            "unit": exc.get("unit"),
-            "unitGroup": exc.get("unit_group"),
-            "amount": exc.get("amount"),
-            "isProduct": exc.get("direction") == "output",
-            "allocationFactor": exc.get("allocationFactor"),
-            "allocationBasis": exc.get("allocationBasis") or exc.get("allocation_basis"),
-        }
-        for exc in exchanges
-        if exc.get("direction") == "output"
-    ]
-    product_outputs = _identify_product_outputs(exchange_ports, flow_type_map)
+    product_outputs = _identify_product_outputs(allocation_source_ports, flow_type_map)
     allocation_factors = _calculate_allocation_factors(product_outputs, None, process_uuid, report, db) if product_outputs else {}
 
     tidas_location = _location_value(
@@ -1431,6 +1450,14 @@ def build_tidas_readiness(
             "code": "MISSING_PROCESSES",
             "message": f"{len(missing_processes)} process(es) not found",
             "details": {"missing_process_uuids": missing_processes},
+        })
+
+    # ── Flow default-unit conversion validation ────────────────────────
+    for violation in collect_flow_default_unit_conversion_violations(graph_json, db):
+        blocking.append({
+            "code": "FLOW_DEFAULT_UNIT_CONVERSION_REQUIRED",
+            "message": "Flow current modelling unit cannot be converted back to the flow default unit for TIDAS export.",
+            "details": violation,
         })
 
     # ── Source-policy validation ───────────────────────────────────────
