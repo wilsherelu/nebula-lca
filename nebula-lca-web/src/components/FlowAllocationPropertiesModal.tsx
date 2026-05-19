@@ -264,7 +264,7 @@ export function FlowAllocationPropertiesModal({
       const payload = await resp.json() as { properties?: FlowAllocationProperty[] };
       const rows = (Array.isArray(payload.properties) ? payload.properties : []).map((row) => normalizeProperty(row, sourceUnit));
       setProperties(rows.length > 0 ? [rows[0]] : [defaultProperty(sourceUnit)]);
-      onSaved?.(rows);
+      onSaved?.(payloadProperties.map((row) => normalizeProperty(row, sourceUnit)));
       onStatus?.(zh ? "Flow 单位组切换配置已保存。" : "Flow unit-group switch saved.");
       onClose();
     } catch (error) {

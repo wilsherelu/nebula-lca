@@ -2290,6 +2290,12 @@ body,
   height: auto;
 }
 
+.overlay-panel.process-info-modal {
+  width: min(760px, 92vw);
+  height: auto;
+  max-height: 86vh;
+}
+
 .overlay-head {
   display: flex;
   align-items: center;
@@ -2551,6 +2557,48 @@ body,
   background: #fff;
   padding: 6px 10px;
   cursor: pointer;
+}
+
+.process-info-body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 12px;
+  padding: 16px;
+  overflow: auto;
+}
+
+.process-info-body label,
+.process-info-field {
+  display: grid;
+  gap: 6px;
+  color: #46606b;
+  font-weight: 600;
+  align-content: start;
+}
+
+.process-info-body .span-2 {
+  grid-column: 1 / -1;
+}
+
+.process-info-body input,
+.process-info-body select,
+.process-info-body textarea {
+  border: 1px solid #cbd8de;
+  border-radius: 6px;
+  color: #10232b;
+  font: inherit;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+.process-info-body textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.process-info-actions {
+  border-top: 1px solid #e6eef2;
+  padding: 12px 16px;
 }
 
 .inventory-grid-header {
@@ -3882,6 +3930,9 @@ body,
 
 .pm-tidas-modal {
   width: min(880px, calc(100vw - 24px));
+  max-height: min(88vh, 920px);
+  display: flex;
+  flex-direction: column;
 }
 
 .pm-tidas-tabs {
@@ -3910,6 +3961,9 @@ body,
 
 .pm-tidas-result {
   margin: 0 14px 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
   border: 1px solid #d9e5ec;
   border-radius: 10px;
   background: #f8fbfe;
@@ -3994,12 +4048,38 @@ body,
   margin: 2px 0;
   font-size: 12px;
   line-height: 1.4;
+  min-width: 0;
 }
 
 .pm-tidas-scroll-list {
   max-height: 180px;
   overflow: auto;
   padding-right: 6px;
+}
+
+.pm-tidas-issue-list li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pm-tidas-issue-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pm-tidas-issue-count {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(160, 48, 48, 0.12);
+  color: #8a2020;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .pm-tidas-warnings {

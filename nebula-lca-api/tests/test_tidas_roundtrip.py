@@ -218,6 +218,134 @@ class TestTidasExport:
         finally:
             db.close()
 
+    def test_process_geography_inherits_project_geography(self, client):
+        """Process export should inherit project geography instead of falling back to GLO."""
+        db = _db.SessionLocal()
+        try:
+            _seed_basic_catalog(db)
+            graph = {
+                "functionalUnit": "1 kg chemical A",
+                "nodes": [
+                    {
+                        "id": "np-1",
+                        "node_kind": "unit_process",
+                        "mode": "normalized",
+                        "process_uuid": "proc-chem-a",
+                        "name": "Chemical A Production",
+                        "location": "",
+                        "reference_product": "chemical A",
+                        "inputs": [],
+                        "outputs": [
+                            {
+                                "id": "out-product",
+                                "flowUuid": "flow-chemical-a",
+                                "name": "chemical A",
+                                "unit": "kg",
+                                "amount": 1.0,
+                                "type": "technosphere",
+                                "direction": "output",
+                                "isProduct": True,
+                            }
+                        ],
+                        "emissions": [],
+                    }
+                ],
+                "exchanges": [],
+            }
+            project_id = _create_project_with_graph(client, db, graph)
+            model = db.get(Model, project_id)
+            assert model is not None
+            model.geography = "CN"
+            db.commit()
+
+            resp = client.post("/api/export/tidas/bundle/preview", json={"project_id": project_id})
+            assert resp.status_code == 200, resp.text
+            warning_messages = [w["message"] for w in resp.json()["warnings"]]
+            assert all("Process proc-chem-a missing geography" not in msg for msg in warning_messages)
+        finally:
+            db.close()
+
+    def test_process_metadata_overrides_project_defaults(self, client):
+        """Process metadata is exported from node fields, including reference product selection."""
+        db = _db.SessionLocal()
+        try:
+            _seed_basic_catalog(db)
+            db.merge(FlowRecord(
+                flow_uuid="flow-oil",
+                flow_name="oil",
+                flow_type="Product flow",
+                default_unit="kg",
+                unit_group="Units of mass",
+                source="test",
+            ))
+            db.commit()
+            graph = {
+                "functionalUnit": "1 kg chemical A",
+                "nodes": [
+                    {
+                        "id": "np-1",
+                        "node_kind": "unit_process",
+                        "mode": "normalized",
+                        "process_uuid": "proc-chem-a",
+                        "name": "Chemical A Production",
+                        "location": "CN-SH",
+                        "reference_product": "oil",
+                        "reference_product_flow_uuid": "flow-oil",
+                        "reference_product_direction": "output",
+                        "reference_year": 2024,
+                        "time_representativeness": "2024 operating data",
+                        "technology_description": "Batch process",
+                        "inputs": [],
+                        "outputs": [
+                            {
+                                "id": "out-product",
+                                "flowUuid": "flow-chemical-a",
+                                "name": "chemical A",
+                                "unit": "kg",
+                                "amount": 1.0,
+                                "type": "technosphere",
+                                "direction": "output",
+                                "isProduct": True,
+                                "allocationFactor": 0.4,
+                            },
+                            {
+                                "id": "out-oil",
+                                "flowUuid": "flow-oil",
+                                "name": "oil",
+                                "unit": "kg",
+                                "amount": 1.0,
+                                "type": "technosphere",
+                                "direction": "output",
+                                "isProduct": True,
+                                "allocationFactor": 0.6,
+                            },
+                        ],
+                        "emissions": [],
+                    }
+                ],
+                "exchanges": [],
+            }
+            project_id = _create_project_with_graph(client, db, graph)
+            model = db.get(Model, project_id)
+            assert model is not None
+            model.geography = "CN"
+            db.commit()
+
+            resp = client.post("/api/export/tidas/bundle", json={"project_id": project_id})
+            assert resp.status_code == 200, resp.text
+            with zipfile.ZipFile(io.BytesIO(resp.content), "r") as zf:
+                process_name = next(name for name in zf.namelist() if name.startswith("processes/"))
+                process_data = json.loads(zf.read(process_name))
+
+            info = process_data["processDataSet"]["processInformation"]
+            assert info["geography"]["locationOfOperationSupplyOrProduction"]["@location"] == "CN-SH"
+            assert info["time"]["common:referenceYear"] == 2024
+            assert info["time"]["common:timeRepresentativenessDescription"][0]["#text"] == "2024 operating data"
+            assert info["technology"]["technologyDescriptionAndIncludedProcesses"][0]["#text"] == "Batch process"
+            assert info["quantitativeReference"]["referenceToReferenceFlow"] == "out-oil"
+        finally:
+            db.close()
+
     def test_export_single_process(self, client):
         """Export TIDAS bundle for single-process project produces valid ZIP."""
         db = _db.SessionLocal()

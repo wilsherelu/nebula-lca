@@ -127,6 +127,11 @@ class HybridNode(BaseModel):
     name: str
     location: str
     reference_product: str = Field(alias="reference_product")
+    reference_product_flow_uuid: str | None = Field(default=None, alias="reference_product_flow_uuid")
+    reference_product_direction: Literal["input", "output"] | None = Field(default=None, alias="reference_product_direction")
+    reference_year: int | None = Field(default=None, alias="reference_year")
+    time_representativeness: str | None = Field(default=None, alias="time_representativeness")
+    technology_description: str | None = Field(default=None, alias="technology_description")
     allocation_method: Literal["unit_group_physical_v1", "custom_factor_v1"] | None = Field(
         default=None,
         alias="allocation_method",

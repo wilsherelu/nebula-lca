@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from app.flow_unit_semantics import (
     build_unit_reference_maps,
     collect_flow_default_unit_conversion_violations,
+    normalize_graph_flow_unit_switches,
     resolve_flow_port_unit_semantics,
 )
 from app.main import _build_product_result_view_from_graph
@@ -26,6 +27,7 @@ class _FakeDb:
                 flow_uuid="oil-flow",
                 default_unit="m3",
                 unit_group="Units of volume",
+                allocation_properties=[],
             ),
         }
         self.unit_defs = [
@@ -114,6 +116,64 @@ def test_flow_default_unit_conversion_requires_switch_for_cross_group_current_un
     assert violations[0]["current_unit_group"] == "Units of mass"
 
 
+def test_flow_default_unit_conversion_uses_flow_level_rule_when_port_switch_missing():
+    db = _FakeDb()
+    db.flow_by_uuid["oil-flow"].allocation_properties = [
+        {
+            "propertyType": "custom_conversion",
+            "value": 800,
+            "basisUnit": "m3",
+            "targetUnitGroup": "Units of mass",
+            "targetUnit": "kg",
+            "source": "user_declared",
+        }
+    ]
+    port = _switched_oil_port()
+    port.pop("unitGroupSwitch")
+
+    sem = resolve_flow_port_unit_semantics(db, port)
+
+    assert sem.ok is True
+    assert sem.amount_in_flow_default_unit == 1
+    assert sem.unit_group_switch["factor"] == 800
+    assert sem.unit_group_switch["inferredFromFlowAllocationProperties"] is True
+
+
+def test_normalize_graph_flow_unit_switches_persists_backend_canonical_switch():
+    db = _FakeDb()
+    db.flow_by_uuid["oil-flow"].allocation_properties = [
+        {
+            "propertyType": "custom_conversion",
+            "value": 800,
+            "basisUnit": "m3",
+            "targetUnitGroup": "Units of mass",
+            "targetUnit": "kg",
+        }
+    ]
+    port = _switched_oil_port()
+    port.pop("unitGroupSwitch")
+    graph = {
+        "nodes": [
+            {
+                "id": "node-1",
+                "process_uuid": "process-1",
+                "name": "process",
+                "inputs": [],
+                "outputs": [port],
+                "emissions": [],
+            }
+        ]
+    }
+
+    normalize_graph_flow_unit_switches(graph, db)
+
+    switch = graph["nodes"][0]["outputs"][0]["unitGroupSwitch"]
+    assert switch["sourceUnitGroup"] == "Units of volume"
+    assert switch["targetUnitGroup"] == "Units of mass"
+    assert switch["factor"] == 800
+    assert "sourceAmount" not in switch
+
+
 def test_flow_default_unit_conversion_uses_catalog_default_over_stale_switch_source_group():
     port = _switched_oil_port()
     port["unitGroupSwitch"]["sourceUnitGroup"] = "Units of mass"
@@ -122,6 +182,18 @@ def test_flow_default_unit_conversion_uses_catalog_default_over_stale_switch_sou
 
     assert sem.ok is True
     assert sem.flow_default_unit_group == "Units of volume"
+    assert sem.amount_in_flow_default_unit == 1
+
+
+def test_flow_default_unit_conversion_ignores_legacy_switch_source_amount_mismatch():
+    port = _switched_oil_port(amount=800, unit="kg")
+    port["unitGroupSwitch"]["sourceAmount"] = 2
+
+    sem = resolve_flow_port_unit_semantics(_FakeDb(), port)
+
+    assert sem.ok is True
+    assert sem.snapshot_source_amount == 2
+    assert sem.inferred_source_amount == 1
     assert sem.amount_in_flow_default_unit == 1
 
 

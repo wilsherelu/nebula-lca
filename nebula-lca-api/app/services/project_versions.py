@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..models import FlowRecord, Model, ModelVersion, PtsCompileArtifact, PtsDefinition, PtsExternalArtifact
 from ..schemas import ProjectOut
+from ..flow_unit_semantics import normalize_graph_flow_unit_switches
 
 # ── graph_storage import (already exists, no circular) ────────────────────
 from ..services.graph_storage import (
@@ -190,6 +191,7 @@ def _create_project_version_from_graph_json(*, db: Session, project_id: str, gra
     validate_graph_contract(graph, require_non_empty=True, allow_pts_nodes=True)
     validate_graph_flow_type_contract(graph, db=db, stage="import_model")
     validate_graph_port_names_against_flow_catalog(graph, db=db, stage="import_model")
+    normalize_graph_flow_unit_switches(graph, db)
     _bind_pts_published_versions_for_graph(db=db, project_id=project_id, graph=graph)
 
     latest_version = db.query(sqla_func.max(ModelVersion.version)).filter(
