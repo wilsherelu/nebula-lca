@@ -14,6 +14,13 @@ def _get(obj: Any, key: str, default: Any = None) -> Any:
     return getattr(obj, key, default)
 
 
+def _set(obj: Any, key: str, value: Any) -> None:
+    if isinstance(obj, dict):
+        obj[key] = value
+    else:
+        setattr(obj, key, value)
+
+
 def _switch(port: Any) -> dict[str, Any]:
     value = _get(port, "unitGroupSwitch", None)
     if value is None:
@@ -27,6 +34,88 @@ def _clean(value: Any) -> str:
 
 def _same_group(left: str, right: str) -> bool:
     return _clean(left).lower() == _clean(right).lower()
+
+
+def _prop_get(row: Any, key: str, default: Any = None) -> Any:
+    if isinstance(row, dict):
+        if key in row:
+            return row.get(key, default)
+        snake = []
+        for char in key:
+            if char.isupper():
+                snake.append("_")
+                snake.append(char.lower())
+            else:
+                snake.append(char)
+        return row.get("".join(snake), default)
+    return getattr(row, key, default)
+
+
+def _flow_allocation_properties(flow_record: FlowRecord | None) -> list[Any]:
+    if flow_record is None:
+        return []
+    rows = getattr(flow_record, "allocation_properties", None) or []
+    return rows if isinstance(rows, list) else []
+
+
+def _infer_switch_from_flow_properties(
+    *,
+    flow_uuid: str,
+    flow_record: FlowRecord | None,
+    current_unit_group: str,
+    current_unit: str,
+    flow_default_unit_group: str,
+    flow_default_unit: str,
+    reference_unit_by_group: dict[str, str],
+) -> dict[str, Any]:
+    for row in _flow_allocation_properties(flow_record):
+        target_group = _clean(_prop_get(row, "targetUnitGroup"))
+        if not target_group or not _same_group(target_group, current_unit_group):
+            continue
+        try:
+            factor = float(_prop_get(row, "value"))
+        except (TypeError, ValueError):
+            factor = 0.0
+        if factor <= 0:
+            continue
+        target_unit = _clean(_prop_get(row, "targetUnit") or reference_unit_by_group.get(target_group) or current_unit)
+        basis_unit = _clean(_prop_get(row, "basisUnit") or reference_unit_by_group.get(flow_default_unit_group) or flow_default_unit)
+        return {
+            "sourceFlowUuid": flow_uuid,
+            "sourceUnitGroup": flow_default_unit_group,
+            "sourceUnit": flow_default_unit,
+            "sourceReferenceUnit": basis_unit,
+            "targetUnitGroup": target_group,
+            "targetUnit": target_unit,
+            "targetReferenceUnit": target_unit,
+            "factor": factor,
+            "source": _clean(_prop_get(row, "source")) or "flow_allocation_properties",
+            "note": _clean(_prop_get(row, "note")),
+            "inferredFromFlowAllocationProperties": True,
+        }
+    return {}
+
+
+def _canonical_switch(sem: "FlowPortUnitSemantics") -> dict[str, Any]:
+    switch = sem.unit_group_switch or {}
+    return {
+        "sourceFlowUuid": sem.flow_uuid,
+        "sourceUnitGroup": sem.flow_default_unit_group,
+        "sourceUnit": sem.flow_default_unit,
+        "sourceReferenceUnit": sem.flow_default_unit,
+        "targetUnitGroup": sem.current_unit_group,
+        "targetUnit": _clean(switch.get("targetUnit") or switch.get("target_unit") or sem.current_unit),
+        "targetReferenceUnit": _clean(
+            switch.get("targetReferenceUnit")
+            or switch.get("target_reference_unit")
+            or switch.get("targetUnit")
+            or switch.get("target_unit")
+            or sem.current_unit
+        ),
+        "factor": float(switch.get("factor")),
+        "source": _clean(switch.get("source")) or "user_declared",
+        "note": _clean(switch.get("note")),
+    }
 
 
 def build_unit_reference_maps(
@@ -74,6 +163,8 @@ class FlowPortUnitSemantics:
     result_factor_to_flow_default_unit: float | None
     amount_in_flow_default_unit: float | None
     ok: bool
+    inferred_source_amount: float | None = None
+    snapshot_source_amount: float | None = None
     reason: str = ""
 
     def as_dict(self) -> dict[str, Any]:
@@ -87,6 +178,8 @@ class FlowPortUnitSemantics:
             "unit_group_switch": self.unit_group_switch,
             "result_factor_to_flow_default_unit": self.result_factor_to_flow_default_unit,
             "amount_in_flow_default_unit": self.amount_in_flow_default_unit,
+            "inferred_source_amount": self.inferred_source_amount,
+            "snapshot_source_amount": self.snapshot_source_amount,
             "ok": self.ok,
             "reason": self.reason,
         }
@@ -123,10 +216,10 @@ def resolve_flow_port_unit_semantics(
     )
 
     current_unit_group = _clean(
-        switch.get("targetUnitGroup")
-        or switch.get("target_unit_group")
-        or _get(port, "unitGroup", None)
+        _get(port, "unitGroup", None)
         or _get(port, "unit_group", None)
+        or switch.get("targetUnitGroup")
+        or switch.get("target_unit_group")
         or flow_default_unit_group
     )
     current_unit = _clean(
@@ -187,7 +280,7 @@ def resolve_flow_port_unit_semantics(
             None,
             None,
             False,
-            "missing_current_unit_factor",
+            reason="missing_current_unit_factor",
         )
     if default_factor is None or default_factor <= 0:
         return FlowPortUnitSemantics(
@@ -201,7 +294,7 @@ def resolve_flow_port_unit_semantics(
             None,
             None,
             False,
-            "missing_flow_default_unit_factor",
+            reason="missing_flow_default_unit_factor",
         )
 
     if _same_group(current_unit_group, flow_default_unit_group):
@@ -214,19 +307,33 @@ def resolve_flow_port_unit_semantics(
             switch_factor = 0.0
         target_group = _clean(switch.get("targetUnitGroup") or switch.get("target_unit_group"))
         if switch_factor <= 0 or not _same_group(target_group, current_unit_group):
-            return FlowPortUnitSemantics(
-                flow_uuid,
-                flow_default_unit_group,
-                flow_default_unit,
-                current_unit_group,
-                current_unit,
-                current_amount,
-                switch,
-                None,
-                None,
-                False,
-                "missing_or_inconsistent_unit_group_switch",
+            inferred_switch = _infer_switch_from_flow_properties(
+                flow_uuid=flow_uuid,
+                flow_record=flow_record,
+                current_unit_group=current_unit_group,
+                current_unit=current_unit,
+                flow_default_unit_group=flow_default_unit_group,
+                flow_default_unit=flow_default_unit,
+                reference_unit_by_group=reference_unit_by_group,
             )
+            if inferred_switch:
+                switch = inferred_switch
+                switch_factor = float(inferred_switch["factor"])
+                target_group = _clean(inferred_switch["targetUnitGroup"])
+            else:
+                return FlowPortUnitSemantics(
+                    flow_uuid,
+                    flow_default_unit_group,
+                    flow_default_unit,
+                    current_unit_group,
+                    current_unit,
+                    current_amount,
+                    switch,
+                    None,
+                    None,
+                    False,
+                    reason="missing_or_inconsistent_unit_group_switch",
+                )
         result_factor = default_factor * switch_factor / current_factor
 
     if result_factor <= 0:
@@ -241,8 +348,33 @@ def resolve_flow_port_unit_semantics(
             None,
             None,
             False,
-            "invalid_result_factor",
+            reason="invalid_result_factor",
         )
+
+    amount_in_flow_default_unit = current_amount / result_factor
+    inferred_source_amount: float | None = None
+    snapshot_source_amount: float | None = None
+    if switch and not _same_group(current_unit_group, flow_default_unit_group):
+        raw_source_amount = switch.get("sourceAmount")
+        if raw_source_amount is None:
+            raw_source_amount = switch.get("source_amount")
+        try:
+            snapshot_source_amount = float(raw_source_amount)
+        except (TypeError, ValueError):
+            snapshot_source_amount = None
+        source_reference_unit = _clean(
+            switch.get("sourceReferenceUnit")
+            or switch.get("source_reference_unit")
+            or flow_default_unit
+        )
+        source_reference_factor = _unit_factor(
+            unit_factor_by_group_and_name,
+            reference_unit_by_group,
+            flow_default_unit_group,
+            source_reference_unit,
+        )
+        if source_reference_factor and source_reference_factor > 0:
+            inferred_source_amount = amount_in_flow_default_unit * default_factor / source_reference_factor
 
     return FlowPortUnitSemantics(
         flow_uuid=flow_uuid,
@@ -253,8 +385,10 @@ def resolve_flow_port_unit_semantics(
         current_amount=current_amount,
         unit_group_switch=switch,
         result_factor_to_flow_default_unit=result_factor,
-        amount_in_flow_default_unit=current_amount / result_factor,
+        amount_in_flow_default_unit=amount_in_flow_default_unit,
         ok=True,
+        inferred_source_amount=inferred_source_amount,
+        snapshot_source_amount=snapshot_source_amount,
     )
 
 
@@ -302,7 +436,37 @@ def collect_flow_default_unit_conversion_violations(
                     "current_unit_group": sem.current_unit_group,
                     "flow_default_unit": sem.flow_default_unit,
                     "flow_default_unit_group": sem.flow_default_unit_group,
+                    "amount_in_flow_default_unit": sem.amount_in_flow_default_unit,
+                    "inferred_source_amount": sem.inferred_source_amount,
+                    "snapshot_source_amount": sem.snapshot_source_amount,
                     "reason": sem.reason,
                     "repair_target": "unit_group",
                 })
     return violations
+
+
+def normalize_graph_flow_unit_switches(graph: Any, db: Session) -> Any:
+    """Persist backend-owned unit-group switch snapshots where resolvable.
+
+    The port amount/unit/unitGroup remains the current modelling fact. This
+    only canonicalizes the audit/conversion rule needed to derive the Flow
+    default-unit amount for calculation and TIDAS export.
+    """
+    unit_factor_by_group_and_name, reference_unit_by_group = build_unit_reference_maps(db)
+    nodes = graph.get("nodes", []) if isinstance(graph, dict) else getattr(graph, "nodes", [])
+    for node in nodes or []:
+        for bucket in ("inputs", "outputs", "emissions"):
+            ports = _get(node, bucket, []) or []
+            for port in ports:
+                sem = resolve_flow_port_unit_semantics(
+                    db,
+                    port,
+                    unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+                    reference_unit_by_group=reference_unit_by_group,
+                )
+                if not sem.ok or _same_group(sem.current_unit_group, sem.flow_default_unit_group):
+                    continue
+                if not sem.unit_group_switch:
+                    continue
+                _set(port, "unitGroupSwitch", _canonical_switch(sem))
+    return graph

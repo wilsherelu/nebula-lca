@@ -344,7 +344,11 @@ def test_readiness_manual_allocation_warning_has_repair_target():
     result = build_tidas_readiness(db, project_id)
 
     assert "process-manual" in result["manual_allocation_required_processes"]
-    issue = result["allocation_warnings"][0]
+    issue = next(
+        item
+        for item in result["allocation_warnings"]
+        if "manual allocation required" in item["message"]
+    )
     assert issue["details"]["repair_target"] == "allocation"
     assert issue["details"]["node_id"] == "node-manual"
     assert issue["details"]["process_uuid"] == "process-manual"

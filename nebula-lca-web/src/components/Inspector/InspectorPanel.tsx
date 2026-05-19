@@ -7,9 +7,10 @@ type InspectorPanelProps = {
   onStatus?: (text: string) => void;
   sourcePolicy?: SourcePolicy;
   initialNodeTab?: "external_in" | "external_out";
+  initialProcessInfoNodeId?: string;
 };
 
-export function InspectorPanel({ onStatus, sourcePolicy = "open_mixed", initialNodeTab }: InspectorPanelProps) {
+export function InspectorPanel({ onStatus, sourcePolicy = "open_mixed", initialNodeTab, initialProcessInfoNodeId }: InspectorPanelProps) {
   const selection = useLcaGraphStore((state) => state.selection);
   const nodes = useLcaGraphStore((state) => state.nodes);
   const edges = useLcaGraphStore((state) => state.edges);
@@ -51,7 +52,15 @@ export function InspectorPanel({ onStatus, sourcePolicy = "open_mixed", initialN
         <div>{t("清单分析", "Inventory Analysis")}</div>
         <button className="drawer-close-btn" onClick={() => closeInspector({ requireProductConfirm: true })}>{t("关闭", "Close")}</button>
       </div>
-      {node && <NodeInspector node={node} onStatus={onStatus} sourcePolicy={sourcePolicy} initialTab={initialNodeTab} />}
+      {node && (
+        <NodeInspector
+          node={node}
+          onStatus={onStatus}
+          sourcePolicy={sourcePolicy}
+          initialTab={initialNodeTab}
+          openProcessInfoOnMount={initialProcessInfoNodeId === node.id || initialProcessInfoNodeId === node.data.processUuid}
+        />
+      )}
       {edge && <EdgeInspector edge={edge} />}
     </aside>
   );

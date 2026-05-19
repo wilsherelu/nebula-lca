@@ -22,6 +22,7 @@ from .database import Base, SessionLocal, engine, get_db
 from .flow_unit_semantics import (
     build_unit_reference_maps,
     collect_flow_default_unit_conversion_violations,
+    normalize_graph_flow_unit_switches,
     resolve_flow_port_unit_semantics,
 )
 from .models import (
@@ -3172,6 +3173,7 @@ def create_model(payload: ModelCreateRequest, db: Session = Depends(get_db)) -> 
     validate_graph_contract(payload.graph, require_non_empty=True, allow_pts_nodes=True)
     validate_graph_flow_type_contract(payload.graph, db=db, stage="save_model")
     validate_graph_port_names_against_flow_catalog(payload.graph, db=db, stage="save_model")
+    normalize_graph_flow_unit_switches(payload.graph, db)
 
     normalized_graph = _normalize_graph_json_for_storage(payload.graph.model_dump(mode="python"))
     slim_graph = _slim_graph_for_storage(normalized_graph)

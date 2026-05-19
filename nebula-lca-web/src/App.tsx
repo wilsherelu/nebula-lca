@@ -826,6 +826,38 @@ const normalizeGraphPayload = (graph: LcaGraphPayload): LcaGraphPayload => {
     }
     return text;
   };
+  const normalizeUnitGroupSwitch = (rawSwitch: unknown): FlowPort["unitGroupSwitch"] | undefined => {
+    if (!rawSwitch || typeof rawSwitch !== "object") {
+      return undefined;
+    }
+    const raw = rawSwitch as Record<string, unknown>;
+    const factor = Number(raw.factor);
+    const targetUnitGroup = String(raw.targetUnitGroup ?? raw.target_unit_group ?? "").trim();
+    const targetUnit = String(raw.targetUnit ?? raw.target_unit ?? "").trim();
+    const targetReferenceUnit = String(raw.targetReferenceUnit ?? raw.target_reference_unit ?? targetUnit).trim();
+    if (!Number.isFinite(factor) || factor <= 0 || !targetUnitGroup) {
+      return undefined;
+    }
+    const normalized: NonNullable<FlowPort["unitGroupSwitch"]> = {
+      sourceFlowUuid: String(raw.sourceFlowUuid ?? raw.source_flow_uuid ?? "").trim() || undefined,
+      sourceUnitGroup: String(raw.sourceUnitGroup ?? raw.source_unit_group ?? "").trim() || undefined,
+      sourceUnit: String(raw.sourceUnit ?? raw.source_unit ?? "").trim() || undefined,
+      sourceReferenceUnit: String(raw.sourceReferenceUnit ?? raw.source_reference_unit ?? "").trim() || undefined,
+      sourceAmount: Number.isFinite(Number(raw.sourceAmount ?? raw.source_amount))
+        ? Number(raw.sourceAmount ?? raw.source_amount)
+        : undefined,
+      sourceExternalSaleAmount: Number.isFinite(Number(raw.sourceExternalSaleAmount ?? raw.source_external_sale_amount))
+        ? Number(raw.sourceExternalSaleAmount ?? raw.source_external_sale_amount)
+        : undefined,
+      targetUnitGroup,
+      targetUnit,
+      targetReferenceUnit,
+      factor,
+      source: String(raw.source ?? "").trim() || undefined,
+      note: String(raw.note ?? "").trim() || undefined,
+    };
+    return normalized;
+  };
 
   const normalizeNode = (node: LcaGraphPayload["nodes"][number]) => {
     const normalizePorts = (ports: NonNullable<typeof node.inputs>) =>
@@ -864,6 +896,7 @@ const normalizeGraphPayload = (graph: LcaGraphPayload): LcaGraphPayload => {
           raw.internal_exposed ?? raw.internalExposed ?? port.internalExposed,
         );
         const isProduct = coerceOptionalBoolean(raw.is_product ?? raw.isProduct ?? port.isProduct) ?? false;
+        const unitGroupSwitch = normalizeUnitGroupSwitch(raw.unitGroupSwitch ?? raw.unit_group_switch ?? port.unitGroupSwitch);
         return {
           ...port,
           id: rawId || portKey || productKey || fallbackId,
@@ -887,6 +920,7 @@ const normalizeGraphPayload = (graph: LcaGraphPayload): LcaGraphPayload => {
           showOnNode,
           internalExposed,
           isProduct,
+          unitGroupSwitch,
         };
       });
     return {
@@ -1226,6 +1260,9 @@ const buildRootPtsShellPatch = (
       referenceProduct: string;
       referenceProductFlowUuid?: string;
       referenceProductDirection?: "input" | "output";
+      referenceYear?: number;
+      timeRepresentativeness?: string;
+      technologyDescription?: string;
       ptsPublishedVersion?: number;
       ptsPublishedArtifactId?: string;
     };
@@ -1267,6 +1304,15 @@ const buildRootPtsShellPatch = (
     (shellNodeRaw?.reference_product_direction === "input" || shellNodeRaw?.reference_product_direction === "output"
       ? shellNodeRaw.reference_product_direction
       : undefined) ?? currentNode.data.referenceProductDirection,
+  referenceYear:
+    (typeof shellNodeRaw?.reference_year === "number" ? shellNodeRaw.reference_year : undefined) ??
+    currentNode.data.referenceYear,
+  timeRepresentativeness:
+    (typeof shellNodeRaw?.time_representativeness === "string" ? shellNodeRaw.time_representativeness : undefined) ??
+    currentNode.data.timeRepresentativeness,
+  technologyDescription:
+    (typeof shellNodeRaw?.technology_description === "string" ? shellNodeRaw.technology_description : undefined) ??
+    currentNode.data.technologyDescription,
   inputs: shellInputs,
   outputs: shellOutputs,
   publishedVersion: publishedVersion ?? currentNode.data.ptsPublishedVersion,
@@ -1793,9 +1839,9 @@ const formatApiError = (raw: unknown): string => {
         const flowName = String(first.flow_name ?? first.flow_uuid ?? "未知 Flow");
         const currentUnit = [first.current_unit_group, first.current_unit].filter(Boolean).join(" / ");
         const defaultUnit = [first.flow_default_unit_group, first.flow_default_unit].filter(Boolean).join(" / ");
-        return `单位组切换缺少有效快照：${flowName} 当前建模单位 ${currentUnit || "-"}，Flow 默认单位 ${defaultUnit || "-"}。请重新打开该行“切换”并保存。`;
+        return `当前端口缺少单位组切换规则：${flowName} 当前建模单位 ${currentUnit || "-"}，Flow 默认单位 ${defaultUnit || "-"}。请打开该行“切换”，确认换算系数后保存。`;
       }
-      return "单位组切换缺少有效快照：请重新打开相关产品行的“切换”并保存。";
+      return "当前端口缺少单位组切换规则：请打开相关产品行的“切换”，确认换算系数后保存。";
     }
     return payload.message ? `${payload.message}` : text;
   } catch {
@@ -2000,6 +2046,7 @@ export default function App() {
   const [showRunConfigDialog, setShowRunConfigDialog] = useState(false);
   const [hasNonEcoElementaryFlows, setHasNonEcoElementaryFlows] = useState(false);
   const [repairInspectorTab, setRepairInspectorTab] = useState<"external_in" | "external_out" | undefined>(undefined);
+  const [repairProcessInfoNodeId, setRepairProcessInfoNodeId] = useState<string | undefined>(undefined);
   const [productDetailViewKey, setProductDetailViewKey] = useState("");
   const [lciaMethodOptions, setLciaMethodOptions] = useState<string[]>(["EF v3.1"]);
   const lciaMethodRestrictsToEf31 = currentSourcePolicy === "tidas_compliant"
@@ -2229,6 +2276,9 @@ export default function App() {
         reference_product: node.data.referenceProduct,
         reference_product_flow_uuid: node.data.referenceProductFlowUuid,
         reference_product_direction: node.data.referenceProductDirection,
+        reference_year: node.data.referenceYear,
+        time_representativeness: node.data.timeRepresentativeness,
+        technology_description: node.data.technologyDescription,
         inputs: node.data.inputs,
         outputs: node.data.outputs,
         position: {
@@ -2280,6 +2330,9 @@ export default function App() {
       reference_product: ptsNode.data.referenceProduct,
       reference_product_flow_uuid: ptsNode.data.referenceProductFlowUuid,
       reference_product_direction: ptsNode.data.referenceProductDirection,
+      reference_year: ptsNode.data.referenceYear,
+      time_representativeness: ptsNode.data.timeRepresentativeness,
+      technology_description: ptsNode.data.technologyDescription,
       inputs: [],
       outputs: [],
     };
@@ -2398,6 +2451,9 @@ export default function App() {
         reference_product: ptsNode.data.referenceProduct,
         reference_product_flow_uuid: ptsNode.data.referenceProductFlowUuid,
         reference_product_direction: ptsNode.data.referenceProductDirection,
+        reference_year: ptsNode.data.referenceYear,
+        time_representativeness: ptsNode.data.timeRepresentativeness,
+        technology_description: ptsNode.data.technologyDescription,
         inputs: shellInputs,
         outputs: shellOutputs,
         emissions: [],
@@ -5328,7 +5384,11 @@ export default function App() {
               if (nodeId) {
                 const desiredTab = repairTarget?.desired_inspector_tab;
                 setRepairInspectorTab(desiredTab === "external_out" ? "external_out" : desiredTab === "external_in" ? "external_in" : undefined);
+                setRepairProcessInfoNodeId(repairTarget?.desired_process_modal === "metadata" ? nodeId : undefined);
                 window.setTimeout(() => openNodeInspector(nodeId), 0);
+              } else {
+                setRepairInspectorTab(undefined);
+                setRepairProcessInfoNodeId(undefined);
               }
             })();
           }}
@@ -6118,7 +6178,12 @@ export default function App() {
                   </section>
                 </div>
               )}
-              <InspectorPanel onStatus={setStatusText} sourcePolicy={currentSourcePolicy} initialNodeTab={repairInspectorTab} />
+              <InspectorPanel
+                onStatus={setStatusText}
+                sourcePolicy={currentSourcePolicy}
+                initialNodeTab={repairInspectorTab}
+                initialProcessInfoNodeId={repairProcessInfoNodeId}
+              />
               <FlowBalanceDialog />
               <PtsPortEditorDialog />
               <PtsVersionHistoryDialog

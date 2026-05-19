@@ -88,6 +88,9 @@ export type LcaNodeData = {
   referenceProduct: string;
   referenceProductFlowUuid?: string;
   referenceProductDirection?: FlowDirection;
+  referenceYear?: number;
+  timeRepresentativeness?: string;
+  technologyDescription?: string;
   inputs: FlowPort[];
   outputs: FlowPort[];
 };

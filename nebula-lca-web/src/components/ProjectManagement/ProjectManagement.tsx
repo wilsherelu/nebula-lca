@@ -162,6 +162,7 @@ type NavModule = "project" | "process" | "flow";
 type NavItem = "recent_projects" | "all_projects" | "all_processes" | "all_flows";
 export type TidasRepairTarget = Record<string, unknown> & {
   desired_inspector_tab?: "external_in" | "external_out";
+  desired_process_modal?: "metadata";
 };
 
 type Props = {
@@ -350,6 +351,51 @@ const formatTidasExportError = (message: string, zh: boolean): string => {
       : "This model contains non-EF/Tiangong elementary flows. The open-source edition does not convert EF and ecoinvent elementary flows automatically, so Tiangong TIDAS export is blocked. Please replace them with EF elementary flows before exporting.";
   }
   return message;
+};
+
+type TidasIssueSummary = {
+  key: string;
+  issue: string | TidasExportWarning;
+  message: string;
+  count: number;
+};
+
+const formatTidasIssue = (issue: string | TidasExportWarning, zh: boolean): string => {
+  if (typeof issue === "string") return formatTidasExportError(issue, zh);
+  if (issue.code === "FLOW_DEFAULT_UNIT_CONVERSION_REQUIRED") {
+    return zh
+      ? "Flow 当前建模单位无法换回默认单位，不能导出 TIDAS。"
+      : "Flow current modelling unit cannot be converted back to the flow default unit for TIDAS export.";
+  }
+  return formatTidasWarning(issue);
+};
+
+const summarizeTidasIssues = (
+  issues: Array<string | TidasExportWarning>,
+  zh: boolean,
+): TidasIssueSummary[] => {
+  const summaries = new Map<string, TidasIssueSummary>();
+  issues.forEach((issue) => {
+    const rawMessage =
+      typeof issue === "string"
+        ? issue
+        : issue.code ?? issue.message ?? issue.category ?? JSON.stringify(issue);
+    const repairTarget =
+      typeof issue === "string" ? "" : String(issue.details?.repair_target ?? issue.category ?? "");
+    const key = `${rawMessage}::${repairTarget}`;
+    const current = summaries.get(key);
+    if (current) {
+      current.count += 1;
+      return;
+    }
+    summaries.set(key, {
+      key,
+      issue,
+      message: formatTidasIssue(issue, zh),
+      count: 1,
+    });
+  });
+  return Array.from(summaries.values());
 };
 
 type TidasImportKind = "flows" | "processes" | "models";
@@ -1276,6 +1322,8 @@ function TidasExportModal(props: {
   const hasErrors = preview ? preview.errors.length > 0 || !preview.can_export : false;
   const hasManualAllocation = preview ? preview.manual_allocation_required_processes.length > 0 : false;
   const hasWarnings = preview ? preview.warnings.length > 0 || preview.allocation_warnings.length > 0 : false;
+  const blockingIssues = preview ? (preview.blocking && preview.blocking.length > 0 ? preview.blocking : preview.errors) : [];
+  const blockingSummaries = summarizeTidasIssues(blockingIssues, zh);
 
   return (
     <div className="pm-modal-mask" onClick={onClose}>
@@ -1304,12 +1352,17 @@ function TidasExportModal(props: {
             </div>
             {hasErrors && (
               <div className="pm-tidas-errors">
-                <h4>{zh ? "错误" : "Errors"}</h4>
-                <ul>
-                  {(preview.blocking && preview.blocking.length > 0 ? preview.blocking : preview.errors).map((err, i) => (
-                    <li key={i}>
-                      <span>{typeof err === "string" ? formatTidasExportError(err, zh) : formatTidasWarning(err)}</span>
-                      <button type="button" className="pm-link-btn" onClick={() => onRepair(err)}>
+                <h4>
+                  {zh ? "错误" : "Errors"} ({blockingIssues.length})
+                </h4>
+                <ul className="pm-tidas-scroll-list pm-tidas-issue-list">
+                  {blockingSummaries.map((item) => (
+                    <li key={item.key}>
+                      <span className="pm-tidas-issue-text">
+                        {item.message}
+                        {item.count > 1 && <span className="pm-tidas-issue-count">×{item.count}</span>}
+                      </span>
+                      <button type="button" className="pm-link-btn" onClick={() => onRepair(item.issue)}>
                         {zh ? "修复" : "Fix"}
                       </button>
                     </li>
@@ -1697,9 +1750,12 @@ export function ProjectManagement(props: Props) {
     const repairTarget: TidasRepairTarget = {
       ...details,
       desired_inspector_tab: target === "allocation" ? "external_out" : undefined,
+      desired_process_modal: target === "process_metadata" ? "metadata" : undefined,
     };
     onOpenProject(exportTargetProject.projectId, exportTargetProject.projectName, repairTarget);
-    if (target === "allocation" || processUuid) {
+    if (target === "process_metadata") {
+      onStatus?.(zh ? `已打开项目，请补录过程 ${processUuid || "-"} 的过程信息。` : `Project opened. Complete process metadata for ${processUuid || "-"}.`);
+    } else if (target === "allocation" || processUuid) {
       onStatus?.(zh ? `已打开项目，请在过程 ${processUuid || "-"} 的输出面板补充分配。` : `Project opened. Edit allocation in process ${processUuid || "-"}.`);
     } else if (flowUuid) {
       onStatus?.(zh ? `已打开项目，请替换或补录 Flow ${flowUuid}。` : `Project opened. Replace or complete flow ${flowUuid}.`);

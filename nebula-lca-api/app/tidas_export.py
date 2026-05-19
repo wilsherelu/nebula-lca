@@ -445,8 +445,20 @@ def _enrich_readiness_issue_targets(graph_json: dict, issues: list[dict]) -> Non
             if isinstance(missing, list) and missing:
                 details.update(_repair_target_for_flow_uuid(graph_json, str(missing[0])))
                 details["missing_flow_uuids"] = missing
+        elif (
+            category == "tidas_placeholder"
+            and "missing geography" in str(issue.get("message") or "").lower()
+            and lookup.get("process_uuid")
+        ):
+            details.update(_repair_target_for_process(graph_json, str(lookup.get("process_uuid")), "process_metadata"))
         elif code in {"missing_tiangong_field"} and "geography" in str(issue.get("message") or "").lower():
             details.setdefault("repair_target", "project_settings")
+        elif (
+            category == "allocation"
+            and "using first product output as reference" in str(issue.get("message") or "").lower()
+            and lookup.get("process_uuid")
+        ):
+            details.update(_repair_target_for_process(graph_json, str(lookup.get("process_uuid")), "process_metadata"))
         elif category == "allocation" or code == "manual_allocation_required":
             process_uuid = str(lookup.get("process_uuid") or "")
             if process_uuid:
@@ -503,6 +515,8 @@ def _select_reference_flow(
     process_uuid: str,
     model: Model | None,
     report: ExportReport,
+    reference_product_flow_uuid: str | None = None,
+    reference_product_name: str | None = None,
 ) -> tuple[dict | None, str | None]:
     """Select the reference (quantitative reference) flow for a process.
 
@@ -526,6 +540,24 @@ def _select_reference_flow(
 
     # Multi-product process
     report.multi_product_process_count += 1
+
+    explicit_uuid = str(reference_product_flow_uuid or "").strip()
+    explicit_name = str(reference_product_name or "").strip()
+    if explicit_uuid or explicit_name:
+        for port in product_outputs:
+            flow_uuid = str(port.get("flowUuid") or "").strip()
+            port_id = str(port.get("id") or "").strip()
+            port_name = str(port.get("name") or "").strip()
+            if explicit_uuid and explicit_uuid in {flow_uuid, port_id}:
+                ref_port = port
+                ref_flow_uuid = port.get("flowUuid")
+                report.reference_flow_by_process[process_uuid] = ref_flow_uuid
+                return ref_port, ref_flow_uuid
+            if explicit_name and port_name == explicit_name:
+                ref_port = port
+                ref_flow_uuid = port.get("flowUuid")
+                report.reference_flow_by_process[process_uuid] = ref_flow_uuid
+                return ref_port, ref_flow_uuid
 
     # Try to match model's reference_product
     if model and model.reference_product:
@@ -810,6 +842,20 @@ def _location_value(location: Any | None, report: ExportReport, context: dict, l
     return "GLO"
 
 
+def _reference_year_value(value: Any | None, report: ExportReport, context: dict, label: str) -> int:
+    if value is None or value == "":
+        return TIDAS_DEFAULT_YEAR
+    try:
+        year = int(value)
+    except (TypeError, ValueError):
+        report.add_warning("tidas_placeholder", f"{label} invalid reference year; using {TIDAS_DEFAULT_YEAR}", context)
+        return TIDAS_DEFAULT_YEAR
+    if 1000 <= year <= 9999:
+        return year
+    report.add_warning("tidas_placeholder", f"{label} invalid reference year; using {TIDAS_DEFAULT_YEAR}", context)
+    return TIDAS_DEFAULT_YEAR
+
+
 def _reference_to_flow(flow_uuid: Any, description: Any | None = None) -> dict:
     return {
         "@refObjectId": str(flow_uuid or ""),
@@ -958,7 +1004,12 @@ def _build_process_data(
 
         process_name = pi.get("process_name_zh") or pi.get("process_name") or pi.get("name") or process_uuid
         process_name_en = pi.get("process_name_en")
-        location = pi.get("location") or pi.get("geography")
+        location = pi.get("location") or pi.get("geography") or (model.geography if model else None)
+        reference_year = pi.get("reference_year")
+        time_representativeness = pi.get("time_representativeness") or (model.time_representativeness if model else None)
+        technology_description = pi.get("technology_description") or TIDAS_GENERATED_COMMENT
+        process_reference_product = pi.get("reference_product")
+        process_reference_product_flow_uuid = pi.get("reference_product_flow_uuid")
         exchanges = pi.get("exchanges") if isinstance(pi.get("exchanges"), list) else []
         ref_internal_id = str(pi.get("reference_flow_internal_id") or "")
         ref_flow_uuid = pi.get("reference_flow_source_uuid")
@@ -966,6 +1017,7 @@ def _build_process_data(
             {
                 "id": str(exc.get("internal_id") or "0"),
                 "flowUuid": exc.get("flow_uuid"),
+                "name": exc.get("port_name") or exc.get("name") or exc.get("flow_name"),
                 "unit": exc.get("unit"),
                 "unitGroup": exc.get("unit_group"),
                 "amount": exc.get("amount"),
@@ -990,7 +1042,12 @@ def _build_process_data(
 
         process_name = node_data.name
         process_name_en = None
-        location = node_data.location
+        location = node_data.location or (model.geography if model else None)
+        reference_year = node_data.reference_year
+        time_representativeness = node_data.time_representativeness or (model.time_representativeness if model else None)
+        technology_description = node_data.technology_description or TIDAS_GENERATED_COMMENT
+        process_reference_product = node_data.reference_product
+        process_reference_product_flow_uuid = node_data.reference_product_flow_uuid
         exchanges = []
         unit_factor_by_group_and_name, reference_unit_by_group = build_unit_reference_maps(db)
 
@@ -1005,6 +1062,11 @@ def _build_process_data(
                 report.add_error(
                     f"Flow {semantics.flow_uuid} cannot be converted back to its default unit for TIDAS export: {semantics.reason}"
                 )
+            unit_group_switch = dict(semantics.unit_group_switch or {})
+            unit_group_switch.pop("sourceAmount", None)
+            unit_group_switch.pop("source_amount", None)
+            unit_group_switch.pop("sourceExternalSaleAmount", None)
+            unit_group_switch.pop("source_external_sale_amount", None)
             return {
                 "internal_id": port.id,
                 "flow_uuid": port.flowUuid,
@@ -1016,7 +1078,7 @@ def _build_process_data(
                 "current_amount": port.amount,
                 "current_unit": semantics.current_unit,
                 "current_unit_group": semantics.current_unit_group,
-                "unit_group_switch": semantics.unit_group_switch,
+                "unit_group_switch": unit_group_switch,
             }
 
         for port in node_data.inputs:
@@ -1033,9 +1095,27 @@ def _build_process_data(
             allocation_source_ports,
             flow_type_map,
         )
-        ref_port, ref_flow_uuid = _select_reference_flow(product_outputs, process_uuid, model, report)
+        ref_port, ref_flow_uuid = _select_reference_flow(
+            product_outputs,
+            process_uuid,
+            model,
+            report,
+            process_reference_product_flow_uuid,
+            process_reference_product,
+        )
         ref_internal_id = str(ref_port.get("id") if ref_port else "")
 
+    if not ref_internal_id:
+        reference_candidates = _identify_product_outputs(allocation_source_ports, flow_type_map)
+        ref_port, ref_flow_uuid = _select_reference_flow(
+            reference_candidates,
+            process_uuid,
+            model,
+            report,
+            process_reference_product_flow_uuid,
+            process_reference_product,
+        )
+        ref_internal_id = str(ref_port.get("id") if ref_port else "")
     if not ref_internal_id:
         for exc in exchanges:
             if exc.get("direction") == "output":
@@ -1058,6 +1138,19 @@ def _build_process_data(
         {"process_uuid": process_uuid},
         f"Process {process_uuid}",
     )
+    tidas_reference_year = _reference_year_value(
+        reference_year,
+        report,
+        {"process_uuid": process_uuid},
+        f"Process {process_uuid}",
+    )
+    time_block = {"common:referenceYear": tidas_reference_year}
+    if str(time_representativeness or "").strip():
+        time_block["common:timeRepresentativenessDescription"] = _localized_items(
+            time_representativeness,
+            time_representativeness,
+        )
+    technology_text = str(technology_description or "").strip() or TIDAS_GENERATED_COMMENT
     process_dataset = {
         **_process_root_attrs(),
         "administrativeInformation": {
@@ -1074,12 +1167,12 @@ def _build_process_data(
                 "classificationInformation": _classification_information("Unclassified"),
                 "common:generalComment": _localized_items(TIDAS_GENERATED_COMMENT, TIDAS_GENERATED_COMMENT),
             },
-            "time": {"common:referenceYear": TIDAS_DEFAULT_YEAR},
+            "time": time_block,
             "geography": {"locationOfOperationSupplyOrProduction": {"@location": tidas_location}},
             "technology": {
                 "technologyDescriptionAndIncludedProcesses": _localized_items(
-                    TIDAS_GENERATED_COMMENT,
-                    TIDAS_GENERATED_COMMENT,
+                    technology_text,
+                    technology_text,
                 ),
                 "referenceToTechnologyFlowDiagrammOrPicture": {},
             },

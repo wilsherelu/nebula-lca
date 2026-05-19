@@ -6008,6 +6008,9 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
           reference_product: string;
           reference_product_flow_uuid?: string;
           reference_product_direction?: "input" | "output";
+          reference_year?: number;
+          time_representativeness?: string;
+          technology_description?: string;
           inputs?: FlowPort[];
           outputs?: FlowPort[];
           position?: XYPosition;
@@ -6063,6 +6066,9 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
             referenceProduct: uiLanguage === "en" ? referenceProductEn || referenceProductZh : referenceProductZh || referenceProductEn,
             referenceProductFlowUuid: node.reference_product_flow_uuid,
             referenceProductDirection: node.reference_product_direction,
+            referenceYear: node.reference_year,
+            timeRepresentativeness: node.time_representativeness,
+            technologyDescription: node.technology_description,
             inputs: patchFlowNameEn(normalized.inputs),
             outputs: patchFlowNameEn(normalized.outputs),
           },
@@ -6171,6 +6177,9 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         reference_product: string;
         reference_product_flow_uuid?: string;
         reference_product_direction?: "input" | "output";
+        reference_year?: number;
+        time_representativeness?: string;
+        technology_description?: string;
         inputs?: FlowPort[];
         outputs?: FlowPort[];
         position?: XYPosition;
@@ -6200,6 +6209,9 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
               referenceProduct: node.reference_product,
               referenceProductFlowUuid: node.reference_product_flow_uuid,
               referenceProductDirection: node.reference_product_direction,
+              referenceYear: node.reference_year,
+              timeRepresentativeness: node.time_representativeness,
+              technologyDescription: node.technology_description,
               inputs: node.inputs ?? [],
               outputs: node.outputs ?? [],
             },
@@ -6227,6 +6239,9 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         reference_product: string;
         reference_product_flow_uuid?: string;
         reference_product_direction?: "input" | "output";
+        reference_year?: number;
+        time_representativeness?: string;
+        technology_description?: string;
         inputs?: FlowPort[];
         outputs?: FlowPort[];
         position?: XYPosition;
@@ -6281,6 +6296,9 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         reference_product: node.data.referenceProduct,
         reference_product_flow_uuid: node.data.referenceProductFlowUuid,
         reference_product_direction: node.data.referenceProductDirection,
+        reference_year: node.data.referenceYear,
+        time_representativeness: node.data.timeRepresentativeness,
+        technology_description: node.data.technologyDescription,
         inputs: normalized.inputs.map(serializePort),
         outputs: normalized.outputs.map(serializePort),
         position: {
@@ -6382,6 +6400,9 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
           reference_product: string;
           reference_product_flow_uuid?: string;
           reference_product_direction?: "input" | "output";
+          reference_year?: number;
+          time_representativeness?: string;
+          technology_description?: string;
           inputs?: FlowPort[];
           outputs?: FlowPort[];
           position?: XYPosition;
@@ -6421,6 +6442,9 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
             referenceProduct: node.reference_product,
             referenceProductFlowUuid: node.reference_product_flow_uuid,
             referenceProductDirection: node.reference_product_direction,
+            referenceYear: node.reference_year,
+            timeRepresentativeness: node.time_representativeness,
+            technologyDescription: node.technology_description,
             inputs: normalized.inputs,
             outputs: normalized.outputs,
           },

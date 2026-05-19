@@ -25,6 +25,7 @@ type Props = {
   onStatus?: (text: string) => void;
   sourcePolicy?: SourcePolicy;
   initialTab?: TabKey;
+  openProcessInfoOnMount?: boolean;
 };
 
 type TabKey = "external_in" | "external_out";
@@ -56,6 +57,15 @@ type AllocationPreview = {
   method: string;
   message: string;
   ok: boolean;
+};
+
+type ProcessInfoDraft = {
+  location: string;
+  referenceYear: string;
+  timeRepresentativeness: string;
+  technologyDescription: string;
+  referenceProductFlowUuid: string;
+  referenceProductText: string;
 };
 
 const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
@@ -347,7 +357,7 @@ function FlowSection({
   );
 }
 
-export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", initialTab }: Props) {
+export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", initialTab, openProcessInfoOnMount = false }: Props) {
   const [tab, setTab] = useState<TabKey>("external_in");
   const [flowPicker, setFlowPicker] = useState<{ open: boolean; target: FlowTarget | null }>({ open: false, target: null });
   const [createFlowDialog, setCreateFlowDialog] = useState<{ open: boolean; target: FlowTarget | null }>({ open: false, target: null });
@@ -359,6 +369,15 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
   const [catalogFlows, setCatalogFlows] = useState<CatalogFlow[]>([]);
   const [allocationPropertyPort, setAllocationPropertyPort] = useState<FlowPort | null>(null);
   const [allocationModalOpen, setAllocationModalOpen] = useState(false);
+  const [processInfoOpen, setProcessInfoOpen] = useState(false);
+  const [processInfoDraft, setProcessInfoDraft] = useState<ProcessInfoDraft>({
+    location: "",
+    referenceYear: "2026",
+    timeRepresentativeness: "",
+    technologyDescription: "",
+    referenceProductFlowUuid: "",
+    referenceProductText: "",
+  });
   const [tidasAllowedUnitGroups, setTidasAllowedUnitGroups] = useState<Set<string>>(new Set());
   const [unitDefinitions, setUnitDefinitions] = useState<UnitDefinition[]>([]);
   const [flowUnitGroupByUuid, setFlowUnitGroupByUuid] = useState<Record<string, string>>({});
@@ -796,26 +815,42 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
       const sourceUnitGroup = flowDefaultUnitGroup || existingSwitch?.sourceUnitGroup || port.unitGroup || sourcePort.unitGroup || "";
       const sourceUnit = flowDefaultUnit || existingSwitch?.sourceUnit || port.unit;
       const sourceReferenceUnit = referenceUnitByGroup.get(sourceUnitGroup) || flowDefaultUnit || existingSwitch?.sourceReferenceUnit || property.basisUnit || sourceUnit;
-      const previousFactor = Number(existingSwitch?.factor);
-      const sourceUnitFactor = unitFactorByGroupAndName.get(`${sourceUnitGroup}||${sourceUnit}`) ?? 1;
-      const canInferSourceAmount = existingSwitch && Number.isFinite(previousFactor) && previousFactor > 0 && sourceUnitFactor > 0;
-      const sourceAmount = Number.isFinite(existingSwitch?.sourceAmount ?? NaN)
-        ? Number(existingSwitch?.sourceAmount)
-        : canInferSourceAmount
-          ? (Number(port.amount) || 0) / (sourceUnitFactor * previousFactor)
-          : (Number(port.amount) || 0);
-      const sourceExternalSaleAmount =
-        Number.isFinite(existingSwitch?.sourceExternalSaleAmount ?? NaN)
-          ? Number(existingSwitch?.sourceExternalSaleAmount)
-          : canInferSourceAmount && port.externalSaleAmount !== undefined
-            ? (Number(port.externalSaleAmount) || 0) / (sourceUnitFactor * previousFactor)
-            : port.externalSaleAmount;
+      const currentUnitGroup = port.unitGroup || sourceUnitGroup;
+      const currentUnitFactor = unitFactorByGroupAndName.get(`${currentUnitGroup}||${port.unit}`) ?? 1;
+      const sourceReferenceFactor = unitFactorByGroupAndName.get(`${sourceUnitGroup}||${sourceReferenceUnit}`) ?? 1;
       const targetUnit = property.targetUnit || referenceUnitByGroup.get(property.targetUnitGroup) || "";
-      const nextAmount = sourceAmount * sourceUnitFactor * factor;
+      const targetUnitFactor = unitFactorByGroupAndName.get(`${property.targetUnitGroup}||${targetUnit}`) ?? 1;
+      const currentUnitGroupKey = normalizeUnitGroup(currentUnitGroup);
+      const sourceUnitGroupKey = normalizeUnitGroup(sourceUnitGroup);
+      const targetUnitGroupKey = normalizeUnitGroup(property.targetUnitGroup);
+      const deriveSourceAmount = (rawAmount: number | undefined, existingSourceAmount?: number): number | undefined => {
+        if (rawAmount === undefined) {
+          return undefined;
+        }
+        const amount = Number(rawAmount) || 0;
+        if (currentUnitGroupKey && currentUnitGroupKey === targetUnitGroupKey) {
+          return sourceReferenceFactor > 0 && factor > 0
+            ? (amount * currentUnitFactor) / (sourceReferenceFactor * factor)
+            : amount / factor;
+        }
+        if (currentUnitGroupKey && currentUnitGroupKey === sourceUnitGroupKey) {
+          return sourceReferenceFactor > 0
+            ? (amount * currentUnitFactor) / sourceReferenceFactor
+            : amount;
+        }
+        return Number.isFinite(existingSourceAmount ?? NaN) ? Number(existingSourceAmount) : amount;
+      };
+      const sourceAmount = deriveSourceAmount(Number(port.amount), existingSwitch?.sourceAmount) ?? 0;
+      const sourceExternalSaleAmount = deriveSourceAmount(port.externalSaleAmount, existingSwitch?.sourceExternalSaleAmount);
+      const nextAmount = targetUnitFactor > 0
+        ? (sourceAmount * sourceReferenceFactor * factor) / targetUnitFactor
+        : sourceAmount * factor;
       const nextExternalSaleAmount =
         sourceExternalSaleAmount === undefined
           ? undefined
-          : (Number(sourceExternalSaleAmount) || 0) * sourceUnitFactor * factor;
+          : targetUnitFactor > 0
+            ? ((Number(sourceExternalSaleAmount) || 0) * sourceReferenceFactor * factor) / targetUnitFactor
+            : (Number(sourceExternalSaleAmount) || 0) * factor;
       const unitGroupSwitch: UnitGroupSwitchSnapshot = {
         sourceFlowUuid: port.flowUuid,
         sourceUnitGroup,
@@ -893,6 +928,46 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
   const externalOutIntermediate = node.data.outputs.filter((p) => p.type !== "biosphere");
   const externalOutElementary = node.data.outputs.filter((p) => p.type === "biosphere");
   const productOutputs = externalOutIntermediate.filter((port) => Boolean(port.isProduct));
+  const openProcessInfoModal = () => {
+    const selectedProduct =
+      productOutputs.find((port) => port.flowUuid === node.data.referenceProductFlowUuid) ??
+      productOutputs.find((port) => port.name === node.data.referenceProduct) ??
+      productOutputs[0];
+    setProcessInfoDraft({
+      location: node.data.location ?? "",
+      referenceYear: String(node.data.referenceYear ?? 2026),
+      timeRepresentativeness: node.data.timeRepresentativeness ?? "",
+      technologyDescription: node.data.technologyDescription ?? "Nebula generated",
+      referenceProductFlowUuid: selectedProduct?.flowUuid ?? "",
+      referenceProductText: node.data.referenceProduct || selectedProduct?.name || "",
+    });
+    setProcessInfoOpen(true);
+  };
+  const saveProcessInfo = () => {
+    const selectedProduct = productOutputs.find((port) => port.flowUuid === processInfoDraft.referenceProductFlowUuid);
+    const rawYear = Number(processInfoDraft.referenceYear);
+    const referenceYear = Number.isInteger(rawYear) && rawYear >= 1000 && rawYear <= 9999 ? rawYear : 2026;
+    updateNode(node.id, (current) => ({
+      ...current,
+      data: {
+        ...current.data,
+        location: processInfoDraft.location.trim(),
+        referenceYear,
+        timeRepresentativeness: processInfoDraft.timeRepresentativeness.trim(),
+        technologyDescription: processInfoDraft.technologyDescription.trim() || "Nebula generated",
+        referenceProduct: selectedProduct?.name ?? processInfoDraft.referenceProductText.trim(),
+        referenceProductFlowUuid: selectedProduct?.flowUuid ?? current.data.referenceProductFlowUuid,
+        referenceProductDirection: selectedProduct ? "output" : current.data.referenceProductDirection,
+      },
+    }));
+    setProcessInfoOpen(false);
+    onStatus?.(t("过程信息已保存。", "Process metadata saved."));
+  };
+  useEffect(() => {
+    if (openProcessInfoOnMount) {
+      openProcessInfoModal();
+    }
+  }, [openProcessInfoOnMount, node.id]);
   const allocationPreview = useMemo(
     () => calculateAllocationPreview(productOutputs),
     [productOutputs, unitFactorByGroupAndName, resolvePortUnitGroupKey, uiLanguage],
@@ -1709,6 +1784,15 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
             />
             {t("单位自动换算", "Unit auto conversion")}
           </label>
+          {!ptsNode && (
+            <button
+              type="button"
+              className="text-btn inspector-toolbar-btn"
+              onClick={openProcessInfoModal}
+            >
+              {t("过程信息", "Process Info")}
+            </button>
+          )}
           {!marketProcess && !ptsNode && (
             <button
               type="button"
@@ -2318,6 +2402,87 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                   {t("确认", "Confirm")}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {processInfoOpen && (
+        <div className="overlay-modal">
+          <div className="overlay-panel process-info-modal">
+            <div className="overlay-head">
+              <strong>{t("过程信息", "Process Info")}</strong>
+              <button type="button" className="drawer-close-btn" onClick={() => setProcessInfoOpen(false)}>
+                {t("关闭", "Close")}
+              </button>
+            </div>
+            <div className="process-info-body">
+              <label>
+                {t("地理位置", "Geography")}
+                <input
+                  value={processInfoDraft.location}
+                  placeholder={t("留空继承项目地理位置，如 CN", "Blank inherits project geography, e.g. CN")}
+                  onChange={(event) => setProcessInfoDraft((prev) => ({ ...prev, location: event.target.value }))}
+                />
+              </label>
+              <label>
+                {t("参考年份", "Reference Year")}
+                <input
+                  type="number"
+                  min={1000}
+                  max={9999}
+                  value={processInfoDraft.referenceYear}
+                  onChange={(event) => setProcessInfoDraft((prev) => ({ ...prev, referenceYear: event.target.value }))}
+                />
+              </label>
+              <label className="process-info-field span-2">
+                {t("时间代表性说明", "Time Representativeness")}
+                <input
+                  value={processInfoDraft.timeRepresentativeness}
+                  placeholder={t("可选", "Optional")}
+                  onChange={(event) => setProcessInfoDraft((prev) => ({ ...prev, timeRepresentativeness: event.target.value }))}
+                />
+              </label>
+              <label className="process-info-field span-2">
+                {t("技术描述", "Technology Description")}
+                <textarea
+                  rows={3}
+                  value={processInfoDraft.technologyDescription}
+                  onChange={(event) => setProcessInfoDraft((prev) => ({ ...prev, technologyDescription: event.target.value }))}
+                />
+              </label>
+              {productOutputs.length > 0 ? (
+                <label className="process-info-field span-2">
+                  {t("参考产品", "Reference Product")}
+                  <select
+                    value={processInfoDraft.referenceProductFlowUuid}
+                    disabled={productOutputs.length <= 1}
+                    onChange={(event) => setProcessInfoDraft((prev) => ({ ...prev, referenceProductFlowUuid: event.target.value }))}
+                  >
+                    {productOutputs.map((port) => (
+                      <option key={port.id} value={port.flowUuid}>
+                        {getPortDisplayName(port)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <label className="process-info-field span-2">
+                  {t("参考产品", "Reference Product")}
+                  <input
+                    value={processInfoDraft.referenceProductText}
+                    onChange={(event) => setProcessInfoDraft((prev) => ({ ...prev, referenceProductText: event.target.value }))}
+                  />
+                </label>
+              )}
+            </div>
+            <div className="assoc-actions process-info-actions">
+              <button type="button" className="ghost-btn" onClick={() => setProcessInfoOpen(false)}>
+                {t("取消", "Cancel")}
+              </button>
+              <button type="button" onClick={saveProcessInfo}>
+                {t("保存", "Save")}
+              </button>
             </div>
           </div>
         </div>
