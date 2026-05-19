@@ -12,6 +12,7 @@ from app.ecoinvent_ef31_loader import (
     ElementaryFlow,
     IntermediateFlow,
     UnitRecord,
+    UnitConversion,
 )
 
 # Keep service tests isolated when a helper uses SessionLocal internally.
@@ -468,6 +469,152 @@ class TestCommitWithDbSession:
             assert pj["exchanges"][0]["flow_uuid"] == "rp-001"
             assert pj["exchanges"][0]["isProduct"] is True
             assert pj["exchanges"][1]["flow_uuid"] == "flow-001"
+        finally:
+            db.close()
+
+    def test_commit_imports_unit_conversions_and_flow_unit_groups(self):
+        """UnitConversions.xml data should become the authoritative eco unit catalog."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from app.database import Base
+        from app.models import FlowRecord, UnitDefinition, UnitGroup
+
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+        db = Session()
+
+        try:
+            dataset = self._make_dataset(reference_product_unit="g")
+            exchange = self._make_elem_exchange(unit="g")
+            elem_flow = self._make_elem_flow(default_unit="g", unit_group="")
+            conversions = [
+                UnitConversion(
+                    conversion_id="conv-g-kg",
+                    unit_from_name="g",
+                    unit_to_name="kg",
+                    unit_type="mass",
+                    factor=0.001,
+                ),
+                UnitConversion(
+                    conversion_id="conv-mg-kg",
+                    unit_from_name="mg",
+                    unit_to_name="kg",
+                    unit_type="mass",
+                    factor=0.000001,
+                ),
+            ]
+
+            result = commit_lci_import(
+                datasets=[dataset],
+                exchanges_map={"test.spold": [exchange]},
+                elementary_flows=[elem_flow],
+                unit_conversions=conversions,
+                db=db,
+            )
+            db.commit()
+
+            assert result.units_new >= 3
+            mass_group = db.get(UnitGroup, "mass")
+            assert mass_group is not None
+            assert mass_group.reference_unit == "kg"
+
+            unit_defs = {
+                row.unit_name: row
+                for row in db.query(UnitDefinition).filter(UnitDefinition.unit_group == "mass").all()
+            }
+            assert unit_defs["kg"].is_reference is True
+            assert unit_defs["kg"].factor_to_reference == 1.0
+            assert unit_defs["g"].factor_to_reference == 0.001
+            assert unit_defs["mg"].factor_to_reference == 0.000001
+
+            flow = db.get(FlowRecord, "flow-001")
+            assert flow is not None
+            assert flow.unit_group == "mass"
+        finally:
+            db.close()
+
+    def test_commit_derives_multi_step_unit_conversion(self):
+        """Indirect conversion paths should still resolve to the group reference unit."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from app.database import Base
+        from app.models import UnitDefinition
+
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+        db = Session()
+
+        try:
+            dataset = self._make_dataset(reference_product_unit="Wh")
+            exchange = self._make_elem_exchange(unit="Wh")
+            elem_flow = self._make_elem_flow(default_unit="Wh", unit_group="")
+            conversions = [
+                UnitConversion("conv-wh-kwh", "Wh", "kWh", "energy", 0.001),
+                UnitConversion("conv-kwh-mj", "kWh", "MJ", "energy", 3.6),
+            ]
+
+            commit_lci_import(
+                datasets=[dataset],
+                exchanges_map={"test.spold": [exchange]},
+                elementary_flows=[elem_flow],
+                unit_conversions=conversions,
+                db=db,
+            )
+            db.commit()
+
+            unit_defs = {
+                row.unit_name: row.factor_to_reference
+                for row in db.query(UnitDefinition).filter(UnitDefinition.unit_group == "energy").all()
+            }
+            assert unit_defs["MJ"] == 1.0
+            assert abs(unit_defs["kWh"] - 3.6) < 1e-12
+            assert abs(unit_defs["Wh"] - 0.0036) < 1e-12
+        finally:
+            db.close()
+
+    def test_commit_backfills_existing_flow_unit_group(self):
+        """Re-running an import should repair old FlowRecord rows with missing unit groups."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from app.database import Base
+        from app.models import FlowRecord
+
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+        db = Session()
+
+        try:
+            db.add(FlowRecord(
+                flow_uuid="flow-001",
+                flow_name="CO2",
+                flow_type="Elementary flow",
+                default_unit="kg",
+                unit_group="",
+                source="ef3.1",
+            ))
+            db.commit()
+
+            dataset = self._make_dataset()
+            exchange = self._make_elem_exchange()
+            elem_flow = self._make_elem_flow(default_unit="kg", unit_group="")
+            conversions = [
+                UnitConversion("conv-g-kg", "g", "kg", "mass", 0.001),
+            ]
+
+            commit_lci_import(
+                datasets=[dataset],
+                exchanges_map={"test.spold": [exchange]},
+                elementary_flows=[elem_flow],
+                unit_conversions=conversions,
+                db=db,
+            )
+            db.commit()
+
+            flow = db.get(FlowRecord, "flow-001")
+            assert flow.unit_group == "mass"
         finally:
             db.close()
 

@@ -12,6 +12,7 @@ Commit requires explicit confirm=true.
 
 import logging
 import uuid
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Optional
@@ -19,7 +20,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from . import database as _database
-from .models import FlowRecord, UnitDefinition, ReferenceProcess
+from .models import FlowRecord, UnitDefinition, ReferenceProcess, UnitGroup
 from .ecoinvent_ef31_loader import (
     ElementaryFlow,
     IntermediateFlow,
@@ -152,6 +153,15 @@ def _ensure_flow_exists(
         )
     ).first()
     if existing:
+        updates = {}
+        if flow.default_unit and not existing.default_unit:
+            updates["default_unit"] = flow.default_unit
+        if flow.unit_group and not existing.unit_group:
+            updates["unit_group"] = flow.unit_group
+        if flow.compartment and not existing.compartment:
+            updates["compartment"] = flow.compartment
+        if updates:
+            db.query(FlowRecord).filter(FlowRecord.flow_uuid == flow.flow_uuid).update(updates)
         return flow.flow_uuid, False
 
     db_flow = FlowRecord(
@@ -181,6 +191,13 @@ def _ensure_intermediate_flow_exists(
         )
     ).first()
     if existing:
+        updates = {}
+        if flow.default_unit and not existing.default_unit:
+            updates["default_unit"] = flow.default_unit
+        if flow.unit_group and not existing.unit_group:
+            updates["unit_group"] = flow.unit_group
+        if updates:
+            db.query(FlowRecord).filter(FlowRecord.flow_uuid == flow.flow_uuid).update(updates)
         return flow.flow_uuid, False
 
     db_flow = FlowRecord(
@@ -198,41 +215,145 @@ def _ensure_intermediate_flow_exists(
     return flow.flow_uuid, True
 
 
-def _ensure_unit_exists(
-    db: Session,
-    unit: UnitRecord,
-) -> tuple[int, bool]:
-    """Ensure a UnitDefinition entry exists.
+_FALLBACK_UNIT_DEFS = {
+    "kg": ("mass", 1.0, True),
+    "kilogram": ("mass", 1.0, True),
+    "g": ("mass", 0.001, False),
+    "gram": ("mass", 0.001, False),
+    "mj": ("energy", 1.0, True),
+    "megajoule": ("energy", 1.0, True),
+    "j": ("energy", 0.000001, False),
+    "joule": ("energy", 0.000001, False),
+    "kwh": ("energy", 3.6, False),
+    "kilowatt hour": ("energy", 3.6, False),
+    "m3": ("volume", 1.0, True),
+    "cubic meter": ("volume", 1.0, True),
+    "l": ("volume", 0.001, False),
+    "litre": ("volume", 0.001, False),
+}
 
-    P2 fix: previously wrote all units into unit_group='ef3.1' with
-    factor_to_reference=1.0, polluting the unit catalog.
 
-    This version only creates entries for known mass/volume/energy units
-    and does NOT consume UnitConversions.xml.  It is intentionally
-    conservative — full unit-group/conversion support is deferred to
-    a future stage.
+def _unit_key(unit_name: str | None) -> str:
+    return str(unit_name or "").strip().lower()
+
+
+def _unit_group_key(unit_type: str | None) -> str:
+    return str(unit_type or "").strip()
+
+
+def _safe_factor(value: float | int | str | None) -> float | None:
+    try:
+        factor = float(value)
+    except (TypeError, ValueError):
+        return None
+    if factor <= 0:
+        return None
+    return factor
+
+
+def _build_ecoinvent_unit_catalog(
+    units: dict[str, UnitRecord],
+    unit_conversions: list[UnitConversion],
+) -> tuple[dict[str, dict[str, float]], dict[str, str], dict[str, str]]:
+    """Return factor maps from ecoinvent UnitConversions.xml.
+
+    The conversion factor is interpreted as:
+    ``amount(unitFromName) * factor = amount(unitToName)``.
+    We choose one reference unit per ecoinvent unitType, then derive every
+    reachable unit's factor_to_reference by graph traversal.
     """
-    unit_name = unit.name
-    if not unit_name:
-        return 0, False
+    graph: dict[str, dict[str, list[tuple[str, float]]]] = defaultdict(lambda: defaultdict(list))
+    units_by_group: dict[str, set[str]] = defaultdict(set)
+    reference_votes: dict[str, Counter[str]] = defaultdict(Counter)
+    from_units_by_group: dict[str, set[str]] = defaultdict(set)
 
-    # Only recognize a handful of base units with sensible mapping
-    KNOWN_BASE_UNITS = {
-        "kilogram": ("mass", True),
-        "gram": ("mass", False),
-        "joule": ("energy", False),
-        "cubic meter": ("volume", False),
-        "litre": ("volume", False),
-        "kilowatt hour": ("energy", False),
-    }
+    for conversion in unit_conversions:
+        group = _unit_group_key(conversion.unit_type)
+        unit_from = str(conversion.unit_from_name or "").strip()
+        unit_to = str(conversion.unit_to_name or "").strip()
+        factor = _safe_factor(conversion.factor)
+        if not group or not unit_from or not unit_to or factor is None:
+            continue
 
-    name_lower = unit_name.lower()
-    if name_lower not in {k.lower(): v for k, v in KNOWN_BASE_UNITS.items()}:
-        # Skip unknown units — don't pollute unit_definitions
-        return 0, False
+        graph[group][unit_from].append((unit_to, factor))
+        graph[group][unit_to].append((unit_from, 1.0 / factor))
+        units_by_group[group].update([unit_from, unit_to])
+        reference_votes[group][unit_to] += 1
+        from_units_by_group[group].add(unit_from)
 
-    unit_group, is_reference = KNOWN_BASE_UNITS[name_lower]
+    for unit in units.values():
+        group = _unit_group_key(unit.unit_type)
+        name = str(unit.name or "").strip()
+        if group and name:
+            units_by_group[group].add(name)
+            reference_votes[group][name] += 1
 
+    factor_by_group: dict[str, dict[str, float]] = {}
+    reference_by_group: dict[str, str] = {}
+    unit_group_by_unit: dict[str, str] = {}
+
+    for group, unit_names in units_by_group.items():
+        if not unit_names:
+            continue
+        terminal_votes = Counter(
+            {
+                unit_name: count
+                for unit_name, count in reference_votes[group].items()
+                if unit_name not in from_units_by_group[group]
+            }
+        )
+        votes = terminal_votes or reference_votes[group]
+        reference = votes.most_common(1)[0][0] if votes else sorted(unit_names)[0]
+        reference_by_group[group] = reference
+
+        factors: dict[str, float] = {reference: 1.0}
+        queue = deque([reference])
+        while queue:
+            current = queue.popleft()
+            current_factor = factors[current]
+            for neighbor, edge_factor in graph[group].get(current, []):
+                if neighbor in factors:
+                    continue
+                factors[neighbor] = current_factor / edge_factor
+                queue.append(neighbor)
+
+        for name in unit_names:
+            if name not in factors and _unit_key(name) == _unit_key(reference):
+                factors[name] = 1.0
+            if name in factors:
+                unit_group_by_unit[_unit_key(name)] = group
+
+        factor_by_group[group] = factors
+
+    return factor_by_group, reference_by_group, unit_group_by_unit
+
+
+def _ensure_unit_group(db: Session, group: str, reference_unit: str) -> tuple[UnitGroup, bool]:
+    existing = db.get(UnitGroup, group)
+    if existing is not None:
+        if reference_unit and not existing.reference_unit:
+            existing.reference_unit = reference_unit
+        return existing, False
+
+    row = UnitGroup(
+        name=group,
+        reference_unit=reference_unit,
+        source_version="ecoinvent",
+        source_package_version="ecoinvent 3.11",
+        source_file="MasterData/UnitConversions.xml",
+    )
+    db.add(row)
+    db.flush()
+    return row, True
+
+
+def _ensure_unit_definition(
+    db: Session,
+    unit_group: str,
+    unit_name: str,
+    factor_to_reference: float,
+    is_reference: bool,
+) -> tuple[int, bool]:
     existing = db.execute(
         UnitDefinition.__table__.select().where(
             UnitDefinition.__table__.c.unit_group == unit_group,
@@ -240,24 +361,87 @@ def _ensure_unit_exists(
         )
     ).first()
     if existing:
+        db.query(UnitDefinition).filter(UnitDefinition.id == existing.id).update(
+            {
+                "factor_to_reference": factor_to_reference,
+                "is_reference": is_reference,
+            }
+        )
         return existing.id, False
-
-    # Convert factor_to_reference to float
-    factor = 1.0
-    if unit_name.lower() == "gram":
-        factor = 0.001
-    elif unit_name.lower() == "kilowatt hour":
-        factor = 3600000.0
 
     db_unit = UnitDefinition(
         unit_group=unit_group,
         unit_name=unit_name,
-        factor_to_reference=factor,
+        factor_to_reference=factor_to_reference,
         is_reference=is_reference,
     )
     db.add(db_unit)
     db.flush()
     return db_unit.id, True
+
+
+def _ensure_unit_exists(
+    db: Session,
+    unit: UnitRecord,
+) -> tuple[int, bool]:
+    """Fallback for minimal fixtures without UnitConversions.xml."""
+    unit_name = str(unit.name or "").strip()
+    fallback = _FALLBACK_UNIT_DEFS.get(_unit_key(unit_name))
+    if not unit_name or fallback is None:
+        return 0, False
+    unit_group, factor, is_reference = fallback
+    _ensure_unit_group(db, unit_group, unit_name if is_reference else "")
+    return _ensure_unit_definition(db, unit_group, unit_name, factor, is_reference)
+
+
+def _ensure_ecoinvent_unit_catalog(
+    db: Session,
+    units: dict[str, UnitRecord],
+    unit_conversions: list[UnitConversion] | None,
+) -> tuple[int, int, dict[str, str]]:
+    """Persist the ecoinvent unit catalog and return unit-name -> group."""
+    conversions = unit_conversions or []
+    factor_by_group, reference_by_group, unit_group_by_unit = _build_ecoinvent_unit_catalog(units, conversions)
+    units_new = 0
+    units_skipped = 0
+
+    for group, factors in factor_by_group.items():
+        reference = reference_by_group.get(group, "")
+        _ensure_unit_group(db, group, reference)
+        for unit_name, factor in factors.items():
+            _, was_new = _ensure_unit_definition(
+                db,
+                group,
+                unit_name,
+                factor,
+                _unit_key(unit_name) == _unit_key(reference),
+            )
+            if was_new:
+                units_new += 1
+            else:
+                units_skipped += 1
+
+    if not conversions:
+        for unit in units.values():
+            _, was_new = _ensure_unit_exists(db, unit)
+            if was_new:
+                units_new += 1
+            else:
+                units_skipped += 1
+
+    return units_new, units_skipped, unit_group_by_unit
+
+
+def _assign_flow_unit_groups(
+    flows: list[ElementaryFlow] | list[IntermediateFlow],
+    unit_group_by_unit: dict[str, str],
+) -> None:
+    for flow in flows:
+        if getattr(flow, "unit_group", None):
+            continue
+        unit_group = unit_group_by_unit.get(_unit_key(getattr(flow, "default_unit", "")))
+        if unit_group:
+            flow.unit_group = unit_group
 
 
 def _build_elementary_exchanges_json(
@@ -313,6 +497,7 @@ def dry_run_lci_import(
     elementary_flows: list[ElementaryFlow],
     intermediate_flows: list[IntermediateFlow] | None = None,
     units: dict[str, UnitRecord] | None = None,
+    unit_conversions: list[UnitConversion] | None = None,
     db: Session | None = None,
 ) -> DbDryRunResult:
     """Dry-run LCI import: count what would be written without touching DB.
@@ -336,6 +521,11 @@ def dry_run_lci_import(
         close_on_exit = True
 
     try:
+        unit_group_by_unit = _build_ecoinvent_unit_catalog(units or {}, unit_conversions or [])[2]
+        _assign_flow_unit_groups(elementary_flows, unit_group_by_unit)
+        if intermediate_flows:
+            _assign_flow_unit_groups(intermediate_flows, unit_group_by_unit)
+
         # Build lookup sets
         flow_rows = db.execute(FlowRecord.__table__.select()).all()
         existing_flow_uuids = {row.flow_uuid for row in flow_rows}
@@ -388,6 +578,7 @@ def commit_lci_import(
     elementary_flows: list[ElementaryFlow],
     intermediate_flows: list[IntermediateFlow] | None = None,
     units: dict[str, UnitRecord] | None = None,
+    unit_conversions: list[UnitConversion] | None = None,
     limit: int | None = None,
     db: Session | None = None,
 ) -> DbCommitResult:
@@ -423,6 +614,15 @@ def commit_lci_import(
         close_on_exit = True
 
     try:
+        units_new, units_skipped, unit_group_by_unit = _ensure_ecoinvent_unit_catalog(
+            db, units, unit_conversions
+        )
+        result.units_new += units_new
+        result.units_skipped += units_skipped
+        _assign_flow_unit_groups(elementary_flows, unit_group_by_unit)
+        if intermediate_flows:
+            _assign_flow_unit_groups(intermediate_flows, unit_group_by_unit)
+
         # Build MasterData lookup for full flow data
         elem_flow_lookup = {f.flow_uuid: f for f in elementary_flows}
 
@@ -486,7 +686,7 @@ def commit_lci_import(
             if not flow_ok:
                 continue
 
-            # Ensure units exist (conservative: only known base units)
+            # Ensure exchange units exist for minimal fixtures without UnitConversions.xml.
             seen_units = set()
             for exc in file_exchanges:
                 if exc.unit and exc.unit not in seen_units:

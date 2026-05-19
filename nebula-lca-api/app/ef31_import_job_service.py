@@ -390,6 +390,7 @@ def preview_ef31_import(
         elementary_flows=elementary_flows,
         intermediate_flows=intermediate_flows,
         units=units_map,
+        unit_conversions=unit_conversions,
     )
     dry_run_summary = dry_run.summary()
     combined_errors = [*errors, *dry_run.errors]
@@ -500,12 +501,17 @@ def commit_ef31_import(
 
     # Reload units from extracted MasterData
     units_map: dict[str, UnitRecord] = {}
+    unit_conversions: list = []
     elementary_flows: list[ElementaryFlow] = []
     intermediate_flows: list[IntermediateFlow] = []
 
     if master_dir and master_dir.exists():
         try:
             units_map = parse_units(master_dir)
+        except Exception:
+            pass
+        try:
+            unit_conversions = parse_unit_conversions(master_dir)
         except Exception:
             pass
         try:
@@ -545,6 +551,7 @@ def commit_ef31_import(
         elementary_flows=elementary_flows,
         intermediate_flows=intermediate_flows,
         units=units_map,
+        unit_conversions=unit_conversions,
         db=db,
     )
     commit_result.job_id = job_id
