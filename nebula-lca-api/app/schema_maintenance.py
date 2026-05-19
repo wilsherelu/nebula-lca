@@ -4,7 +4,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from .models import UnitGroup
+from .models import LciExchangeMatrix, UnitGroup
 from .tidas_reference import load_tidas_reference_seed
 
 
@@ -72,6 +72,50 @@ def ensure_unit_group_source_columns(engine: Engine) -> dict:
         "table": "unit_groups",
         "added_columns": added_columns,
         "status": "ok" if added_columns else "already_complete",
+    }
+
+
+def ensure_lci_exchange_matrix_table(engine: Engine) -> dict:
+    """Ensure lci_exchange_matrix table exists with correct schema."""
+    added_tables: list[str] = []
+    added_indexes: list[str] = []
+    if not inspect(engine).has_table("lci_exchange_matrix"):
+        LciExchangeMatrix.__table__.create(bind=engine, checkfirst=True)
+        added_tables.append("lci_exchange_matrix")
+
+    with engine.begin() as conn:
+        inspector = inspect(conn)
+        columns = {col["name"] for col in inspector.get_columns("lci_exchange_matrix")}
+        needed = {
+            "process_uuid": "VARCHAR(64)",
+            "flow_uuid": "VARCHAR(64)",
+            "amount": "FLOAT",
+            "unit": "VARCHAR(64)",
+            "direction": "VARCHAR(8)",
+            "source": "VARCHAR(64)",
+            "source_package_version": "VARCHAR(255)",
+        }
+        for col_name, col_type in needed.items():
+            if col_name not in columns:
+                conn.execute(text(f"ALTER TABLE lci_exchange_matrix ADD COLUMN {col_name} {col_type}"))
+                added_indexes.append(f"col:{col_name}")
+
+        existing_indexes = {idx["name"] for idx in inspector.get_indexes("lci_exchange_matrix")}
+        dialect_name = conn.engine.dialect.name
+        for idx_name, idx_sql in [
+            ("ix_lci_process_uuid", "CREATE INDEX {if_not_exists} ix_lci_process_uuid ON lci_exchange_matrix (process_uuid)"),
+            ("ix_lci_flow_uuid", "CREATE INDEX {if_not_exists} ix_lci_flow_uuid ON lci_exchange_matrix (flow_uuid)"),
+        ]:
+            if idx_name in existing_indexes:
+                continue
+            if_not_exists = "IF NOT EXISTS" if dialect_name in {"postgresql", "sqlite"} else ""
+            conn.execute(text(idx_sql.format(if_not_exists=if_not_exists)))
+            added_indexes.append(idx_name)
+
+    return {
+        "status": "ok" if added_tables or added_indexes else "already_complete",
+        "added_tables": added_tables,
+        "added_indexes": added_indexes,
     }
 
 

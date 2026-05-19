@@ -221,3 +221,27 @@ class DebugDiagnostic(Base):
     payload_json: Mapped[dict] = mapped_column(JsonType, nullable=False, default=dict)
     result_json: Mapped[dict] = mapped_column(JsonType, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class LciExchangeMatrix(Base):
+    """Sparse matrix storing elementary inventory for ecoinvent LCI processes.
+
+    Each row represents one non-zero elementary exchange within a process.
+    Multiple units for the same process/flow/direction must stay separate until
+    a later unit-normalization step can safely combine them.
+    """
+
+    __tablename__ = "lci_exchange_matrix"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    process_uuid: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    flow_uuid: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    unit: Mapped[str] = mapped_column(String(64), nullable=False)
+    direction: Mapped[str] = mapped_column(String(8), nullable=False)
+    source: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_package_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("process_uuid", "flow_uuid", "direction", "unit", name="uq_lci_process_flow_direction_unit"),
+    )
