@@ -364,6 +364,15 @@ def parse_intermediate_exchanges(data_dir: Path, units: Dict[str, UnitRecord]) -
                     elif classification is None and class_value:
                         classification = class_value
 
+            # Check classification as attribute on <intermediateExchange> itself
+            # (ecoSpold02 format uses attributes, not child <classification> element)
+            if not classification_value:
+                class_system = str(elem.get('classification', '')).strip()
+                class_value = str(elem.get('classificationValue', '')).strip()
+                if class_system == 'By-product classification':
+                    classification_value = class_value
+                    classification = class_value
+
             unit_name = units.get(unit_id, UnitRecord("", "")).name if unit_id else ""
 
             # Only the By-product classification decides product vs waste semantics.
