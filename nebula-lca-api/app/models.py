@@ -1,6 +1,6 @@
 from datetime import datetime
 import uuid
-from sqlalchemy import String, Integer, DateTime, ForeignKey, Text, Float, Boolean, UniqueConstraint
+from sqlalchemy import String, Integer, DateTime, ForeignKey, Text, Float, Boolean, UniqueConstraint, LargeBinary
 from sqlalchemy import JSON as SAJSON
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import JSONB
@@ -245,3 +245,64 @@ class LciExchangeMatrix(Base):
     __table_args__ = (
         UniqueConstraint("process_uuid", "flow_uuid", "direction", "unit", name="uq_lci_process_flow_direction_unit"),
     )
+
+
+class LciBiosphereFlowKey(Base):
+    """Dictionary key for canonicalized elementary inventory vectors."""
+
+    __tablename__ = "lci_biosphere_flow_keys"
+
+    flow_key_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    flow_uuid: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    compartment: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    subcompartment: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    direction: Mapped[str] = mapped_column(String(8), nullable=False)
+    canonical_unit: Mapped[str] = mapped_column(String(64), nullable=False)
+    source: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_package_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "flow_uuid",
+            "compartment",
+            "subcompartment",
+            "direction",
+            "canonical_unit",
+            name="uq_lci_flow_key_identity",
+        ),
+    )
+
+
+class LciVectorAxis(Base):
+    """Reusable sorted flow-key axis for compressed LCI vectors."""
+
+    __tablename__ = "lci_vector_axes"
+
+    axis_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    nnz: Mapped[int] = mapped_column(Integer, nullable=False)
+    flow_key_ids_blob: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    checksum: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    compression: Mapped[str] = mapped_column(String(32), nullable=False, default="zlib")
+
+
+class LciProcessVector(Base):
+    """Compressed elementary inventory vector for one linked LCI process."""
+
+    __tablename__ = "lci_process_vectors"
+
+    process_uuid: Mapped[str] = mapped_column(String(64), primary_key=True)
+    dataset_level: Mapped[str] = mapped_column(String(32), nullable=False, default="linked_lci")
+    system_model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    nnz: Mapped[int] = mapped_column(Integer, nullable=False)
+    axis_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    flow_key_ids_blob: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    amounts_blob: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    index_dtype: Mapped[str] = mapped_column(String(32), nullable=False, default="uint32")
+    amount_dtype: Mapped[str] = mapped_column(String(32), nullable=False, default="float64")
+    compression: Mapped[str] = mapped_column(String(32), nullable=False, default="zlib")
+    canonicalized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    checksum: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    source: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_package_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

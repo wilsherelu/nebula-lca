@@ -230,6 +230,7 @@ _FALLBACK_UNIT_DEFS = {
     "cubic meter": ("volume", 1.0, True),
     "l": ("volume", 0.001, False),
     "litre": ("volume", 0.001, False),
+    "kbq": ("radioactivity", 1.0, True),
 }
 
 
@@ -421,13 +422,19 @@ def _ensure_ecoinvent_unit_catalog(
             else:
                 units_skipped += 1
 
-    if not conversions:
-        for unit in units.values():
-            _, was_new = _ensure_unit_exists(db, unit)
-            if was_new:
-                units_new += 1
-            else:
-                units_skipped += 1
+    for unit in units.values():
+        unit_name = str(unit.name or "").strip()
+        unit_key = _unit_key(unit_name)
+        if unit_group_by_unit.get(unit_key):
+            continue
+        _, was_new = _ensure_unit_exists(db, unit)
+        fallback = _FALLBACK_UNIT_DEFS.get(unit_key)
+        if fallback is not None:
+            unit_group_by_unit[unit_key] = fallback[0]
+        if was_new:
+            units_new += 1
+        else:
+            units_skipped += 1
 
     return units_new, units_skipped, unit_group_by_unit
 
