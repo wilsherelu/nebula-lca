@@ -265,11 +265,14 @@ def import_ecoinvent_processes(
     spold_dir: str,
     package_version: str = "ecoinvent_3.11",
     limit: Optional[int] = None,
+    write_matrix_debug: bool = False,
 ) -> dict:
     """Scan .spold files and write lightweight process metadata to reference_processes.
 
     Does NOT write full exchanges to process_json.
-    Elementary exchanges are aggregated and written to lci_exchange_matrix.
+    Elementary exchanges are aggregated into compressed lci_process_vectors.
+    The row-wise lci_exchange_matrix debug table is optional because it is too
+    large and slow for real ecoinvent imports.
 
     Returns:
         {processes_inserted, processes_updated, skipped, errors, exchange_count,
@@ -296,6 +299,9 @@ def import_ecoinvent_processes(
     vector_rows_written = 0
     vector_nnz_total = 0
     vector_warnings: list[str] = []
+    unit_conversion_cache = _build_unit_conversion_cache(db)
+    flow_key_cache = _build_lci_flow_key_cache(db)
+    flow_metadata_cache = _build_flow_metadata_cache(db)
 
     start_time = time.time()
 
@@ -374,13 +380,23 @@ def import_ecoinvent_processes(
                         source_package_version=package_version,
                     )
                 )
-            matrix_result = write_ecoinvent_exchanges_to_matrix(db, matrix_rows, commit=False)
+            if write_matrix_debug:
+                matrix_result = write_ecoinvent_exchanges_to_matrix(db, matrix_rows, commit=False)
+            else:
+                matrix_result = {
+                    "rows_inserted": 0,
+                    "rows_updated": 0,
+                    "rows_aggregated": _count_aggregated_exchange_keys(matrix_rows),
+                }
             vector_result = write_ecoinvent_process_vector(
                 db,
                 process_uuid=process_uuid,
                 exchanges=matrix_rows,
                 package_version=package_version,
                 dataset_level="linked_lci",
+                unit_conversion_cache=unit_conversion_cache,
+                flow_key_cache=flow_key_cache,
+                flow_metadata_cache=flow_metadata_cache,
                 commit=False,
             )
             exchange_count += len(matrix_rows)
@@ -498,6 +514,9 @@ def write_ecoinvent_process_vector(
     exchanges: list[LciExchangeMatrix],
     package_version: str = "ecoinvent_3.11",
     dataset_level: str = "linked_lci",
+    unit_conversion_cache: dict[str, tuple[float, str]] | None = None,
+    flow_key_cache: dict[tuple[str, str, str, str, str], int] | None = None,
+    flow_metadata_cache: dict[str, tuple[str, str]] | None = None,
     commit: bool = True,
 ) -> dict:
     """Write one compressed elementary inventory vector for a process.
@@ -510,22 +529,27 @@ def write_ecoinvent_process_vector(
     agg: dict[int, float] = {}
     canonicalized = True
     warnings: list[str] = []
+    unit_cache = unit_conversion_cache if unit_conversion_cache is not None else _build_unit_conversion_cache(db)
+    key_cache = flow_key_cache if flow_key_cache is not None else _build_lci_flow_key_cache(db)
+    meta_cache = flow_metadata_cache if flow_metadata_cache is not None else _build_flow_metadata_cache(db)
 
     for ex in exchanges:
         if not ex.flow_uuid or not ex.direction or ex.amount == 0:
             continue
-        amount, canonical_unit, unit_ok = _canonicalize_lci_exchange_unit(db, float(ex.amount), ex.unit)
+        amount, canonical_unit, unit_ok = _canonicalize_lci_exchange_unit_cached(float(ex.amount), ex.unit, unit_cache)
         if not unit_ok:
             canonicalized = False
             warnings.append(
                 f"Missing unit conversion for process={process_uuid} flow={ex.flow_uuid} unit={ex.unit}"
             )
-        flow_key_id = _get_or_create_lci_flow_key(
+        flow_key_id = _get_or_create_lci_flow_key_cached(
             db,
             flow_uuid=ex.flow_uuid,
             direction=ex.direction,
             canonical_unit=canonical_unit,
             package_version=package_version,
+            flow_key_cache=key_cache,
+            flow_metadata_cache=meta_cache,
         )
         agg[flow_key_id] = agg.get(flow_key_id, 0.0) + amount
 
@@ -582,23 +606,31 @@ def write_ecoinvent_process_vector(
 
 
 def _canonicalize_lci_exchange_unit(db: Session, amount: float, unit: str) -> tuple[float, str, bool]:
+    return _canonicalize_lci_exchange_unit_cached(amount, unit, _build_unit_conversion_cache(db))
+
+
+def _build_unit_conversion_cache(db: Session) -> dict[str, tuple[float, str]]:
+    groups = {row.name: row.reference_unit for row in db.query(UnitGroup).all()}
+    cache: dict[str, tuple[float, str]] = {}
+    for definition in db.query(UnitDefinition).all():
+        reference_unit = groups.get(definition.unit_group) or definition.unit_name
+        cache[definition.unit_name] = (float(definition.factor_to_reference), reference_unit)
+    return cache
+
+
+def _canonicalize_lci_exchange_unit_cached(
+    amount: float,
+    unit: str,
+    unit_conversion_cache: dict[str, tuple[float, str]],
+) -> tuple[float, str, bool]:
     unit_name = (unit or "").strip()
     if not unit_name:
         return amount, "", False
-
-    definitions = (
-        db.query(UnitDefinition)
-        .filter(UnitDefinition.unit_name == unit_name)
-        .order_by(UnitDefinition.is_reference.desc(), UnitDefinition.id.asc())
-        .all()
-    )
-    if not definitions:
+    conversion = unit_conversion_cache.get(unit_name)
+    if conversion is None:
         return amount, unit_name, False
-
-    definition = definitions[0]
-    group = db.get(UnitGroup, definition.unit_group)
-    reference_unit = group.reference_unit if group and group.reference_unit else definition.unit_name
-    return amount * float(definition.factor_to_reference), reference_unit, True
+    factor_to_reference, reference_unit = conversion
+    return amount * factor_to_reference, reference_unit, True
 
 
 def _get_or_create_lci_flow_key(
@@ -609,9 +641,53 @@ def _get_or_create_lci_flow_key(
     canonical_unit: str,
     package_version: str,
 ) -> int:
-    flow = db.get(FlowRecord, flow_uuid)
-    compartment = flow.compartment if flow and flow.compartment else ""
+    return _get_or_create_lci_flow_key_cached(
+        db,
+        flow_uuid=flow_uuid,
+        direction=direction,
+        canonical_unit=canonical_unit,
+        package_version=package_version,
+        flow_key_cache=_build_lci_flow_key_cache(db),
+        flow_metadata_cache=_build_flow_metadata_cache(db),
+    )
+
+
+def _build_lci_flow_key_cache(db: Session) -> dict[tuple[str, str, str, str, str], int]:
+    return {
+        (
+            row.flow_uuid,
+            row.compartment or "",
+            row.subcompartment or "",
+            row.direction,
+            row.canonical_unit,
+        ): int(row.flow_key_id)
+        for row in db.query(LciBiosphereFlowKey).all()
+    }
+
+
+def _build_flow_metadata_cache(db: Session) -> dict[str, tuple[str, str]]:
+    return {
+        row.flow_uuid: (row.compartment or "", row.flow_name or row.flow_uuid)
+        for row in db.query(FlowRecord.flow_uuid, FlowRecord.compartment, FlowRecord.flow_name).all()
+    }
+
+
+def _get_or_create_lci_flow_key_cached(
+    db: Session,
+    *,
+    flow_uuid: str,
+    direction: str,
+    canonical_unit: str,
+    package_version: str,
+    flow_key_cache: dict[tuple[str, str, str, str, str], int],
+    flow_metadata_cache: dict[str, tuple[str, str]],
+) -> int:
+    compartment = flow_metadata_cache.get(flow_uuid, ("", ""))[0]
     subcompartment = ""
+    key = (flow_uuid, compartment, subcompartment, direction, canonical_unit)
+    cached_id = flow_key_cache.get(key)
+    if cached_id is not None:
+        return cached_id
 
     existing = (
         db.query(LciBiosphereFlowKey)
@@ -625,7 +701,9 @@ def _get_or_create_lci_flow_key(
         .first()
     )
     if existing is not None:
-        return int(existing.flow_key_id)
+        flow_key_id = int(existing.flow_key_id)
+        flow_key_cache[key] = flow_key_id
+        return flow_key_id
 
     item = LciBiosphereFlowKey(
         flow_uuid=flow_uuid,
@@ -638,7 +716,20 @@ def _get_or_create_lci_flow_key(
     )
     db.add(item)
     db.flush()
-    return int(item.flow_key_id)
+    flow_key_id = int(item.flow_key_id)
+    flow_key_cache[key] = flow_key_id
+    return flow_key_id
+
+
+def _count_aggregated_exchange_keys(exchanges: list[LciExchangeMatrix]) -> int:
+    raw_keys = 0
+    keys: set[tuple[str, str, str, str]] = set()
+    for ex in exchanges:
+        if not ex.process_uuid or not ex.flow_uuid or not ex.unit or not ex.direction:
+            continue
+        raw_keys += 1
+        keys.add((ex.process_uuid, ex.flow_uuid, ex.direction, ex.unit))
+    return max(0, raw_keys - len(keys))
 
 
 # ======================================================================
