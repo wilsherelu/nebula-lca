@@ -431,10 +431,10 @@ class TestSPOLDProcessImport:
         )
         assert result["processes_inserted"] == 3
         assert result["exchange_count"] > 0
-        assert result["matrix_rows_inserted"] > 0
+        assert result["matrix_rows_inserted"] == 0
         assert result["vector_rows_written"] == 3
         assert result["vector_nnz_total"] > 0
-        assert db_session.query(LciExchangeMatrix).count() > 0
+        assert db_session.query(LciExchangeMatrix).count() == 0
         assert db_session.query(LciProcessVector).count() == 3
 
     def test_processes_have_lightweight_json(self, db_session, sample_spold_files):
@@ -519,7 +519,6 @@ class TestSPOLDProcessImport:
         result = import_ecoinvent_processes(db_session, spold_dir=str(tmp_path))
         assert result["processes_inserted"] == 2
         assert db_session.query(ReferenceProcess).count() == 2
-        assert db_session.query(LciExchangeMatrix).count() == 2
         assert db_session.query(LciProcessVector).count() == 2
 
     def test_import_processes_vector_can_unpack(self, db_session, sample_spold_files, sample_units_xml):
@@ -663,6 +662,7 @@ class TestExchangeMatrixWrite:
             db_session,
             spold_dir=str(spold_dir),
             package_version="ecoinvent_3.11",
+            write_matrix_debug=True,
         )
 
         # Collect exchanges from result (in real usage they'd be passed directly)
