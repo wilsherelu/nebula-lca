@@ -151,6 +151,7 @@ from .services import graph_contract as _gc
 from .services import graph_storage as _gs
 from .services import catalog_cache as _cc
 from .services import pts_resources as _pr
+from .services.ef31_sparse_lcia_runtime import try_run_direct_sparse_lcia
 from .services.lci_runtime import expand_lci_vectors_into_graph
 from .api.projects import _base_router, _api_router as _api_projects_router
 from .api.paginated_projects import _router as _paginated_projects_router
@@ -3813,8 +3814,6 @@ def run_solver_and_persist(
     # Harden product flags at backend entry to avoid stale/null frontend payloads.
     normalize_graph_product_flags(payload.graph)
     normalize_same_flow_uuid_opposite_direction_ports(payload.graph)
-    lci_expansion = expand_lci_vectors_into_graph(db, payload.graph)
-    solver_graph = lci_expansion.graph
 
     unit_rows = db.query(UnitDefinition).all()
     unit_factor_by_group_and_name: dict[tuple[str, str], float] = {}
@@ -3829,6 +3828,57 @@ def run_solver_and_persist(
 
     display_process_unit_map = _build_process_unit_map_from_graph(payload.graph)
     flow_type_by_uuid = _solver_flow_type_by_uuid_cached(db)
+
+    direct_result = try_run_direct_sparse_lcia(
+        db=db,
+        graph=payload.graph,
+        lcia_methods=payload.lcia_methods,
+    )
+    if direct_result is not None:
+        solver_output = direct_result.solver_output
+        process_index = solver_output.get("process_index", [])
+        values = solver_output.get("values", [])
+        product_result_index, product_unit_map, product_values = _build_product_result_view_from_graph(
+            db=db,
+            graph=payload.graph,
+            process_index=process_index,
+            values=values,
+            unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+            reference_unit_by_group=reference_unit_by_group,
+        )
+        solved = {
+            "summary": solver_output.get("summary", {}),
+            "lci_result": {
+                "issues": solver_output.get("issues", []),
+                "lci_vector_runtime": solver_output.get("lci_vector_runtime", {}),
+                "missing_ef31_flow_uuids": solver_output.get("missing_ef31_flow_uuids", []),
+                "missing_ef31_flows": solver_output.get("missing_ef31_flows", []),
+                "indicator_index": _enrich_indicator_index_with_units(solver_output.get("indicator_index", [])),
+                "process_index": process_index,
+                "values": values,
+                "process_unit_map": display_process_unit_map,
+                "product_result_index": product_result_index,
+                "product_values": product_values,
+                "product_unit_map": product_unit_map,
+            },
+        }
+        request_json = _build_run_job_request_json(payload)
+        run_job = RunJob(
+            model_version_id=payload.model_version_id,
+            status="completed",
+            request_json=request_json,
+            result_json=solved,
+            message="Run completed",
+            created_at=datetime.utcnow(),
+            finished_at=datetime.utcnow(),
+        )
+        db.add(run_job)
+        db.commit()
+        db.refresh(run_job)
+        return "completed", run_job.id, solved, direct_result.tiangong_like_input
+
+    lci_expansion = expand_lci_vectors_into_graph(db, payload.graph)
+    solver_graph = lci_expansion.graph
 
     normalized_graph = normalize_graph_units_to_reference(
         solver_graph,
