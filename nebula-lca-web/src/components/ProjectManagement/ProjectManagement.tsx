@@ -1,6 +1,6 @@
 ﻿import { useEffect, useRef, useState } from "react";
 import { CreateFlowDialog } from "../CreateFlowDialog";
-import Ef31ImportDialog from "../Ef31ImportDialog";
+import Ef31ImportJobPanel from "../Ef31ImportJobPanel";
 import { FlowAllocationPropertiesModal, type FlowAllocationProperty } from "../FlowAllocationPropertiesModal";
 
 export type ProjectListItem = {
@@ -2735,7 +2735,7 @@ export function ProjectManagement(props: Props) {
         }}
         onStatus={onStatus}
       />
-      <Ef31ImportDialog
+      <Ef31ImportJobPanel
         open={ef31ImportOpen}
         uiLanguage={uiLanguage}
         onClose={() => setEf31ImportOpen(false)}

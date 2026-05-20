@@ -306,3 +306,64 @@ class LciProcessVector(Base):
     source_package_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+# ======================================================================
+# Ecoinvent Import Task System
+# ======================================================================
+
+
+class ImportJob(Base):
+    """Persistent import task for EF 3.1 LCI/LCIA ingestion."""
+
+    __tablename__ = "import_jobs"
+
+    job_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    file_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    file_type: Mapped[str] = mapped_column(String(32), nullable=False, default="lci")
+    phase: Mapped[str] = mapped_column(String(32), nullable=False, default="created")
+    progress_pct: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    workers: Mapped[int] = mapped_column(Integer, default=4, nullable=False)
+    limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    error_summary: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    stats_json: Mapped[dict | None] = mapped_column(JsonType, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class ImportJobPauseRequest(Base):
+    """Marker to record a pause request."""
+
+    __tablename__ = "import_job_pause_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    requested_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class DatasetCheckpoint(Base):
+    """Per-dataset checkpoint for resumable import."""
+
+    __tablename__ = "dataset_checkpoints"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    dataset_key: Mapped[str] = mapped_column(String(512), nullable=False, index=True, unique=False)
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="pending",
+        # pending | running | imported | failed | skipped
+    )
+    process_uuid: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    vector_nnz: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+# Backwards-compatible alias
+Ef31Job = ImportJob
+Ef31Checkpoint = DatasetCheckpoint
