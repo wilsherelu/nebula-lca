@@ -4,7 +4,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from .models import LciBiosphereFlowKey, LciExchangeMatrix, LciProcessVector, LciVectorAxis, UnitGroup
+from .models import LciBiosphereFlowKey, LciExchangeMatrix, LciProcessVector, LciVectorAxis, UnitGroup, ImportJob, ImportJobPauseRequest, DatasetCheckpoint
 from .tidas_reference import load_tidas_reference_seed
 
 
@@ -118,6 +118,50 @@ def ensure_lci_exchange_matrix_table(engine: Engine) -> dict:
                 continue
             if_not_exists = "IF NOT EXISTS" if dialect_name in {"postgresql", "sqlite"} else ""
             conn.execute(text(idx_sql.format(if_not_exists=if_not_exists)))
+            added_indexes.append(idx_name)
+
+    return {
+        "status": "ok" if added_tables or added_indexes else "already_complete",
+        "added_tables": added_tables,
+        "added_indexes": added_indexes,
+    }
+
+
+def ensure_import_tables(engine: Engine) -> dict:
+    """Ensure import task system tables exist."""
+    added_tables: list[str] = []
+    added_indexes: list[str] = []
+
+    for model, table_name in [
+        (ImportJob, "import_jobs"),
+        (ImportJobPauseRequest, "import_job_pause_requests"),
+        (DatasetCheckpoint, "dataset_checkpoints"),
+    ]:
+        if not inspect(engine).has_table(table_name):
+            model.__table__.create(bind=engine, checkfirst=True)
+            added_tables.append(table_name)
+
+    # Create indexes on import_jobs
+    with engine.begin() as conn:
+        dialect_name = conn.engine.dialect.name
+        if_if_not_exists = "IF NOT EXISTS" if dialect_name in {"postgresql", "sqlite"} else ""
+
+        idx_defs = [
+            ("import_jobs", "ix_import_jobs_status", f"CREATE INDEX {if_if_not_exists} ix_import_jobs_status ON import_jobs (status)"),
+            ("dataset_checkpoints", "ix_dataset_checkpoint_job_id", f"CREATE INDEX {if_if_not_exists} ix_dataset_checkpoint_job_id ON dataset_checkpoints (job_id)"),
+            ("dataset_checkpoints", "ix_dataset_checkpoint_status", f"CREATE INDEX {if_if_not_exists} ix_dataset_checkpoint_status ON dataset_checkpoints (status)"),
+        ]
+        inspector = inspect(conn)
+        existing_by_table = {
+            table_name: {idx["name"] for idx in inspector.get_indexes(table_name)}
+            for table_name in {"import_jobs", "dataset_checkpoints"}
+            if inspector.has_table(table_name)
+        }
+        for table_name, idx_name, idx_sql in idx_defs:
+            existing_indexes = existing_by_table.get(table_name, set())
+            if idx_name in existing_indexes:
+                continue
+            conn.execute(text(idx_sql))
             added_indexes.append(idx_name)
 
     return {

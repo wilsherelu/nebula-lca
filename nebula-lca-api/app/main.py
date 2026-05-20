@@ -144,6 +144,7 @@ from .schema_maintenance import (
     ensure_flow_catalog_tidas_columns,
     ensure_unit_group_source_columns,
     ensure_lci_exchange_matrix_table,
+    ensure_import_tables,
 )
 from .pts_validate import validate_pts_compile
 from .pts_compile import PTS_COMPILE_SCHEMA_VERSION, compile_pts, compute_pts_graph_hash
@@ -285,6 +286,9 @@ app.include_router(_ef31_import_base_router)
 app.include_router(_ef31_import_api_router)
 app.include_router(_tidas_import_base_router)
 app.include_router(_tidas_import_api_router)
+# Chunked upload + import job routes (new)
+from .api.ef31_chunked_import import _router as _chunked_import_router
+app.include_router(_chunked_import_router)
 app.include_router(_ref_catalog_base_router)
 # ── reference_data router (Stage 6B-lite: stats only) ──
 from .api.reference_data import _api_router as _reference_data_api_router
@@ -1255,6 +1259,7 @@ def _ensure_source_compliance_schema_on_startup() -> None:
     _ensure_custom_flow_columns()
     _ensure_unit_group_source_columns()
     ensure_lci_exchange_matrix_table(engine)
+    ensure_import_tables(engine)
     db = SessionLocal()
     try:
         backfill_tidas_unit_group_sources(db)

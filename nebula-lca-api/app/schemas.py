@@ -1387,3 +1387,71 @@ class Ef31ImportReportResponse(BaseModel):
     committed: bool | None = None
     catalog_target_kind: str | None = None
     runtime_csv: dict | None = None
+
+
+# ======================================================================
+# Upload Session Schemas
+# ======================================================================
+
+class UploadSessionCreateResponse(BaseModel):
+    """Response when creating a chunked upload session."""
+    upload_id: str = Field(..., description="Unique upload session ID")
+    chunk_size: int = Field(..., description="Recommended chunk size in bytes")
+    uploaded_chunks: list[int] = Field(default_factory=list, description="Already uploaded chunk indices")
+
+
+class UploadChunkCompleteResponse(BaseModel):
+    """Response after completing all chunks."""
+    file_path: str = Field(..., description="Merged file path on disk")
+    file_name: str = Field(..., description="Original file name")
+    file_size: int = Field(..., description="Total file size in bytes")
+    file_type: str = Field(..., description="File type: lci or lcia")
+
+
+# ======================================================================
+# Import Job Schemas
+# ======================================================================
+
+class ImportJobCreateRequest(BaseModel):
+    """Request to create an import job from an uploaded file or local path."""
+    file_path: str = Field(..., description="Path to the uploaded file (or local path)")
+    file_type: Literal["lci", "lcia"] = Field(default="lci", description="Type of data being imported")
+    workers: int = Field(default=4, ge=1, le=8, description="Number of parallel parser workers")
+    limit: int | None = Field(default=None, description="Max datasets to import (None = full)")
+
+
+class ImportJobStartRequest(BaseModel):
+    """Request to start or resume an import job."""
+    resume_from_failed: bool = Field(default=False, description="Skip already-imported datasets and start from failed ones")
+
+
+class ImportJobStatusResponse(BaseModel):
+    """Detailed status of an import job."""
+    job_id: str = Field(..., description="Job ID")
+    file_path: str = Field(..., description="Source file path")
+    file_type: str = Field(..., description="lci or lcia")
+    phase: str = Field(..., description="current phase: created/parsing/importing/done/cancelled/failed")
+    progress_pct: float = Field(..., description="Overall progress 0-100")
+    workers: int = Field(..., description="Number of parser workers")
+    limit: int | None = Field(default=None, description="Dataset limit or None for full")
+    status: str = Field(..., description="pending/running/paused/completed/failed/cancelled")
+    error_summary: str | None = Field(default=None, description="Brief error message if failed")
+    stats: dict | None = Field(default=None, description="Import statistics: processed, skipped, failed, speed, etc.")
+    failed_datasets: list[str] = Field(default_factory=list, description="List of failed dataset keys")
+    created_at: str = Field(..., description="Creation timestamp")
+    updated_at: str = Field(..., description="Last update timestamp")
+
+
+class ImportJobListResponse(BaseModel):
+    """List of import jobs with filtering."""
+    jobs: list[ImportJobStatusResponse] = Field(default_factory=list)
+    total: int = Field(default=0)
+
+
+# Backwards-compatible alias
+Ef31UploadSessionCreateResponse = UploadSessionCreateResponse
+Ef31UploadChunkCompleteResponse = UploadChunkCompleteResponse
+Ef31ImportJobCreateRequest = ImportJobCreateRequest
+Ef31ImportJobStartRequest = ImportJobStartRequest
+Ef31ImportJobStatusResponse = ImportJobStatusResponse
+Ef31ImportJobListResponse = ImportJobListResponse
