@@ -151,6 +151,7 @@ from .services import graph_contract as _gc
 from .services import graph_storage as _gs
 from .services import catalog_cache as _cc
 from .services import pts_resources as _pr
+from .services.lci_runtime import expand_lci_vectors_into_graph
 from .api.projects import _base_router, _api_router as _api_projects_router
 from .api.paginated_projects import _router as _paginated_projects_router
 from .api.export_tidas import _base_router as _export_tidas_base_router, _api_router as _export_tidas_api_router
@@ -3812,6 +3813,8 @@ def run_solver_and_persist(
     # Harden product flags at backend entry to avoid stale/null frontend payloads.
     normalize_graph_product_flags(payload.graph)
     normalize_same_flow_uuid_opposite_direction_ports(payload.graph)
+    lci_expansion = expand_lci_vectors_into_graph(db, payload.graph)
+    solver_graph = lci_expansion.graph
 
     unit_rows = db.query(UnitDefinition).all()
     unit_factor_by_group_and_name: dict[tuple[str, str], float] = {}
@@ -3828,7 +3831,7 @@ def run_solver_and_persist(
     flow_type_by_uuid = _solver_flow_type_by_uuid_cached(db)
 
     normalized_graph = normalize_graph_units_to_reference(
-        payload.graph,
+        solver_graph,
         unit_factor_by_group_and_name=unit_factor_by_group_and_name,
         reference_unit_by_group=reference_unit_by_group,
     )
@@ -3896,6 +3899,12 @@ def run_solver_and_persist(
         "summary": solver_output.get("summary", {}),
         "lci_result": {
             "issues": solver_output.get("issues", []),
+            "lci_vector_runtime": {
+                "expanded_process_count": lci_expansion.expanded_process_count,
+                "expanded_port_count": lci_expansion.expanded_port_count,
+                "missing_vectors": lci_expansion.missing_vectors,
+                "provenance": lci_expansion.provenance,
+            },
             "missing_ef31_flow_uuids": solver_output.get("missing_ef31_flow_uuids", []),
             "missing_ef31_flows": solver_output.get("missing_ef31_flows", []),
             "indicator_index": _enrich_indicator_index_with_units(solver_output.get("indicator_index", [])),

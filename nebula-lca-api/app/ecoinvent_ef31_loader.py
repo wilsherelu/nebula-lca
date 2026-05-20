@@ -684,12 +684,15 @@ def parse_spold_exchanges(spold_path: Path) -> List[LCIElementaryExchange]:
             exc_name = ""
             unit_name = ""
             output_group = 0
+            direction_hint = ""
             raw_output_group = elem_exc.get('outputGroup', '')
             if raw_output_group:
                 try:
                     output_group = int(raw_output_group)
                 except ValueError:
                     output_group = 0
+                    if raw_output_group.strip().lower() in {"output", "input"}:
+                        direction_hint = raw_output_group.strip().lower()
             
             for child in elem_exc:
                 tag = child.tag.split('}')[-1]
@@ -698,15 +701,18 @@ def parse_spold_exchanges(spold_path: Path) -> List[LCIElementaryExchange]:
                 elif tag == 'unitName':
                     unit_name = (child.text or '').strip()
                 elif tag == 'outputGroup':
+                    raw_child_output_group = (child.text or '').strip()
                     try:
-                        output_group = int((child.text or '').strip())
+                        output_group = int(raw_child_output_group)
                     except ValueError:
                         output_group = 0
+                        if raw_child_output_group.lower() in {"output", "input"}:
+                            direction_hint = raw_child_output_group.lower()
             
             # Determine direction from outputGroup
             # outputGroup > 0 = output (emission to air/water/soil)
             # outputGroup < 0 = input (resource from nature)
-            direction = "output" if output_group > 0 else ("input" if output_group < 0 else "")
+            direction = "output" if output_group > 0 else ("input" if output_group < 0 else direction_hint)
             
             if exc_id:
                 exchanges.append(LCIElementaryExchange(

@@ -33,7 +33,16 @@ from .ef31_db_service import (
     _ensure_ecoinvent_unit_catalog,
     _generate_lci_process_uuid,
 )
-from .models import FlowRecord, ReferenceProcess, UnitGroup, LciExchangeMatrix
+from .lci_vector_codec import pack_lci_vector
+from .models import (
+    FlowRecord,
+    LciBiosphereFlowKey,
+    LciExchangeMatrix,
+    LciProcessVector,
+    ReferenceProcess,
+    UnitDefinition,
+    UnitGroup,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -284,6 +293,9 @@ def import_ecoinvent_processes(
     matrix_rows_inserted = 0
     matrix_rows_updated = 0
     matrix_rows_aggregated = 0
+    vector_rows_written = 0
+    vector_nnz_total = 0
+    vector_warnings: list[str] = []
 
     start_time = time.time()
 
@@ -363,10 +375,21 @@ def import_ecoinvent_processes(
                     )
                 )
             matrix_result = write_ecoinvent_exchanges_to_matrix(db, matrix_rows, commit=False)
+            vector_result = write_ecoinvent_process_vector(
+                db,
+                process_uuid=process_uuid,
+                exchanges=matrix_rows,
+                package_version=package_version,
+                dataset_level="linked_lci",
+                commit=False,
+            )
             exchange_count += len(matrix_rows)
             matrix_rows_inserted += matrix_result["rows_inserted"]
             matrix_rows_updated += matrix_result["rows_updated"]
             matrix_rows_aggregated += matrix_result["rows_aggregated"]
+            vector_rows_written += vector_result["vectors_written"]
+            vector_nnz_total += vector_result["nnz"]
+            vector_warnings.extend(vector_result["warnings"])
 
         except Exception as exc:
             errors.append(f"{spold_file.name}: {exc}")
@@ -384,6 +407,9 @@ def import_ecoinvent_processes(
         "matrix_rows_inserted": matrix_rows_inserted,
         "matrix_rows_updated": matrix_rows_updated,
         "matrix_rows_aggregated": matrix_rows_aggregated,
+        "vector_rows_written": vector_rows_written,
+        "vector_nnz_total": vector_nnz_total,
+        "vector_warnings": vector_warnings,
         "duration_seconds": round(duration, 3),
     }
 
@@ -463,6 +489,156 @@ def write_ecoinvent_exchanges_to_matrix(
         "rows_aggregated": rows_aggregated,
         "warnings": warnings,
     }
+
+
+def write_ecoinvent_process_vector(
+    db: Session,
+    *,
+    process_uuid: str,
+    exchanges: list[LciExchangeMatrix],
+    package_version: str = "ecoinvent_3.11",
+    dataset_level: str = "linked_lci",
+    commit: bool = True,
+) -> dict:
+    """Write one compressed elementary inventory vector for a process.
+
+    The vector aggregates elementary exchanges by canonicalized flow key. Unit
+    conversion is intentionally conservative: known UnitDefinition rows are
+    converted to their unit-group reference unit; unknown units are preserved
+    and reported in warnings.
+    """
+    agg: dict[int, float] = {}
+    canonicalized = True
+    warnings: list[str] = []
+
+    for ex in exchanges:
+        if not ex.flow_uuid or not ex.direction or ex.amount == 0:
+            continue
+        amount, canonical_unit, unit_ok = _canonicalize_lci_exchange_unit(db, float(ex.amount), ex.unit)
+        if not unit_ok:
+            canonicalized = False
+            warnings.append(
+                f"Missing unit conversion for process={process_uuid} flow={ex.flow_uuid} unit={ex.unit}"
+            )
+        flow_key_id = _get_or_create_lci_flow_key(
+            db,
+            flow_uuid=ex.flow_uuid,
+            direction=ex.direction,
+            canonical_unit=canonical_unit,
+            package_version=package_version,
+        )
+        agg[flow_key_id] = agg.get(flow_key_id, 0.0) + amount
+
+    flow_key_ids = sorted(agg)
+    amounts = [agg[key] for key in flow_key_ids]
+    packed = pack_lci_vector(flow_key_ids, amounts)
+    compressed_bytes = len(packed.flow_key_ids_blob) + len(packed.amounts_blob)
+
+    existing = db.get(LciProcessVector, process_uuid)
+    if existing is None:
+        db.add(
+            LciProcessVector(
+                process_uuid=process_uuid,
+                dataset_level=dataset_level,
+                system_model=None,
+                nnz=packed.nnz,
+                axis_id=None,
+                flow_key_ids_blob=packed.flow_key_ids_blob,
+                amounts_blob=packed.amounts_blob,
+                index_dtype=packed.index_dtype,
+                amount_dtype=packed.amount_dtype,
+                compression=packed.compression,
+                canonicalized=canonicalized,
+                checksum=packed.checksum,
+                source=package_version,
+                source_package_version=package_version,
+            )
+        )
+    else:
+        existing.dataset_level = dataset_level
+        existing.nnz = packed.nnz
+        existing.axis_id = None
+        existing.flow_key_ids_blob = packed.flow_key_ids_blob
+        existing.amounts_blob = packed.amounts_blob
+        existing.index_dtype = packed.index_dtype
+        existing.amount_dtype = packed.amount_dtype
+        existing.compression = packed.compression
+        existing.canonicalized = canonicalized
+        existing.checksum = packed.checksum
+        existing.source = package_version
+        existing.source_package_version = package_version
+
+    if commit:
+        db.commit()
+    else:
+        db.flush()
+    return {
+        "vectors_written": 1,
+        "nnz": packed.nnz,
+        "compressed_bytes": compressed_bytes,
+        "canonicalized": canonicalized,
+        "warnings": warnings,
+    }
+
+
+def _canonicalize_lci_exchange_unit(db: Session, amount: float, unit: str) -> tuple[float, str, bool]:
+    unit_name = (unit or "").strip()
+    if not unit_name:
+        return amount, "", False
+
+    definitions = (
+        db.query(UnitDefinition)
+        .filter(UnitDefinition.unit_name == unit_name)
+        .order_by(UnitDefinition.is_reference.desc(), UnitDefinition.id.asc())
+        .all()
+    )
+    if not definitions:
+        return amount, unit_name, False
+
+    definition = definitions[0]
+    group = db.get(UnitGroup, definition.unit_group)
+    reference_unit = group.reference_unit if group and group.reference_unit else definition.unit_name
+    return amount * float(definition.factor_to_reference), reference_unit, True
+
+
+def _get_or_create_lci_flow_key(
+    db: Session,
+    *,
+    flow_uuid: str,
+    direction: str,
+    canonical_unit: str,
+    package_version: str,
+) -> int:
+    flow = db.get(FlowRecord, flow_uuid)
+    compartment = flow.compartment if flow and flow.compartment else ""
+    subcompartment = ""
+
+    existing = (
+        db.query(LciBiosphereFlowKey)
+        .filter(
+            LciBiosphereFlowKey.flow_uuid == flow_uuid,
+            LciBiosphereFlowKey.compartment == compartment,
+            LciBiosphereFlowKey.subcompartment == subcompartment,
+            LciBiosphereFlowKey.direction == direction,
+            LciBiosphereFlowKey.canonical_unit == canonical_unit,
+        )
+        .first()
+    )
+    if existing is not None:
+        return int(existing.flow_key_id)
+
+    item = LciBiosphereFlowKey(
+        flow_uuid=flow_uuid,
+        compartment=compartment,
+        subcompartment=subcompartment,
+        direction=direction,
+        canonical_unit=canonical_unit,
+        source=package_version,
+        source_package_version=package_version,
+    )
+    db.add(item)
+    db.flush()
+    return int(item.flow_key_id)
 
 
 # ======================================================================

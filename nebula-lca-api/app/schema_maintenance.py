@@ -4,7 +4,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from .models import LciExchangeMatrix, UnitGroup
+from .models import LciBiosphereFlowKey, LciExchangeMatrix, LciProcessVector, LciVectorAxis, UnitGroup
 from .tidas_reference import load_tidas_reference_seed
 
 
@@ -76,12 +76,20 @@ def ensure_unit_group_source_columns(engine: Engine) -> dict:
 
 
 def ensure_lci_exchange_matrix_table(engine: Engine) -> dict:
-    """Ensure lci_exchange_matrix table exists with correct schema."""
+    """Ensure LCI sparse row and compressed-vector tables exist."""
     added_tables: list[str] = []
     added_indexes: list[str] = []
     if not inspect(engine).has_table("lci_exchange_matrix"):
         LciExchangeMatrix.__table__.create(bind=engine, checkfirst=True)
         added_tables.append("lci_exchange_matrix")
+    for table_model, table_name in [
+        (LciBiosphereFlowKey, "lci_biosphere_flow_keys"),
+        (LciVectorAxis, "lci_vector_axes"),
+        (LciProcessVector, "lci_process_vectors"),
+    ]:
+        if not inspect(engine).has_table(table_name):
+            table_model.__table__.create(bind=engine, checkfirst=True)
+            added_tables.append(table_name)
 
     with engine.begin() as conn:
         inspector = inspect(conn)

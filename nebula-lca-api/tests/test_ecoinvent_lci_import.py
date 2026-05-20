@@ -16,7 +16,24 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.models import Base, FlowRecord, ReferenceProcess, UnitDefinition, UnitGroup, LciExchangeMatrix
+from app.lci_vector_codec import pack_lci_vector, unpack_lci_vector
+from app.schemas import HybridGraph
+from app.services.lci_runtime import (
+    expand_graph_lci_inventory,
+    expand_lci_vectors_into_graph,
+    inventory_with_flow_metadata,
+    load_process_vectors,
+)
+from app.models import (
+    Base,
+    FlowRecord,
+    LciBiosphereFlowKey,
+    LciExchangeMatrix,
+    LciProcessVector,
+    ReferenceProcess,
+    UnitDefinition,
+    UnitGroup,
+)
 from app.schema_maintenance import ensure_lci_exchange_matrix_table
 from app.ingest_ecoinvent import (
     import_ecoinvent_elementary_flows,
@@ -24,6 +41,7 @@ from app.ingest_ecoinvent import (
     import_ecoinvent_processes,
     import_ecoinvent_units,
     write_ecoinvent_exchanges_to_matrix,
+    write_ecoinvent_process_vector,
     _guess_unit_group_from_name,
 )
 
@@ -57,6 +75,7 @@ def sample_units_xml(tmp_path: Path) -> Path:
       <unit id="unit-kwh"><name>kWh</name></unit>
       <unit id="unit-m3"><name>m3</name></unit>
       <unit id="unit-l"><name>l</name></unit>
+      <unit id="unit-kbq"><name>kBq</name></unit>
     </units>
     """)
     p = tmp_path / "Units.xml"
@@ -292,6 +311,17 @@ class TestUnitImport:
         assert abs(gram.factor_to_reference - 0.001) < 1e-12
         assert abs(kwh.factor_to_reference - 3.6) < 1e-12
 
+    def test_import_conversions_keeps_fallback_units_not_in_conversion_graph(self, db_session, sample_units_xml, sample_conversions_xml):
+        import_ecoinvent_units(
+            db_session,
+            data_dir=str(sample_units_xml.parent),
+            package_version="ecoinvent_3.11",
+        )
+        kbq = db_session.query(UnitDefinition).filter_by(unit_name="kBq").first()
+        assert kbq is not None
+        assert kbq.unit_group == "radioactivity"
+        assert kbq.is_reference is True
+
 
 # ======================================================================
 # Tests: Elementary flow import
@@ -402,7 +432,10 @@ class TestSPOLDProcessImport:
         assert result["processes_inserted"] == 3
         assert result["exchange_count"] > 0
         assert result["matrix_rows_inserted"] > 0
+        assert result["vector_rows_written"] == 3
+        assert result["vector_nnz_total"] > 0
         assert db_session.query(LciExchangeMatrix).count() > 0
+        assert db_session.query(LciProcessVector).count() == 3
 
     def test_processes_have_lightweight_json(self, db_session, sample_spold_files):
         spold_dir = sample_spold_files[0].parent
@@ -487,6 +520,130 @@ class TestSPOLDProcessImport:
         assert result["processes_inserted"] == 2
         assert db_session.query(ReferenceProcess).count() == 2
         assert db_session.query(LciExchangeMatrix).count() == 2
+        assert db_session.query(LciProcessVector).count() == 2
+
+    def test_import_processes_vector_can_unpack(self, db_session, sample_spold_files, sample_units_xml):
+        import_ecoinvent_units(db_session, data_dir=str(sample_units_xml.parent))
+        import_ecoinvent_processes(db_session, spold_dir=str(sample_spold_files[0].parent))
+        vector = db_session.query(LciProcessVector).first()
+        assert vector is not None
+        flow_key_ids, amounts = unpack_lci_vector(
+            flow_key_ids_blob=vector.flow_key_ids_blob,
+            amounts_blob=vector.amounts_blob,
+            nnz=vector.nnz,
+            compression=vector.compression,
+        )
+        assert len(flow_key_ids) == vector.nnz
+        assert len(amounts) == vector.nnz
+        assert all(isinstance(item, int) for item in flow_key_ids)
+        assert any(abs(amount) > 0 for amount in amounts)
+
+    def test_lci_runtime_expands_vector_with_demand_scale(self, db_session, sample_spold_files, sample_units_xml):
+        import_ecoinvent_units(db_session, data_dir=str(sample_units_xml.parent))
+        import_ecoinvent_processes(db_session, spold_dir=str(sample_spold_files[0].parent))
+        process = db_session.query(ReferenceProcess).filter_by(process_name="Cement production").first()
+        assert process is not None
+
+        graph = {
+            "nodes": [
+                {
+                    "id": "node-cement",
+                    "node_kind": "lci_dataset",
+                    "process_uuid": process.process_uuid,
+                    "outputs": [
+                        {
+                            "id": "out-cement",
+                            "flowUuid": "flow-cement",
+                            "amount": 2.0,
+                            "unit": "kg",
+                            "type": "technosphere",
+                            "isProduct": True,
+                        }
+                    ],
+                }
+            ]
+        }
+        expanded = expand_graph_lci_inventory(db_session, graph)
+        rows = inventory_with_flow_metadata(db_session, expanded.inventory)
+        by_flow = {row["flow_uuid"]: row for row in rows}
+        assert expanded.missing_vectors == []
+        assert expanded.provenance[0]["scale"] == 2.0
+        assert abs(by_flow["flow-co2-air-001"]["amount"] - 1.6) < 1e-12
+        assert abs(by_flow["flow-ch4-air-002"]["amount"] - 0.002) < 1e-12
+
+    def test_load_process_vectors_batches_by_uuid(self, db_session, sample_spold_files, sample_units_xml):
+        import_ecoinvent_units(db_session, data_dir=str(sample_units_xml.parent))
+        import_ecoinvent_processes(db_session, spold_dir=str(sample_spold_files[0].parent))
+        process_uuids = [row.process_uuid for row in db_session.query(ReferenceProcess).all()]
+        vectors = load_process_vectors(db_session, process_uuids)
+        assert set(vectors) == set(process_uuids)
+        assert all(vectors[process_uuid] for process_uuid in process_uuids)
+
+    def test_lci_vector_expands_into_solver_graph_ports(self, db_session, sample_spold_files, sample_units_xml, sample_elementary_xml):
+        import_ecoinvent_units(db_session, data_dir=str(sample_units_xml.parent))
+        import_ecoinvent_elementary_flows(db_session, data_dir=str(sample_units_xml.parent), source="ecoinvent_3.11")
+        import_ecoinvent_processes(db_session, spold_dir=str(sample_spold_files[0].parent))
+        process = db_session.query(ReferenceProcess).filter_by(process_name="Cement production").first()
+        assert process is not None
+
+        graph = HybridGraph.model_validate(
+            {
+                "functionalUnit": "2 kg cement",
+                "nodes": [
+                    {
+                        "id": "node-cement",
+                        "node_kind": "lci_dataset",
+                        "mode": "normalized",
+                        "process_uuid": process.process_uuid,
+                        "name": "Cement production",
+                        "location": "DE",
+                        "reference_product": "cement",
+                        "inputs": [],
+                        "outputs": [
+                            {
+                                "id": "out-cement",
+                                "flowUuid": "flow-cement",
+                                "name": "cement",
+                                "unit": "kg",
+                                "unitGroup": "mass",
+                                "amount": 2.0,
+                                "type": "technosphere",
+                                "direction": "output",
+                                "isProduct": True,
+                            }
+                        ],
+                        "emissions": [],
+                    }
+                ],
+                "exchanges": [],
+                "metadata": {},
+            }
+        )
+        expanded = expand_lci_vectors_into_graph(db_session, graph)
+        node = expanded.graph.nodes[0]
+        biosphere_ports = [port for port in node.outputs if port.type == "biosphere"]
+        assert expanded.expanded_process_count == 1
+        assert expanded.expanded_port_count == 2
+        assert {port.flowUuid for port in biosphere_ports} == {"flow-co2-air-001", "flow-ch4-air-002"}
+        co2 = next(port for port in biosphere_ports if port.flowUuid == "flow-co2-air-001")
+        assert abs(co2.amount - 1.6) < 1e-12
+
+
+class TestLciVectorCodec:
+    def test_pack_unpack_roundtrip(self):
+        packed = pack_lci_vector([1, 7, 9], [0.5, -2.0, 3.25])
+        flow_key_ids, amounts = unpack_lci_vector(
+            flow_key_ids_blob=packed.flow_key_ids_blob,
+            amounts_blob=packed.amounts_blob,
+            nnz=packed.nnz,
+            compression=packed.compression,
+        )
+        assert flow_key_ids == [1, 7, 9]
+        assert amounts == [0.5, -2.0, 3.25]
+
+    def test_pack_requires_sorted_keys(self):
+        with pytest.raises(ValueError):
+            pack_lci_vector([2, 1], [1.0, 2.0])
 
 
 # ======================================================================
@@ -636,6 +793,65 @@ class TestExchangeMatrixWrite:
         assert row is not None
         assert row.source == "ecoinvent_3.11"
         assert row.source_package_version == "ecoinvent_3.11"
+
+    def test_process_vector_canonicalizes_known_units(self, db_session, sample_units_xml, sample_conversions_xml):
+        import_ecoinvent_units(db_session, data_dir=str(sample_units_xml.parent))
+        exchanges = [
+            LciExchangeMatrix(
+                process_uuid="proc-vector-001",
+                flow_uuid="flow-co2-air-001",
+                amount=1000.0,
+                unit="g",
+                direction="output",
+                source="ecoinvent_3.11",
+                source_package_version="ecoinvent_3.11",
+            ),
+        ]
+        result = write_ecoinvent_process_vector(
+            db_session,
+            process_uuid="proc-vector-001",
+            exchanges=exchanges,
+            package_version="ecoinvent_3.11",
+        )
+        assert result["vectors_written"] == 1
+        assert result["canonicalized"] is True
+
+        vector = db_session.get(LciProcessVector, "proc-vector-001")
+        assert vector is not None
+        flow_key_ids, amounts = unpack_lci_vector(
+            flow_key_ids_blob=vector.flow_key_ids_blob,
+            amounts_blob=vector.amounts_blob,
+            nnz=vector.nnz,
+            compression=vector.compression,
+        )
+        assert amounts == [1.0]
+        key = db_session.get(LciBiosphereFlowKey, flow_key_ids[0])
+        assert key is not None
+        assert key.canonical_unit == "kg"
+
+    def test_process_vector_preserves_unknown_units_with_warning(self, db_session):
+        exchanges = [
+            LciExchangeMatrix(
+                process_uuid="proc-vector-unknown",
+                flow_uuid="flow-x",
+                amount=2.0,
+                unit="mystery_unit",
+                direction="output",
+                source="ecoinvent_3.11",
+                source_package_version="ecoinvent_3.11",
+            ),
+        ]
+        result = write_ecoinvent_process_vector(
+            db_session,
+            process_uuid="proc-vector-unknown",
+            exchanges=exchanges,
+            package_version="ecoinvent_3.11",
+        )
+        assert result["canonicalized"] is False
+        assert result["warnings"]
+        vector = db_session.get(LciProcessVector, "proc-vector-unknown")
+        assert vector is not None
+        assert vector.canonicalized is False
 
 
 # ======================================================================
