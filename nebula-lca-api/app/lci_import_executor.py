@@ -66,6 +66,7 @@ class ImportResult:
     processes_inserted: int = 0
     processes_skipped: int = 0
     processes_failed: int = 0
+    skipped_global: int = 0
     flows_new: int = 0
     flows_error: int = 0
     vectors_written: int = 0
@@ -98,6 +99,8 @@ class LciImportJobExecutor:
         limit: int | None = None,
         write_matrix_debug: bool = False,
         resume_from_failed: bool = False,
+        overwrite_existing: bool = False,
+        package_version: str = "ecoinvent_3.11",
     ):
         self.job_id = job_id
         self.db = db
@@ -107,6 +110,8 @@ class LciImportJobExecutor:
         self.limit = limit
         self.write_matrix_debug = write_matrix_debug
         self.resume_from_failed = resume_from_failed
+        self.overwrite_existing = overwrite_existing
+        self.package_version = package_version
 
         # Pause control
         self._pause_event = threading.Event()
@@ -126,6 +131,7 @@ class LciImportJobExecutor:
         self._vector_warnings: list[str] = []
         self._error_summary: str | None = None
         self._total_count = 0
+        self._global_skipped_dataset_keys: set[str] = set()
 
         # Pre-load MasterData flows (shared across workers)
         self._elementary_flows = []
@@ -185,6 +191,7 @@ class LciImportJobExecutor:
                 result.processes_inserted = self._stats["inserted"]
                 result.processes_skipped = self._stats["skipped"] + skipped_count
                 result.processes_failed = self._stats["failed"]
+                result.skipped_global = getattr(self, '_skipped_global_counter', 0)
                 result.vectors_written = self._stats["vectors_written"]
                 result.vector_nnz_total = self._stats["nnz_total"]
                 result.vector_warnings = list(self._vector_warnings)
@@ -320,6 +327,8 @@ class LciImportJobExecutor:
         for pr in results:
             if pr.error:
                 status = "failed"
+            elif Path(pr.spold_path).name in self._global_skipped_dataset_keys:
+                status = "skipped_global"
             elif pr.dataset:
                 status = "imported"
             else:
@@ -426,6 +435,23 @@ class LciImportJobExecutor:
         procs = pr.process_uuid
         exs = pr.exchanges
 
+        # ── Two-stage dedup: global → process/vector write ──
+        # Build dataset_uuid = activity_id + ":" + reference_product_id (fallback: activity_id)
+        activity_id = ds.activity_id
+        ref_product_id = ds.reference_product_id or ""
+        dataset_uuid = f"{activity_id}:{ref_product_id}" if ref_product_id else activity_id
+
+        if not self.overwrite_existing:
+            global_rec = self._get_global_dataset_status(dataset_uuid)
+            if global_rec is not None and global_rec.status == "imported":
+                # Dataset already imported globally — skip without writing
+                with self._lock:
+                    self._stats["skipped"] += 1
+                    self._global_skipped_dataset_keys.add(Path(pr.spold_path).name)
+                self._update_global_skipped(1)
+                self._update_progress()
+                return
+
         # Check for missing elementary flow refs
         elem_flow_lookup = self._elem_flow_lookup
         missing_refs = []
@@ -438,6 +464,13 @@ class LciImportJobExecutor:
             with self._lock:
                 self._stats["failed"] += 1
                 self._failed_datasets.append(pr.spold_path)
+            # Record global failure for this dataset
+            self._update_global_status(
+                dataset_uuid, "failed", pr.spold_path, procs,
+                error_msg="missing elementary flow refs",
+                activity_id=ds.activity_id,
+                reference_product_id=ds.reference_product_id,
+            )
             return
 
         # Build process_json
@@ -470,7 +503,7 @@ class LciImportJobExecutor:
                     process_json=process_json,
                     source_file=pr.spold_path,
                     import_mode="ecoinvent_ef31_lci",
-                    import_report_json={"package_version": "ecoinvent_3.11"},
+                    import_report_json={"package_version": self.package_version},
                 )
             )
             with self._lock:
@@ -510,6 +543,7 @@ class LciImportJobExecutor:
                 )
             )
 
+        nnz_written = 0
         if matrix_rows:
             # Import flows first
             for exc in exs:
@@ -523,10 +557,101 @@ class LciImportJobExecutor:
                 procs, matrix_rows, is_intermediate=False
             )
             if result:
+                nnz_written = result.get("nnz", 0)
                 with self._lock:
                     self._stats["vectors_written"] += result.get("vectors_written", 0)
                     self._stats["nnz_total"] += result.get("nnz", 0)
                     self._vector_warnings.extend(result.get("warnings", []))
+
+        # ── Update global import status on success ──
+        self._update_global_status(
+            dataset_uuid,
+            "imported",
+            pr.spold_path,
+            procs,
+            nnz=nnz_written,
+            activity_id=ds.activity_id,
+            reference_product_id=ds.reference_product_id,
+        )
+        self._update_progress()
+
+    # ── Global dataset import state helpers ────────────────────────────
+
+    def _get_global_dataset_status(self, dataset_uuid: str):
+        """Query global dedup state. Returns row or None."""
+        from .models import GlobalDatasetImport
+        try:
+            return (
+                self.db.query(GlobalDatasetImport)
+                .filter(
+                    GlobalDatasetImport.source_package_version == self.package_version,
+                    GlobalDatasetImport.dataset_uuid == dataset_uuid,
+                )
+                .first()
+            )
+        except Exception:
+            return None
+
+    def _update_global_status(
+        self,
+        dataset_uuid: str,
+        status: str,
+        filename: str,
+        process_uuid: str,
+        nnz: int = 0,
+        error_msg: str | None = None,
+        activity_id: str | None = None,
+        reference_product_id: str | None = None,
+    ) -> None:
+        """Upsert global dataset import state."""
+        from .models import GlobalDatasetImport
+        try:
+            row = (
+                self.db.query(GlobalDatasetImport)
+                .filter(
+                    GlobalDatasetImport.source_package_version == self.package_version,
+                    GlobalDatasetImport.dataset_uuid == dataset_uuid,
+                )
+                .first()
+            )
+            if row is None:
+                row = GlobalDatasetImport(
+                    source_package_version=self.package_version,
+                    dataset_uuid=dataset_uuid,
+                    status=status,
+                )
+                self.db.add(row)
+            row.status = status
+            row.dataset_filename = filename
+            row.process_uuid = process_uuid
+            row.activity_id = activity_id
+            row.reference_product_id = reference_product_id
+            row.vector_nnz = nnz
+            row.last_job_id = self.job_id
+            row.error_message = error_msg
+            if status == "imported":
+                row.imported_at = __import__("datetime").datetime.utcnow()
+            self.db.flush()
+        except Exception:
+            # Non-critical: global dedup failure should not break the import
+            pass
+
+    def _update_global_skipped(self, count: int) -> None:
+        """Increment skipped_global counter on the job (thread-safe)."""
+        with self._lock:
+            if not hasattr(self, '_skipped_global_counter'):
+                self._skipped_global_counter = 0
+            self._skipped_global_counter += count
+
+        try:
+            job = self.db.query(ImportJob).filter(
+                ImportJob.job_id == self.job_id
+            ).first()
+            if job:
+                job.skipped_global = self._skipped_global_counter
+                self.db.flush()
+        except Exception:
+            pass
 
         self._update_progress()
 
