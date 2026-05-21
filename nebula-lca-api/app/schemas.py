@@ -1418,6 +1418,7 @@ class ImportJobCreateRequest(BaseModel):
     file_type: Literal["lci", "lcia"] = Field(default="lci", description="Type of data being imported")
     workers: int = Field(default=4, ge=1, le=8, description="Number of parallel parser workers")
     limit: int | None = Field(default=None, description="Max datasets to import (None = full)")
+    overwrite_existing: bool = Field(default=False, description="If true, re-import datasets that are already imported globally")
 
 
 class ImportJobStartRequest(BaseModel):
@@ -1438,6 +1439,8 @@ class ImportJobStatusResponse(BaseModel):
     error_summary: str | None = Field(default=None, description="Brief error message if failed")
     stats: dict | None = Field(default=None, description="Import statistics: processed, skipped, failed, speed, etc.")
     failed_datasets: list[str] = Field(default_factory=list, description="List of failed dataset keys")
+    skipped_global: int = Field(default=0, description="Number of datasets skipped due to global dedup")
+    overwrite_existing: bool = Field(default=False, description="Whether this job will overwrite existing datasets")
     created_at: str = Field(..., description="Creation timestamp")
     updated_at: str = Field(..., description="Last update timestamp")
 

@@ -49,6 +49,8 @@ def _job_response(job: ImportJob, failed_datasets: list[str] | None = None) -> I
         error_summary=job.error_summary,
         stats=job.stats_json,
         failed_datasets=failed_datasets or [],
+        skipped_global=getattr(job, 'skipped_global', 0),
+        overwrite_existing=getattr(job, 'overwrite_existing', False),
         created_at=str(job.created_at),
         updated_at=str(job.updated_at),
     )
@@ -90,6 +92,8 @@ def _run_job_background(job_id: str, resume_from_failed: bool) -> None:
             workers=job.workers,
             limit=job.limit,
             resume_from_failed=resume_from_failed,
+            overwrite_existing=getattr(job, 'overwrite_existing', False),
+            package_version="ecoinvent_3.11",
         )
         result = executor.run()
 
@@ -100,10 +104,12 @@ def _run_job_background(job_id: str, resume_from_failed: bool) -> None:
             job.status = "completed" if not result.error_summary else "failed"
             job.phase = "done" if job.status == "completed" else "failed"
         job.error_summary = result.error_summary
+        job.skipped_global = result.skipped_global
         job.stats_json = {
             "processes_inserted": result.processes_inserted,
             "processes_skipped": result.processes_skipped,
             "processes_failed": result.processes_failed,
+            "skipped_global": result.skipped_global,
             "vectors_written": result.vectors_written,
             "vector_nnz_total": result.vector_nnz_total,
             "failed_datasets": result.failed_datasets,
@@ -229,6 +235,8 @@ def create_import_job(
         workers=request.workers,
         limit=request.limit,
         status="pending",
+        overwrite_existing=request.overwrite_existing,
+        skipped_global=0,
         created_at=datetime.utcnow(),
     )
     db.add(job)

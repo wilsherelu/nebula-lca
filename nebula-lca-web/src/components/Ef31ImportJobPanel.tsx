@@ -23,6 +23,8 @@ interface JobStatus {
   error_summary: string | null;
   stats: Record<string, unknown> | null;
   failed_datasets: string[];
+  skipped_global: number;
+  overwrite_existing: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -66,6 +68,8 @@ const zhText = {
   nnz: "\u975e\u96f6\u9879",
   duration: "\u8017\u65f6",
   failed: "\u5931\u8d25",
+  overwriteExisting: "\u8986\u76d6\u5df2\u5bfc\u5168 dataset",
+  skippedGlobal: "\u5168\u5c40\u8df3\u8fc7",
 };
 
 const enText = {
@@ -102,6 +106,8 @@ const enText = {
   nnz: "nnz",
   duration: "Duration",
   failed: "Failed",
+  overwriteExisting: "Overwrite already imported datasets",
+  skippedGlobal: "Global skipped",
 };
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -143,6 +149,7 @@ export default function Ef31ImportJobPanel(props: {
   const [jobBusy, setJobBusy] = useState(false);
   const [workers, setWorkers] = useState(4);
   const [limit, setLimit] = useState<number | null>(100);
+  const [overwriteExisting, setOverwriteExisting] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
   const [job, setJob] = useState<JobStatus | null>(null);
@@ -211,7 +218,7 @@ export default function Ef31ImportJobPanel(props: {
       const newJob = await requestJson<JobStatus>(`${API_BASE}/import/ef31/jobs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ file_path: completed.file_path, file_type: fileType, workers, limit }),
+        body: JSON.stringify({ file_path: completed.file_path, file_type: fileType, workers, limit, overwrite_existing: overwriteExisting }),
       });
       const started = await requestJson<JobStatus>(`${API_BASE}/import/ef31/jobs/${encodeURIComponent(newJob.job_id)}/start`, {
         method: "POST",
@@ -227,7 +234,7 @@ export default function Ef31ImportJobPanel(props: {
     } finally {
       setUploadBusy(false);
     }
-  }, [fileType, limit, selectedFile, startPolling, t.selectFile, workers]);
+  }, [fileType, limit, overwriteExisting, selectedFile, startPolling, t.selectFile, workers]);
 
   const pause = useCallback(async () => {
     if (!job) return;
@@ -360,6 +367,10 @@ export default function Ef31ImportJobPanel(props: {
                     <span style={{ fontSize: 12 }}>{t.limit}</span>
                     <input type="number" min={1} value={limit ?? ""} placeholder={t.full} onChange={(event) => setLimit(event.target.value ? Number(event.target.value) : null)} />
                   </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input type="checkbox" checked={overwriteExisting} onChange={(event) => setOverwriteExisting(event.target.checked)} />
+                    <span style={{ fontSize: 12, color: "#c0392b" }}>{t.overwriteExisting}</span>
+                  </label>
                 </>
               )}
             </>
@@ -383,6 +394,7 @@ export default function Ef31ImportJobPanel(props: {
               </div>
               <div style={{ display: "flex", gap: 16, marginTop: 8, fontSize: 12, flexWrap: "wrap" }}>
                 <span>{t.processed}: <b>{processedCount}</b></span>
+                <span>{t.skippedGlobal}: <b>{job.skipped_global ?? 0}</b></span>
                 {(job.status === "running" || job.status === "paused") && <span>ETA {estimateTimeRemaining(job.progress_pct, elapsedSeconds)}</span>}
               </div>
               {job.failed_datasets?.length > 0 && (
@@ -400,6 +412,7 @@ export default function Ef31ImportJobPanel(props: {
               <div style={{ display: "grid", gap: 4, fontSize: 12, color: "#496675", marginTop: 8 }}>
                 <div>{t.status}: <b>{job.status}</b></div>
                 <div>{t.processes}: <b>{Number(stats.processes_inserted ?? 0)}</b> {t.new} / <b>{Number(stats.processes_skipped ?? 0)}</b> {t.skipped}</div>
+                <div>{t.skippedGlobal}: <b>{job.skipped_global ?? 0}</b></div>
                 <div>{t.vectors}: <b>{Number(stats.vectors_written ?? 0)}</b> ({t.nnz}) <b>{Number(stats.vector_nnz_total ?? 0)}</b></div>
                 <div>{t.duration}: <b>{Number(stats.duration_seconds ?? 0).toFixed(1)}s</b></div>
                 {job.failed_datasets?.length > 0 && <div style={{ color: "#e67e22" }}>{t.failed}: {job.failed_datasets.length}</div>}

@@ -4,7 +4,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from .models import LciBiosphereFlowKey, LciExchangeMatrix, LciProcessVector, LciVectorAxis, UnitGroup, ImportJob, ImportJobPauseRequest, DatasetCheckpoint
+from .models import LciBiosphereFlowKey, LciExchangeMatrix, LciProcessVector, LciVectorAxis, UnitGroup, ImportJob, ImportJobPauseRequest, DatasetCheckpoint, GlobalDatasetImport
 from .tidas_reference import load_tidas_reference_seed
 
 
@@ -131,30 +131,49 @@ def ensure_import_tables(engine: Engine) -> dict:
     """Ensure import task system tables exist."""
     added_tables: list[str] = []
     added_indexes: list[str] = []
+    added_columns: list[str] = []
 
     for model, table_name in [
         (ImportJob, "import_jobs"),
         (ImportJobPauseRequest, "import_job_pause_requests"),
         (DatasetCheckpoint, "dataset_checkpoints"),
+        (GlobalDatasetImport, "global_dataset_imports"),
     ]:
         if not inspect(engine).has_table(table_name):
             model.__table__.create(bind=engine, checkfirst=True)
             added_tables.append(table_name)
 
-    # Create indexes on import_jobs
     with engine.begin() as conn:
         dialect_name = conn.engine.dialect.name
         if_if_not_exists = "IF NOT EXISTS" if dialect_name in {"postgresql", "sqlite"} else ""
+        inspector = inspect(conn)
+
+        if inspector.has_table("import_jobs"):
+            import_job_columns = {col["name"] for col in inspector.get_columns("import_jobs")}
+            for col_name, col_type in [
+                ("skipped_global", "INTEGER NOT NULL DEFAULT 0"),
+                ("overwrite_existing", "BOOLEAN NOT NULL DEFAULT false"),
+            ]:
+                if col_name in import_job_columns:
+                    continue
+                if dialect_name == "postgresql":
+                    conn.execute(text(f"ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
+                elif dialect_name == "sqlite":
+                    conn.execute(text(f"ALTER TABLE import_jobs ADD COLUMN {col_name} {col_type}"))
+                else:
+                    raise RuntimeError(f"Unsupported database dialect '{dialect_name}'")
+                added_columns.append(f"import_jobs.{col_name}")
 
         idx_defs = [
             ("import_jobs", "ix_import_jobs_status", f"CREATE INDEX {if_if_not_exists} ix_import_jobs_status ON import_jobs (status)"),
             ("dataset_checkpoints", "ix_dataset_checkpoint_job_id", f"CREATE INDEX {if_if_not_exists} ix_dataset_checkpoint_job_id ON dataset_checkpoints (job_id)"),
             ("dataset_checkpoints", "ix_dataset_checkpoint_status", f"CREATE INDEX {if_if_not_exists} ix_dataset_checkpoint_status ON dataset_checkpoints (status)"),
+            ("global_dataset_imports", "ix_global_dataset_pv", f"CREATE INDEX {if_if_not_exists} ix_global_dataset_pv ON global_dataset_imports (source_package_version, dataset_uuid)"),
+            ("global_dataset_imports", "ix_global_dataset_status", f"CREATE INDEX {if_if_not_exists} ix_global_dataset_status ON global_dataset_imports (status)"),
         ]
-        inspector = inspect(conn)
         existing_by_table = {
             table_name: {idx["name"] for idx in inspector.get_indexes(table_name)}
-            for table_name in {"import_jobs", "dataset_checkpoints"}
+            for table_name in {"import_jobs", "dataset_checkpoints", "global_dataset_imports"}
             if inspector.has_table(table_name)
         }
         for table_name, idx_name, idx_sql in idx_defs:
@@ -165,8 +184,9 @@ def ensure_import_tables(engine: Engine) -> dict:
             added_indexes.append(idx_name)
 
     return {
-        "status": "ok" if added_tables or added_indexes else "already_complete",
+        "status": "ok" if added_tables or added_columns or added_indexes else "already_complete",
         "added_tables": added_tables,
+        "added_columns": added_columns,
         "added_indexes": added_indexes,
     }
 

@@ -328,6 +328,8 @@ class ImportJob(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     error_summary: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     stats_json: Mapped[dict | None] = mapped_column(JsonType, nullable=True)
+    skipped_global: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    overwrite_existing: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -354,13 +356,55 @@ class DatasetCheckpoint(Base):
         String(32),
         nullable=False,
         default="pending",
-        # pending | running | imported | failed | skipped
+        # pending | running | imported | failed | skipped | skipped_global
     )
     process_uuid: Mapped[str | None] = mapped_column(String(64), nullable=True)
     vector_nnz: Mapped[int | None] = mapped_column(Integer, nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_message: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+# ======================================================================
+# Global Dataset Import State
+# ======================================================================
+
+
+class GlobalDatasetImport(Base):
+    """Global dedup state for ecoinvent dataset imports across jobs.
+
+    Primary key: (source_package_version, dataset_uuid)
+    dataset_uuid = activity_id + reference_product_id (fallback: activity_id only)
+    """
+
+    __tablename__ = "global_dataset_imports"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_package_version",
+            "dataset_uuid",
+            name="uq_global_dataset_pv_uuid",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_package_version: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    dataset_uuid: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
+    dataset_filename: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    process_uuid: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    activity_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reference_product_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="pending",
+        # pending | imported | failed
+    )
+    vector_nnz: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_job_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    imported_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
