@@ -276,31 +276,67 @@ def start_import_job(
     return _job_response(job)
 
 
-@_router.post("/jobs/{job_id}/pause")
+@_router.post("/jobs/{job_id}/pause", status_code=202)
 def pause_import_job(job_id: str, db: Session = Depends(get_db)):
-    """Pause an import job (best-effort, pauses at next checkpoint)."""
+    """Pause an import job (best-effort, pauses at next checkpoint).
+
+    Always writes a control signal file so pause is captured even when
+    the DB session is locked.  Returns 202 Accepted immediately.
+    """
     job = db.query(ImportJob).filter(ImportJob.job_id == job_id).first()
     if job is None:
         raise HTTPException(status_code=404, detail={"code": "JOB_NOT_FOUND", "message": f"No job: {job_id}"})
-    if job.status != "running":
+    if job.status not in {"running", "paused"}:
         raise HTTPException(status_code=400, detail={"code": "NOT_RUNNING", "message": f"Job is {job.status}, not running"})
-    job.status = "paused"
-    job.updated_at = datetime.utcnow()
-    db.commit()
+
+    # Always write control signal (file I/O, independent of DB lock)
+    from ..job_control import write_job_control_signal
+
+    try:
+        write_job_control_signal(job_id, pause_requested=True, cancel_requested=False)
+    except Exception:
+        pass  # Non-critical: signal file is best-effort
+
+    # Best-effort DB update
+    try:
+        job.status = "paused"
+        job.updated_at = datetime.utcnow()
+        db.commit()
+    except Exception:
+        pass  # DB may be locked; signal file already written
+
     return {"job_id": job_id, "status": "paused", "message": "Pause requested, will stop at next dataset boundary"}
 
 
-@_router.post("/jobs/{job_id}/cancel")
+@_router.post("/jobs/{job_id}/cancel", status_code=202)
 def cancel_import_job(job_id: str, db: Session = Depends(get_db)):
-    """Cancel an import job."""
+    """Cancel an import job.
+
+    Always writes a control signal file so cancel is captured even when
+    the DB session is locked.  Returns 202 Accepted immediately.
+    """
     job = db.query(ImportJob).filter(ImportJob.job_id == job_id).first()
     if job is None:
         raise HTTPException(status_code=404, detail={"code": "JOB_NOT_FOUND", "message": f"No job: {job_id}"})
-    job.status = "cancelled"
-    job.phase = "cancelled"
-    job.updated_at = datetime.utcnow()
-    db.commit()
-    return {"job_id": job_id, "status": "cancelled"}
+
+    # Always write control signal (file I/O, independent of DB lock)
+    from ..job_control import write_job_control_signal
+
+    try:
+        write_job_control_signal(job_id, pause_requested=True, cancel_requested=True)
+    except Exception:
+        pass  # Non-critical: signal file is best-effort
+
+    # Best-effort DB update
+    try:
+        job.status = "cancelled"
+        job.phase = "cancelled"
+        job.updated_at = datetime.utcnow()
+        db.commit()
+    except Exception:
+        pass  # DB may be locked; signal file already written
+
+    return {"job_id": job_id, "status": "cancelled", "message": "Cancel requested, will stop at next dataset boundary"}
 
 
 @_router.get("/jobs/{job_id}", response_model=ImportJobStatusResponse)

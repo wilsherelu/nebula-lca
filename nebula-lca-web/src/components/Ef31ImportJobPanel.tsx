@@ -255,9 +255,17 @@ export default function Ef31ImportJobPanel(props: {
 
   const cancel = useCallback(async () => {
     if (!job) return;
-    await requestJson(`${API_BASE}/import/ef31/jobs/${encodeURIComponent(job.job_id)}/cancel`, { method: "POST" });
+    try {
+      await requestJson(`${API_BASE}/import/ef31/jobs/${encodeURIComponent(job.job_id)}/cancel`, { method: "POST" });
+    } catch {
+      // Ignore: signal file already written, background thread will pick it up
+    }
     stopPolling();
-    setJob(await requestJson<JobStatus>(`${API_BASE}/import/ef31/jobs/${encodeURIComponent(job.job_id)}`));
+    try {
+      setJob(await requestJson<JobStatus>(`${API_BASE}/import/ef31/jobs/${encodeURIComponent(job.job_id)}`));
+    } catch {
+      // Keep current state
+    }
   }, [job, stopPolling]);
 
   const retryFailed = useCallback(async () => {
@@ -395,6 +403,8 @@ export default function Ef31ImportJobPanel(props: {
               <div style={{ display: "flex", gap: 16, marginTop: 8, fontSize: 12, flexWrap: "wrap" }}>
                 <span>{t.processed}: <b>{processedCount}</b></span>
                 <span>{t.skippedGlobal}: <b>{job.skipped_global ?? 0}</b></span>
+                <span>{t.vectors}: <b>{Number(stats.vectors_written ?? 0)}</b></span>
+                <span>{t.failed}: <b>{Number(stats.processes_failed ?? 0)}</b></span>
                 {(job.status === "running" || job.status === "paused") && <span>ETA {estimateTimeRemaining(job.progress_pct, elapsedSeconds)}</span>}
               </div>
               {job.failed_datasets?.length > 0 && (
