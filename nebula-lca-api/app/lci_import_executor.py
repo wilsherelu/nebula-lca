@@ -118,6 +118,11 @@ class LciImportJobExecutor:
         self._paused = False
         self._cancel_requested = False
 
+        # Performance caches (built once per job, shared across workers)
+        self._unit_conversion_cache: dict[str, tuple[float, str]] = {}
+        self._flow_key_cache: dict[tuple[str, str, str, str, str], int] = {}
+        self._flow_metadata_cache: dict[str, tuple[str, str]] = {}
+
         # Statistics (protected by lock)
         self._lock = threading.Lock()
         self._stats = {
@@ -170,12 +175,13 @@ class LciImportJobExecutor:
             parse_results: list[ParseResult] = []
             batch_size = max(self.workers * 8, 16)
             for offset in range(0, len(pending_files), batch_size):
-                requested_status = self._get_requested_status()
-                if requested_status == "cancelled":
+                # Check signal files before each batch
+                sig_pause, sig_cancel = self._check_control_signals()
+                if sig_cancel:
                     self._cancel_requested = True
                     self._update_job_status("cancelled")
                     break
-                if requested_status == "paused":
+                if sig_pause:
                     self._update_job_status("paused")
                     break
 
@@ -232,7 +238,11 @@ class LciImportJobExecutor:
     # ── MasterData loading ─────────────────────────────────────────────
 
     def _load_master_data(self) -> None:
-        """Load elementary flows from MasterData (shared lookup for all workers)."""
+        """Load elementary flows from MasterData (shared lookup for all workers).
+
+        Also pre-builds performance caches (unit conversion, flow keys,
+        flow metadata) so they are NOT rebuilt per-process-vector.
+        """
         if not self.master_data_dir or not self.master_data_dir.exists():
             return
         try:
@@ -240,6 +250,9 @@ class LciImportJobExecutor:
                 import_ecoinvent_elementary_flows,
                 import_ecoinvent_intermediate_flows,
                 import_ecoinvent_units,
+                _build_unit_conversion_cache,
+                _build_lci_flow_key_cache,
+                _build_flow_metadata_cache,
             )
 
             import_ecoinvent_units(self.db, data_dir=str(self.master_data_dir), package_version="ecoinvent_3.11")
@@ -251,6 +264,16 @@ class LciImportJobExecutor:
                 self.master_data_dir, units_map
             )
             self._elem_flow_lookup = {f.flow_uuid: f for f in self._elementary_flows}
+
+            # Build job-level caches ONCE (not per-process)
+            try:
+                self._unit_conversion_cache = _build_unit_conversion_cache(self.db)
+                self._flow_key_cache = _build_lci_flow_key_cache(self.db)
+                self._flow_metadata_cache = _build_flow_metadata_cache(self.db)
+            except Exception:
+                # Non-critical: caches degrade gracefully
+                pass
+
             logger.info(
                 f"[{self.job_id}] Loaded {len(self._elementary_flows)} elementary flows"
             )
@@ -448,8 +471,8 @@ class LciImportJobExecutor:
                 with self._lock:
                     self._stats["skipped"] += 1
                     self._global_skipped_dataset_keys.add(Path(pr.spold_path).name)
+                # Update global skipped counter (includes stats_json sync)
                 self._update_global_skipped(1)
-                self._update_progress()
                 return
 
         # Check for missing elementary flow refs
@@ -517,7 +540,7 @@ class LciImportJobExecutor:
             with self._lock:
                 self._stats["skipped"] += 1  # updated counts as skipped for simplicity
 
-        # Upsert flows
+        # Upsert flows (first pass)
         for exc in exs:
             if exc.exchange_id:
                 full_flow = elem_flow_lookup.get(exc.exchange_id)
@@ -545,14 +568,7 @@ class LciImportJobExecutor:
 
         nnz_written = 0
         if matrix_rows:
-            # Import flows first
-            for exc in exs:
-                if exc.exchange_id:
-                    full_flow = elem_flow_lookup.get(exc.exchange_id)
-                    if full_flow:
-                        self._ensure_flow_exists(full_flow, is_intermediate=False)
-
-            # Write vector
+            # Write vector (caches already built in _load_master_data)
             result = self._write_process_vector(
                 procs, matrix_rows, is_intermediate=False
             )
@@ -637,7 +653,10 @@ class LciImportJobExecutor:
             pass
 
     def _update_global_skipped(self, count: int) -> None:
-        """Increment skipped_global counter on the job (thread-safe)."""
+        """Increment skipped_global counter on the job (thread-safe).
+
+        Updates ImportJob.skipped_global and stats_json in DB.
+        """
         with self._lock:
             if not hasattr(self, '_skipped_global_counter'):
                 self._skipped_global_counter = 0
@@ -649,11 +668,13 @@ class LciImportJobExecutor:
             ).first()
             if job:
                 job.skipped_global = self._skipped_global_counter
+                # Also update stats_json for consistency
+                if job.stats_json is None:
+                    job.stats_json = {}
+                job.stats_json["skipped_global"] = self._skipped_global_counter
                 self.db.flush()
         except Exception:
             pass
-
-        self._update_progress()
 
     def _ensure_flow_exists(self, flow, is_intermediate: bool = False) -> None:
         """Ensure FlowRecord exists — simplified inline version."""
@@ -681,7 +702,11 @@ class LciImportJobExecutor:
         )
 
     def _write_process_vector(self, process_uuid: str, exchanges: list, is_intermediate: bool = False) -> dict | None:
-        """Write compressed vector using the canonical ecoinvent vector helper."""
+        """Write compressed vector using the canonical ecoinvent vector helper.
+
+        Passes pre-built job-level caches (unit conversion, flow keys,
+        flow metadata) so each process does NOT rebuild them from DB.
+        """
         if not exchanges:
             return None
         from .ingest_ecoinvent import write_ecoinvent_process_vector
@@ -692,10 +717,37 @@ class LciImportJobExecutor:
             exchanges=exchanges,
             package_version="ecoinvent_3.11",
             dataset_level="linked_lci",
+            unit_conversion_cache=self._unit_conversion_cache,
+            flow_key_cache=self._flow_key_cache,
+            flow_metadata_cache=self._flow_metadata_cache,
             commit=False,
         )
 
     # ── Job state helpers ──────────────────────────────────────────────
+
+    def _check_control_signals(self) -> tuple[bool, bool]:
+        """Check file-based control signals and in-memory state.
+
+        Returns (pause_requested, cancel_requested).
+        Signal files take priority; they survive DB lock.
+        """
+        try:
+            from .job_control import read_job_control_signal
+
+            signal = read_job_control_signal(self.job_id)
+            if signal:
+                cancel = bool(signal.get("cancel_requested", False))
+                pause = bool(signal.get("pause_requested", False))
+                if cancel:
+                    self._cancel_requested = True
+                if pause:
+                    self._paused = True
+                    self._pause_event.set()
+                return pause, cancel
+        except Exception:
+            pass
+        # Fallback to in-memory state
+        return self._paused, self._cancel_requested
 
     def _get_requested_status(self) -> str | None:
         try:
@@ -707,16 +759,36 @@ class LciImportJobExecutor:
             return None
 
     def _update_progress(self) -> None:
-        """Update job progress in DB (called after each dataset)."""
+        """Update job progress in DB after each dataset.
+
+        Synchronises: progress_pct, stats_json (inserted/skipped/failed
+        vectors nnz skipped_global).
+        """
         try:
             job = self.db.query(ImportJob).filter(
                 ImportJob.job_id == self.job_id
             ).first()
             if job:
                 total = self._total_count
-                processed = self._stats["inserted"] + self._stats["skipped"] + self._stats["failed"]
+                with self._lock:
+                    inserted = self._stats["inserted"]
+                    skipped = self._stats["skipped"]
+                    failed = self._stats["failed"]
+                    vectors_written = self._stats["vectors_written"]
+                    nnz_total = self._stats["nnz_total"]
+
+                processed = inserted + skipped + failed
                 if total and total > 0:
                     job.progress_pct = round(min(100.0, processed / total * 100), 1)
+
+                job.stats_json = {
+                    "processes_inserted": inserted,
+                    "processes_skipped": skipped,
+                    "processes_failed": failed,
+                    "skipped_global": getattr(self, '_skipped_global_counter', 0),
+                    "vectors_written": vectors_written,
+                    "vector_nnz_total": nnz_total,
+                }
                 job.updated_at = __import__("datetime").datetime.utcnow()
                 self.db.flush()
         except Exception:
@@ -750,6 +822,14 @@ class LciImportJobExecutor:
         result.duration_seconds = round(time.time() - start_time, 3)
         if self._error_summary:
             result.error_summary = self._error_summary
+
+        # Clear control signal file on completion
+        try:
+            from .job_control import clear_job_control_signal
+            clear_job_control_signal(self.job_id)
+        except Exception:
+            pass
+
         logger.info(
             f"[{self.job_id}] Import complete: "
             f"inserted={result.processes_inserted} skipped={result.processes_skipped} "

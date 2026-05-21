@@ -432,3 +432,189 @@ def test_global_dataset_skip_marks_job_checkpoint(tmp_path):
     assert executor._stats["skipped"] == 1
     assert executor._stats["inserted"] == 0
     assert job.skipped_global == 1
+
+
+def test_cache_built_once_per_job(tmp_path):
+    """Unit conversion / flow key caches should be built once, not per-process."""
+    import threading
+    from collections import defaultdict
+    from unittest.mock import MagicMock, patch
+
+    from sqlalchemy.orm import sessionmaker
+
+    from app.lci_import_executor import LciImportJobExecutor
+    from app.models import ImportJob
+
+    db_path = tmp_path / "test.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+
+    ImportJob.__table__.create(engine)
+
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    db.add(ImportJob(job_id="cache-test", file_path="/fake/path.7z", file_type="lci"))
+    db.commit()
+
+    executor = LciImportJobExecutor.__new__(LciImportJobExecutor)
+    executor.db = db
+    executor.job_id = "cache-test"
+    executor.package_version = "ecoinvent_3.11"
+    executor.overwrite_existing = False
+    executor.spold_dir = tmp_path / "spold"
+    executor.master_data_dir = None
+    executor.workers = 2
+    executor.limit = None
+    executor.write_matrix_debug = False
+    executor.resume_from_failed = False
+    executor._pause_event = threading.Event()
+    executor._paused = False
+    executor._cancel_requested = False
+    executor._lock = threading.Lock()
+    executor._stats = defaultdict(int)
+    executor._failed_datasets = []
+    executor._vector_warnings = []
+    executor._total_count = 0
+    executor._elementary_flows = []
+    executor._elem_flow_lookup = {}
+    executor._global_skipped_dataset_keys = set()
+    executor._unit_conversion_cache = {}
+    executor._flow_key_cache = {}
+    executor._flow_metadata_cache = {}
+
+    # Call _load_master_data when no master_data_dir → should do nothing
+    executor._load_master_data()
+
+    # Verify caches are still empty when no MasterData
+    assert executor._unit_conversion_cache == {}
+    assert executor._flow_key_cache == {}
+    assert executor._flow_metadata_cache == {}
+
+
+def test_control_signal_file_written(tmp_path):
+    """Control signal API should write file even when DB is locked."""
+    import json
+
+    from app.job_control import read_job_control_signal, write_job_control_signal, clear_job_control_signal
+
+    signal_dir = tmp_path / "job_control"
+    # Monkey-patch the signal dir
+    import app.job_control as jc
+    original_dir = jc.SIGNAL_DIR
+    jc.SIGNAL_DIR = signal_dir
+
+    try:
+        job_id = "signal-test-001"
+
+        # Write signal
+        result = write_job_control_signal(job_id, pause_requested=True, cancel_requested=False)
+        assert result["job_id"] == job_id
+        assert result["pause_requested"] is True
+        assert result["cancel_requested"] is False
+
+        # Read back
+        signal = read_job_control_signal(job_id)
+        assert signal is not None
+        assert signal["pause_requested"] is True
+
+        # Clear
+        clear_job_control_signal(job_id)
+        assert read_job_control_signal(job_id) is None
+
+    finally:
+        jc.SIGNAL_DIR = original_dir
+
+
+def test_progress_stats_json_updates(tmp_path):
+    """_update_progress should sync stats_json with current counts."""
+    import threading
+    from collections import defaultdict
+
+    from sqlalchemy.orm import sessionmaker
+
+    from app.lci_import_executor import LciImportJobExecutor
+    from app.models import ImportJob
+
+    db_path = tmp_path / "test.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+
+    ImportJob.__table__.create(engine)
+
+    Session = sessionmaker(bind=engine)
+    db = Session()
+
+    job_id = "stats-test-001"
+    db.add(ImportJob(
+        job_id=job_id,
+        file_path="/fake/path.7z",
+        file_type="lci",
+        progress_pct=0.0,
+        stats_json=None,
+    ))
+    db.commit()
+
+    executor = LciImportJobExecutor.__new__(LciImportJobExecutor)
+    executor.db = db
+    executor.job_id = job_id
+    executor._total_count = 100
+    executor._lock = threading.Lock()
+    executor._stats = defaultdict(int)
+    executor._stats["inserted"] = 10
+    executor._stats["skipped"] = 5
+    executor._stats["failed"] = 2
+    executor._stats["vectors_written"] = 10
+    executor._stats["nnz_total"] = 500
+
+    # Call _update_progress
+    executor._update_progress()
+
+    # Check DB state
+    job = db.query(ImportJob).filter_by(job_id=job_id).one()
+    assert job.progress_pct == 17.0  # (10 + 5 + 2) / 100 * 100 = 17.0
+    assert job.stats_json is not None
+    assert job.stats_json["processes_inserted"] == 10
+    assert job.stats_json["processes_skipped"] == 5
+    assert job.stats_json["processes_failed"] == 2
+    assert job.stats_json["vectors_written"] == 10
+    assert job.stats_json["vector_nnz_total"] == 500
+
+
+def test_recover_stale_jobs_resets_running_checkpoints(tmp_path):
+    """Stale running jobs should be cancellable for retry maintenance."""
+    from datetime import datetime, timedelta
+
+    from sqlalchemy.orm import sessionmaker
+
+    from app.job_control import recover_stale_jobs
+    from app.models import DatasetCheckpoint, ImportJob
+
+    db_path = tmp_path / "test.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    ImportJob.__table__.create(engine)
+    DatasetCheckpoint.__table__.create(engine)
+
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    job_id = "stale-job-001"
+    db.add(ImportJob(
+        job_id=job_id,
+        file_path="/fake/path.7z",
+        file_type="lci",
+        status="running",
+        phase="importing",
+        updated_at=datetime.utcnow() - timedelta(hours=2),
+    ))
+    db.add(DatasetCheckpoint(
+        job_id=job_id,
+        dataset_key="dataset.spold",
+        status="running",
+    ))
+    db.commit()
+
+    result = recover_stale_jobs(db, max_running_seconds=60)
+
+    assert result["jobs_cancelled"] == 1
+    assert result["checkpoints_reset"] == 1
+    job = db.query(ImportJob).filter_by(job_id=job_id).one()
+    checkpoint = db.query(DatasetCheckpoint).filter_by(job_id=job_id).one()
+    assert job.status == "cancelled"
+    assert checkpoint.status == "pending"
