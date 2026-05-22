@@ -56,6 +56,17 @@ def _job_response(job: ImportJob, failed_datasets: list[str] | None = None) -> I
     )
 
 
+def _set_job_phase(db: Session, job_id: str, phase: str, stats: dict | None = None) -> None:
+    job = db.query(ImportJob).filter(ImportJob.job_id == job_id).first()
+    if job is None:
+        return
+    job.phase = phase
+    job.status = "running"
+    job.stats_json = {**(job.stats_json or {}), **(stats or {}), "phase": phase}
+    job.updated_at = datetime.utcnow()
+    db.commit()
+
+
 def _run_job_background(job_id: str, resume_from_failed: bool) -> None:
     db = SessionLocal()
     try:
@@ -71,6 +82,7 @@ def _run_job_background(job_id: str, resume_from_failed: bool) -> None:
             return
 
         if file_path.suffix.lower() == ".7z":
+            _set_job_phase(db, job_id, "extracting", {"message": "extracting_archive"})
             extract_dir = Path("import-cache") / "job_extract" / job_id
             extract_dir.mkdir(parents=True, exist_ok=True)
             from ..ecoinvent_ef31_loader import selective_extract_7z
@@ -81,6 +93,8 @@ def _run_job_background(job_id: str, resume_from_failed: bool) -> None:
         else:
             spold_dir = str(file_path)
             master_data_dir = ""
+
+        _set_job_phase(db, job_id, "masterdata", {"message": "loading_masterdata"})
 
         from ..lci_import_executor import LciImportJobExecutor
 
@@ -146,6 +160,7 @@ async def create_upload_session(
 
 
 @_router.put("/upload-session/{upload_id}/chunks/{chunk_index}")
+@_router.post("/upload-session/{upload_id}/chunks/{chunk_index}")
 async def upload_chunk(
     upload_id: str,
     chunk_index: int,

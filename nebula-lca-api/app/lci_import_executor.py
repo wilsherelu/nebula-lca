@@ -246,6 +246,8 @@ class LciImportJobExecutor:
         if not self.master_data_dir or not self.master_data_dir.exists():
             return
         try:
+            self._update_job_phase("masterdata")
+            self.db.commit()
             from .ingest_ecoinvent import (
                 import_ecoinvent_elementary_flows,
                 import_ecoinvent_intermediate_flows,
@@ -801,6 +803,7 @@ class LciImportJobExecutor:
             ).first()
             if job:
                 job.phase = phase
+                job.stats_json = {**(job.stats_json or {}), "phase": phase}
                 job.updated_at = __import__("datetime").datetime.utcnow()
                 self.db.flush()
         except Exception:
