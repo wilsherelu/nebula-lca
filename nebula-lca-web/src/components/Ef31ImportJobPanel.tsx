@@ -37,7 +37,7 @@ const IMPORT_API_BASE = RAW_IMPORT_API_BASE
   : (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") && window.location.port === "5173"
     ? "http://127.0.0.1:8001/api"
     : API_BASE;
-const DEFAULT_CHUNK_SIZE = 5 * 1024 * 1024;
+const DEFAULT_CHUNK_SIZE = 64 * 1024 * 1024;
 const STATUS_POLL_INTERVAL_MS = 2000;
 const CHUNK_UPLOAD_RETRY_LIMIT = 5;
 
@@ -77,6 +77,7 @@ const zhText = {
   failed: "\u5931\u8d25",
   overwriteExisting: "\u8986\u76d6\u5df2\u5bfc\u5168 dataset",
   skippedGlobal: "\u5168\u5c40\u8df3\u8fc7",
+  phase: "\u9636\u6bb5",
 };
 
 const enText = {
@@ -115,6 +116,7 @@ const enText = {
   failed: "Failed",
   overwriteExisting: "Overwrite already imported datasets",
   skippedGlobal: "Global skipped",
+  phase: "Phase",
 };
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -249,7 +251,7 @@ export default function Ef31ImportJobPanel(props: {
           chunkResult = await requestJsonWithRetry<{ uploaded_chunks?: number[] }>(
             `${IMPORT_API_BASE}/import/ef31/upload-session/${session.upload_id}/chunks/${i}`,
             {
-              method: "PUT",
+              method: "POST",
               body: formData,
             },
             CHUNK_UPLOAD_RETRY_LIMIT,
@@ -455,6 +457,7 @@ export default function Ef31ImportJobPanel(props: {
                 <div style={{ height: "100%", width: `${Math.min(100, job.progress_pct)}%`, background: job.status === "failed" ? "#c0392b" : "#27ae60", borderRadius: 4 }} />
               </div>
               <div style={{ display: "flex", gap: 16, marginTop: 8, fontSize: 12, flexWrap: "wrap" }}>
+                <span>{t.phase}: <b>{String(stats.phase ?? job.phase ?? "-")}</b></span>
                 <span>{t.processed}: <b>{processedCount}</b></span>
                 <span>{t.skippedGlobal}: <b>{job.skipped_global ?? 0}</b></span>
                 <span>{t.vectors}: <b>{Number(stats.vectors_written ?? 0)}</b></span>

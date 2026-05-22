@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-_DEFAULT_CHUNK_SIZE = 5 * 1024 * 1024  # 5 MB
+_DEFAULT_CHUNK_SIZE = 64 * 1024 * 1024  # 64 MB
 _UPLOAD_SESSIONS_DIR = Path("import-cache") / "upload_sessions"
 
 

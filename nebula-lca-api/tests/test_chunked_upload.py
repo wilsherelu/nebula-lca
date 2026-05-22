@@ -43,7 +43,7 @@ def test_create_upload_session():
     )
     assert upload_id
     assert response["upload_id"] == upload_id
-    assert response["chunk_size"] == 5 * 1024 * 1024
+    assert response["chunk_size"] == 64 * 1024 * 1024
     assert response["uploaded_chunks"] == []
 
 
