@@ -136,11 +136,12 @@ def _run_job_background(job_id: str, resume_from_failed: bool) -> None:
 async def create_upload_session(
     file_name: str = Query(..., description="Original file name"),
     file_type: str = Query("lci", description="lci or lcia"),
+    expected_size: int | None = Query(None, description="Expected file size in bytes"),
 ):
     """Create a chunked upload session."""
     from ..chunked_upload import create_upload_session as _create
 
-    upload_id, response = _create(file_name=file_name, file_type=file_type)
+    upload_id, response = _create(file_name=file_name, file_type=file_type, expected_size=expected_size)
     return UploadSessionCreateResponse(**response)
 
 

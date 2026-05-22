@@ -91,6 +91,19 @@ def test_upload_chunk_resume_list():
     assert session2["uploaded_chunks"] == [0, 1, 2]
 
 
+def test_create_upload_session_reuses_unfinished_same_file():
+    from app.chunked_upload import create_upload_session, upload_chunk
+
+    upload_id, _ = create_upload_session("resume-same.7z", "lci", expected_size=123)
+    upload_chunk(upload_id, 0, b"data0")
+
+    reused_id, response = create_upload_session("resume-same.7z", "lci", expected_size=123)
+
+    assert reused_id == upload_id
+    assert response["upload_id"] == upload_id
+    assert response["uploaded_chunks"] == [0]
+
+
 def test_complete_missing_chunks():
     from app.chunked_upload import (
         create_upload_session,
