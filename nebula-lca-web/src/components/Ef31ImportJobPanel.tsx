@@ -31,8 +31,15 @@ interface JobStatus {
 
 const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
 const API_BASE = RAW_API_BASE.endsWith("/api") ? RAW_API_BASE : `${RAW_API_BASE}/api`;
+const RAW_IMPORT_API_BASE = ((import.meta.env.VITE_IMPORT_API_BASE_URL as string | undefined) ?? "").replace(/\/$/, "");
+const IMPORT_API_BASE = RAW_IMPORT_API_BASE
+  ? (RAW_IMPORT_API_BASE.endsWith("/api") ? RAW_IMPORT_API_BASE : `${RAW_IMPORT_API_BASE}/api`)
+  : (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") && window.location.port === "5173"
+    ? "http://127.0.0.1:8001/api"
+    : API_BASE;
 const DEFAULT_CHUNK_SIZE = 5 * 1024 * 1024;
 const STATUS_POLL_INTERVAL_MS = 2000;
+const CHUNK_UPLOAD_RETRY_LIMIT = 5;
 
 const zhText = {
   title: "\u5bfc\u5165 LCI/LCIA \u6570\u636e\u5e93",
@@ -119,6 +126,24 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   return resp.json();
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function requestJsonWithRetry<T>(url: string, init: RequestInit | undefined, retries: number): Promise<T> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await requestJson<T>(url, init);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= retries) break;
+      await delay(Math.min(12000, 800 * 2 ** attempt));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -152,6 +177,7 @@ export default function Ef31ImportJobPanel(props: {
   const [overwriteExisting, setOverwriteExisting] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
+  const [uploadSession, setUploadSession] = useState<UploadSession | null>(null);
   const [job, setJob] = useState<JobStatus | null>(null);
   const [errorText, setErrorText] = useState("");
   const pollingRef = useRef<number | null>(null);
@@ -168,7 +194,7 @@ export default function Ef31ImportJobPanel(props: {
     stopPolling();
     pollingRef.current = window.setInterval(async () => {
       try {
-        const next = await requestJson<JobStatus>(`${API_BASE}/import/ef31/jobs/${encodeURIComponent(jobId)}`);
+        const next = await requestJson<JobStatus>(`${IMPORT_API_BASE}/import/ef31/jobs/${encodeURIComponent(jobId)}`);
         setJob(next);
         if (["completed", "failed", "cancelled"].includes(next.status)) {
           stopPolling();
@@ -182,6 +208,11 @@ export default function Ef31ImportJobPanel(props: {
 
   useEffect(() => stopPolling, [stopPolling]);
 
+  useEffect(() => {
+    setUploadSession(null);
+    setUploadProgress({ current: 0, total: 0 });
+  }, [selectedFile]);
+
   const startUpload = useCallback(async () => {
     if (!selectedFile) {
       setErrorText(t.selectFile);
@@ -191,10 +222,19 @@ export default function Ef31ImportJobPanel(props: {
     setUploadBusy(true);
     setUploadProgress({ current: 0, total: 0 });
     try {
-      const session = await requestJson<UploadSession>(
-        `${API_BASE}/import/ef31/upload-session?file_name=${encodeURIComponent(selectedFile.name)}&file_type=${fileType}`,
-        { method: "POST" },
-      );
+      let session = uploadSession;
+      if (!session) {
+        session = await requestJson<UploadSession>(
+          `${IMPORT_API_BASE}/import/ef31/upload-session?file_name=${encodeURIComponent(selectedFile.name)}&file_type=${fileType}&expected_size=${selectedFile.size}`,
+          { method: "POST" },
+        );
+        setUploadSession(session);
+      } else {
+        session = await requestJson<UploadSession>(
+          `${IMPORT_API_BASE}/import/ef31/upload-session/${encodeURIComponent(session.upload_id)}`,
+        );
+        setUploadSession(session);
+      }
       const chunkSize = session.chunk_size || DEFAULT_CHUNK_SIZE;
       const totalChunks = Math.ceil(selectedFile.size / chunkSize);
       const uploaded = new Set(session.uploaded_chunks ?? []);
@@ -204,27 +244,41 @@ export default function Ef31ImportJobPanel(props: {
         if (uploaded.has(i)) continue;
         const formData = new FormData();
         formData.append("file", selectedFile.slice(i * chunkSize, Math.min(selectedFile.size, (i + 1) * chunkSize)));
-        await requestJson(`${API_BASE}/import/ef31/upload-session/${session.upload_id}/chunks/${i}`, {
-          method: "PUT",
-          body: formData,
-        });
-        setUploadProgress({ current: i + 1, total: totalChunks });
+        let chunkResult: { uploaded_chunks?: number[] };
+        try {
+          chunkResult = await requestJsonWithRetry<{ uploaded_chunks?: number[] }>(
+            `${IMPORT_API_BASE}/import/ef31/upload-session/${session.upload_id}/chunks/${i}`,
+            {
+              method: "PUT",
+              body: formData,
+            },
+            CHUNK_UPLOAD_RETRY_LIMIT,
+          );
+        } catch (error) {
+          throw new Error(`Chunk ${i + 1}/${totalChunks} upload failed after retry: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        uploaded.add(i);
+        if (Array.isArray(chunkResult.uploaded_chunks)) {
+          chunkResult.uploaded_chunks.forEach((idx) => uploaded.add(idx));
+        }
+        setUploadProgress({ current: uploaded.size, total: totalChunks });
       }
 
       const completed = await requestJson<{ file_path: string }>(
-        `${API_BASE}/import/ef31/upload-session/${session.upload_id}/complete?total_chunks=${totalChunks}&file_type=${fileType}`,
+        `${IMPORT_API_BASE}/import/ef31/upload-session/${session.upload_id}/complete?total_chunks=${totalChunks}&file_type=${fileType}`,
         { method: "POST" },
       );
-      const newJob = await requestJson<JobStatus>(`${API_BASE}/import/ef31/jobs`, {
+      const newJob = await requestJson<JobStatus>(`${IMPORT_API_BASE}/import/ef31/jobs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ file_path: completed.file_path, file_type: fileType, workers, limit, overwrite_existing: overwriteExisting }),
       });
-      const started = await requestJson<JobStatus>(`${API_BASE}/import/ef31/jobs/${encodeURIComponent(newJob.job_id)}/start`, {
+      const started = await requestJson<JobStatus>(`${IMPORT_API_BASE}/import/ef31/jobs/${encodeURIComponent(newJob.job_id)}/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ resume_from_failed: false }),
       });
+      setUploadSession(null);
       startTimeRef.current = Date.now();
       setJob(started);
       setPhase("job");
@@ -234,17 +288,17 @@ export default function Ef31ImportJobPanel(props: {
     } finally {
       setUploadBusy(false);
     }
-  }, [fileType, limit, overwriteExisting, selectedFile, startPolling, t.selectFile, workers]);
+  }, [fileType, limit, overwriteExisting, selectedFile, startPolling, t.selectFile, uploadSession, workers]);
 
   const pause = useCallback(async () => {
     if (!job) return;
-    await requestJson(`${API_BASE}/import/ef31/jobs/${encodeURIComponent(job.job_id)}/pause`, { method: "POST" });
-    setJob(await requestJson<JobStatus>(`${API_BASE}/import/ef31/jobs/${encodeURIComponent(job.job_id)}`));
+    await requestJson(`${IMPORT_API_BASE}/import/ef31/jobs/${encodeURIComponent(job.job_id)}/pause`, { method: "POST" });
+    setJob(await requestJson<JobStatus>(`${IMPORT_API_BASE}/import/ef31/jobs/${encodeURIComponent(job.job_id)}`));
   }, [job]);
 
   const resume = useCallback(async () => {
     if (!job) return;
-    const started = await requestJson<JobStatus>(`${API_BASE}/import/ef31/jobs/${encodeURIComponent(job.job_id)}/start`, {
+    const started = await requestJson<JobStatus>(`${IMPORT_API_BASE}/import/ef31/jobs/${encodeURIComponent(job.job_id)}/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ resume_from_failed: false }),
@@ -256,13 +310,13 @@ export default function Ef31ImportJobPanel(props: {
   const cancel = useCallback(async () => {
     if (!job) return;
     try {
-      await requestJson(`${API_BASE}/import/ef31/jobs/${encodeURIComponent(job.job_id)}/cancel`, { method: "POST" });
+      await requestJson(`${IMPORT_API_BASE}/import/ef31/jobs/${encodeURIComponent(job.job_id)}/cancel`, { method: "POST" });
     } catch {
       // Ignore: signal file already written, background thread will pick it up
     }
     stopPolling();
     try {
-      setJob(await requestJson<JobStatus>(`${API_BASE}/import/ef31/jobs/${encodeURIComponent(job.job_id)}`));
+      setJob(await requestJson<JobStatus>(`${IMPORT_API_BASE}/import/ef31/jobs/${encodeURIComponent(job.job_id)}`));
     } catch {
       // Keep current state
     }
@@ -272,7 +326,7 @@ export default function Ef31ImportJobPanel(props: {
     if (!job) return;
     setJobBusy(true);
     try {
-      const started = await requestJson<JobStatus>(`${API_BASE}/import/ef31/jobs/${encodeURIComponent(job.job_id)}/retry-failed`, {
+      const started = await requestJson<JobStatus>(`${IMPORT_API_BASE}/import/ef31/jobs/${encodeURIComponent(job.job_id)}/retry-failed`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ resume_from_failed: true }),
@@ -289,7 +343,7 @@ export default function Ef31ImportJobPanel(props: {
     if (!job) return;
     setErrorText("");
     try {
-      await requestJson(`${API_BASE}/import/ef31/jobs/${encodeURIComponent(job.job_id)}/lcia-runtime`, { method: "POST" });
+      await requestJson(`${IMPORT_API_BASE}/import/ef31/jobs/${encodeURIComponent(job.job_id)}/lcia-runtime`, { method: "POST" });
     } catch (err) {
       setErrorText(err instanceof Error ? err.message : String(err));
     }
