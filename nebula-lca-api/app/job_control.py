@@ -106,23 +106,24 @@ def job_needs_action(job_id: str) -> tuple[bool, bool]:
 def recover_stale_jobs(
     db,
     *,
-    max_running_seconds: int = 3600,
+    max_seconds: int = 600,
     statuses: Optional[list[str]] = None,
 ) -> dict:
-    """Mark stale running jobs as cancelled and reset their checkpoints.
+    """Mark stale jobs (running/pending/paused) as cancelled and reset checkpoints.
 
     A job is considered stale when:
-    - It has status ``running`` in the database AND
-    - Its ``updated_at`` is older than ``max_running_seconds``.
+    - Its status is one of the target ``statuses`` AND
+    - Its ``updated_at`` is older than ``max_seconds`` seconds.
 
     This is a maintenance helper; it does NOT touch running executors.
     It only updates DB state so the job can be retried.
 
     Args:
         db: SQLAlchemy session.
-        max_running_seconds: Max seconds a running job is allowed without
-            DB updates before being considered stale (default: 1 hour).
-        statuses: ImportJob statuses to check.  Defaults to ``["running"]``.
+        max_seconds: Max seconds a job is allowed without DB updates
+            before being considered stale (default: 600 = 10 min).
+        statuses: ImportJob statuses to check.  Defaults to
+            ``["running", "pending", "paused"]``.
 
     Returns:
         Dict with counts of recovered jobs and updated checkpoints.
@@ -130,14 +131,25 @@ def recover_stale_jobs(
     from .models import DatasetCheckpoint, ImportJob
 
     if statuses is None:
-        statuses = ["running"]
+        statuses = ["running", "pending", "paused"]
 
     recovered: dict = {
         "jobs_cancelled": 0,
         "checkpoints_reset": 0,
+        "signals_cleared": 0,
     }
 
-    cutoff = datetime.utcnow() - timedelta(seconds=max_running_seconds)
+    if SIGNAL_DIR.exists():
+        for signal_file in SIGNAL_DIR.glob("*.json"):
+            job = db.query(ImportJob).filter(
+                ImportJob.job_id == signal_file.stem,
+                ImportJob.status.in_(["completed", "failed", "cancelled"]),
+            ).first()
+            if job is not None:
+                clear_job_control_signal(job.job_id)
+                recovered["signals_cleared"] += 1
+
+    cutoff = datetime.utcnow() - timedelta(seconds=max_seconds)
     jobs = db.query(ImportJob).filter(
         ImportJob.status.in_(statuses),
         ImportJob.updated_at < cutoff,
@@ -149,7 +161,7 @@ def recover_stale_jobs(
         ).update(
             {
                 "status": "pending",
-                "error_message": "Reset from stale running import job",
+                "error_message": "Reset from stale import job",
                 "updated_at": datetime.utcnow(),
             },
             synchronize_session=False,
