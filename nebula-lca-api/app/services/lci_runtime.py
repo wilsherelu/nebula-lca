@@ -140,6 +140,7 @@ def expand_lci_vectors_into_graph(db: Session, graph: HybridGraph) -> ExpandedLc
                 direction=direction,
                 showOnNode=False,
                 isProduct=False,
+                sourceSystem="ecoinvent",
             )
             if direction == "input":
                 node.inputs.append(port)
@@ -258,6 +259,92 @@ def inventory_with_flow_metadata(db: Session, inventory: dict[int, float]) -> li
             }
         )
     return result
+
+
+def top_process_vector_exchanges(
+    db: Session,
+    process_uuid: str,
+    limit: int = 10,
+    page: int = 1,
+    page_size: int | None = None,
+    direction: str | None = None,
+    q: str | None = None,
+) -> tuple[int, list[dict[str, Any]]]:
+    """Return the largest elementary exchanges in a compressed LCI vector."""
+    effective_page_size = max(1, min(page_size or limit, 100))
+    effective_page = max(1, page)
+    vectors = load_process_vectors(db, [process_uuid])
+    vector = vectors.get(process_uuid)
+    if not vector:
+        return 0, []
+
+    flow_key_ids = list(vector.keys())
+    flow_key_rows = {
+        int(row.flow_key_id): row
+        for row in db.query(LciBiosphereFlowKey)
+        .filter(LciBiosphereFlowKey.flow_key_id.in_(flow_key_ids))
+        .all()
+    }
+    normalized_direction = direction if direction in {"input", "output"} else None
+    search_text = str(q or "").strip().lower()
+    candidates: list[tuple[int, float]] = []
+    for flow_key_id, amount in vector.items():
+        flow_key = flow_key_rows.get(flow_key_id)
+        if flow_key is None:
+            continue
+        row_direction = "input" if str(flow_key.direction or "").lower() == "input" else "output"
+        if normalized_direction is not None and row_direction != normalized_direction:
+            continue
+        candidates.append((flow_key_id, amount))
+
+    offset = (effective_page - 1) * effective_page_size
+    selected = sorted(candidates, key=lambda item: abs(item[1]), reverse=True)[offset: offset + effective_page_size]
+    flow_uuids = sorted({row.flow_uuid for row in flow_key_rows.values() if row.flow_uuid})
+    flow_rows = {
+        row.flow_uuid: row
+        for row in db.query(FlowRecord).filter(FlowRecord.flow_uuid.in_(flow_uuids)).all()
+    } if flow_uuids else {}
+    if search_text:
+        filtered: list[tuple[int, float]] = []
+        for flow_key_id, amount in candidates:
+            flow_key = flow_key_rows.get(flow_key_id)
+            flow = flow_rows.get(flow_key.flow_uuid) if flow_key is not None else None
+            name_haystack = " ".join(
+                str(part or "").lower()
+                for part in (
+                    flow.flow_name if flow is not None else None,
+                    getattr(flow, "flow_name_en", None) if flow is not None else None,
+                    flow_key.flow_uuid if flow_key is not None else None,
+                    flow_key.compartment if flow_key is not None else None,
+                    flow_key.subcompartment if flow_key is not None else None,
+                )
+            )
+            if search_text in name_haystack:
+                filtered.append((flow_key_id, amount))
+        candidates = filtered
+        offset = (effective_page - 1) * effective_page_size
+        selected = sorted(candidates, key=lambda item: abs(item[1]), reverse=True)[offset: offset + effective_page_size]
+
+    items: list[dict[str, Any]] = []
+    for flow_key_id, amount in selected:
+        flow_key = flow_key_rows.get(flow_key_id)
+        if flow_key is None:
+            continue
+        flow = flow_rows.get(flow_key.flow_uuid)
+        row_direction = "input" if str(flow_key.direction or "").lower() == "input" else "output"
+        items.append(
+            {
+                "flow_key_id": flow_key_id,
+                "flow_uuid": flow_key.flow_uuid,
+                "flow_name": flow.flow_name if flow is not None else flow_key.flow_uuid,
+                "direction": row_direction,
+                "unit": flow_key.canonical_unit,
+                "amount": amount,
+                "compartment": flow_key.compartment,
+                "subcompartment": flow_key.subcompartment,
+            }
+        )
+    return len(candidates), items
 
 
 def _get_graph_nodes(graph: Any) -> list[Any]:

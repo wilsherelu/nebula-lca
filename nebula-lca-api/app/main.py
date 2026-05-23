@@ -28,6 +28,7 @@ from .flow_unit_semantics import (
 from .models import (
     DebugDiagnostic,
     FlowRecord,
+    LciBiosphereFlowKey,
     Model,
     ModelVersion,
     PtsCompileArtifact,
@@ -140,6 +141,7 @@ from .preprocess import normalize_graph_units_to_reference
 from .solver import to_tiangong_like
 from .solver_adapter import run_tiangong_lcia
 from .schema_maintenance import (
+    backfill_ecoinvent_unit_group_sources,
     backfill_tidas_unit_group_sources,
     ensure_flow_catalog_tidas_columns,
     ensure_unit_group_source_columns,
@@ -1263,6 +1265,7 @@ def _ensure_source_compliance_schema_on_startup() -> None:
     db = SessionLocal()
     try:
         backfill_tidas_unit_group_sources(db)
+        backfill_ecoinvent_unit_group_sources(db)
     finally:
         db.close()
 
@@ -1740,6 +1743,24 @@ def _solver_flow_type_by_uuid_cached(db: Session) -> dict[str, str]:
         for flow_uuid, meta in _flow_meta_by_uuid_cached(db).items()
         if flow_uuid and meta and str(meta[2] or "").strip()
     }
+
+
+def _solver_flow_source_by_uuid_cached(db: Session) -> dict[str, str]:
+    cache_key = f"flow_source_by_uuid:v1:rev={_cache_revision('flow_meta')}"
+    cached = _cache_get(cache_key, ttl_seconds=_CACHE_TTL_FLOW_META_SECONDS)
+    if isinstance(cached, dict):
+        return cached
+    value = {
+        str(row.flow_uuid).strip(): _safe_str(row.source)
+        for row in db.query(FlowRecord.flow_uuid, FlowRecord.source).all()
+        if str(row.flow_uuid or "").strip() and _safe_str(row.source)
+    }
+    for row in db.query(LciBiosphereFlowKey.flow_uuid).distinct().all():
+        flow_uuid = str(row.flow_uuid or "").strip()
+        if flow_uuid:
+            value[flow_uuid] = "ecoinvent"
+    _cache_set(cache_key, value)
+    return value
 
 
 def _as_list(value: object) -> list:
@@ -3833,6 +3854,7 @@ def run_solver_and_persist(
 
     display_process_unit_map = _build_process_unit_map_from_graph(payload.graph)
     flow_type_by_uuid = _solver_flow_type_by_uuid_cached(db)
+    flow_source_by_uuid = _solver_flow_source_by_uuid_cached(db)
 
     direct_result = try_run_direct_sparse_lcia(
         db=db,
@@ -3892,7 +3914,11 @@ def run_solver_and_persist(
     )
 
     try:
-        tiangong_like = to_tiangong_like(normalized_graph, flow_type_by_uuid=flow_type_by_uuid)
+        tiangong_like = to_tiangong_like(
+            normalized_graph,
+            flow_type_by_uuid=flow_type_by_uuid,
+            flow_source_by_uuid=flow_source_by_uuid,
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
@@ -3909,6 +3935,7 @@ def run_solver_and_persist(
         adapter_result = run_tiangong_lcia(
             normalized_graph,
             flow_type_by_uuid=flow_type_by_uuid,
+            flow_source_by_uuid=flow_source_by_uuid,
             lcia_methods=payload.lcia_methods,
         )
     except Exception as exc:

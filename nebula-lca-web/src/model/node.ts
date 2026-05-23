@@ -62,6 +62,7 @@ export type FlowPort = {
   internalExposed?: boolean;
   exposureMode?: "boundary_only" | "force_product_expose";
   dbMapping?: string;
+  sourceSystem?: string;
 };
 
 export type LcaNodeData = {

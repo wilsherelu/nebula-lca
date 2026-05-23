@@ -418,7 +418,7 @@ class TestCommitWithDbSession:
             "subcompartment": None,
             "cas_number": None,
             "formula": "CO2",
-            "source": "ef3.1",
+            "source": "ecoinvent",
         }
         defaults.update(kwargs)
         return ElementaryFlow(**defaults)
@@ -770,6 +770,6 @@ class TestCommitWithDbSession:
             assert len(flows) >= 1
             flow = flows[0]
             assert flow.compartment == "air"
-            assert flow.source == "ef3.1"
+            assert flow.source == "ecoinvent"
         finally:
             db.close()

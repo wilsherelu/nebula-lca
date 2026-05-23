@@ -75,7 +75,7 @@ class ElementaryFlow:
     subcompartment: Optional[str] = None
     cas_number: Optional[str] = None
     formula: Optional[str] = None
-    source: str = "ef3.1"
+    source: str = "ecoinvent"
 
 
 @dataclass
@@ -87,7 +87,7 @@ class IntermediateFlow:
     default_unit: str = ""
     unit_group: str = ""
     classification: Optional[str] = None
-    source: str = "ef3.1"
+    source: str = "ecoinvent"
 
 
 @dataclass
@@ -660,7 +660,8 @@ def parse_spold_exchanges(spold_path: Path) -> List[LCIElementaryExchange]:
     Real ecoSpold02 LCI uses:
     - elementaryExchange with @elementaryExchangeId linking to MasterData
     - Children: name, unitName, compartment, outputGroup
-    - outputGroup indicates direction: >0 = output (emission), <0 = input (resource)
+    - inputGroup indicates input (resource from environment)
+    - outputGroup indicates output (emission to environment)
     """
     exchanges = []
     try:
@@ -684,7 +685,14 @@ def parse_spold_exchanges(spold_path: Path) -> List[LCIElementaryExchange]:
             exc_name = ""
             unit_name = ""
             output_group = 0
+            input_group = 0
             direction_hint = ""
+            raw_input_group = elem_exc.get('inputGroup', '')
+            if raw_input_group:
+                try:
+                    input_group = int(raw_input_group)
+                except ValueError:
+                    input_group = 1 if raw_input_group.strip() else 0
             raw_output_group = elem_exc.get('outputGroup', '')
             if raw_output_group:
                 try:
@@ -708,11 +716,17 @@ def parse_spold_exchanges(spold_path: Path) -> List[LCIElementaryExchange]:
                         output_group = 0
                         if raw_child_output_group.lower() in {"output", "input"}:
                             direction_hint = raw_child_output_group.lower()
+                elif tag == 'inputGroup':
+                    raw_child_input_group = (child.text or '').strip()
+                    try:
+                        input_group = int(raw_child_input_group)
+                    except ValueError:
+                        input_group = 1 if raw_child_input_group else 0
             
-            # Determine direction from outputGroup
-            # outputGroup > 0 = output (emission to air/water/soil)
-            # outputGroup < 0 = input (resource from nature)
-            direction = "output" if output_group > 0 else ("input" if output_group < 0 else direction_hint)
+            # Determine direction from ecoSpold groups.
+            # Real ecoSpold02 resource flows commonly use inputGroup; older fixtures may encode
+            # resources as negative outputGroup.
+            direction = "input" if input_group > 0 else ("output" if output_group > 0 else ("input" if output_group < 0 else direction_hint))
             
             if exc_id:
                 exchanges.append(LCIElementaryExchange(

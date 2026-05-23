@@ -12,9 +12,14 @@ def run_tiangong_lcia(
     graph: HybridGraph,
     *,
     flow_type_by_uuid: dict[str, str] | None = None,
+    flow_source_by_uuid: dict[str, str] | None = None,
     lcia_methods: list[str] | None = None,
 ) -> dict:
-    snapshot = to_tiangong_like(graph, flow_type_by_uuid=flow_type_by_uuid)
+    snapshot = to_tiangong_like(
+        graph,
+        flow_type_by_uuid=flow_type_by_uuid,
+        flow_source_by_uuid=flow_source_by_uuid,
+    )
     payload = json.dumps(
         {"snapshot": snapshot, "lcia_methods": lcia_methods or ["EF v3.1"]},
         ensure_ascii=False,

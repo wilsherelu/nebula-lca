@@ -2239,6 +2239,21 @@ body,
   text-overflow: ellipsis;
 }
 
+.flow-value-readonly {
+  display: block;
+  min-height: 34px;
+  line-height: 34px;
+  border: 1px solid #cedae0;
+  border-radius: 6px;
+  padding: 0 10px;
+  background: #f7fafb;
+  color: #35515d;
+  font-size: 13px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .linked-summary-btn {
   display: inline-flex;
   align-items: center;
@@ -2294,6 +2309,16 @@ body,
   width: min(760px, 92vw);
   height: auto;
   max-height: 86vh;
+}
+
+.overlay-panel.lci-exchange-viewer {
+  width: min(980px, 94vw);
+  height: min(76vh, 720px);
+}
+
+.lci-viewer-filters {
+  grid-template-columns: minmax(260px, 1fr) auto;
+  align-items: center;
 }
 
 .overlay-head {
@@ -3903,6 +3928,10 @@ body,
   grid-column: 1 / -1;
 }
 
+.pm-modal-grid .span-2 {
+  grid-column: 1 / -1;
+}
+
 .pm-modal-grid input,
 .pm-modal-grid textarea,
 .pm-modal-grid select {
@@ -4152,6 +4181,71 @@ body,
   color: #0d83ff;
 }
 
+.ef31-import-file-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 36px;
+  color: #496675;
+  font-size: 13px;
+}
+
+.ef31-import-file-meta b {
+  color: #27495a;
+}
+
+.ef31-import-advanced-toggle {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: #0d83ff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ef31-import-advanced {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #dbe7ef;
+  border-radius: 10px;
+  background: #f8fbfe;
+}
+
+.ef31-import-overwrite {
+  grid-column: 1 / -1;
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: flex-start;
+  gap: 10px !important;
+  padding: 10px 12px;
+  border: 1px solid #f0d6d0;
+  border-radius: 8px;
+  background: #fff7f5;
+}
+
+.ef31-import-overwrite input {
+  width: auto;
+  margin-top: 3px;
+}
+
+.ef31-import-overwrite span {
+  display: grid;
+  gap: 3px;
+}
+
+.ef31-import-overwrite strong {
+  color: #b33a2e;
+  font-size: 13px;
+}
+
+.ef31-import-overwrite small {
+  color: #7b5a50;
+  line-height: 1.45;
+}
+
 .pm-error {
   margin: 0 14px 12px;
   color: #b33a2e;
@@ -4200,6 +4294,10 @@ body,
   }
 
   .pm-modal-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ef31-import-advanced {
     grid-template-columns: 1fr;
   }
 }

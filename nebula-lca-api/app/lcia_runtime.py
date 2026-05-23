@@ -23,10 +23,17 @@ from app.ecoinvent_ef31_loader import (
     filter_cf_ef31,
     match_cf_to_flows as _match_cf_to_flows,
 )
+from app.services.ef31_runtime_csv import ACTIVE_MANIFEST_NAME, DEFAULT_EF31_RUNTIME_ROOT
 
 logger = logging.getLogger(__name__)
 
 _RUNTIME_LCIA_ROOT = PROJECT_ROOT / "runtime" / "lcia"
+
+
+def _field(obj, name: str, default=None):
+    if isinstance(obj, dict):
+        return obj.get(name, default)
+    return getattr(obj, name, default)
 
 
 def generate_lcia_runtime_artifact(
@@ -63,17 +70,17 @@ def generate_lcia_runtime_artifact(
     # Match CFs to flows
     # Convert CFs to format expected by match_cf_to_flows
     cf_objects = []
-    for cf in all_cfs:
+    for cf in ef31_cfs:
         class _Cf:
             pass
         obj = _Cf()
-        obj.method = cf.get("method", "")
-        obj.category = cf.get("category", "")
-        obj.indicator = cf.get("indicator", "")
-        obj.flow_name = cf.get("flow_name", "")
-        obj.compartment = cf.get("compartment", "")
-        obj.subcompartment = cf.get("subcompartment", "")
-        obj.cf_value = cf.get("cf_value", 0.0)
+        obj.method = _field(cf, "method", "")
+        obj.category = _field(cf, "category", "")
+        obj.indicator = _field(cf, "indicator", "")
+        obj.flow_name = _field(cf, "flow_name", "")
+        obj.compartment = _field(cf, "compartment", "")
+        obj.subcompartment = _field(cf, "subcompartment", "")
+        obj.cf_value = _field(cf, "cf_value", 0.0)
         cf_objects.append(obj)
 
     elem_flow_objects = []
@@ -92,28 +99,26 @@ def generate_lcia_runtime_artifact(
     # Build matched list with flow UUID lookup
     matched_with_uuid = []
     for m in matched:
-        flow_key = m.get("flow_name", "")
-        flow_uuid = None
-        for ef in elementary_flows:
-            if ef.get("flow_name") == flow_key or ef.get("flow_uuid") == flow_key:
-                flow_uuid = ef.get("flow_uuid")
-                break
+        flow_key = m.get("cf_flow_name", "")
+        flow_uuid = m.get("matched_flow_uuid")
         matched_with_uuid.append({
-            "method": m.get("method", ""),
-            "indicator": m.get("indicator", ""),
+            "method": m.get("cf_method", ""),
+            "category": m.get("cf_category", ""),
+            "indicator": m.get("cf_indicator", ""),
             "flow_name": flow_key,
             "flow_uuid": flow_uuid,
             "cf_value": m.get("cf_value", 0.0),
         })
 
     # Generate output
-    output_dir = output_root or (_RUNTIME_LCIA_ROOT / str(uuid.uuid4())[:12])
+    output_dir = output_root or (DEFAULT_EF31_RUNTIME_ROOT / f"lcia-{str(uuid.uuid4())[:12]}")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Write flow_index.csv
     flow_index_path = output_dir / "flow_index.csv"
+    flow_uuid_to_index: dict[str, int] = {}
     with open(flow_index_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, delimiter=";")
         writer.writerow(["flow_index", "FlowUUID", "FlowName"])
         seen_uuids = set()
         idx = 0
@@ -121,73 +126,69 @@ def generate_lcia_runtime_artifact(
             fuuid = ef.get("flow_uuid", "")
             if fuuid and fuuid not in seen_uuids:
                 seen_uuids.add(fuuid)
+                flow_uuid_to_index[fuuid] = idx
                 writer.writerow([idx, fuuid, ef.get("flow_name", "")])
                 idx += 1
 
     # Write indicator_index.csv
     indicator_index_path = output_dir / "indicator_index.csv"
+    indicator_by_key = {
+        (_field(ind, "method", ""), _field(ind, "category", ""), _field(ind, "indicator", "")): ind
+        for ind in indicators
+    }
+    matched_indicator_keys = []
+    seen_indicator_keys = set()
+    for m in matched_with_uuid:
+        key = (m.get("method", ""), m.get("category", ""), m.get("indicator", ""))
+        if key in indicator_by_key and key not in seen_indicator_keys:
+            matched_indicator_keys.append(key)
+            seen_indicator_keys.add(key)
+
     with open(indicator_index_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, delimiter=";")
         writer.writerow([
             "indicator_index", "method_en", "method_zh",
             "indicator_en", "indicator_zh", "ecoinvent_category",
         ])
-        idx = 0
-        seen_methods = set()
-        for ind in indicators:
-            method_key = (ind.get("method"), ind.get("category"), ind.get("indicator"))
-            if method_key in seen_methods:
-                continue
-            seen_methods.add(method_key)
-            method = ind.get("method", "")
-            category = ind.get("category", "")
-            indicator = ind.get("indicator", "")
-            # Simple split for method en/zh
-            parts = method.split(" ", 1)
-            method_en = parts[0] if parts else method
-            method_zh = parts[1] if len(parts) > 1 else ""
-            ind_en = indicator
-            ind_zh = ""
-            writer.writerow([idx, method_en, method_zh, ind_en, ind_zh, category])
-            idx += 1
+        for idx, key in enumerate(matched_indicator_keys):
+            method, category, indicator = key
+            writer.writerow([idx, method, method, indicator, indicator, category])
 
     # Write lcia_factors.csv
     lcia_factors_path = output_dir / "lcia_factors.csv"
     with open(lcia_factors_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, delimiter=";")
         writer.writerow(["row", "column", "coefficient"])
-        row_idx = 0
         # Build indicator index lookup
-        indicator_index = {}
-        for ind in indicators:
-            method_key = (ind.get("method"), ind.get("category"), ind.get("indicator"))
-            if method_key not in indicator_index:
-                indicator_index[method_key] = len(indicator_index)
+        indicator_index = {key: idx for idx, key in enumerate(matched_indicator_keys)}
 
+        factors_count = 0
         for m in matched_with_uuid:
+            flow_idx = flow_uuid_to_index.get(str(m.get("flow_uuid") or ""))
+            if flow_idx is None:
+                continue
             method = m.get("method", "")
             indicator = m.get("indicator", "")
-            category = ""
-            for ind in indicators:
-                if ind.get("method") == method and ind.get("indicator") == indicator:
-                    category = ind.get("category", "")
-                    break
+            category = m.get("category", "")
             key = (method, category, indicator)
-            col_idx = indicator_index.get(key, 0)
-            writer.writerow([row_idx, col_idx, m.get("cf_value", 0.0)])
-            row_idx += 1
+            row_idx = indicator_index.get(key)
+            if row_idx is None:
+                continue
+            writer.writerow([row_idx, flow_idx, m.get("cf_value", 0.0)])
+            factors_count += 1
 
     # Build manifest
     flows_count = len(seen_uuids)
     indicators_count = len(indicator_index)
-    factors_count = row_idx
     unmatched_count = len(unmatched)
     ambiguous_count = len(ambiguous)
 
     manifest = {
         "runtime_schema_version": "lcia-runtime-artifact-v1",
         "runtime_id": str(uuid.uuid4()),
+        "job_id": output_dir.name,
         "output_dir": str(output_dir),
+        "artifact_dir": str(output_dir),
         "active": True,
         "files": {
             "flow_index": "flow_index.csv",
@@ -203,11 +204,11 @@ def generate_lcia_runtime_artifact(
         "generated_at": str(uuid.uuid1()),
     }
 
-    manifest_path = output_dir / "active_manifest.json"
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, default=str),
-        encoding="utf-8",
-    )
+    manifest_text = json.dumps(manifest, ensure_ascii=False, default=str)
+    (output_dir / "manifest.json").write_text(manifest_text, encoding="utf-8")
+    (output_dir / "runtime_summary.json").write_text(manifest_text, encoding="utf-8")
+    (output_dir / "active_manifest.json").write_text(manifest_text, encoding="utf-8")
+    (output_dir.parent / ACTIVE_MANIFEST_NAME).write_text(manifest_text, encoding="utf-8")
 
     logger.info(
         f"LCIA runtime generated: {flows_count} flows, "
@@ -258,7 +259,7 @@ def generate_lcia_runtime_artifact_from_artifacts(
     # Write flow_index.csv
     flow_index_path = output_dir / "flow_index.csv"
     with open(flow_index_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, delimiter=";")
         writer.writerow(["flow_index", "FlowUUID", "FlowName"])
         idx = 0
         seen = set()
@@ -273,7 +274,7 @@ def generate_lcia_runtime_artifact_from_artifacts(
     indicator_index_path = output_dir / "indicator_index.csv"
     indicator_index: dict[tuple, int] = {}
     with open(indicator_index_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, delimiter=";")
         writer.writerow([
             "indicator_index", "method_en", "method_zh",
             "indicator_en", "indicator_zh", "ecoinvent_category",
@@ -297,20 +298,28 @@ def generate_lcia_runtime_artifact_from_artifacts(
     # Write lcia_factors.csv
     lcia_factors_path = output_dir / "lcia_factors.csv"
     with open(lcia_factors_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, delimiter=";")
         writer.writerow(["row", "column", "coefficient"])
-        row_idx = 0
+        factors_count = 0
         for m in matched:
+            flow_uuid = m.get("matched_flow_uuid") or m.get("flow_uuid") or ""
+            if not flow_uuid:
+                continue
+            flow_idx = None
+            for idx, ef in enumerate(elementary_flows):
+                if ef.get("flow_uuid") == flow_uuid:
+                    flow_idx = idx
+                    break
+            if flow_idx is None:
+                continue
             method = m.get("method", "")
             indicator = m.get("indicator", "")
-            category = ""
-            for ind in indicators:
-                if ind.get("method") == method and ind.get("indicator") == indicator:
-                    category = ind.get("category", "")
-                    break
-            col_idx = indicator_index.get((method, category, indicator), 0)
-            writer.writerow([row_idx, col_idx, m.get("cf_value", 0.0)])
-            row_idx += 1
+            category = m.get("category", "")
+            row_idx = indicator_index.get((method, category, indicator))
+            if row_idx is None:
+                continue
+            writer.writerow([row_idx, flow_idx, m.get("cf_value", 0.0)])
+            factors_count += 1
 
     # Manifest
     manifest = {
@@ -325,7 +334,7 @@ def generate_lcia_runtime_artifact_from_artifacts(
         },
         "flows_count": len(seen),
         "indicators_count": len(indicator_index),
-        "factors_count": row_idx,
+        "factors_count": factors_count,
         "cf_matched": len(matched),
         "cf_unmatched": len(unmatched),
         "cf_ambiguous": len(ambiguous),

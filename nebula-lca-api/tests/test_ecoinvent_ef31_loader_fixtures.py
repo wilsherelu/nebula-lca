@@ -147,6 +147,32 @@ class TestParseSpoldExchanges:
         assert ch4.direction == "output"
         assert natgas.direction == "input"
 
+    def test_parses_direction_from_inputgroup_and_outputgroup_attributes(self, tmp_path):
+        spold_path = tmp_path / "direction_attributes.spold"
+        spold_path.write_text(
+            """<?xml version="1.0" encoding="UTF-8"?>
+<es:ecoSpold xmlns:es="http://www.EcoInvent.org/EcoSpold02">
+  <es:activityDataset>
+    <es:flowData>
+      <es:elementaryExchange elementaryExchangeId="resource-flow" amount="2" inputGroup="5">
+        <es:name>resource</es:name>
+        <es:unitName>kg</es:unitName>
+      </es:elementaryExchange>
+      <es:elementaryExchange elementaryExchangeId="emission-flow" amount="3" outputGroup="4">
+        <es:name>emission</es:name>
+        <es:unitName>kg</es:unitName>
+      </es:elementaryExchange>
+    </es:flowData>
+  </es:activityDataset>
+</es:ecoSpold>
+""",
+            encoding="utf-8",
+        )
+        exchanges = parse_spold_exchanges(spold_path)
+        by_id = {exchange.exchange_id: exchange for exchange in exchanges}
+        assert by_id["resource-flow"].direction == "input"
+        assert by_id["emission-flow"].direction == "output"
+
     def test_parses_unit_name(self):
         """Unit name should be captured from child element."""
         spold_path = LCI_FIXTURES / "electricity_medium_voltage_ch.spold"

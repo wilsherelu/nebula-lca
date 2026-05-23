@@ -1,7 +1,9 @@
 import csv
+import json
 
 from fastapi.testclient import TestClient
 
+from app.api.v1 import _build_source_partitioned_ef31_c_matrix, _resolve_runtime_csv_dir
 from app.core.ef31_runtime_cache import Ef31RuntimeCache, GLOBAL_EF31_RUNTIME_CACHE
 from app.main import app
 
@@ -67,6 +69,7 @@ def _snapshot():
                 "flow_type": "Elementary flow",
                 "unit": "kg",
                 "unit_group_uuid": "mass",
+                "source_system": "ef3.1",
             },
             {
                 "flow_uuid": "flow-ch4",
@@ -74,6 +77,7 @@ def _snapshot():
                 "flow_type": "Elementary flow",
                 "unit": "kg",
                 "unit_group_uuid": "mass",
+                "source_system": "ecoinvent",
             },
         ],
         "exchanges": [
@@ -132,6 +136,53 @@ def test_ef31_runtime_cache_reuses_loaded_sources(tmp_path):
     assert first["C"] == second["C"]
     assert first["C"]["rows"] == [0, 1]
     assert [item["value"] for item in first["C"]["data"]] == [1.0, 27.0, 2.0]
+
+
+def test_active_manifest_runtime_root_resolves_to_artifact_dir(tmp_path):
+    runtime_root = tmp_path / "runtime" / "ef31"
+    artifact_dir = runtime_root / "official"
+    artifact_dir.mkdir(parents=True)
+    _write_ecoinvent_runtime(artifact_dir)
+    (runtime_root / "active_manifest.json").write_text(
+        json.dumps({"artifact_dir": str(artifact_dir)}),
+        encoding="utf-8",
+    )
+
+    assert _resolve_runtime_csv_dir(runtime_root) == artifact_dir
+
+
+def test_source_partitioning_does_not_cross_match_ecoinvent_flows(tmp_path):
+    legacy_dir = tmp_path / "legacy"
+    eco_dir = tmp_path / "eco"
+    legacy_dir.mkdir()
+    eco_dir.mkdir()
+    _write_legacy_runtime(legacy_dir)
+    _write_ecoinvent_runtime(eco_dir)
+    GLOBAL_EF31_RUNTIME_CACHE.clear()
+
+    snapshot = {
+        "flows": [
+            {
+                "flow_uuid": "flow-co2",
+                "flow_name": "Carbon dioxide",
+                "source_system": "ecoinvent",
+            }
+        ]
+    }
+    b_matrix = {"rows": ["flow-co2"], "cols": ["p1"], "data": []}
+    issues = []
+
+    pack = _build_source_partitioned_ef31_c_matrix(
+        snapshot=snapshot,
+        b_matrix=b_matrix,
+        legacy_ef31_dir=str(legacy_dir),
+        ecoinvent_ef31_dir=str(eco_dir),
+        lcia_methods=["EF v3.1"],
+        issues=issues,
+    )
+
+    assert pack["C"]["data"] == []
+    assert any("missing 1 flow_uuids" in issue for issue in issues)
 
 
 def test_lcia_response_includes_runtime_cache_timing(tmp_path, monkeypatch):

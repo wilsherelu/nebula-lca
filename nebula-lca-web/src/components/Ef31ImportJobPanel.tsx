@@ -29,6 +29,11 @@ interface JobStatus {
   updated_at: string;
 }
 
+interface JobListResponse {
+  jobs: JobStatus[];
+  total: number;
+}
+
 const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
 const API_BASE = RAW_API_BASE.endsWith("/api") ? RAW_API_BASE : `${RAW_API_BASE}/api`;
 const RAW_IMPORT_API_BASE = ((import.meta.env.VITE_IMPORT_API_BASE_URL as string | undefined) ?? "").replace(/\/$/, "");
@@ -50,9 +55,15 @@ const zhText = {
   packageLabel: "LCI/LCIA \u6570\u636e\u5305\uff08.7z / .xlsx\uff09",
   packagePlaceholder: "\u8bf7\u9009\u62e9 .7z \u6216 .xlsx \u6587\u4ef6",
   advanced: "\u9ad8\u7ea7\u8bbe\u7f6e",
+  hideAdvanced: "\u6536\u8d77\u9ad8\u7ea7\u8bbe\u7f6e",
   workers: "\u89e3\u6790\u5e76\u53d1\u6570",
   limit: "\u5bfc\u5165\u524d N \u4e2a\u6570\u636e\u96c6\uff08\u7559\u7a7a = \u5168\u91cf\uff09",
   full: "\u5168\u91cf",
+  fileSize: "\u6587\u4ef6\u5927\u5c0f",
+  dataType: "\u6570\u636e\u7c7b\u578b",
+  lciType: "LCI \u6570\u636e\u5305",
+  lciaType: "LCIA \u56e0\u5b50\u5305",
+  overwriteHint: "\u91cd\u65b0\u5bfc\u5165\u5df2\u5b58\u5728\u7684 dataset\uff0c\u7528\u4e8e\u4fee\u590d\u65e7\u5411\u91cf\u6216\u7248\u672c\u66f4\u65b0\u3002",
   start: "\u5f00\u59cb\u5bfc\u5165",
   uploading: "\u4e0a\u4f20\u4e2d...",
   importing: "\u5bfc\u5165\u4e2d",
@@ -70,12 +81,15 @@ const zhText = {
   status: "\u72b6\u6001",
   processes: "\u8fc7\u7a0b",
   new: "\u65b0\u589e",
+  updated: "\u66f4\u65b0",
   skipped: "\u8df3\u8fc7",
   vectors: "\u5411\u91cf",
+  reused: "\u590d\u7528",
+  emptyVectors: "\u7a7a\u5411\u91cf",
   nnz: "\u975e\u96f6\u9879",
   duration: "\u8017\u65f6",
   failed: "\u5931\u8d25",
-  overwriteExisting: "\u8986\u76d6\u5df2\u5bfc\u5168 dataset",
+  overwriteExisting: "\u8986\u76d6\u5df2\u5bfc\u5165\u6570\u636e\u96c6",
   skippedGlobal: "\u5168\u5c40\u8df3\u8fc7",
   phase: "\u9636\u6bb5",
 };
@@ -89,9 +103,15 @@ const enText = {
   packageLabel: "LCI/LCIA Package (.7z / .xlsx)",
   packagePlaceholder: "Choose .7z or .xlsx file",
   advanced: "Advanced",
+  hideAdvanced: "Hide advanced",
   workers: "Parser Workers",
   limit: "Import first N datasets (empty = full)",
   full: "full",
+  fileSize: "File size",
+  dataType: "Data type",
+  lciType: "LCI package",
+  lciaType: "LCIA factor package",
+  overwriteHint: "Re-import existing datasets. Use this to repair old vectors or refresh a package version.",
   start: "Start Import",
   uploading: "Uploading...",
   importing: "Importing",
@@ -109,8 +129,11 @@ const enText = {
   status: "Status",
   processes: "Processes",
   new: "new",
+  updated: "updated",
   skipped: "skipped",
   vectors: "Vectors",
+  reused: "reused",
+  emptyVectors: "empty vectors",
   nnz: "nnz",
   duration: "Duration",
   failed: "Failed",
@@ -192,9 +215,33 @@ export default function Ef31ImportJobPanel(props: {
     }
   }, []);
 
+  const resetPanel = useCallback(() => {
+    stopPolling();
+    setPhase("upload");
+    setSelectedFile(null);
+    setFileType("lci");
+    setUploadBusy(false);
+    setJobBusy(false);
+    setLimit(100);
+    setOverwriteExisting(false);
+    setShowAdvanced(false);
+    setUploadProgress({ current: 0, total: 0 });
+    setUploadSession(null);
+    setJob(null);
+    setErrorText("");
+    startTimeRef.current = null;
+  }, [stopPolling]);
+
+  const closePanel = useCallback(() => {
+    if (phase === "done" || (job && ["completed", "failed", "cancelled"].includes(job.status))) {
+      resetPanel();
+    }
+    onClose();
+  }, [job, onClose, phase, resetPanel]);
+
   const startPolling = useCallback((jobId: string) => {
     stopPolling();
-    pollingRef.current = window.setInterval(async () => {
+    const pollOnce = async () => {
       try {
         const next = await requestJson<JobStatus>(`${IMPORT_API_BASE}/import/ef31/jobs/${encodeURIComponent(jobId)}`);
         setJob(next);
@@ -205,10 +252,40 @@ export default function Ef31ImportJobPanel(props: {
       } catch {
         // Keep polling; transient network errors should not lose the job state.
       }
-    }, STATUS_POLL_INTERVAL_MS);
+    };
+    void pollOnce();
+    pollingRef.current = window.setInterval(pollOnce, STATUS_POLL_INTERVAL_MS);
   }, [stopPolling]);
 
   useEffect(() => stopPolling, [stopPolling]);
+
+  useEffect(() => {
+    if (!open || job || uploadBusy || jobBusy) return;
+    let cancelled = false;
+    const statuses = ["running", "pending", "paused"];
+    const loadActiveJob = async () => {
+      for (const status of statuses) {
+        try {
+          const result = await requestJson<JobListResponse>(`${IMPORT_API_BASE}/import/ef31/jobs?status=${status}&limit=1`);
+          const active = result.jobs[0];
+          if (!active || cancelled) continue;
+          setJob(active);
+          setPhase("job");
+          if (active.status === "running") {
+            startTimeRef.current = Date.now();
+            startPolling(active.job_id);
+          }
+          return;
+        } catch {
+          // Opening the panel should still work if job lookup has a transient error.
+        }
+      }
+    };
+    void loadActiveJob();
+    return () => {
+      cancelled = true;
+    };
+  }, [job, jobBusy, open, startPolling, uploadBusy]);
 
   useEffect(() => {
     setUploadSession(null);
@@ -355,7 +432,15 @@ export default function Ef31ImportJobPanel(props: {
 
   const elapsedSeconds = startTimeRef.current ? (Date.now() - startTimeRef.current) / 1000 : 0;
   const stats = job?.stats ?? {};
-  const processedCount = Number(stats.processes_inserted ?? 0) + Number(stats.processes_skipped ?? 0) + Number(stats.processes_failed ?? 0);
+  const processedCount = Number(
+    stats.datasets_processed
+      ?? (
+        Number(stats.processes_inserted ?? 0)
+        + Number(stats.processes_updated ?? 0)
+        + Number(stats.processes_skipped ?? 0)
+        + Number(stats.processes_failed ?? 0)
+      )
+  );
   const phaseItems = [t.upload, t.createJob, t.done];
   const phaseIndex = ["upload", "job", "done"].indexOf(phase);
 
@@ -364,7 +449,7 @@ export default function Ef31ImportJobPanel(props: {
       <div className="pm-modal pm-tidas-modal" onClick={(event) => event.stopPropagation()}>
         <div className="pm-modal-head">
           <strong>{t.title}</strong>
-          <button type="button" className="pm-link-btn" onClick={onClose}>{t.close}</button>
+          <button type="button" className="pm-link-btn" onClick={closePanel}>{t.close}</button>
         </div>
 
         <div style={{ padding: "12px 14px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -402,22 +487,22 @@ export default function Ef31ImportJobPanel(props: {
                     onChange={(event) => {
                       const file = event.target.files?.[0] ?? null;
                       setSelectedFile(file);
-                      setFileType(file?.name.toLowerCase().endsWith(".xlsx") ? "lcia" : "lci");
+                      const fileName = file?.name.toLowerCase() ?? "";
+                      setFileType(fileName.endsWith(".xlsx") || fileName.includes("lcia") ? "lcia" : "lci");
                       setErrorText("");
                     }}
                   />
                 </div>
               </label>
-              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 12, color: "#496675" }}>{selectedFile ? formatBytes(selectedFile.size) : ""}</span>
-              </label>
-              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <button type="button" className="pm-link-btn" onClick={() => setShowAdvanced(!showAdvanced)}>
-                  {t.advanced} {showAdvanced ? "?" : "?"}
+              <div className="ef31-import-file-meta span-2">
+                <span>{t.fileSize}: <b>{selectedFile ? formatBytes(selectedFile.size) : "-"}</b></span>
+                <span>{t.dataType}: <b>{fileType === "lcia" ? t.lciaType : t.lciType}</b></span>
+                <button type="button" className="ef31-import-advanced-toggle" onClick={() => setShowAdvanced(!showAdvanced)}>
+                  {showAdvanced ? t.hideAdvanced : t.advanced}
                 </button>
-              </label>
+              </div>
               {showAdvanced && (
-                <>
+                <div className="ef31-import-advanced span-2">
                   <label>
                     <span style={{ fontSize: 12 }}>{t.workers}</span>
                     <select value={workers} onChange={(event) => setWorkers(Number(event.target.value))}>
@@ -431,11 +516,14 @@ export default function Ef31ImportJobPanel(props: {
                     <span style={{ fontSize: 12 }}>{t.limit}</span>
                     <input type="number" min={1} value={limit ?? ""} placeholder={t.full} onChange={(event) => setLimit(event.target.value ? Number(event.target.value) : null)} />
                   </label>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <label className="ef31-import-overwrite">
                     <input type="checkbox" checked={overwriteExisting} onChange={(event) => setOverwriteExisting(event.target.checked)} />
-                    <span style={{ fontSize: 12, color: "#c0392b" }}>{t.overwriteExisting}</span>
+                    <span>
+                      <strong>{t.overwriteExisting}</strong>
+                      <small>{t.overwriteHint}</small>
+                    </span>
                   </label>
-                </>
+                </div>
               )}
             </>
           )}
@@ -459,8 +547,11 @@ export default function Ef31ImportJobPanel(props: {
               <div style={{ display: "flex", gap: 16, marginTop: 8, fontSize: 12, flexWrap: "wrap" }}>
                 <span>{t.phase}: <b>{String(stats.phase ?? job.phase ?? "-")}</b></span>
                 <span>{t.processed}: <b>{processedCount}</b></span>
+                <span>{t.updated}: <b>{Number(stats.processes_updated ?? 0)}</b></span>
                 <span>{t.skippedGlobal}: <b>{job.skipped_global ?? 0}</b></span>
                 <span>{t.vectors}: <b>{Number(stats.vectors_written ?? 0)}</b></span>
+                <span>{t.reused}: <b>{Number(stats.vectors_reused ?? 0)}</b></span>
+                <span>{t.emptyVectors}: <b>{Number(stats.empty_vectors ?? 0)}</b></span>
                 <span>{t.failed}: <b>{Number(stats.processes_failed ?? 0)}</b></span>
                 {(job.status === "running" || job.status === "paused") && <span>ETA {estimateTimeRemaining(job.progress_pct, elapsedSeconds)}</span>}
               </div>
@@ -475,12 +566,13 @@ export default function Ef31ImportJobPanel(props: {
 
           {phase === "done" && job && (
             <label className="span-2" style={{ cursor: "default" }}>
-              <div style={{ color: "#27ae60", fontWeight: 600, fontSize: 14 }}>? {t.importComplete}</div>
+              <div style={{ color: "#27ae60", fontWeight: 600, fontSize: 14 }}>{t.importComplete}</div>
               <div style={{ display: "grid", gap: 4, fontSize: 12, color: "#496675", marginTop: 8 }}>
                 <div>{t.status}: <b>{job.status}</b></div>
-                <div>{t.processes}: <b>{Number(stats.processes_inserted ?? 0)}</b> {t.new} / <b>{Number(stats.processes_skipped ?? 0)}</b> {t.skipped}</div>
+                <div>{t.processes}: <b>{Number(stats.processes_inserted ?? 0)}</b> {t.new} / <b>{Number(stats.processes_updated ?? 0)}</b> {t.updated}</div>
                 <div>{t.skippedGlobal}: <b>{job.skipped_global ?? 0}</b></div>
-                <div>{t.vectors}: <b>{Number(stats.vectors_written ?? 0)}</b> ({t.nnz}) <b>{Number(stats.vector_nnz_total ?? 0)}</b></div>
+                <div>{t.vectors}: <b>{Number(stats.vectors_written ?? 0)}</b> {t.new} / <b>{Number(stats.vectors_reused ?? 0)}</b> {t.reused} / <b>{Number(stats.empty_vectors ?? 0)}</b> {t.emptyVectors}</div>
+                <div>{t.nnz}: <b>{Number(stats.vector_nnz_total ?? 0)}</b></div>
                 <div>{t.duration}: <b>{Number(stats.duration_seconds ?? 0).toFixed(1)}s</b></div>
                 {job.failed_datasets?.length > 0 && <div style={{ color: "#e67e22" }}>{t.failed}: {job.failed_datasets.length}</div>}
               </div>
@@ -491,7 +583,7 @@ export default function Ef31ImportJobPanel(props: {
         {errorText && <div className="pm-error">{errorText}</div>}
 
         <div className="pm-modal-actions">
-          <button type="button" className="pm-ghost-btn" onClick={onClose}>{t.close}</button>
+          <button type="button" className="pm-ghost-btn" onClick={closePanel}>{t.close}</button>
           {phase === "upload" && (
             <button type="button" className="pm-primary-btn" onClick={startUpload} disabled={uploadBusy || !selectedFile}>
               {uploadBusy ? t.uploading : t.start}

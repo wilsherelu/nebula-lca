@@ -2,11 +2,13 @@ from types import SimpleNamespace
 
 from app.flow_unit_semantics import (
     build_unit_reference_maps,
+    build_unit_group_identity_map,
     collect_flow_default_unit_conversion_violations,
     normalize_graph_flow_unit_switches,
     resolve_flow_port_unit_semantics,
 )
 from app.main import _build_product_result_view_from_graph
+from app.ef31_db_service import _ensure_unit_group
 from app.models import FlowRecord, ReferenceProcess, UnitDefinition, UnitGroup
 from app.schemas import HybridGraph
 from app.tidas_export import ExportReport, _build_process_data
@@ -89,6 +91,99 @@ def test_flow_unit_semantics_converts_current_amount_back_to_flow_default_unit()
     assert sem.flow_default_unit == "m3"
     assert sem.amount_in_flow_default_unit == 1
     assert sem.result_factor_to_flow_default_unit == 800
+
+
+def test_flow_unit_semantics_treats_ecoinvent_mass_alias_as_same_group():
+    db = _FakeDb()
+    db.flow_by_uuid["fiber-flow"] = SimpleNamespace(
+        flow_uuid="fiber-flow",
+        default_unit="kg",
+        unit_group="mass",
+        allocation_properties=[],
+    )
+    db.unit_defs.append(SimpleNamespace(unit_group="mass", unit_name="kg", factor_to_reference=1.0, is_reference=True))
+    db.unit_groups.append(SimpleNamespace(name="mass", reference_unit="kg"))
+    port = {
+        "id": "out_fiber",
+        "flowUuid": "fiber-flow",
+        "name": "fibre, polyester",
+        "type": "technosphere",
+        "direction": "output",
+        "isProduct": True,
+        "amount": 1,
+        "unit": "kg",
+        "unitGroup": "Units of mass",
+    }
+
+    sem = resolve_flow_port_unit_semantics(db, port)
+    violations = collect_flow_default_unit_conversion_violations(
+        {
+            "nodes": [
+                {
+                    "id": "node-1",
+                    "process_uuid": "process-1",
+                    "outputs": [port],
+                    "inputs": [],
+                    "emissions": [],
+                }
+            ]
+        },
+        db,
+    )
+
+    assert sem.ok is True
+    assert sem.amount_in_flow_default_unit == 1
+    assert sem.result_factor_to_flow_default_unit == 1
+    assert violations == []
+
+
+def test_unit_group_identity_uses_physical_id_for_basic_groups():
+    db = _FakeDb()
+    db.unit_groups.append(
+        SimpleNamespace(
+            name="mass",
+            reference_unit="kg",
+            source_uuid="ecoinvent:unit-type:mass",
+        )
+    )
+    db.unit_groups.append(
+        SimpleNamespace(
+            name="Units of mass",
+            reference_unit="kg",
+            source_uuid="ecoinvent:unit-type:mass",
+        )
+    )
+
+    identity_by_name = build_unit_group_identity_map(db)
+
+    assert identity_by_name["mass"] == "physical:mass"
+    assert identity_by_name["Units of mass"] == "physical:mass"
+
+
+def test_ensure_ecoinvent_unit_group_writes_stable_source_identity():
+    class _FakeDbForUnitGroups:
+        def __init__(self):
+            self.rows = {}
+            self.added = []
+
+        def get(self, model, key):
+            assert model is UnitGroup
+            return self.rows.get(key)
+
+        def add(self, row):
+            self.rows[row.name] = row
+            self.added.append(row)
+
+        def flush(self):
+            pass
+
+    db = _FakeDbForUnitGroups()
+
+    row, was_new = _ensure_unit_group(db, "mass", "kg")
+
+    assert was_new is True
+    assert row.source_uuid == "ecoinvent:unit-type:mass"
+    assert row.source_version == "ecoinvent"
 
 
 def test_flow_default_unit_conversion_requires_switch_for_cross_group_current_unit():
