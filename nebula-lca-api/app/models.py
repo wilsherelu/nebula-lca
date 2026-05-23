@@ -359,6 +359,7 @@ class DatasetCheckpoint(Base):
         # pending | running | imported | failed | skipped | skipped_global
     )
     process_uuid: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    vector_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     vector_nnz: Mapped[int | None] = mapped_column(Integer, nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_message: Mapped[str | None] = mapped_column(String(1024), nullable=True)

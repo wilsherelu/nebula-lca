@@ -18,7 +18,12 @@ def _solver_runtime_flow_type(value: object) -> str:
     return "Product flow"
 
 
-def to_tiangong_like(graph: HybridGraph, *, flow_type_by_uuid: dict[str, str] | None = None) -> dict:
+def to_tiangong_like(
+    graph: HybridGraph,
+    *,
+    flow_type_by_uuid: dict[str, str] | None = None,
+    flow_source_by_uuid: dict[str, str] | None = None,
+) -> dict:
     processes = []
     flows_map: dict[str, dict] = {}
     exchanges = []
@@ -27,6 +32,11 @@ def to_tiangong_like(graph: HybridGraph, *, flow_type_by_uuid: dict[str, str] | 
         str(flow_uuid).strip().lower(): str(flow_type).strip()
         for flow_uuid, flow_type in (flow_type_by_uuid or {}).items()
         if str(flow_uuid).strip() and str(flow_type).strip()
+    }
+    normalized_flow_source_by_uuid = {
+        str(flow_uuid).strip().lower(): str(source).strip()
+        for flow_uuid, source in (flow_source_by_uuid or {}).items()
+        if str(flow_uuid).strip() and str(source).strip()
     }
 
     node_by_id = {node.id: node for node in graph.nodes}
@@ -131,12 +141,16 @@ def to_tiangong_like(graph: HybridGraph, *, flow_type_by_uuid: dict[str, str] | 
                 flow_type = normalized_flow_type_by_uuid.get(str(port.flowUuid).strip().lower())
                 if not flow_type:
                     flow_type = graph_exchange_type_to_flow_semantic(port.type)
+                source_system = str(getattr(port, "sourceSystem", "") or "").strip()
+                if not source_system:
+                    source_system = normalized_flow_source_by_uuid.get(str(port.flowUuid).strip().lower(), "")
                 flows_map[port.flowUuid] = {
                     "flow_uuid": port.flowUuid,
                     "flow_name": port.name,
                     "flow_type": _solver_runtime_flow_type(flow_type),
                     "default_unit_uuid": port.unit,
                     "unit_group_uuid": f"unit_group::{port.unitGroup or port.unit}",
+                    "source_system": source_system,
                 }
 
         node_ports = node.inputs + node.outputs + node.emissions

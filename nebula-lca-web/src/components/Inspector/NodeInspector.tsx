@@ -68,6 +68,24 @@ type ProcessInfoDraft = {
   referenceProductText: string;
 };
 
+type LciTopExchange = {
+  flow_key_id: number;
+  flow_uuid: string;
+  flow_name?: string | null;
+  direction: string;
+  unit: string;
+  amount: number;
+  compartment?: string | null;
+  subcompartment?: string | null;
+};
+
+type LciExchangeViewerState = {
+  open: boolean;
+  direction: "input" | "output";
+  page: number;
+  query: string;
+};
+
 const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
 const API_BASE = RAW_API_BASE.endsWith("/api") ? RAW_API_BASE : `${RAW_API_BASE}/api`;
 
@@ -226,12 +244,15 @@ type FlowSectionProps = {
   uiLanguage: "zh" | "en";
   readOnly?: boolean;
   lockFields?: boolean;
+  plainReadOnly?: boolean;
   allowShowOnNodeToggle?: boolean;
   showNodeColumn?: boolean;
+  showActionColumn?: boolean;
   ports: FlowPort[];
   getDisplayName?: (port: FlowPort) => string;
   onChange: (next: FlowPort[]) => void;
   onAdd?: () => void;
+  headerAction?: ReactNode;
   onDelete?: (id: string) => void;
   extraHeader?: string;
   renderExtraCell?: (port: FlowPort, idx: number) => ReactNode;
@@ -247,12 +268,15 @@ function FlowSection({
   uiLanguage,
   readOnly = false,
   lockFields = false,
+  plainReadOnly = false,
   allowShowOnNodeToggle = false,
   showNodeColumn = true,
+  showActionColumn = true,
   ports,
   getDisplayName,
   onChange,
   onAdd,
+  headerAction,
   onDelete,
   extraHeader,
   renderExtraCell,
@@ -266,12 +290,14 @@ function FlowSection({
   const showOnNodeLocked = readOnly || (lockFields && !allowShowOnNodeToggle);
   const hasExtra = Boolean(extraHeader && renderExtraCell);
   const hasExtra2 = Boolean(extraHeader2 && renderExtraCell2);
+  const locked = readOnly || lockFields || plainReadOnly;
   return (
     <section className="inventory-section">
       <div className="inventory-section-head">
         <h4>{title}</h4>
-        {onAdd && (
-          <button type="button" className="text-btn" disabled={readOnly || lockFields} onClick={onAdd}>
+        {headerAction}
+        {onAdd && !plainReadOnly && (
+          <button type="button" className="text-btn" disabled={locked} onClick={onAdd}>
             {t("+ 新增流", "+ Add Flow")}
           </button>
         )}
@@ -284,7 +310,7 @@ function FlowSection({
         {hasExtra ? <div>{extraHeader}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
         {hasExtra2 ? <div>{extraHeader2}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
         {showNodeColumn ? <div>{t("显示", "Show")}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
-        <div>{t("操作", "Action")}</div>
+        {showActionColumn ? <div>{t("操作", "Action")}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
       </div>
       {ports.map((port, idx) => (
         <div key={port.id} className="inventory-grid-row">
@@ -292,32 +318,42 @@ function FlowSection({
           <div className="flow-name-readonly" title={getDisplayName ? getDisplayName(port) : port.name}>
             {getDisplayName ? getDisplayName(port) : port.name}
           </div>
-          <input
-            type="number"
-            disabled={readOnly || lockFields}
-            value={Number.isFinite(port.amount) ? port.amount : 0}
-            onChange={(event) => {
-              const next = Number(event.target.value);
-              onChange(updatePortValue(ports, port.id, "amount", Number.isFinite(next) ? next : 0));
-            }}
-          />
-          <select
-            disabled={readOnly || lockFields}
-            value={port.unit}
-            onChange={(event) => {
-              if (onUnitChange) {
-                onUnitChange(port, event.target.value);
-                return;
-              }
-              onChange(updatePortValue(ports, port.id, "unit", event.target.value));
-            }}
-          >
-            {(unitOptionsByPort?.[port.id] ?? [port.unit]).map((unit) => (
-              <option key={`${port.id}_${unit}`} value={unit}>
-                {unit}
-              </option>
-            ))}
-          </select>
+          {plainReadOnly ? (
+            <div className="flow-value-readonly" title={String(Number.isFinite(port.amount) ? port.amount : 0)}>
+              {Number.isFinite(port.amount) ? port.amount : 0}
+            </div>
+          ) : (
+            <input
+              type="number"
+              disabled={locked}
+              value={Number.isFinite(port.amount) ? port.amount : 0}
+              onChange={(event) => {
+                const next = Number(event.target.value);
+                onChange(updatePortValue(ports, port.id, "amount", Number.isFinite(next) ? next : 0));
+              }}
+            />
+          )}
+          {plainReadOnly ? (
+            <div className="flow-value-readonly" title={port.unit}>{port.unit}</div>
+          ) : (
+            <select
+              disabled={locked}
+              value={port.unit}
+              onChange={(event) => {
+                if (onUnitChange) {
+                  onUnitChange(port, event.target.value);
+                  return;
+                }
+                onChange(updatePortValue(ports, port.id, "unit", event.target.value));
+              }}
+            >
+              {(unitOptionsByPort?.[port.id] ?? [port.unit]).map((unit) => (
+                <option key={`${port.id}_${unit}`} value={unit}>
+                  {unit}
+                </option>
+              ))}
+            </select>
+          )}
           {hasExtra ? <div className="extra-column-cell">{renderExtraCell?.(port, idx)}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
           {hasExtra2 ? <div className="extra-column-cell">{renderExtraCell2?.(port, idx)}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
           {showNodeColumn ? (
@@ -325,31 +361,35 @@ function FlowSection({
               <input
                 type="checkbox"
                 checked={port.showOnNode}
-                disabled={showOnNodeLocked}
+                disabled={showOnNodeLocked || plainReadOnly}
                 onChange={(event) => onChange(updatePortValue(ports, port.id, "showOnNode", event.target.checked))}
               />
             </label>
           ) : <div className="inventory-grid-spacer" aria-hidden="true" />}
-          <div className="inventory-action-cell">
-            {onLink && port.type !== "biosphere" && (
-              <button
-                type="button"
-                className="link-btn"
-                disabled={readOnly || lockFields}
-                onClick={() => onLink(port)}
-              >
-                {t("关联", "Link")}
-              </button>
-            )}
-            <button
-              type="button"
-              className="link-btn danger"
-              disabled={readOnly || lockFields || !onDelete}
-              onClick={() => onDelete?.(port.id)}
-            >
-              {t("删除", "Delete")}
-            </button>
-          </div>
+          {showActionColumn ? (
+            <div className="inventory-action-cell">
+              {onLink && port.type !== "biosphere" && !plainReadOnly && (
+                <button
+                  type="button"
+                  className="link-btn"
+                  disabled={locked}
+                  onClick={() => onLink(port)}
+                >
+                  {t("关联", "Link")}
+                </button>
+              )}
+              {!plainReadOnly && (
+                <button
+                  type="button"
+                  className="link-btn danger"
+                  disabled={locked || !onDelete}
+                  onClick={() => onDelete?.(port.id)}
+                >
+                  {t("删除", "Delete")}
+                </button>
+              )}
+            </div>
+          ) : <div className="inventory-grid-spacer" aria-hidden="true" />}
         </div>
       ))}
       {ports.length === 0 && <div className="table-empty">{t("暂无数据", "No data")}</div>}
@@ -402,6 +442,14 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
   const [pendingMarketOutputSelection, setPendingMarketOutputSelection] = useState(false);
   const [productRuleHint, setProductRuleHint] = useState("");
   const [selectedNodeId, setSelectedNodeId] = useState("");
+  const [lciTopExchanges, setLciTopExchanges] = useState<{ input: LciTopExchange[]; output: LciTopExchange[] }>({ input: [], output: [] });
+  const [lciTopExchangeNnz, setLciTopExchangeNnz] = useState<{ input: number; output: number }>({ input: 0, output: 0 });
+  const [lciTopExchangeError, setLciTopExchangeError] = useState("");
+  const [lciViewer, setLciViewer] = useState<LciExchangeViewerState>({ open: false, direction: "output", page: 1, query: "" });
+  const [lciViewerItems, setLciViewerItems] = useState<LciTopExchange[]>([]);
+  const [lciViewerTotal, setLciViewerTotal] = useState(0);
+  const [lciViewerLoading, setLciViewerLoading] = useState(false);
+  const [lciViewerError, setLciViewerError] = useState("");
 
   const uiLanguage = useLcaGraphStore((state) => state.uiLanguage);
   const updateNode = useLcaGraphStore((state) => state.updateNode);
@@ -927,6 +975,73 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
   const externalInElementary = node.data.inputs.filter((p) => p.type === "biosphere");
   const externalOutIntermediate = node.data.outputs.filter((p) => p.type !== "biosphere");
   const externalOutElementary = node.data.outputs.filter((p) => p.type === "biosphere");
+  const lciTopElementaryPorts = useMemo(() => {
+    const toPort = (item: LciTopExchange, direction: "input" | "output"): FlowPort => ({
+      id: `lci-vector-preview::${direction}::${item.flow_key_id}`,
+      flowUuid: item.flow_uuid,
+      name: item.flow_name || item.flow_uuid,
+      unit: item.unit || "",
+      amount: Number.isFinite(item.amount) ? item.amount : 0,
+      type: "biosphere",
+      direction,
+      showOnNode: false,
+      isProduct: false,
+      sourceSystem: "ecoinvent",
+    });
+    return {
+      input: lciTopExchanges.input.map((item) => toPort(item, "input")),
+      output: lciTopExchanges.output.map((item) => toPort(item, "output")),
+    };
+  }, [lciTopExchanges]);
+  const formatInventoryAmount = (value: number) => {
+    if (!Number.isFinite(value)) {
+      return "0";
+    }
+    const absValue = Math.abs(value);
+    if (absValue !== 0 && (absValue >= 100000 || absValue < 0.0001)) {
+      return value.toExponential(6);
+    }
+    return Number(value.toPrecision(8)).toString();
+  };
+  const formatLciDirection = (direction: string | null | undefined) => {
+    const normalized = (direction || "").toLowerCase();
+    if (normalized === "input") {
+      return t("输入", "Input");
+    }
+    if (normalized === "output") {
+      return t("输出", "Output");
+    }
+    return direction || "-";
+  };
+  const formatLciCategory = (item: Pick<LciTopExchange, "compartment" | "subcompartment">) => {
+    const translateCategory = (value: string) => {
+      const normalized = value.trim().toLowerCase();
+      const categoryMap: Record<string, string> = {
+        air: t("空气", "Air"),
+        water: t("水体", "Water"),
+        soil: t("土壤", "Soil"),
+        "natural resource": t("自然资源", "Natural resource"),
+        "natural resources": t("自然资源", "Natural resources"),
+        resource: t("资源", "Resource"),
+        resources: t("资源", "Resources"),
+        "inventory indicator": t("清单指标", "Inventory indicator"),
+      };
+      return categoryMap[normalized] ?? value;
+    };
+    const parts = [item.compartment, item.subcompartment]
+      .filter((value): value is string => Boolean(value && value.trim()))
+      .map(translateCategory);
+    return parts.join(" / ") || "-";
+  };
+  const openLciExchangeViewer = (direction: "input" | "output") => {
+    setLciViewer({ open: true, direction, page: 1, query: "" });
+  };
+  const renderLciViewMore = (direction: "input" | "output", total: number) =>
+    total > 10 ? (
+      <button type="button" className="text-btn" onClick={() => openLciExchangeViewer(direction)}>
+        {t("查看更多", "View More")}
+      </button>
+    ) : null;
   const productOutputs = externalOutIntermediate.filter((port) => Boolean(port.isProduct));
   const openProcessInfoModal = () => {
     const selectedProduct =
@@ -1114,6 +1229,101 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
   );
   const settingCandidates = nodes.filter((candidate) => candidate.id !== node.id);
   const canAutoNormalizeMarketInputs = marketProcess && externalInIntermediate.length > 0 && marketInputShareTotal > 0;
+
+  useEffect(() => {
+    if (!lciNode || !node.data.processUuid) {
+      setLciTopExchanges({ input: [], output: [] });
+      setLciTopExchangeNnz({ input: 0, output: 0 });
+      setLciTopExchangeError("");
+      return;
+    }
+    let cancelled = false;
+    setLciTopExchangeError("");
+    const encodedProcessUuid = encodeURIComponent(node.data.processUuid);
+    const loadDirection = async (direction: "input" | "output") => {
+      const resp = await fetch(`${API_BASE}/reference/processes/${encodedProcessUuid}/lci-vector/top-exchanges?page=1&page_size=10&direction=${direction}`);
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status}`);
+      }
+      return resp.json();
+    };
+    Promise.all([loadDirection("input"), loadDirection("output")])
+      .then(([inputPayload, outputPayload]) => {
+        if (cancelled) {
+          return;
+        }
+        setLciTopExchanges({
+          input: Array.isArray(inputPayload.items) ? inputPayload.items : [],
+          output: Array.isArray(outputPayload.items) ? outputPayload.items : [],
+        });
+        setLciTopExchangeNnz({
+          input: Number(inputPayload.nnz ?? 0) || 0,
+          output: Number(outputPayload.nnz ?? 0) || 0,
+        });
+      })
+      .catch((error: unknown) => {
+        if (cancelled) {
+          return;
+        }
+        setLciTopExchanges({ input: [], output: [] });
+        setLciTopExchangeNnz({ input: 0, output: 0 });
+        setLciTopExchangeError(error instanceof Error ? error.message : String(error));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [lciNode, node.data.processUuid]);
+
+  useEffect(() => {
+    if (!lciViewer.open || !lciNode || !node.data.processUuid) {
+      setLciViewerItems([]);
+      setLciViewerTotal(0);
+      setLciViewerError("");
+      return;
+    }
+    let cancelled = false;
+    const encodedProcessUuid = encodeURIComponent(node.data.processUuid);
+    const params = new URLSearchParams({
+      page: String(lciViewer.page),
+      page_size: "20",
+      direction: lciViewer.direction,
+    });
+    if (lciViewer.query.trim()) {
+      params.set("q", lciViewer.query.trim());
+    }
+    setLciViewerLoading(true);
+    setLciViewerError("");
+    fetch(`${API_BASE}/reference/processes/${encodedProcessUuid}/lci-vector/top-exchanges?${params.toString()}`)
+      .then((resp) => {
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}`);
+        }
+        return resp.json();
+      })
+      .then((payload) => {
+        if (cancelled) {
+          return;
+        }
+        setLciViewerItems(Array.isArray(payload.items) ? payload.items : []);
+        setLciViewerTotal(Number(payload.nnz ?? 0) || 0);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) {
+          return;
+        }
+        setLciViewerItems([]);
+        setLciViewerTotal(0);
+        setLciViewerError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLciViewerLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [lciNode, lciViewer.direction, lciViewer.open, lciViewer.page, lciViewer.query, node.data.processUuid]);
 
   useEffect(() => {
     if (!marketProcess) {
@@ -1775,15 +1985,17 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
               {t("归一化（normalized）", "Normalized")}
             </button>
           </div>
-          <label className="inline-checkbox">
-            <input
-              type="checkbox"
-              checked={unitAutoScaleEnabled}
-              disabled={importedLocked}
-              onChange={(event) => setUnitAutoScaleEnabled(event.target.checked)}
-            />
-            {t("单位自动换算", "Unit auto conversion")}
-          </label>
+          {!lciNode && (
+            <label className="inline-checkbox">
+              <input
+                type="checkbox"
+                checked={unitAutoScaleEnabled}
+                disabled={importedLocked}
+                onChange={(event) => setUnitAutoScaleEnabled(event.target.checked)}
+              />
+              {t("单位自动换算", "Unit auto conversion")}
+            </label>
+          )}
           {!ptsNode && (
             <button
               type="button"
@@ -1793,7 +2005,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
               {t("过程信息", "Process Info")}
             </button>
           )}
-          {!marketProcess && !ptsNode && (
+          {!marketProcess && !ptsNode && !lciNode && (
             <button
               type="button"
               className="text-btn inspector-toolbar-btn"
@@ -1825,6 +2037,9 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
             )
             : t("PTS 节点固定为归一化。", "PTS nodes are fixed to normalized mode.")}
         </div>
+      )}
+      {lciNode && lciTopExchangeError && (
+        <div className="mode-lock-hint warning">{t("读取基本流预览失败：", "Failed to load elementary flow preview: ")}{lciTopExchangeError}</div>
       )}
       {marketProcess && (
         <div className="market-option-block">
@@ -1910,8 +2125,11 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
               <FlowSection
                 title={t("中间流", "Intermediate Flows")}
                 uiLanguage={uiLanguage}
-                lockFields={importedLocked}
-                allowShowOnNodeToggle={importedLocked}
+                lockFields={importedLocked || lciNode}
+                plainReadOnly={lciNode}
+                allowShowOnNodeToggle={importedLocked && !lciNode}
+                showNodeColumn={!lciNode}
+                showActionColumn={!lciNode}
                 ports={externalInIntermediate}
                 getDisplayName={getPortDisplayName}
                 unitOptionsByPort={marketInputUnitOptionsByPort}
@@ -1919,24 +2137,32 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                   void updatePortUnitWithConversion("inputs", port, nextUnit);
                 }}
                 extraHeader={t("单位组", "Unit Group")}
-                extraHeader2={t("定义产品", "Product Def.")}
+                extraHeader2={lciNode ? undefined : t("定义产品", "Product Def.")}
                 renderExtraCell={(port) => (
-                  <div className="row-setting-cell">
-                    <button type="button" className="link-btn" disabled={!port.flowUuid} onClick={() => setAllocationPropertyPort(port)}>
-                      {t("切换", "Switch")}
-                    </button>
-                  </div>
+                  lciNode
+                    ? <div className="flow-value-readonly" title={resolvePortUnitGroupKey(port) || ""}>{resolvePortUnitGroupKey(port) || "-"}</div>
+                    : (
+                      <div className="row-setting-cell">
+                        <button type="button" className="link-btn" disabled={!port.flowUuid} onClick={() => setAllocationPropertyPort(port)}>
+                          {t("切换", "Switch")}
+                        </button>
+                      </div>
+                    )
                 )}
-                renderExtraCell2={(port) => (
-                  <label className="inline-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={isReferenceProductPort(port, "input")}
-                      disabled={importedLocked || lciNode || marketProcess}
-                      onChange={(event) => applyProductToggle("input", port.id, event.target.checked)}
-                    />
-                  </label>
-                )}
+                renderExtraCell2={
+                  lciNode
+                    ? undefined
+                    : (port) => (
+                      <label className="inline-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={isReferenceProductPort(port, "input")}
+                          disabled={importedLocked || marketProcess}
+                          onChange={(event) => applyProductToggle("input", port.id, event.target.checked)}
+                        />
+                      </label>
+                    )
+                }
                 onChange={(next) =>
                   updateNode(node.id, (current) => {
                     const marketUnit = marketProcess ? current.data.outputs[0]?.unit : undefined;
@@ -1959,9 +2185,9 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                     };
                   })
                 }
-                onAdd={() => setFlowPicker({ open: true, target: "in_intermediate" })}
-                onLink={!marketProcess ? (port) => openAssociationDialog("input", port) : undefined}
-                onDelete={(id) =>
+                onAdd={lciNode ? undefined : () => setFlowPicker({ open: true, target: "in_intermediate" })}
+                onLink={!marketProcess && !lciNode ? (port) => openAssociationDialog("input", port) : undefined}
+                onDelete={lciNode ? undefined : (id) =>
                   updateNode(node.id, (current) => ({
                     ...current,
                     data: {
@@ -1973,11 +2199,19 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
               />
               {!marketProcess && !ptsNode && (
                 <FlowSection
-                  title={t("基本流", "Elementary Flows")}
+                  title={
+                    lciNode
+                      ? t(`基本流（输入 Top 10 / 共 ${lciTopExchangeNnz.input} 条）`, `Elementary Flows (input top 10 / ${lciTopExchangeNnz.input} total)`)
+                      : t("基本流", "Elementary Flows")
+                  }
                   uiLanguage={uiLanguage}
-                  lockFields={importedLocked}
+                  readOnly={lciNode}
+                  lockFields={importedLocked || lciNode}
+                  plainReadOnly={lciNode}
                   showNodeColumn={false}
-                  ports={externalInElementary}
+                  showActionColumn={!lciNode}
+                  headerAction={lciNode ? renderLciViewMore("input", lciTopExchangeNnz.input) : undefined}
+                  ports={lciNode ? lciTopElementaryPorts.input : externalInElementary}
                   getDisplayName={getPortDisplayName}
                   unitOptionsByPort={unitOptionsByPort}
                   onUnitChange={(port, nextUnit) => {
@@ -1995,8 +2229,8 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                       },
                     }))
                   }
-                  onAdd={() => setFlowPicker({ open: true, target: "in_elementary" })}
-                  onDelete={(id) =>
+                  onAdd={lciNode ? undefined : () => setFlowPicker({ open: true, target: "in_elementary" })}
+                  onDelete={lciNode ? undefined : (id) =>
                     updateNode(node.id, (current) => ({
                       ...current,
                       data: {
@@ -2030,9 +2264,12 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
               <FlowSection
                 title={t("中间流", "Intermediate Flows")}
                 uiLanguage={uiLanguage}
-                readOnly={false}
-                lockFields={importedLocked}
-                allowShowOnNodeToggle={importedLocked}
+                readOnly={lciNode}
+                lockFields={importedLocked || lciNode}
+                plainReadOnly={lciNode}
+                allowShowOnNodeToggle={importedLocked && !lciNode}
+                showNodeColumn={!lciNode}
+                showActionColumn={!lciNode}
                 ports={externalOutIntermediate}
                 getDisplayName={getPortDisplayName}
                 unitOptionsByPort={unitOptionsByPort}
@@ -2040,15 +2277,19 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                   void updatePortUnitWithConversion("outputs", port, nextUnit);
                 }}
                 extraHeader={t("单位组", "Unit Group")}
-                extraHeader2={t("定义产品", "Product Def.")}
+                extraHeader2={lciNode ? undefined : t("定义产品", "Product Def.")}
                 renderExtraCell={(port) => (
-                  <div className="row-setting-cell">
-                    <button type="button" className="link-btn" disabled={!port.flowUuid} onClick={() => setAllocationPropertyPort(port)}>
-                      {t("切换", "Switch")}
-                    </button>
-                  </div>
+                  lciNode
+                    ? <div className="flow-value-readonly" title={resolvePortUnitGroupKey(port) || ""}>{resolvePortUnitGroupKey(port) || "-"}</div>
+                    : (
+                      <div className="row-setting-cell">
+                        <button type="button" className="link-btn" disabled={!port.flowUuid} onClick={() => setAllocationPropertyPort(port)}>
+                          {t("切换", "Switch")}
+                        </button>
+                      </div>
+                    )
                 )}
-                renderExtraCell2={(port) => {
+                renderExtraCell2={lciNode ? undefined : (port) => {
                   if (marketProcess) {
                     return <span className="market-fixed-product">{t("固定产品", "Fixed Product")}</span>;
                   }
@@ -2101,15 +2342,17 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                   }))
                 }
                 onAdd={
-                  marketProcess
+                  lciNode
+                    ? undefined
+                    : marketProcess
                     ? () => {
                       setPendingMarketOutputSelection(true);
                       setFlowPicker({ open: true, target: "out_intermediate" });
                     }
                     : () => setFlowPicker({ open: true, target: "out_intermediate" })
                 }
-                onLink={(port) => openAssociationDialog("output", port)}
-                onDelete={(id) => {
+                onLink={lciNode ? undefined : (port) => openAssociationDialog("output", port)}
+                onDelete={lciNode ? undefined : (id) => {
                   if (marketProcess) {
                     setPendingMarketOutputSelection(true);
                     updateNode(node.id, (current) => ({
@@ -2136,11 +2379,19 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
               />
               {!marketProcess && !ptsNode && (
                 <FlowSection
-                  title={t("基本流", "Elementary Flows")}
+                  title={
+                    lciNode
+                      ? t(`基本流（输出 Top 10 / 共 ${lciTopExchangeNnz.output} 条）`, `Elementary Flows (output top 10 / ${lciTopExchangeNnz.output} total)`)
+                      : t("基本流", "Elementary Flows")
+                  }
                   uiLanguage={uiLanguage}
-                  lockFields={importedLocked}
+                  readOnly={lciNode}
+                  lockFields={importedLocked || lciNode}
+                  plainReadOnly={lciNode}
                   showNodeColumn={false}
-                  ports={externalOutElementary}
+                  showActionColumn={!lciNode}
+                  headerAction={lciNode ? renderLciViewMore("output", lciTopExchangeNnz.output) : undefined}
+                  ports={lciNode ? lciTopElementaryPorts.output : externalOutElementary}
                   getDisplayName={getPortDisplayName}
                   unitOptionsByPort={unitOptionsByPort}
                   onUnitChange={(port, nextUnit) => {
@@ -2158,8 +2409,8 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                       },
                     }))
                   }
-                  onAdd={() => setFlowPicker({ open: true, target: "out_elementary" })}
-                  onDelete={(id) =>
+                  onAdd={lciNode ? undefined : () => setFlowPicker({ open: true, target: "out_elementary" })}
+                  onDelete={lciNode ? undefined : (id) =>
                     updateNode(node.id, (current) => ({
                       ...current,
                       data: {
@@ -2173,6 +2424,95 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
             </>
           )}
         </>
+      )}
+
+      {lciViewer.open && (
+        <div className="overlay-modal" onClick={() => setLciViewer((current) => ({ ...current, open: false }))}>
+          <div className="overlay-panel lci-exchange-viewer" onClick={(event) => event.stopPropagation()}>
+            <div className="overlay-head">
+              <strong>
+                {lciViewer.direction === "input"
+                  ? t("基本流输入清单", "Elementary Input Inventory")
+                  : t("基本流输出清单", "Elementary Output Inventory")}
+              </strong>
+              <button type="button" className="text-btn" onClick={() => setLciViewer((current) => ({ ...current, open: false }))}>
+                {t("关闭", "Close")}
+              </button>
+            </div>
+            <div className="overlay-filters lci-viewer-filters">
+              <input
+                value={lciViewer.query}
+                placeholder={t("按流名称或 UUID 搜索", "Search by flow name or UUID")}
+                onChange={(event) => setLciViewer((current) => ({ ...current, query: event.target.value, page: 1 }))}
+              />
+              <span>
+                {t("共", "Total")} {lciViewerTotal} {t("条", "items")}
+              </span>
+            </div>
+            <div className="overlay-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>{t("流名称", "Flow")}</th>
+                    <th>{t("方向", "Direction")}</th>
+                    <th>{t("分类", "Category")}</th>
+                    <th>{t("数量", "Amount")}</th>
+                    <th>{t("单位", "Unit")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lciViewerLoading && (
+                    <tr>
+                      <td colSpan={5} className="table-empty">{t("加载中", "Loading")}</td>
+                    </tr>
+                  )}
+                  {!lciViewerLoading && lciViewerError && (
+                    <tr>
+                      <td colSpan={5} className="table-empty">{lciViewerError}</td>
+                    </tr>
+                  )}
+                  {!lciViewerLoading && !lciViewerError && lciViewerItems.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="table-empty">{t("暂无数据", "No data")}</td>
+                    </tr>
+                  )}
+                  {!lciViewerLoading && !lciViewerError && lciViewerItems.map((item) => (
+                    <tr key={`${item.flow_key_id}_${item.direction}`}>
+                      <td title={item.flow_uuid}>{item.flow_name || item.flow_uuid}</td>
+                      <td>{formatLciDirection(item.direction)}</td>
+                      <td>{formatLciCategory(item)}</td>
+                      <td>{formatInventoryAmount(item.amount)}</td>
+                      <td>{item.unit}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="overlay-pagination">
+              <span>
+                {t("第", "Page")} {lciViewer.page} / {Math.max(1, Math.ceil(lciViewerTotal / 20))}
+              </span>
+              <div className="overlay-pagination-actions">
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  disabled={lciViewer.page <= 1}
+                  onClick={() => setLciViewer((current) => ({ ...current, page: Math.max(1, current.page - 1) }))}
+                >
+                  {t("上一页", "Previous")}
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  disabled={lciViewer.page >= Math.max(1, Math.ceil(lciViewerTotal / 20))}
+                  onClick={() => setLciViewer((current) => ({ ...current, page: current.page + 1 }))}
+                >
+                  {t("下一页", "Next")}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {flowPicker.open && (

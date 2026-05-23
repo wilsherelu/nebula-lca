@@ -389,6 +389,7 @@ def test_global_dataset_skip_marks_job_checkpoint(tmp_path):
             status="imported",
             dataset_filename="already.spold",
             process_uuid="proc-existing",
+            vector_nnz=10,
         )
     )
     db.commit()
@@ -429,9 +430,12 @@ def test_global_dataset_skip_marks_job_checkpoint(tmp_path):
     checkpoint = db.query(DatasetCheckpoint).filter_by(job_id=job_id, dataset_key="already.spold").one()
     job = db.get(ImportJob, job_id)
     assert checkpoint.status == "skipped_global"
-    assert executor._stats["skipped"] == 1
-    assert executor._stats["inserted"] == 0
-    assert job.skipped_global == 1
+    assert checkpoint.vector_status == "reused"
+    assert checkpoint.vector_nnz == 10
+    assert executor._stats["datasets_processed"] == 1
+    assert executor._stats["datasets_skipped_global"] == 1
+    assert executor._stats["vectors_reused"] == 1
+    assert executor._stats["processes_inserted"] == 0
 
 
 def test_cache_built_once_per_job(tmp_path):
@@ -558,10 +562,14 @@ def test_progress_stats_json_updates(tmp_path):
     executor._total_count = 100
     executor._lock = threading.Lock()
     executor._stats = defaultdict(int)
-    executor._stats["inserted"] = 10
-    executor._stats["skipped"] = 5
-    executor._stats["failed"] = 2
+    executor._stats["datasets_processed"] = 17
+    executor._stats["processes_inserted"] = 10
+    executor._stats["processes_updated"] = 3
+    executor._stats["datasets_skipped_global"] = 2
+    executor._stats["processes_failed"] = 2
     executor._stats["vectors_written"] = 10
+    executor._stats["vectors_reused"] = 2
+    executor._stats["empty_vectors"] = 1
     executor._stats["nnz_total"] = 500
 
     # Call _update_progress
@@ -571,10 +579,15 @@ def test_progress_stats_json_updates(tmp_path):
     job = db.query(ImportJob).filter_by(job_id=job_id).one()
     assert job.progress_pct == 17.0  # (10 + 5 + 2) / 100 * 100 = 17.0
     assert job.stats_json is not None
+    assert job.stats_json["datasets_processed"] == 17
     assert job.stats_json["processes_inserted"] == 10
-    assert job.stats_json["processes_skipped"] == 5
+    assert job.stats_json["processes_updated"] == 3
+    assert job.stats_json["datasets_skipped_global"] == 2
+    assert job.stats_json["processes_skipped"] == 2
     assert job.stats_json["processes_failed"] == 2
     assert job.stats_json["vectors_written"] == 10
+    assert job.stats_json["vectors_reused"] == 2
+    assert job.stats_json["empty_vectors"] == 1
     assert job.stats_json["vector_nnz_total"] == 500
 
 

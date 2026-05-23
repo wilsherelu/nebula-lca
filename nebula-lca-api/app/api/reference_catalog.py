@@ -26,6 +26,7 @@ from ..schemas import (
     ImportedProcessDetail,
     ImportReferenceProcessesRequest,
     ImportReferenceProcessesResponse,
+    LciVectorTopExchangesResponse,
     MissingFlowSummaryResponse,
     ProcessFilteredExchangesResponse,
     ProcessImportReportResponse,
@@ -487,6 +488,43 @@ def get_reference_process_filtered_exchanges(
         process_uuid=process_uuid,
         filtered_exchange_count=len(filtered),
         filtered_exchanges=filtered,
+    )
+
+
+@_api_router.get("/api/reference/processes/{process_uuid}/lci-vector/top-exchanges", response_model=LciVectorTopExchangesResponse)
+@_base_router.get("/reference/processes/{process_uuid}/lci-vector/top-exchanges", response_model=LciVectorTopExchangesResponse)
+def get_reference_process_lci_vector_top_exchanges(
+    process_uuid: str,
+    limit: int = Query(default=10, ge=1, le=100),
+    page: int = Query(default=1, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=100),
+    direction: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> LciVectorTopExchangesResponse:
+    row = db.get(ReferenceProcess, process_uuid)
+    if row is None:
+        raise HTTPException(status_code=404, detail={"code": "PROCESS_NOT_FOUND", "message": f"Process not found: {process_uuid}"})
+    if direction is not None and direction not in {"input", "output"}:
+        raise HTTPException(status_code=422, detail={"code": "INVALID_DIRECTION", "message": "direction must be input or output"})
+    from ..services.lci_runtime import top_process_vector_exchanges
+
+    effective_page_size = page_size or limit
+    nnz, items = top_process_vector_exchanges(
+        db,
+        process_uuid,
+        limit=limit,
+        page=page,
+        page_size=effective_page_size,
+        direction=direction,
+        q=q,
+    )
+    return LciVectorTopExchangesResponse(
+        process_uuid=process_uuid,
+        nnz=nnz,
+        page=page,
+        page_size=effective_page_size,
+        items=items,
     )
 
 

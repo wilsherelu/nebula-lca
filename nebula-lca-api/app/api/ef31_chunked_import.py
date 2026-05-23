@@ -18,10 +18,11 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..database import SessionLocal, get_db
-from ..models import ImportJob, DatasetCheckpoint
+from ..models import FlowRecord, ImportJob, DatasetCheckpoint, LciBiosphereFlowKey
 from ..schemas import (
     ImportJobCreateRequest,
     ImportJobListResponse,
@@ -67,6 +68,82 @@ def _set_job_phase(db: Session, job_id: str, phase: str, stats: dict | None = No
     db.commit()
 
 
+def _ecoinvent_elementary_flows_for_lcia(db: Session) -> list[dict]:
+    from ..ecoinvent_ef31_loader import parse_elementary_exchanges, parse_units
+    from ..config import PROJECT_ROOT
+
+    cache_root = PROJECT_ROOT / "import-cache" / "job_extract"
+    masterdata_files = sorted(
+        cache_root.glob("*/MasterData/ElementaryExchanges.xml"),
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
+    for elementary_path in masterdata_files:
+        master_dir = elementary_path.parent
+        units = parse_units(master_dir)
+        flows = parse_elementary_exchanges(master_dir, units)
+        if flows:
+            return [
+                {
+                    "flow_uuid": flow.flow_uuid,
+                    "flow_name": flow.flow_name,
+                    "compartment": flow.compartment or "",
+                    "subcompartment": flow.subcompartment or "",
+                }
+                for flow in flows
+            ]
+
+    lci_flow_uuids = {
+        row[0]
+        for row in db.query(LciBiosphereFlowKey.flow_uuid).distinct().all()
+        if row[0]
+    }
+    query = db.query(FlowRecord).filter(
+        FlowRecord.flow_type == "Elementary flow",
+        FlowRecord.source.in_(["ecoinvent", "ecoinvent_3.11"]),
+    )
+    if lci_flow_uuids:
+        query = query.filter(FlowRecord.flow_uuid.in_(lci_flow_uuids))
+    rows = query.all()
+    return [
+        {
+            "flow_uuid": row.flow_uuid,
+            "flow_name": row.flow_name,
+            "compartment": row.compartment or "",
+            "subcompartment": "",
+        }
+        for row in rows
+    ]
+
+
+def _finish_lcia_job(db: Session, job: ImportJob, lcia_excel: Path) -> None:
+    from ..lcia_runtime import generate_lcia_runtime_artifact
+
+    _set_job_phase(db, job.job_id, "runtime", {"message": "generating_lcia_runtime"})
+    elementary_flows = _ecoinvent_elementary_flows_for_lcia(db)
+    manifest = generate_lcia_runtime_artifact(lcia_excel, elementary_flows)
+    job = db.query(ImportJob).filter(ImportJob.job_id == job.job_id).first()
+    if job is None:
+        return
+    job.status = "completed"
+    job.phase = "done"
+    job.progress_pct = 100.0
+    job.error_summary = None
+    job.stats_json = {
+        "phase": "done",
+        "lcia_excel": str(lcia_excel),
+        "runtime_manifest": manifest,
+        "flows_count": manifest.get("flows_count", 0),
+        "indicators_count": manifest.get("indicators_count", 0),
+        "factors_count": manifest.get("factors_count", 0),
+        "cf_matched": manifest.get("cf_matched", 0),
+        "cf_unmatched": manifest.get("cf_unmatched", 0),
+        "cf_ambiguous": manifest.get("cf_ambiguous", 0),
+    }
+    job.updated_at = datetime.utcnow()
+    db.commit()
+
+
 def _run_job_background(job_id: str, resume_from_failed: bool) -> None:
     db = SessionLocal()
     try:
@@ -90,9 +167,16 @@ def _run_job_background(job_id: str, resume_from_failed: bool) -> None:
             extract_result = selective_extract_7z(file_path, extract_dir, spold_limit=job.limit or 0)
             spold_dir = str(extract_result.get("datasets_dir", extract_dir))
             master_data_dir = str(extract_result.get("master_dir", ""))
+            lcia_excel = extract_result.get("lcia_excel")
+            if lcia_excel and (job.file_type == "lcia" or not extract_result.get("datasets_dir")):
+                _finish_lcia_job(db, job, Path(lcia_excel))
+                return
         else:
             spold_dir = str(file_path)
             master_data_dir = ""
+            if job.file_type == "lcia" or file_path.suffix.lower() == ".xlsx":
+                _finish_lcia_job(db, job, file_path)
+                return
 
         _set_job_phase(db, job_id, "masterdata", {"message": "loading_masterdata"})
 
@@ -120,11 +204,16 @@ def _run_job_background(job_id: str, resume_from_failed: bool) -> None:
         job.error_summary = result.error_summary
         job.skipped_global = result.skipped_global
         job.stats_json = {
+            "datasets_processed": result.datasets_processed,
             "processes_inserted": result.processes_inserted,
+            "processes_updated": result.processes_updated,
             "processes_skipped": result.processes_skipped,
+            "datasets_skipped_global": result.datasets_skipped_global,
             "processes_failed": result.processes_failed,
             "skipped_global": result.skipped_global,
             "vectors_written": result.vectors_written,
+            "vectors_reused": result.vectors_reused,
+            "empty_vectors": result.empty_vectors,
             "vector_nnz_total": result.vector_nnz_total,
             "failed_datasets": result.failed_datasets,
             "duration_seconds": result.duration_seconds,
@@ -373,6 +462,45 @@ def get_import_job(job_id: str, db: Session = Depends(get_db)):
     return _job_response(job, failed_keys)
 
 
+@_router.get("/jobs/{job_id}/vector-diagnostics")
+def get_import_job_vector_diagnostics(
+    job_id: str,
+    status: Optional[str] = Query(None, description="Filter by vector_status"),
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    """List checkpoint rows whose vector status needs attention."""
+    job = db.query(ImportJob).filter(ImportJob.job_id == job_id).first()
+    if job is None:
+        raise HTTPException(status_code=404, detail={"code": "JOB_NOT_FOUND", "message": f"No job: {job_id}"})
+
+    query = db.query(DatasetCheckpoint).filter(DatasetCheckpoint.job_id == job_id)
+    if status:
+        query = query.filter(DatasetCheckpoint.vector_status == status)
+    else:
+        query = query.filter(
+            or_(
+                DatasetCheckpoint.vector_status.is_(None),
+                DatasetCheckpoint.vector_status != "written",
+            )
+        )
+    rows = query.order_by(DatasetCheckpoint.dataset_key.asc()).limit(limit).all()
+    return {
+        "job_id": job_id,
+        "items": [
+            {
+                "dataset_key": row.dataset_key,
+                "status": row.status,
+                "process_uuid": row.process_uuid,
+                "vector_status": row.vector_status,
+                "vector_nnz": row.vector_nnz,
+                "error_message": row.error_message,
+            }
+            for row in rows
+        ],
+    }
+
+
 @_router.get("/jobs", response_model=ImportJobListResponse)
 def list_import_jobs(
     status: Optional[str] = Query(None, description="Filter by status"),
@@ -408,6 +536,19 @@ def generate_lcia_runtime_for_job(
 ):
     """Generate LCIA runtime from a completed LCIA upload session."""
     from ..lcia_runtime import generate_lcia_runtime_from_job as _gen
+
+    job = db.query(ImportJob).filter(ImportJob.job_id == job_id).first()
+    if job is None:
+        raise HTTPException(status_code=404, detail={"code": "JOB_NOT_FOUND", "message": f"No job: {job_id}"})
+    stats = job.stats_json or {}
+    lcia_excel = stats.get("lcia_excel")
+    if job.file_type == "lcia" and lcia_excel:
+        try:
+            _finish_lcia_job(db, job, Path(str(lcia_excel)))
+            refreshed = db.query(ImportJob).filter(ImportJob.job_id == job_id).first()
+            return (refreshed.stats_json or {}).get("runtime_manifest", {}) if refreshed else {}
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail={"code": "LCIA_RUNTIME_FAILED", "message": str(e)})
 
     try:
         manifest = _gen(job_id)

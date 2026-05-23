@@ -207,7 +207,7 @@ def _ensure_intermediate_flow_exists(
         flow_type=flow.flow_type,
         default_unit=flow.default_unit,
         unit_group=flow.unit_group,
-        source="ef3.1",
+        source=flow.source,
         is_custom=False,
     )
     db.add(db_flow)
@@ -330,15 +330,25 @@ def _build_ecoinvent_unit_catalog(
 
 
 def _ensure_unit_group(db: Session, group: str, reference_unit: str) -> tuple[UnitGroup, bool]:
+    source_uuid = f"ecoinvent:unit-type:{group}"
     existing = db.get(UnitGroup, group)
     if existing is not None:
         if reference_unit and not existing.reference_unit:
             existing.reference_unit = reference_unit
+        if not existing.source_uuid:
+            existing.source_uuid = source_uuid
+        if not existing.source_version:
+            existing.source_version = "ecoinvent"
+        if not existing.source_package_version:
+            existing.source_package_version = "ecoinvent 3.11"
+        if not existing.source_file:
+            existing.source_file = "MasterData/UnitConversions.xml"
         return existing, False
 
     row = UnitGroup(
         name=group,
         reference_unit=reference_unit,
+        source_uuid=source_uuid,
         source_version="ecoinvent",
         source_package_version="ecoinvent 3.11",
         source_file="MasterData/UnitConversions.xml",

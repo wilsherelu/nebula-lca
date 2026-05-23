@@ -164,6 +164,21 @@ def ensure_import_tables(engine: Engine) -> dict:
                     raise RuntimeError(f"Unsupported database dialect '{dialect_name}'")
                 added_columns.append(f"import_jobs.{col_name}")
 
+        if inspector.has_table("dataset_checkpoints"):
+            checkpoint_columns = {col["name"] for col in inspector.get_columns("dataset_checkpoints")}
+            for col_name, col_type in [
+                ("vector_status", "VARCHAR(32)"),
+            ]:
+                if col_name in checkpoint_columns:
+                    continue
+                if dialect_name == "postgresql":
+                    conn.execute(text(f"ALTER TABLE dataset_checkpoints ADD COLUMN IF NOT EXISTS {col_name} {col_type}"))
+                elif dialect_name == "sqlite":
+                    conn.execute(text(f"ALTER TABLE dataset_checkpoints ADD COLUMN {col_name} {col_type}"))
+                else:
+                    raise RuntimeError(f"Unsupported database dialect '{dialect_name}'")
+                added_columns.append(f"dataset_checkpoints.{col_name}")
+
         idx_defs = [
             ("import_jobs", "ix_import_jobs_status", f"CREATE INDEX {if_if_not_exists} ix_import_jobs_status ON import_jobs (status)"),
             ("dataset_checkpoints", "ix_dataset_checkpoint_job_id", f"CREATE INDEX {if_if_not_exists} ix_dataset_checkpoint_job_id ON dataset_checkpoints (job_id)"),
@@ -251,3 +266,33 @@ def backfill_tidas_unit_group_sources(db: Session) -> dict:
     if updated:
         db.commit()
     return {"updated": updated, "seed_unit_groups": len(seed.get("unit_groups") or [])}
+
+
+def backfill_ecoinvent_unit_group_sources(db: Session) -> dict:
+    updated = 0
+    for row in db.query(UnitGroup).all():
+        source_version = str(getattr(row, "source_version", "") or "").strip().lower()
+        source_package_version = str(getattr(row, "source_package_version", "") or "").strip().lower()
+        source_file = str(getattr(row, "source_file", "") or "").strip()
+        is_ecoinvent = (
+            source_version == "ecoinvent"
+            or source_package_version.startswith("ecoinvent")
+            or source_file == "MasterData/UnitConversions.xml"
+        )
+        if not is_ecoinvent:
+            continue
+        changed = False
+        for attr, value in {
+            "source_uuid": getattr(row, "source_uuid", None) or f"ecoinvent:unit-type:{row.name}",
+            "source_version": getattr(row, "source_version", None) or "ecoinvent",
+            "source_package_version": getattr(row, "source_package_version", None) or "ecoinvent 3.11",
+            "source_file": getattr(row, "source_file", None) or "MasterData/UnitConversions.xml",
+        }.items():
+            if getattr(row, attr, None) != value:
+                setattr(row, attr, value)
+                changed = True
+        if changed:
+            updated += 1
+    if updated:
+        db.commit()
+    return {"updated": updated}

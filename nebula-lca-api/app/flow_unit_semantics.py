@@ -32,8 +32,37 @@ def _clean(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _unit_group_key(value: Any) -> str:
+    text = _clean(value).lower()
+    if not text:
+        return ""
+    for old, new in (("_", " "), ("-", " ")):
+        text = text.replace(old, new)
+    text = " ".join(text.split())
+    for prefix in ("units of ", "unit of "):
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+            break
+    aliases = {
+        "lenght": "length",
+        "item": "items",
+    }
+    return aliases.get(text, text)
+
+
+def _unit_group_identity(value: Any, unit_group_identity_by_name: dict[str, str] | None = None) -> str:
+    text = _clean(value)
+    if not text:
+        return ""
+    if unit_group_identity_by_name:
+        source_identity = unit_group_identity_by_name.get(text) or unit_group_identity_by_name.get(text.lower())
+        if source_identity:
+            return source_identity
+    return f"canonical:{_unit_group_key(text)}"
+
+
 def _same_group(left: str, right: str) -> bool:
-    return _clean(left).lower() == _clean(right).lower()
+    return _unit_group_identity(left) == _unit_group_identity(right)
 
 
 def _prop_get(row: Any, key: str, default: Any = None) -> Any:
@@ -58,6 +87,17 @@ def _flow_allocation_properties(flow_record: FlowRecord | None) -> list[Any]:
     return rows if isinstance(rows, list) else []
 
 
+def _same_group_identity(
+    left: str,
+    right: str,
+    unit_group_identity_by_name: dict[str, str] | None,
+) -> bool:
+    return _unit_group_identity(left, unit_group_identity_by_name) == _unit_group_identity(
+        right,
+        unit_group_identity_by_name,
+    )
+
+
 def _infer_switch_from_flow_properties(
     *,
     flow_uuid: str,
@@ -67,10 +107,11 @@ def _infer_switch_from_flow_properties(
     flow_default_unit_group: str,
     flow_default_unit: str,
     reference_unit_by_group: dict[str, str],
+    unit_group_identity_by_name: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     for row in _flow_allocation_properties(flow_record):
         target_group = _clean(_prop_get(row, "targetUnitGroup"))
-        if not target_group or not _same_group(target_group, current_unit_group):
+        if not target_group or not _same_group_identity(target_group, current_unit_group, unit_group_identity_by_name):
             continue
         try:
             factor = float(_prop_get(row, "value"))
@@ -133,6 +174,42 @@ def build_unit_reference_maps(
     return unit_factor_by_group_and_name, reference_unit_by_group
 
 
+def build_unit_group_identity_map(db: Session) -> dict[str, str]:
+    physical_identity_by_key = {
+        "area": "physical:area",
+        "area time": "physical:area_time",
+        "currency": "physical:currency",
+        "energy": "physical:energy",
+        "items": "physical:items",
+        "length": "physical:length",
+        "mass": "physical:mass",
+        "mass time": "physical:mass_time",
+        "mole": "physical:mole",
+        "radioactivity": "physical:radioactivity",
+        "time": "physical:time",
+        "volume": "physical:volume",
+        "volume time": "physical:volume_time",
+    }
+    identity_by_name: dict[str, str] = {}
+    for group in db.query(UnitGroup).all():
+        name = _clean(group.name)
+        if not name:
+            continue
+        canonical_key = _unit_group_key(name)
+        source_uuid = _clean(getattr(group, "source_uuid", None))
+        identity = physical_identity_by_key.get(canonical_key)
+        if not identity:
+            identity = f"source:{source_uuid}" if source_uuid else f"canonical:{canonical_key}"
+        identity_by_name[name] = identity
+        identity_by_name[name.lower()] = identity
+
+    for name in list(identity_by_name):
+        canonical_name = _unit_group_key(name)
+        if canonical_name and canonical_name not in identity_by_name:
+            identity_by_name[canonical_name] = identity_by_name[name]
+    return identity_by_name
+
+
 def _unit_factor(
     unit_factor_by_group_and_name: dict[tuple[str, str], float],
     reference_unit_by_group: dict[str, str],
@@ -191,9 +268,12 @@ def resolve_flow_port_unit_semantics(
     *,
     unit_factor_by_group_and_name: dict[tuple[str, str], float] | None = None,
     reference_unit_by_group: dict[str, str] | None = None,
+    unit_group_identity_by_name: dict[str, str] | None = None,
 ) -> FlowPortUnitSemantics:
     if unit_factor_by_group_and_name is None or reference_unit_by_group is None:
         unit_factor_by_group_and_name, reference_unit_by_group = build_unit_reference_maps(db)
+    if unit_group_identity_by_name is None:
+        unit_group_identity_by_name = build_unit_group_identity_map(db)
 
     flow_uuid = _clean(_get(port, "flowUuid", None) or _get(port, "flow_uuid", None))
     flow_record = db.get(FlowRecord, flow_uuid) if flow_uuid else None
@@ -240,7 +320,7 @@ def resolve_flow_port_unit_semantics(
         and (
             not current_unit_group
             or not flow_default_unit_group
-            or _same_group(current_unit_group, flow_default_unit_group)
+            or _same_group_identity(current_unit_group, flow_default_unit_group, unit_group_identity_by_name)
         )
     ):
         return FlowPortUnitSemantics(
@@ -297,7 +377,7 @@ def resolve_flow_port_unit_semantics(
             reason="missing_flow_default_unit_factor",
         )
 
-    if _same_group(current_unit_group, flow_default_unit_group):
+    if _same_group_identity(current_unit_group, flow_default_unit_group, unit_group_identity_by_name):
         result_factor = default_factor / current_factor
     else:
         raw_switch_factor = switch.get("factor")
@@ -306,7 +386,7 @@ def resolve_flow_port_unit_semantics(
         except (TypeError, ValueError):
             switch_factor = 0.0
         target_group = _clean(switch.get("targetUnitGroup") or switch.get("target_unit_group"))
-        if switch_factor <= 0 or not _same_group(target_group, current_unit_group):
+        if switch_factor <= 0 or not _same_group_identity(target_group, current_unit_group, unit_group_identity_by_name):
             inferred_switch = _infer_switch_from_flow_properties(
                 flow_uuid=flow_uuid,
                 flow_record=flow_record,
@@ -315,6 +395,7 @@ def resolve_flow_port_unit_semantics(
                 flow_default_unit_group=flow_default_unit_group,
                 flow_default_unit=flow_default_unit,
                 reference_unit_by_group=reference_unit_by_group,
+                unit_group_identity_by_name=unit_group_identity_by_name,
             )
             if inferred_switch:
                 switch = inferred_switch
@@ -354,7 +435,7 @@ def resolve_flow_port_unit_semantics(
     amount_in_flow_default_unit = current_amount / result_factor
     inferred_source_amount: float | None = None
     snapshot_source_amount: float | None = None
-    if switch and not _same_group(current_unit_group, flow_default_unit_group):
+    if switch and not _same_group_identity(current_unit_group, flow_default_unit_group, unit_group_identity_by_name):
         raw_source_amount = switch.get("sourceAmount")
         if raw_source_amount is None:
             raw_source_amount = switch.get("source_amount")
@@ -401,6 +482,7 @@ def collect_flow_default_unit_conversion_violations(
 ) -> list[dict[str, Any]]:
     if unit_factor_by_group_and_name is None or reference_unit_by_group is None:
         unit_factor_by_group_and_name, reference_unit_by_group = build_unit_reference_maps(db)
+    unit_group_identity_by_name = build_unit_group_identity_map(db)
 
     nodes = graph.get("nodes", []) if isinstance(graph, dict) else getattr(graph, "nodes", [])
     violations: list[dict[str, Any]] = []
@@ -416,10 +498,15 @@ def collect_flow_default_unit_conversion_violations(
                     port,
                     unit_factor_by_group_and_name=unit_factor_by_group_and_name,
                     reference_unit_by_group=reference_unit_by_group,
+                    unit_group_identity_by_name=unit_group_identity_by_name,
                 )
                 if sem.ok:
                     continue
-                if _same_group(sem.current_unit_group, sem.flow_default_unit_group) and sem.reason not in {
+                if _same_group_identity(
+                    sem.current_unit_group,
+                    sem.flow_default_unit_group,
+                    unit_group_identity_by_name,
+                ) and sem.reason not in {
                     "missing_current_unit_factor",
                     "missing_flow_default_unit_factor",
                 }:
@@ -453,6 +540,7 @@ def normalize_graph_flow_unit_switches(graph: Any, db: Session) -> Any:
     default-unit amount for calculation and TIDAS export.
     """
     unit_factor_by_group_and_name, reference_unit_by_group = build_unit_reference_maps(db)
+    unit_group_identity_by_name = build_unit_group_identity_map(db)
     nodes = graph.get("nodes", []) if isinstance(graph, dict) else getattr(graph, "nodes", [])
     for node in nodes or []:
         for bucket in ("inputs", "outputs", "emissions"):
@@ -463,8 +551,13 @@ def normalize_graph_flow_unit_switches(graph: Any, db: Session) -> Any:
                     port,
                     unit_factor_by_group_and_name=unit_factor_by_group_and_name,
                     reference_unit_by_group=reference_unit_by_group,
+                    unit_group_identity_by_name=unit_group_identity_by_name,
                 )
-                if not sem.ok or _same_group(sem.current_unit_group, sem.flow_default_unit_group):
+                if not sem.ok or _same_group_identity(
+                    sem.current_unit_group,
+                    sem.flow_default_unit_group,
+                    unit_group_identity_by_name,
+                ):
                     continue
                 if not sem.unit_group_switch:
                     continue

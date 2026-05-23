@@ -23,6 +23,7 @@ from app.services.lci_runtime import (
     expand_lci_vectors_into_graph,
     inventory_with_flow_metadata,
     load_process_vectors,
+    top_process_vector_exchanges,
 )
 from app.models import (
     Base,
@@ -852,6 +853,105 @@ class TestExchangeMatrixWrite:
         vector = db_session.get(LciProcessVector, "proc-vector-unknown")
         assert vector is not None
         assert vector.canonicalized is False
+
+    def test_top_process_vector_exchanges_filters_pages_and_searches(self, db_session):
+        db_session.add_all([
+            FlowRecord(
+                flow_uuid="flow-co2-air-001",
+                flow_name="Carbon dioxide fossil",
+                flow_type="Elementary flow",
+                default_unit="kg",
+                unit_group="mass",
+                compartment="air",
+                source="ecoinvent_3.11",
+            ),
+            FlowRecord(
+                flow_uuid="flow-water-002",
+                flow_name="Water resource",
+                flow_type="Elementary flow",
+                default_unit="m3",
+                unit_group="volume",
+                compartment="water",
+                source="ecoinvent_3.11",
+            ),
+            FlowRecord(
+                flow_uuid="flow-ch4-air-003",
+                flow_name="Methane fossil",
+                flow_type="Elementary flow",
+                default_unit="kg",
+                unit_group="mass",
+                compartment="air",
+                source="ecoinvent_3.11",
+            ),
+        ])
+        exchanges = [
+            LciExchangeMatrix(
+                process_uuid="proc-top",
+                flow_uuid="flow-co2-air-001",
+                amount=2.0,
+                unit="kg",
+                direction="output",
+                source="ecoinvent_3.11",
+                source_package_version="ecoinvent_3.11",
+            ),
+            LciExchangeMatrix(
+                process_uuid="proc-top",
+                flow_uuid="flow-water-002",
+                amount=5.0,
+                unit="m3",
+                direction="input",
+                source="ecoinvent_3.11",
+                source_package_version="ecoinvent_3.11",
+            ),
+            LciExchangeMatrix(
+                process_uuid="proc-top",
+                flow_uuid="flow-ch4-air-003",
+                amount=1.0,
+                unit="kg",
+                direction="output",
+                source="ecoinvent_3.11",
+                source_package_version="ecoinvent_3.11",
+            ),
+        ]
+        write_ecoinvent_process_vector(
+            db_session,
+            process_uuid="proc-top",
+            exchanges=exchanges,
+            package_version="ecoinvent_3.11",
+        )
+
+        total_output, first_output = top_process_vector_exchanges(
+            db_session,
+            "proc-top",
+            page=1,
+            page_size=1,
+            direction="output",
+        )
+        assert total_output == 2
+        assert len(first_output) == 1
+        assert first_output[0]["flow_uuid"] == "flow-co2-air-001"
+        assert first_output[0]["direction"] == "output"
+
+        total_input, input_items = top_process_vector_exchanges(
+            db_session,
+            "proc-top",
+            page=1,
+            page_size=10,
+            direction="input",
+        )
+        assert total_input == 1
+        assert input_items[0]["flow_uuid"] == "flow-water-002"
+
+        search_total, search_items = top_process_vector_exchanges(
+            db_session,
+            "proc-top",
+            page=1,
+            page_size=10,
+            direction="output",
+            q="methane",
+        )
+        assert search_total == 1
+        assert search_items[0]["flow_uuid"] == "flow-ch4-air-003"
 
 
 # ======================================================================

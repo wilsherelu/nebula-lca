@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 
 from . import ecoinvent_ef31_loader as _loader
 from .ef31_db_service import _generate_lci_process_uuid
-from .models import DatasetCheckpoint, ImportJob, LciExchangeMatrix
+from .models import DatasetCheckpoint, ImportJob, LciExchangeMatrix, LciProcessVector
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,9 @@ class ParseResult:
     process_uuid: str
     duration_ms: int
     error: str | None = None
+    dataset_uuid: str | None = None
+    vector_status: str | None = None  # written | reused | empty | failed
+    vector_nnz: int | None = None
 
 
 @dataclass
@@ -63,13 +66,18 @@ class FlushBatch:
 class ImportResult:
     """Final result after executor completes."""
     job_id: str
+    datasets_processed: int = 0
     processes_inserted: int = 0
+    processes_updated: int = 0
     processes_skipped: int = 0
     processes_failed: int = 0
+    datasets_skipped_global: int = 0
     skipped_global: int = 0
     flows_new: int = 0
     flows_error: int = 0
     vectors_written: int = 0
+    vectors_reused: int = 0
+    empty_vectors: int = 0
     vector_nnz_total: int = 0
     vector_warnings: list = field(default_factory=list)
     failed_datasets: list[str] = field(default_factory=list)
@@ -126,10 +134,14 @@ class LciImportJobExecutor:
         # Statistics (protected by lock)
         self._lock = threading.Lock()
         self._stats = {
-            "inserted": 0,
-            "skipped": 0,
-            "failed": 0,
+            "datasets_processed": 0,
+            "processes_inserted": 0,
+            "processes_updated": 0,
+            "datasets_skipped_global": 0,
+            "processes_failed": 0,
             "vectors_written": 0,
+            "vectors_reused": 0,
+            "empty_vectors": 0,
             "nnz_total": 0,
         }
         self._failed_datasets: list[str] = []
@@ -190,15 +202,21 @@ class LciImportJobExecutor:
                 for pr in batch_results:
                     self._flush_single(pr)
                 self._mark_checkpoints_complete(batch_results)
+                self._update_progress()
                 self.db.commit()
                 parse_results.extend(batch_results)
 
             with self._lock:
-                result.processes_inserted = self._stats["inserted"]
-                result.processes_skipped = self._stats["skipped"] + skipped_count
-                result.processes_failed = self._stats["failed"]
-                result.skipped_global = getattr(self, '_skipped_global_counter', 0)
+                result.datasets_processed = self._stats["datasets_processed"]
+                result.processes_inserted = self._stats["processes_inserted"]
+                result.processes_updated = self._stats["processes_updated"]
+                result.datasets_skipped_global = self._stats["datasets_skipped_global"] + skipped_count
+                result.processes_skipped = result.datasets_skipped_global
+                result.processes_failed = self._stats["processes_failed"]
+                result.skipped_global = result.datasets_skipped_global
                 result.vectors_written = self._stats["vectors_written"]
+                result.vectors_reused = self._stats["vectors_reused"]
+                result.empty_vectors = self._stats["empty_vectors"]
                 result.vector_nnz_total = self._stats["nnz_total"]
                 result.vector_warnings = list(self._vector_warnings)
                 result.failed_datasets = list(self._failed_datasets)
@@ -370,6 +388,8 @@ class LciImportJobExecutor:
             if cp:
                 cp.status = status
                 cp.process_uuid = pr.process_uuid
+                cp.vector_status = pr.vector_status
+                cp.vector_nnz = pr.vector_nnz
                 cp.duration_ms = pr.duration_ms
                 cp.error_message = pr.error
                 self.db.flush()
@@ -447,10 +467,12 @@ class LciImportJobExecutor:
     def _flush_single(self, pr: ParseResult) -> None:
         """Flush one parse result to the DB (called by main thread)."""
         if pr.error:
+            pr.vector_status = "failed"
+            pr.vector_nnz = 0
             with self._lock:
-                self._stats["failed"] += 1
+                self._stats["datasets_processed"] += 1
+                self._stats["processes_failed"] += 1
                 self._failed_datasets.append(pr.spold_path)
-            self._update_progress()
             return
 
         if pr.dataset is None:
@@ -465,13 +487,33 @@ class LciImportJobExecutor:
         activity_id = ds.activity_id
         ref_product_id = ds.reference_product_id or ""
         dataset_uuid = f"{activity_id}:{ref_product_id}" if ref_product_id else activity_id
+        pr.dataset_uuid = dataset_uuid
 
         if not self.overwrite_existing:
             global_rec = self._get_global_dataset_status(dataset_uuid)
             if global_rec is not None and global_rec.status == "imported":
                 # Dataset already imported globally — skip without writing
+                existing_vector = None
+                if global_rec.process_uuid:
+                    try:
+                        existing_vector = self.db.get(LciProcessVector, global_rec.process_uuid)
+                    except Exception:
+                        self.db.rollback()
+                        existing_vector = None
+                reused_nnz = (
+                    existing_vector.nnz
+                    if existing_vector is not None
+                    else (global_rec.vector_nnz or 0)
+                )
+                pr.vector_status = "reused" if reused_nnz > 0 else "empty"
+                pr.vector_nnz = reused_nnz
                 with self._lock:
-                    self._stats["skipped"] += 1
+                    self._stats["datasets_processed"] += 1
+                    self._stats["datasets_skipped_global"] += 1
+                    if pr.vector_status == "reused":
+                        self._stats["vectors_reused"] += 1
+                    else:
+                        self._stats["empty_vectors"] += 1
                     self._global_skipped_dataset_keys.add(Path(pr.spold_path).name)
                 # Update global skipped counter (includes stats_json sync)
                 self._update_global_skipped(1)
@@ -486,8 +528,11 @@ class LciImportJobExecutor:
                     missing_refs.append(exc.exchange_id)
 
         if missing_refs:
+            pr.vector_status = "failed"
+            pr.vector_nnz = 0
             with self._lock:
-                self._stats["failed"] += 1
+                self._stats["datasets_processed"] += 1
+                self._stats["processes_failed"] += 1
                 self._failed_datasets.append(pr.spold_path)
             # Record global failure for this dataset
             self._update_global_status(
@@ -532,7 +577,7 @@ class LciImportJobExecutor:
                 )
             )
             with self._lock:
-                self._stats["inserted"] += 1
+                self._stats["processes_inserted"] += 1
         else:
             existing.process_name = ds.activity_name or procs
             existing.process_name_en = ds.activity_name
@@ -540,14 +585,7 @@ class LciImportJobExecutor:
             existing.process_json = process_json
             existing.source_file = pr.spold_path
             with self._lock:
-                self._stats["skipped"] += 1  # updated counts as skipped for simplicity
-
-        # Upsert flows (first pass)
-        for exc in exs:
-            if exc.exchange_id:
-                full_flow = elem_flow_lookup.get(exc.exchange_id)
-                if full_flow:
-                    self._ensure_flow_exists(full_flow)
+                self._stats["processes_updated"] += 1
 
         # Write compressed vector
         from . import ecoinvent_ef31_loader as _l
@@ -576,10 +614,29 @@ class LciImportJobExecutor:
             )
             if result:
                 nnz_written = result.get("nnz", 0)
+                pr.vector_status = "written"
+                pr.vector_nnz = nnz_written
                 with self._lock:
                     self._stats["vectors_written"] += result.get("vectors_written", 0)
                     self._stats["nnz_total"] += result.get("nnz", 0)
                     self._vector_warnings.extend(result.get("warnings", []))
+        if pr.vector_status is None:
+            existing_vector = self.db.get(LciProcessVector, procs)
+            if existing_vector is not None and not self.overwrite_existing:
+                pr.vector_status = "reused"
+                pr.vector_nnz = existing_vector.nnz or 0
+                with self._lock:
+                    self._stats["vectors_reused"] += 1
+            else:
+                pr.vector_status = "empty"
+                pr.vector_nnz = 0
+                with self._lock:
+                    self._stats["empty_vectors"] += 1
+                    if self.overwrite_existing:
+                        self._vector_warnings.append(
+                            f"{Path(pr.spold_path).name}: no elementary vector rows"
+                        )
+        nnz_written = pr.vector_nnz or 0
 
         # ── Update global import status on success ──
         self._update_global_status(
@@ -591,7 +648,8 @@ class LciImportJobExecutor:
             activity_id=ds.activity_id,
             reference_product_id=ds.reference_product_id,
         )
-        self._update_progress()
+        with self._lock:
+            self._stats["datasets_processed"] += 1
 
     # ── Global dataset import state helpers ────────────────────────────
 
@@ -655,28 +713,15 @@ class LciImportJobExecutor:
             pass
 
     def _update_global_skipped(self, count: int) -> None:
-        """Increment skipped_global counter on the job (thread-safe).
+        """Increment the in-memory skipped_global counter.
 
-        Updates ImportJob.skipped_global and stats_json in DB.
+        The DB row is updated by _update_progress at batch boundaries to
+        avoid one write lock per skipped dataset.
         """
         with self._lock:
             if not hasattr(self, '_skipped_global_counter'):
                 self._skipped_global_counter = 0
             self._skipped_global_counter += count
-
-        try:
-            job = self.db.query(ImportJob).filter(
-                ImportJob.job_id == self.job_id
-            ).first()
-            if job:
-                job.skipped_global = self._skipped_global_counter
-                # Also update stats_json for consistency
-                if job.stats_json is None:
-                    job.stats_json = {}
-                job.stats_json["skipped_global"] = self._skipped_global_counter
-                self.db.flush()
-        except Exception:
-            pass
 
     def _ensure_flow_exists(self, flow, is_intermediate: bool = False) -> None:
         """Ensure FlowRecord exists — simplified inline version."""
@@ -773,22 +818,31 @@ class LciImportJobExecutor:
             if job:
                 total = self._total_count
                 with self._lock:
-                    inserted = self._stats["inserted"]
-                    skipped = self._stats["skipped"]
-                    failed = self._stats["failed"]
+                    datasets_processed = self._stats["datasets_processed"]
+                    inserted = self._stats["processes_inserted"]
+                    updated = self._stats["processes_updated"]
+                    skipped_global = self._stats["datasets_skipped_global"]
+                    failed = self._stats["processes_failed"]
                     vectors_written = self._stats["vectors_written"]
+                    vectors_reused = self._stats["vectors_reused"]
+                    empty_vectors = self._stats["empty_vectors"]
                     nnz_total = self._stats["nnz_total"]
 
-                processed = inserted + skipped + failed
                 if total and total > 0:
-                    job.progress_pct = round(min(100.0, processed / total * 100), 1)
+                    job.progress_pct = round(min(100.0, datasets_processed / total * 100), 1)
+                job.skipped_global = skipped_global
 
                 job.stats_json = {
+                    "datasets_processed": datasets_processed,
                     "processes_inserted": inserted,
-                    "processes_skipped": skipped,
+                    "processes_updated": updated,
+                    "processes_skipped": skipped_global,
+                    "datasets_skipped_global": skipped_global,
                     "processes_failed": failed,
-                    "skipped_global": getattr(self, '_skipped_global_counter', 0),
+                    "skipped_global": skipped_global,
                     "vectors_written": vectors_written,
+                    "vectors_reused": vectors_reused,
+                    "empty_vectors": empty_vectors,
                     "vector_nnz_total": nnz_total,
                 }
                 job.updated_at = __import__("datetime").datetime.utcnow()
@@ -835,8 +889,10 @@ class LciImportJobExecutor:
 
         logger.info(
             f"[{self.job_id}] Import complete: "
-            f"inserted={result.processes_inserted} skipped={result.processes_skipped} "
-            f"failed={result.processes_failed} vectors={result.vectors_written} "
+            f"processed={result.datasets_processed} inserted={result.processes_inserted} "
+            f"updated={result.processes_updated} global_skipped={result.datasets_skipped_global} "
+            f"failed={result.processes_failed} vectors_written={result.vectors_written} "
+            f"vectors_reused={result.vectors_reused} empty_vectors={result.empty_vectors} "
             f"nnz={result.vector_nnz_total} duration={result.duration_seconds}s"
         )
         return result

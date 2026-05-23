@@ -93,6 +93,7 @@ class FlowPort(BaseModel):
     reference_product_flow_uuid: str | None = None
     product_name: str | None = None
     product_name_en: str | None = None
+    sourceSystem: str | None = None
     model_config = ConfigDict(populate_by_name=True)
 
     @field_validator("isProduct", mode="before")
@@ -798,6 +799,25 @@ class ProcessFilteredExchangesResponse(BaseModel):
     process_uuid: str
     filtered_exchange_count: int = 0
     filtered_exchanges: list[FilteredExchangeEvidence] = Field(default_factory=list)
+
+
+class LciVectorExchangeItem(BaseModel):
+    flow_key_id: int
+    flow_uuid: str
+    flow_name: str | None = None
+    direction: str
+    unit: str
+    amount: float
+    compartment: str | None = None
+    subcompartment: str | None = None
+
+
+class LciVectorTopExchangesResponse(BaseModel):
+    process_uuid: str
+    nnz: int = 0
+    page: int = 1
+    page_size: int = 10
+    items: list[LciVectorExchangeItem] = Field(default_factory=list)
 
 
 class MissingFlowSummaryResponse(BaseModel):
