@@ -446,7 +446,13 @@ def cancel_import_job(job_id: str, db: Session = Depends(get_db)):
 
 @_router.get("/jobs/{job_id}", response_model=ImportJobStatusResponse)
 def get_import_job(job_id: str, db: Session = Depends(get_db)):
-    """Get import job status."""
+    """Get import job status (auto-recovers stale tasks)."""
+    # If the queried job is stale, recover it to avoid frontend polling stuck
+    try:
+        from ..job_control import recover_stale_jobs
+        recover_stale_jobs(db, max_seconds=600)
+    except Exception:
+        logger.warning("Failed to recover stale import job before status query; continuing", exc_info=True)
     job = db.query(ImportJob).filter(ImportJob.job_id == job_id).first()
     if job is None:
         raise HTTPException(status_code=404, detail={"code": "JOB_NOT_FOUND", "message": f"No job: {job_id}"})
@@ -507,7 +513,13 @@ def list_import_jobs(
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
-    """List import jobs."""
+    """List import jobs (auto-recovers stale tasks first)."""
+    # Recover stale jobs (running/pending/paused older than 10 min)
+    try:
+        from ..job_control import recover_stale_jobs
+        recover_stale_jobs(db, max_seconds=600)
+    except Exception:
+        logger.warning("Failed to recover stale import jobs; continuing with query", exc_info=True)
     query = db.query(ImportJob).order_by(ImportJob.created_at.desc())
     if status:
         query = query.filter(ImportJob.status == status)

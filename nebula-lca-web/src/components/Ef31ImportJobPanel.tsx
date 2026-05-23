@@ -45,6 +45,14 @@ const IMPORT_API_BASE = RAW_IMPORT_API_BASE
 const DEFAULT_CHUNK_SIZE = 64 * 1024 * 1024;
 const STATUS_POLL_INTERVAL_MS = 2000;
 const CHUNK_UPLOAD_RETRY_LIMIT = 5;
+const STALE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+
+function parseJobUpdatedAtMs(updatedAt: string | null | undefined): number {
+  if (!updatedAt) return 0;
+  const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/.test(updatedAt) ? updatedAt : `${updatedAt}Z`;
+  const parsed = Date.parse(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
 
 const zhText = {
   title: "\u5bfc\u5165 LCI/LCIA \u6570\u636e\u5e93",
@@ -263,16 +271,21 @@ export default function Ef31ImportJobPanel(props: {
     if (!open || job || uploadBusy || jobBusy) return;
     let cancelled = false;
     const statuses = ["running", "pending", "paused"];
+    const now = Date.now();
     const loadActiveJob = async () => {
       for (const status of statuses) {
         try {
           const result = await requestJson<JobListResponse>(`${IMPORT_API_BASE}/import/ef31/jobs?status=${status}&limit=1`);
           const active = result.jobs[0];
           if (!active || cancelled) continue;
+          // Only auto-mount jobs updated within the stale threshold (10 min).
+          // Older stale jobs are considered abandoned and left for manual recovery.
+          const updatedMs = parseJobUpdatedAtMs(active.updated_at);
+          if (updatedMs <= 0 || now - updatedMs > STALE_THRESHOLD_MS) continue;
           setJob(active);
           setPhase("job");
           if (active.status === "running") {
-            startTimeRef.current = Date.now();
+            startTimeRef.current = now;
             startPolling(active.job_id);
           }
           return;

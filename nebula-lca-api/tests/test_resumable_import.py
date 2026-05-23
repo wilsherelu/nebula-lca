@@ -591,15 +591,16 @@ def test_progress_stats_json_updates(tmp_path):
     assert job.stats_json["vector_nnz_total"] == 500
 
 
-def test_recover_stale_jobs_resets_running_checkpoints(tmp_path):
+def test_recover_stale_jobs_resets_running_checkpoints(tmp_path, monkeypatch):
     """Stale running jobs should be cancellable for retry maintenance."""
     from datetime import datetime, timedelta
 
     from sqlalchemy.orm import sessionmaker
 
-    from app.job_control import recover_stale_jobs
+    from app.job_control import read_job_control_signal, recover_stale_jobs, write_job_control_signal
     from app.models import DatasetCheckpoint, ImportJob
 
+    monkeypatch.chdir(tmp_path)
     db_path = tmp_path / "test.db"
     engine = create_engine(f"sqlite:///{db_path}")
     ImportJob.__table__.create(engine)
@@ -621,13 +622,25 @@ def test_recover_stale_jobs_resets_running_checkpoints(tmp_path):
         dataset_key="dataset.spold",
         status="running",
     ))
+    terminal_job_id = "terminal-job-001"
+    db.add(ImportJob(
+        job_id=terminal_job_id,
+        file_path="/fake/terminal.7z",
+        file_type="lci",
+        status="completed",
+        phase="done",
+        updated_at=datetime.utcnow(),
+    ))
     db.commit()
+    write_job_control_signal(terminal_job_id, pause_requested=True, cancel_requested=True)
 
-    result = recover_stale_jobs(db, max_running_seconds=60)
+    result = recover_stale_jobs(db, max_seconds=60)
 
     assert result["jobs_cancelled"] == 1
     assert result["checkpoints_reset"] == 1
+    assert result["signals_cleared"] == 1
     job = db.query(ImportJob).filter_by(job_id=job_id).one()
     checkpoint = db.query(DatasetCheckpoint).filter_by(job_id=job_id).one()
     assert job.status == "cancelled"
     assert checkpoint.status == "pending"
+    assert read_job_control_signal(terminal_job_id) is None
