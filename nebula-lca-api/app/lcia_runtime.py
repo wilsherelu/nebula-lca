@@ -23,7 +23,11 @@ from app.ecoinvent_ef31_loader import (
     filter_cf_ef31,
     match_cf_to_flows as _match_cf_to_flows,
 )
-from app.services.ef31_runtime_csv import ACTIVE_MANIFEST_NAME, DEFAULT_EF31_RUNTIME_ROOT
+from app.services.ef31_runtime_csv import (
+    ACTIVE_MANIFEST_NAME,
+    DEFAULT_EF31_RUNTIME_ROOT,
+    should_update_active_manifest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -204,11 +208,14 @@ def generate_lcia_runtime_artifact(
         "generated_at": str(uuid.uuid1()),
     }
 
+    activate = should_update_active_manifest(output_dir.parent, manifest)
+    manifest["active"] = activate
     manifest_text = json.dumps(manifest, ensure_ascii=False, default=str)
     (output_dir / "manifest.json").write_text(manifest_text, encoding="utf-8")
     (output_dir / "runtime_summary.json").write_text(manifest_text, encoding="utf-8")
     (output_dir / "active_manifest.json").write_text(manifest_text, encoding="utf-8")
-    (output_dir.parent / ACTIVE_MANIFEST_NAME).write_text(manifest_text, encoding="utf-8")
+    if activate:
+        (output_dir.parent / ACTIVE_MANIFEST_NAME).write_text(manifest_text, encoding="utf-8")
 
     logger.info(
         f"LCIA runtime generated: {flows_count} flows, "

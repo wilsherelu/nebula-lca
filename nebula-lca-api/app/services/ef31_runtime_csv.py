@@ -27,6 +27,32 @@ DEFAULT_EF31_RUNTIME_ROOT = PROJECT_ROOT / "runtime" / "ef31"
 ACTIVE_MANIFEST_NAME = "active_manifest.json"
 
 
+def should_update_active_manifest(output_root: Path, summary: dict) -> bool:
+    """Avoid replacing a broad default EF3.1 runtime with a tiny preview runtime."""
+    try:
+        if output_root.resolve() != DEFAULT_EF31_RUNTIME_ROOT.resolve():
+            return True
+        active_path = output_root / ACTIVE_MANIFEST_NAME
+        if not active_path.exists():
+            return True
+        active = json.loads(active_path.read_text(encoding="utf-8"))
+        active_flows = int(active.get("flows_count") or 0)
+        active_indicators = int(active.get("indicators_count") or 0)
+        active_factors = int(active.get("factors_count") or 0)
+        new_flows = int(summary.get("flows_count") or 0)
+        new_indicators = int(summary.get("indicators_count") or 0)
+        new_factors = int(summary.get("factors_count") or 0)
+        if active_flows >= 1000 and active_indicators >= 10 and active_factors >= 1000:
+            return (
+                new_flows >= active_flows
+                and new_indicators >= active_indicators
+                and new_factors >= active_factors
+            )
+    except Exception:
+        return True
+    return True
+
+
 def generate_ef31_runtime_csvs(
     job_id: str,
     output_root: Optional[Path] = None,
@@ -229,12 +255,15 @@ def generate_ef31_runtime_csvs(
         "cf_unmatched": len(unmatched),
         "cf_ambiguous": len(ambiguous),
     }
+    activate = should_update_active_manifest(output_root, summary)
+    summary["active"] = activate
     with open(output_dir / "runtime_summary.json", "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
     with open(output_dir / "manifest.json", "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
-    with open(output_root / ACTIVE_MANIFEST_NAME, "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2, ensure_ascii=False)
+    if activate:
+        with open(output_root / ACTIVE_MANIFEST_NAME, "w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
 
     logger.info(
         "Generated EF3.1 runtime CSVs for job %s: %d flows, %d indicators, %d factors",
