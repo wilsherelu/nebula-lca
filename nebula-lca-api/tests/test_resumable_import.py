@@ -511,6 +511,183 @@ def test_parse_write_pipeline_flushes_full_batch_and_remainder(tmp_path):
     assert executor._build_performance_stats()["avg_parse_ms"] == 5.0
 
 
+def test_parse_one_fast_skips_global_import_without_exchange_parse(tmp_path, monkeypatch):
+    """Imported datasets should skip exchange parsing when global cache has a hit."""
+    import threading
+    from collections import defaultdict
+
+    from app.ecoinvent_ef31_loader import LCIDataset
+    import app.lci_import_executor as executor_module
+    from app.lci_import_executor import LciImportJobExecutor
+
+    executor = LciImportJobExecutor.__new__(LciImportJobExecutor)
+    executor.overwrite_existing = False
+    executor._paused = False
+    executor._cancel_requested = False
+    executor._pause_event = threading.Event()
+    executor._global_import_cache = {
+        "act-001:rp-001": {
+            "status": "imported",
+            "process_uuid": "proc-existing",
+            "vector_nnz": 10,
+        }
+    }
+
+    monkeypatch.setattr(
+        executor_module._loader,
+        "parse_spold_file",
+        lambda path: LCIDataset(
+            filename=path.name,
+            activity_id="act-001",
+            activity_name="Already imported",
+            location="GLO",
+            reference_product_name="Product",
+            reference_product_unit="kg",
+            reference_product_amount=1.0,
+            reference_product_id="rp-001",
+        ),
+    )
+
+    def fail_exchange_parse(path):
+        raise AssertionError("exchange parser should not run for global fast skip")
+
+    monkeypatch.setattr(executor_module._loader, "parse_spold_exchanges", fail_exchange_parse)
+
+    result = LciImportJobExecutor._parse_one(executor, tmp_path / "already.spold")
+
+    assert result.global_skip is True
+    assert result.parse_stage == "metadata"
+    assert result.process_uuid == "proc-existing"
+    assert result.vector_status == "reused"
+    assert result.vector_nnz == 10
+
+
+def test_parse_one_overwrite_bypasses_global_fast_skip(tmp_path, monkeypatch):
+    """Overwrite imports must parse exchanges even if global cache has a hit."""
+    import threading
+
+    from app.ecoinvent_ef31_loader import LCIDataset, LCIElementaryExchange
+    import app.lci_import_executor as executor_module
+    from app.lci_import_executor import LciImportJobExecutor
+
+    executor = LciImportJobExecutor.__new__(LciImportJobExecutor)
+    executor.overwrite_existing = True
+    executor._paused = False
+    executor._cancel_requested = False
+    executor._pause_event = threading.Event()
+    executor._global_import_cache = {
+        "act-001:rp-001": {
+            "status": "imported",
+            "process_uuid": "proc-existing",
+            "vector_nnz": 10,
+        }
+    }
+
+    monkeypatch.setattr(
+        executor_module._loader,
+        "parse_spold_file",
+        lambda path: LCIDataset(
+            filename=path.name,
+            activity_id="act-001",
+            activity_name="Overwrite",
+            location="GLO",
+            reference_product_name="Product",
+            reference_product_unit="kg",
+            reference_product_amount=1.0,
+            reference_product_id="rp-001",
+        ),
+    )
+    monkeypatch.setattr(
+        executor_module._loader,
+        "parse_spold_exchanges",
+        lambda path: [
+            LCIElementaryExchange(
+                dataset_filename=path.name,
+                exchange_id="flow-001",
+                exchange_name="Flow",
+                unit="kg",
+                direction="output",
+                amount=1.0,
+            )
+        ],
+    )
+
+    result = LciImportJobExecutor._parse_one(executor, tmp_path / "overwrite.spold")
+
+    assert result.global_skip is False
+    assert result.parse_stage == "exchanges"
+    assert len(result.exchanges) == 1
+
+
+def test_global_fast_skip_flush_marks_checkpoint_and_stats(tmp_path):
+    """Fast skipped parse results should update stats and checkpoint without DB lookup."""
+    import threading
+    from collections import defaultdict
+
+    from sqlalchemy.orm import sessionmaker
+
+    from app.ecoinvent_ef31_loader import LCIDataset
+    from app.lci_import_executor import LciImportJobExecutor, ParseResult
+    from app.models import DatasetCheckpoint, ImportJob
+
+    db_path = tmp_path / "test.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    ImportJob.__table__.create(engine)
+    DatasetCheckpoint.__table__.create(engine)
+
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    job_id = "fast-skip-job"
+    db.add(ImportJob(job_id=job_id, file_path="/fake/path.7z", file_type="lci"))
+    db.add(DatasetCheckpoint(job_id=job_id, dataset_key="already.spold", status="running"))
+    db.commit()
+
+    executor = LciImportJobExecutor.__new__(LciImportJobExecutor)
+    executor.db = db
+    executor.job_id = job_id
+    executor._lock = threading.Lock()
+    executor._stats = defaultdict(int)
+    executor._global_skipped_dataset_keys = set()
+    executor._failed_datasets = []
+
+    result = ParseResult(
+        spold_path="already.spold",
+        dataset=LCIDataset(
+            filename="already.spold",
+            activity_id="act-001",
+            activity_name="Already imported",
+            location="GLO",
+            reference_product_name="Product",
+            reference_product_unit="kg",
+            reference_product_amount=1.0,
+            reference_product_id="rp-001",
+        ),
+        exchanges=[],
+        process_uuid="proc-existing",
+        duration_ms=1,
+        dataset_uuid="act-001:rp-001",
+        global_skip=True,
+        reused_process_uuid="proc-existing",
+        reused_vector_nnz=10,
+        parse_stage="metadata",
+        vector_status="reused",
+        vector_nnz=10,
+    )
+
+    executor._flush_single(result)
+    executor._mark_checkpoints_complete([result])
+    db.commit()
+
+    checkpoint = db.query(DatasetCheckpoint).filter_by(job_id=job_id, dataset_key="already.spold").one()
+    assert checkpoint.status == "skipped_global"
+    assert checkpoint.process_uuid == "proc-existing"
+    assert checkpoint.vector_status == "reused"
+    assert checkpoint.vector_nnz == 10
+    assert executor._stats["datasets_processed"] == 1
+    assert executor._stats["datasets_skipped_global"] == 1
+    assert executor._stats["vectors_reused"] == 1
+
+
 def test_cache_built_once_per_job(tmp_path):
     """Unit conversion / flow key caches should be built once, not per-process."""
     import threading
@@ -737,6 +914,11 @@ def test_progress_stats_json_updates(tmp_path):
     assert job.stats_json["commit_count"] == 0
     assert job.stats_json["write_batch_size"] == LciImportJobExecutor.DEFAULT_WRITE_BATCH_SIZE
     assert job.stats_json["avg_parse_ms"] == 0.0
+    assert job.stats_json["global_skip_fast_count"] == 0
+    assert job.stats_json["metadata_parse_count"] == 0
+    assert job.stats_json["exchange_parse_count"] == 0
+    assert job.stats_json["avg_metadata_parse_ms"] == 0.0
+    assert job.stats_json["avg_exchange_parse_ms"] == 0.0
     assert job.stats_json["masterdata_reused"] is False
     assert job.stats_json["masterdata_wall_seconds"] == 0.0
 
