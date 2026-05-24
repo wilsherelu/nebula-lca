@@ -348,6 +348,9 @@ class DatasetCheckpoint(Base):
     """Per-dataset checkpoint for resumable import."""
 
     __tablename__ = "dataset_checkpoints"
+    __table_args__ = (
+        UniqueConstraint("job_id", "dataset_key", name="uq_dataset_checkpoint_job_dataset"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     job_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)

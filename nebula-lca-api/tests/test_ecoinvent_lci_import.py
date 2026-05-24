@@ -676,6 +676,21 @@ class TestLciVectorCodec:
         assert flow_key_ids == [1, 7, 9]
         assert amounts == [0.5, -2.0, 3.25]
 
+    def test_fast_compression_roundtrip_keeps_checksum(self):
+        flow_key_ids = [1, 7, 9]
+        amounts = [0.5, -2.0, 3.25]
+        fast = pack_lci_vector(flow_key_ids, amounts, compression_level=1)
+        default = pack_lci_vector(flow_key_ids, amounts, compression_level=6)
+
+        assert fast.compression == "zlib"
+        assert fast.checksum == default.checksum
+        assert unpack_lci_vector(
+            flow_key_ids_blob=fast.flow_key_ids_blob,
+            amounts_blob=fast.amounts_blob,
+            nnz=fast.nnz,
+            compression=fast.compression,
+        ) == (flow_key_ids, amounts)
+
     def test_pack_requires_sorted_keys(self):
         with pytest.raises(ValueError):
             pack_lci_vector([2, 1], [1.0, 2.0])
