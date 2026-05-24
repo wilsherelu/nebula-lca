@@ -45,6 +45,10 @@ class ParseResult:
     duration_ms: int
     error: str | None = None
     dataset_uuid: str | None = None
+    global_skip: bool = False
+    reused_process_uuid: str | None = None
+    reused_vector_nnz: int | None = None
+    parse_stage: str = "exchanges"
     vector_status: str | None = None  # written | reused | empty | failed
     vector_nnz: int | None = None
 
@@ -154,6 +158,7 @@ class LciImportJobExecutor:
         self._error_summary: str | None = None
         self._total_count = 0
         self._global_skipped_dataset_keys: set[str] = set()
+        self._global_import_cache: dict[str, dict] = {}
         self._write_batch_size = self.DEFAULT_WRITE_BATCH_SIZE
         self._queue_maxsize = self.DEFAULT_QUEUE_MAXSIZE
         self._write_flush_interval_seconds = self.DEFAULT_WRITE_FLUSH_INTERVAL_SECONDS
@@ -165,6 +170,11 @@ class LciImportJobExecutor:
             "queue_max_observed": 0,
             "parse_duration_ms_total": 0,
             "parse_result_count": 0,
+            "metadata_duration_ms_total": 0,
+            "metadata_parse_count": 0,
+            "exchange_duration_ms_total": 0,
+            "exchange_parse_count": 0,
+            "global_skip_fast_count": 0,
             "flush_duration_ms_total": 0.0,
             "flush_result_count": 0,
         }
@@ -195,6 +205,7 @@ class LciImportJobExecutor:
             self._total_count = len(spold_files)
             checkpoints = self._load_checkpoints(spold_files)
             pending_files, skipped_count = self._filter_by_checkpoint(spold_files, checkpoints)
+            self._load_global_import_cache()
 
             if not pending_files:
                 logger.info("[%s] All datasets already imported or skipped", self.job_id)
@@ -423,7 +434,7 @@ class LciImportJobExecutor:
         for pr in results:
             if pr.error:
                 status = "failed"
-            elif Path(pr.spold_path).name in self._global_skipped_dataset_keys:
+            elif pr.global_skip or Path(pr.spold_path).name in self._global_skipped_dataset_keys:
                 status = "skipped_global"
             elif pr.dataset:
                 status = "imported"
@@ -475,9 +486,29 @@ class LciImportJobExecutor:
                     process_uuid="",
                     duration_ms=int((time.time() - t0) * 1000),
                     error="parse_spold_file returned None",
+                    parse_stage="metadata",
                 )
 
             procs = _generate_lci_process_uuid(ds)
+            dataset_uuid = self._dataset_uuid_for(ds)
+            cached_global = self._global_import_cache.get(dataset_uuid)
+            if not self.overwrite_existing and cached_global and cached_global.get("status") == "imported":
+                reused_nnz = int(cached_global.get("vector_nnz") or 0)
+                return ParseResult(
+                    spold_path=str(spold_path),
+                    dataset=ds,
+                    exchanges=[],
+                    process_uuid=str(cached_global.get("process_uuid") or procs),
+                    duration_ms=int((time.time() - t0) * 1000),
+                    dataset_uuid=dataset_uuid,
+                    global_skip=True,
+                    reused_process_uuid=str(cached_global.get("process_uuid") or procs),
+                    reused_vector_nnz=reused_nnz,
+                    parse_stage="metadata",
+                    vector_status="reused" if reused_nnz > 0 else "empty",
+                    vector_nnz=reused_nnz,
+                )
+
             exs = _loader.parse_spold_exchanges(spold_path)
             return ParseResult(
                 spold_path=str(spold_path),
@@ -485,6 +516,8 @@ class LciImportJobExecutor:
                 exchanges=exs or [],
                 process_uuid=procs,
                 duration_ms=int((time.time() - t0) * 1000),
+                dataset_uuid=dataset_uuid,
+                parse_stage="exchanges",
             )
         except Exception as exc:
             return ParseResult(
@@ -494,6 +527,7 @@ class LciImportJobExecutor:
                 process_uuid="",
                 duration_ms=int((time.time() - t0) * 1000),
                 error=str(exc),
+                parse_stage="metadata",
             )
 
     def _parse_files_concurrent(self, files: list[Path]) -> list[ParseResult]:
@@ -653,13 +687,24 @@ class LciImportJobExecutor:
         self._perf_stats["flush_result_count"] += len(results)
 
     def _record_parse_result_stats(self, result: ParseResult) -> None:
-        self._perf_stats["parse_duration_ms_total"] += max(0, int(result.duration_ms or 0))
-        self._perf_stats["parse_result_count"] += 1
+        duration_ms = max(0, int(result.duration_ms or 0))
+        self._perf_stats["parse_duration_ms_total"] = int(self._perf_stats.get("parse_duration_ms_total", 0) or 0) + duration_ms
+        self._perf_stats["parse_result_count"] = int(self._perf_stats.get("parse_result_count", 0) or 0) + 1
+        if result.parse_stage == "metadata":
+            self._perf_stats["metadata_duration_ms_total"] = int(self._perf_stats.get("metadata_duration_ms_total", 0) or 0) + duration_ms
+            self._perf_stats["metadata_parse_count"] = int(self._perf_stats.get("metadata_parse_count", 0) or 0) + 1
+        else:
+            self._perf_stats["exchange_duration_ms_total"] = int(self._perf_stats.get("exchange_duration_ms_total", 0) or 0) + duration_ms
+            self._perf_stats["exchange_parse_count"] = int(self._perf_stats.get("exchange_parse_count", 0) or 0) + 1
+        if result.global_skip:
+            self._perf_stats["global_skip_fast_count"] = int(self._perf_stats.get("global_skip_fast_count", 0) or 0) + 1
 
     def _build_performance_stats(self) -> dict:
         perf = getattr(self, "_perf_stats", {})
         write_batch_size = int(getattr(self, "_write_batch_size", self.DEFAULT_WRITE_BATCH_SIZE))
         parse_count = int(perf.get("parse_result_count", 0) or 0)
+        metadata_count = int(perf.get("metadata_parse_count", 0) or 0)
+        exchange_count = int(perf.get("exchange_parse_count", 0) or 0)
         flush_count = int(perf.get("flush_result_count", 0) or 0)
         avg_parse_ms = (
             float(perf.get("parse_duration_ms_total", 0) or 0) / parse_count
@@ -671,6 +716,16 @@ class LciImportJobExecutor:
             if flush_count
             else 0.0
         )
+        avg_metadata_ms = (
+            float(perf.get("metadata_duration_ms_total", 0) or 0) / metadata_count
+            if metadata_count
+            else 0.0
+        )
+        avg_exchange_ms = (
+            float(perf.get("exchange_duration_ms_total", 0) or 0) / exchange_count
+            if exchange_count
+            else 0.0
+        )
         return {
             "parse_wall_seconds": round(float(perf.get("parse_wall_seconds", 0.0) or 0.0), 3),
             "write_wall_seconds": round(float(perf.get("write_wall_seconds", 0.0) or 0.0), 3),
@@ -678,6 +733,11 @@ class LciImportJobExecutor:
             "write_batch_size": int(perf.get("write_batch_size", write_batch_size) or write_batch_size),
             "queue_max_observed": int(perf.get("queue_max_observed", 0) or 0),
             "avg_parse_ms": round(avg_parse_ms, 3),
+            "global_skip_fast_count": int(perf.get("global_skip_fast_count", 0) or 0),
+            "metadata_parse_count": metadata_count,
+            "exchange_parse_count": exchange_count,
+            "avg_metadata_parse_ms": round(avg_metadata_ms, 3),
+            "avg_exchange_parse_ms": round(avg_exchange_ms, 3),
             "avg_flush_ms": round(avg_flush_ms, 3),
             "masterdata_reused": bool(perf.get("masterdata_reused", False)),
             "masterdata_wall_seconds": round(float(perf.get("masterdata_wall_seconds", 0.0) or 0.0), 3),
@@ -699,15 +759,29 @@ class LciImportJobExecutor:
         if pr.dataset is None:
             return
 
+        if pr.global_skip:
+            pr.vector_status = pr.vector_status or ("reused" if (pr.reused_vector_nnz or 0) > 0 else "empty")
+            pr.vector_nnz = int(pr.reused_vector_nnz or pr.vector_nnz or 0)
+            if pr.reused_process_uuid:
+                pr.process_uuid = pr.reused_process_uuid
+            with self._lock:
+                self._stats["datasets_processed"] += 1
+                self._stats["datasets_skipped_global"] += 1
+                if pr.vector_status == "reused":
+                    self._stats["vectors_reused"] += 1
+                else:
+                    self._stats["empty_vectors"] += 1
+                self._global_skipped_dataset_keys.add(Path(pr.spold_path).name)
+            self._update_global_skipped(1)
+            return
+
         ds = pr.dataset
         procs = pr.process_uuid
         exs = pr.exchanges
 
         # ── Two-stage dedup: global → process/vector write ──
         # Build dataset_uuid = activity_id + ":" + reference_product_id (fallback: activity_id)
-        activity_id = ds.activity_id
-        ref_product_id = ds.reference_product_id or ""
-        dataset_uuid = f"{activity_id}:{ref_product_id}" if ref_product_id else activity_id
+        dataset_uuid = pr.dataset_uuid or self._dataset_uuid_for(ds)
         pr.dataset_uuid = dataset_uuid
 
         if not self.overwrite_existing:
@@ -869,6 +943,11 @@ class LciImportJobExecutor:
             activity_id=ds.activity_id,
             reference_product_id=ds.reference_product_id,
         )
+        self._global_import_cache[dataset_uuid] = {
+            "status": "imported",
+            "process_uuid": procs,
+            "vector_nnz": nnz_written,
+        }
         with self._lock:
             self._stats["datasets_processed"] += 1
 
@@ -888,6 +967,43 @@ class LciImportJobExecutor:
             )
         except Exception:
             return None
+
+    def _load_global_import_cache(self) -> None:
+        from .models import GlobalDatasetImport
+
+        if self.overwrite_existing:
+            self._global_import_cache = {}
+            return
+        try:
+            rows = (
+                self.db.query(
+                    GlobalDatasetImport.dataset_uuid,
+                    GlobalDatasetImport.status,
+                    GlobalDatasetImport.process_uuid,
+                    GlobalDatasetImport.vector_nnz,
+                )
+                .filter(
+                    GlobalDatasetImport.source_package_version == self.package_version,
+                    GlobalDatasetImport.status == "imported",
+                )
+                .all()
+            )
+            self._global_import_cache = {
+                str(row.dataset_uuid): {
+                    "status": row.status,
+                    "process_uuid": row.process_uuid,
+                    "vector_nnz": int(row.vector_nnz or 0),
+                }
+                for row in rows
+                if row.dataset_uuid
+            }
+        except Exception:
+            self._global_import_cache = {}
+
+    def _dataset_uuid_for(self, dataset: object) -> str:
+        activity_id = str(getattr(dataset, "activity_id", "") or "")
+        ref_product_id = str(getattr(dataset, "reference_product_id", "") or "")
+        return f"{activity_id}:{ref_product_id}" if ref_product_id else activity_id
 
     def _update_global_status(
         self,
