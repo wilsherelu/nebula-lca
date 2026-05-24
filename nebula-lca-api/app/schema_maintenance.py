@@ -183,6 +183,7 @@ def ensure_import_tables(engine: Engine) -> dict:
             ("import_jobs", "ix_import_jobs_status", f"CREATE INDEX {if_if_not_exists} ix_import_jobs_status ON import_jobs (status)"),
             ("dataset_checkpoints", "ix_dataset_checkpoint_job_id", f"CREATE INDEX {if_if_not_exists} ix_dataset_checkpoint_job_id ON dataset_checkpoints (job_id)"),
             ("dataset_checkpoints", "ix_dataset_checkpoint_status", f"CREATE INDEX {if_if_not_exists} ix_dataset_checkpoint_status ON dataset_checkpoints (status)"),
+            ("dataset_checkpoints", "uq_dataset_checkpoint_job_dataset", f"CREATE UNIQUE INDEX {if_if_not_exists} uq_dataset_checkpoint_job_dataset ON dataset_checkpoints (job_id, dataset_key)"),
             ("global_dataset_imports", "ix_global_dataset_pv", f"CREATE INDEX {if_if_not_exists} ix_global_dataset_pv ON global_dataset_imports (source_package_version, dataset_uuid)"),
             ("global_dataset_imports", "ix_global_dataset_status", f"CREATE INDEX {if_if_not_exists} ix_global_dataset_status ON global_dataset_imports (status)"),
         ]
@@ -195,6 +196,21 @@ def ensure_import_tables(engine: Engine) -> dict:
             existing_indexes = existing_by_table.get(table_name, set())
             if idx_name in existing_indexes:
                 continue
+            if table_name == "dataset_checkpoints" and idx_name == "uq_dataset_checkpoint_job_dataset":
+                if dialect_name == "sqlite":
+                    conn.execute(text(
+                        "DELETE FROM dataset_checkpoints "
+                        "WHERE id NOT IN ("
+                        "SELECT MAX(id) FROM dataset_checkpoints GROUP BY job_id, dataset_key"
+                        ")"
+                    ))
+                elif dialect_name == "postgresql":
+                    conn.execute(text(
+                        "DELETE FROM dataset_checkpoints a USING dataset_checkpoints b "
+                        "WHERE a.job_id = b.job_id "
+                        "AND a.dataset_key = b.dataset_key "
+                        "AND a.id < b.id"
+                    ))
             conn.execute(text(idx_sql))
             added_indexes.append(idx_name)
 

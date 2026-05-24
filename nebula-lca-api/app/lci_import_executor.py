@@ -166,6 +166,7 @@ class LciImportJobExecutor:
     DEFAULT_WRITE_BATCH_SIZE = 32
     DEFAULT_QUEUE_MAXSIZE = 128
     DEFAULT_WRITE_FLUSH_INTERVAL_SECONDS = 2.0
+    DEFAULT_VECTOR_COMPRESSION_LEVEL = 1
 
     def __init__(
         self,
@@ -286,6 +287,9 @@ class LciImportJobExecutor:
             "pack_sort_seconds": 0.0,
             "pack_compress_seconds": 0.0,
             "upsert_execute_seconds": 0.0,
+            "checkpoint_core_upsert_enabled": False,
+            "checkpoint_upsert_execute_seconds": 0.0,
+            "vector_compression_level": self.DEFAULT_VECTOR_COMPRESSION_LEVEL,
             "commit_seconds": 0.0,
             "session_clear_gc_seconds": 0.0,
             # Worker-side exclusive timing
@@ -1213,7 +1217,7 @@ class LciImportJobExecutor:
             if upsert_count
             else 0.0
         )
-        return {
+        result = {
             "parse_wall_seconds": round(float(perf.get("parse_wall_seconds", 0.0) or 0.0), 3),
             "write_wall_seconds": round(float(perf.get("write_wall_seconds", 0.0) or 0.0), 3),
             "commit_count": commit_count,
@@ -1265,6 +1269,9 @@ class LciImportJobExecutor:
             "pack_sort_seconds": round(float(perf.get("pack_sort_seconds", 0.0) or 0.0), 3),
             "pack_compress_seconds": round(float(perf.get("pack_compress_seconds", 0.0) or 0.0), 3),
             "upsert_execute_seconds": round(float(perf.get("upsert_execute_seconds", 0.0) or 0.0), 3),
+            "checkpoint_core_upsert_enabled": bool(perf.get("checkpoint_core_upsert_enabled", False)),
+            "checkpoint_upsert_execute_seconds": round(float(perf.get("checkpoint_upsert_execute_seconds", 0.0) or 0.0), 3),
+            "vector_compression_level": int(perf.get("vector_compression_level", self.DEFAULT_VECTOR_COMPRESSION_LEVEL) or self.DEFAULT_VECTOR_COMPRESSION_LEVEL),
             "commit_seconds": round(float(perf.get("commit_seconds", 0.0) or 0.0), 3),
             "session_clear_gc_seconds": round(float(perf.get("session_clear_gc_seconds", 0.0) or 0.0), 3),
             # Worker exclusive timing
@@ -1491,6 +1498,59 @@ class LciImportJobExecutor:
                     "vector_nnz": int(r.get("vector_nnz") or 0),
                 }
 
+    def _core_upsert_dataset_checkpoints(self, rows: list[dict]) -> None:
+        """Bulk upsert DatasetCheckpoint rows by job_id + dataset_key."""
+        if not rows:
+            return
+        now = datetime.utcnow()
+        if self._is_sqlite():
+            values = [{**r, "created_at": now, "updated_at": now} for r in rows]
+            stmt = sqlite_insert(DatasetCheckpoint).values(values)
+            excluded = stmt.excluded
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["job_id", "dataset_key"],
+                set_={
+                    "status": excluded.status,
+                    "process_uuid": excluded.process_uuid,
+                    "vector_status": excluded.vector_status,
+                    "vector_nnz": excluded.vector_nnz,
+                    "duration_ms": excluded.duration_ms,
+                    "error_message": excluded.error_message,
+                    "updated_at": now,
+                },
+            )
+            self.db.execute(stmt)
+            self._perf_stats["checkpoint_core_upsert_enabled"] = True
+            return
+
+        checkpoint_keys = [r["dataset_key"] for r in rows]
+        existing = (
+            self.db.query(DatasetCheckpoint)
+            .filter(
+                DatasetCheckpoint.job_id == self.job_id,
+                DatasetCheckpoint.dataset_key.in_(checkpoint_keys),
+            )
+            .all()
+            if checkpoint_keys
+            else []
+        )
+        by_key = {row.dataset_key: row for row in existing}
+        new_rows: list[DatasetCheckpoint] = []
+        for r in rows:
+            cp = by_key.get(r["dataset_key"])
+            if cp is None:
+                cp = DatasetCheckpoint(job_id=r["job_id"], dataset_key=r["dataset_key"], status=r["status"])
+                by_key[r["dataset_key"]] = cp
+                new_rows.append(cp)
+            cp.status = r["status"]
+            cp.process_uuid = r.get("process_uuid")
+            cp.vector_status = r.get("vector_status")
+            cp.vector_nnz = r.get("vector_nnz")
+            cp.duration_ms = r.get("duration_ms")
+            cp.error_message = r.get("error_message")
+        if new_rows:
+            self.db.add_all(new_rows)
+
     def debug_replay_writer(self) -> dict:
         """Replay writer logic for cached ``LciWritePlan`` objects.
 
@@ -1681,36 +1741,14 @@ class LciImportJobExecutor:
 
         global_prefetch_elapsed = time.perf_counter() - prefetch_t0
 
-        # Only pre-fetch checkpoints — no process/vector pre-fetch needed
-        # because core upsert uses INSERT OR REPLACE (no ORM lookup)
-        checkpoint_prefetch_t0 = time.perf_counter()
-        checkpoint_keys = [Path(pr.spold_path).name for pr in results]
-        checkpoint_rows = (
-            self.db.query(DatasetCheckpoint)
-            .filter(
-                DatasetCheckpoint.job_id == self.job_id,
-                DatasetCheckpoint.dataset_key.in_(checkpoint_keys),
-            )
-            .all()
-            if checkpoint_keys
-            else []
-        )
-        checkpoint_by_key = {row.dataset_key: row for row in checkpoint_rows}
-        checkpoint_prefetch_elapsed = time.perf_counter() - checkpoint_prefetch_t0
-
         # Split prefetch timing
         self._perf_stats["batch_prefetch_global_wall_seconds"] = (
             float(self._perf_stats.get("batch_prefetch_global_wall_seconds", 0.0) or 0.0)
             + global_prefetch_elapsed
         )
-        self._perf_stats["batch_prefetch_checkpoint_wall_seconds"] = (
-            float(self._perf_stats.get("batch_prefetch_checkpoint_wall_seconds", 0.0) or 0.0)
-            + checkpoint_prefetch_elapsed
-        )
         self._perf_stats["batch_prefetch_wall_seconds"] = (
             float(self._perf_stats.get("batch_prefetch_wall_seconds", 0.0) or 0.0)
             + global_prefetch_elapsed
-            + checkpoint_prefetch_elapsed
         )
         # Exclusive timing: DB fetch (SQLAlchemy query execution + row fetch)
         self._perf_stats["db_fetch_seconds"] = (
@@ -1800,7 +1838,11 @@ class LciImportJobExecutor:
                         amounts = [agg[k] for k in flow_key_ids]
                         from .lci_vector_codec import pack_lci_vector
                         t_compress = time.perf_counter()
-                        packed = pack_lci_vector(flow_key_ids, amounts)
+                        packed = pack_lci_vector(
+                            flow_key_ids,
+                            amounts,
+                            compression_level=self.DEFAULT_VECTOR_COMPRESSION_LEVEL,
+                        )
                         compress_elapsed = time.perf_counter() - t_compress
                         self._perf_stats["pack_sort_seconds"] = (
                             float(self._perf_stats.get("pack_sort_seconds", 0.0) or 0.0) + sort_elapsed
@@ -2011,22 +2053,25 @@ class LciImportJobExecutor:
         self._perf_stats["db_upsert_batch_count"] = int(self._perf_stats.get("db_upsert_batch_count", 0) or 0) + 1
 
         checkpoint_t0 = time.perf_counter()
-        new_checkpoints: list[DatasetCheckpoint] = []
+        checkpoint_rows: list[dict] = []
         for pr in results:
             key = Path(pr.spold_path).name
-            cp = checkpoint_by_key.get(key)
-            if cp is None:
-                cp = DatasetCheckpoint(job_id=self.job_id, dataset_key=key, status="pending")
-                checkpoint_by_key[key] = cp
-                new_checkpoints.append(cp)
-            cp.status = self._checkpoint_status_for(pr)
-            cp.process_uuid = pr.process_uuid
-            cp.vector_status = pr.vector_status
-            cp.vector_nnz = pr.vector_nnz
-            cp.duration_ms = pr.duration_ms
-            cp.error_message = pr.error or pr.warning
-        if new_checkpoints:
-            self.db.add_all(new_checkpoints)
+            checkpoint_rows.append({
+                "job_id": self.job_id,
+                "dataset_key": key,
+                "status": self._checkpoint_status_for(pr),
+                "process_uuid": pr.process_uuid,
+                "vector_status": pr.vector_status,
+                "vector_nnz": pr.vector_nnz,
+                "duration_ms": pr.duration_ms,
+                "error_message": pr.error or pr.warning,
+            })
+        checkpoint_upsert_t0 = time.perf_counter()
+        self._core_upsert_dataset_checkpoints(checkpoint_rows)
+        self._perf_stats["checkpoint_upsert_execute_seconds"] = (
+            float(self._perf_stats.get("checkpoint_upsert_execute_seconds", 0.0) or 0.0)
+            + (time.perf_counter() - checkpoint_upsert_t0)
+        )
         self._perf_stats["batch_checkpoint_wall_seconds"] = (
             float(self._perf_stats.get("batch_checkpoint_wall_seconds", 0.0) or 0.0)
             + (time.perf_counter() - checkpoint_t0)

@@ -49,7 +49,12 @@ def _unpack_float64(raw: bytes) -> list[float]:
     return list(arr)
 
 
-def pack_lci_vector(flow_key_ids: list[int], amounts: list[float]) -> PackedLciVector:
+def pack_lci_vector(
+    flow_key_ids: list[int],
+    amounts: list[float],
+    *,
+    compression_level: int = 1,
+) -> PackedLciVector:
     if len(flow_key_ids) != len(amounts):
         raise ValueError("flow_key_ids and amounts must have the same length")
     if flow_key_ids != sorted(flow_key_ids):
@@ -59,8 +64,8 @@ def pack_lci_vector(flow_key_ids: list[int], amounts: list[float]) -> PackedLciV
     amount_raw = _pack_float64(amounts)
     checksum = hashlib.sha256(index_raw + amount_raw).hexdigest()
     return PackedLciVector(
-        flow_key_ids_blob=zlib.compress(index_raw),
-        amounts_blob=zlib.compress(amount_raw),
+        flow_key_ids_blob=zlib.compress(index_raw, level=compression_level),
+        amounts_blob=zlib.compress(amount_raw, level=compression_level),
         nnz=len(flow_key_ids),
         checksum=checksum,
     )

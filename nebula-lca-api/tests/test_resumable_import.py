@@ -751,6 +751,62 @@ def test_sqlite_core_upsert_path_is_active(tmp_path):
     assert db.query(ReferenceProcess).count() == 1
 
 
+def test_sqlite_core_checkpoint_upsert_updates_without_duplicates(tmp_path):
+    """Checkpoint core upsert should update by job_id + dataset_key."""
+    import threading
+
+    from sqlalchemy.orm import sessionmaker
+
+    from app.lci_import_executor import LciImportJobExecutor
+    from app.models import DatasetCheckpoint
+
+    db_path = tmp_path / "test.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    DatasetCheckpoint.__table__.create(engine)
+
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    executor = LciImportJobExecutor.__new__(LciImportJobExecutor)
+    executor.db = db
+    executor.job_id = "job-001"
+    executor._lock = threading.Lock()
+    executor._perf_stats = {
+        "checkpoint_core_upsert_enabled": False,
+        "checkpoint_upsert_execute_seconds": 0.0,
+    }
+
+    row = {
+        "job_id": "job-001",
+        "dataset_key": "one.spold",
+        "status": "running",
+        "process_uuid": "proc-001",
+        "vector_status": None,
+        "vector_nnz": None,
+        "duration_ms": 1,
+        "error_message": None,
+    }
+    LciImportJobExecutor._core_upsert_dataset_checkpoints(executor, [row])
+    db.commit()
+
+    updated = {
+        **row,
+        "status": "imported",
+        "vector_status": "written",
+        "vector_nnz": 3,
+        "duration_ms": 2,
+    }
+    LciImportJobExecutor._core_upsert_dataset_checkpoints(executor, [updated])
+    db.commit()
+
+    checkpoints = db.query(DatasetCheckpoint).all()
+    assert len(checkpoints) == 1
+    assert checkpoints[0].status == "imported"
+    assert checkpoints[0].vector_status == "written"
+    assert checkpoints[0].vector_nnz == 3
+    assert checkpoints[0].duration_ms == 2
+    assert executor._perf_stats["checkpoint_core_upsert_enabled"] is True
+
+
 def test_debug_writer_replay_mode_caches_plans_without_db_writes():
     """writer_replay mode should cache write plans and skip normal DB work."""
     from collections import defaultdict
