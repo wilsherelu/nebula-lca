@@ -227,10 +227,14 @@ def _unpack_amounts_only(amounts_blob: bytes, nnz: int, compression: str) -> lis
     from array import array
     import zlib
 
-    if compression != "zlib":
+    if compression == "zlib":
+        raw = zlib.decompress(amounts_blob)
+    elif compression == "none":
+        raw = amounts_blob
+    else:
         raise ValueError(f"Unsupported LCI vector compression: {compression}")
     arr = array("d")
-    arr.frombytes(zlib.decompress(amounts_blob))
+    arr.frombytes(raw)
     amounts = list(arr)
     if len(amounts) != nnz:
         raise ValueError("LCI amounts blob length does not match nnz")

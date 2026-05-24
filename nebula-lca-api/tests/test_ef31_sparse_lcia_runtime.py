@@ -95,6 +95,42 @@ def _seed_lci_vector(db) -> None:
     db.commit()
 
 
+def _seed_uncompressed_lci_vector(db) -> None:
+    db.add(UnitGroup(name="mass", reference_unit="kg"))
+    db.add(UnitDefinition(unit_group="mass", unit_name="kg", factor_to_reference=1.0, is_reference=True))
+    db.add(FlowRecord(flow_uuid="product-flow", flow_name="product", flow_type="product_flow", default_unit="kg", unit_group="mass"))
+    db.add(FlowRecord(flow_uuid="flow-co2", flow_name="Carbon dioxide", flow_type="elementary_flow", default_unit="kg", unit_group="mass", compartment="air"))
+    db.add(
+        ReferenceProcess(
+            process_uuid="proc-lci",
+            process_name="LCI process",
+            process_type="lci_dataset",
+            reference_flow_uuid="product-flow",
+            process_json={
+                "reference_product_amount": 1.0,
+                "reference_product_unit": "kg",
+            },
+        )
+    )
+    co2_key = LciBiosphereFlowKey(flow_uuid="flow-co2", compartment="air", subcompartment="", direction="output", canonical_unit="kg")
+    db.add(co2_key)
+    db.flush()
+    packed = pack_lci_vector([int(co2_key.flow_key_id)], [1.0], compression_level=0)
+    db.add(
+        LciProcessVector(
+            process_uuid="proc-lci",
+            nnz=packed.nnz,
+            flow_key_ids_blob=packed.flow_key_ids_blob,
+            amounts_blob=packed.amounts_blob,
+            compression=packed.compression,
+            checksum=packed.checksum,
+            source="test",
+            source_package_version="test",
+        )
+    )
+    db.commit()
+
+
 def _graph(amount: float = 1.0) -> HybridGraph:
     return HybridGraph(
         functionalUnit=f"{amount} kg product",
@@ -172,6 +208,26 @@ def test_direct_sparse_lcia_reports_missing_cf_flows(tmp_path: Path) -> None:
         assert solver_output["values"] == [[1.0]]
         assert solver_output["missing_ef31_flow_uuids"] == ["flow-ch4"]
         assert solver_output["missing_ef31_flows"][0]["amount"] == 0.1
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_direct_sparse_lcia_reads_uncompressed_lci_vector(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime-none"
+    _write_runtime(runtime_root, include_ch4=False)
+    db, engine = _db_session()
+    try:
+        _seed_uncompressed_lci_vector(db)
+        result = try_run_direct_sparse_lcia(
+            db=db,
+            graph=_graph(amount=2.0),
+            lcia_methods=["EF v3.1"],
+            runtime_root=runtime_root,
+        )
+
+        assert result is not None
+        assert result.solver_output["values"] == [[2.0]]
     finally:
         db.close()
         engine.dispose()

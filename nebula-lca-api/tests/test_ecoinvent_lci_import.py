@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.lci_vector_codec import pack_lci_vector, unpack_lci_vector
+from app.lci_vector_codec import pack_lci_vector, unpack_lci_flow_key_ids, unpack_lci_vector
 from app.schemas import HybridGraph
 from app.services.lci_runtime import (
     expand_graph_lci_inventory,
@@ -691,6 +691,26 @@ class TestLciVectorCodec:
             nnz=fast.nnz,
             compression=fast.compression,
         ) == (flow_key_ids, amounts)
+
+    def test_no_compression_roundtrip_keeps_checksum(self):
+        flow_key_ids = [1, 7, 9]
+        amounts = [0.5, -2.0, 3.25]
+        raw = pack_lci_vector(flow_key_ids, amounts, compression_level=0)
+        zlib = pack_lci_vector(flow_key_ids, amounts, compression_level=1)
+
+        assert raw.compression == "none"
+        assert raw.checksum == zlib.checksum
+        assert unpack_lci_vector(
+            flow_key_ids_blob=raw.flow_key_ids_blob,
+            amounts_blob=raw.amounts_blob,
+            nnz=raw.nnz,
+            compression=raw.compression,
+        ) == (flow_key_ids, amounts)
+        assert unpack_lci_flow_key_ids(
+            flow_key_ids_blob=raw.flow_key_ids_blob,
+            nnz=raw.nnz,
+            compression=raw.compression,
+        ) == flow_key_ids
 
     def test_pack_requires_sorted_keys(self):
         with pytest.raises(ValueError):

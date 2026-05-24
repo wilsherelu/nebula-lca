@@ -861,6 +861,19 @@ def test_sqlite_core_checkpoint_upsert_updates_without_duplicates(tmp_path):
     assert executor._perf_stats["checkpoint_core_upsert_enabled"] is True
 
 
+def test_executor_vector_compression_level_uses_env(monkeypatch):
+    from app.lci_import_executor import LciImportJobExecutor
+
+    monkeypatch.setenv("LCI_VECTOR_COMPRESSION_LEVEL", "0")
+    assert LciImportJobExecutor._configured_vector_compression_level() == 0
+
+    monkeypatch.setenv("LCI_VECTOR_COMPRESSION_LEVEL", "12")
+    assert LciImportJobExecutor._configured_vector_compression_level() == 9
+
+    monkeypatch.setenv("LCI_VECTOR_COMPRESSION_LEVEL", "invalid")
+    assert LciImportJobExecutor._configured_vector_compression_level() == 1
+
+
 def test_debug_writer_replay_mode_caches_plans_without_db_writes():
     """writer_replay mode should cache write plans and skip normal DB work."""
     from collections import defaultdict
