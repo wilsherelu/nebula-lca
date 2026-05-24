@@ -901,6 +901,88 @@ def test_global_fast_skip_flush_marks_checkpoint_and_stats(tmp_path):
     assert executor._stats["vectors_reused"] == 1
 
 
+def test_bulk_writer_records_global_fast_skip(tmp_path):
+    """Bulk writer should count parser-level global skips and checkpoint them."""
+    import threading
+    from collections import defaultdict
+
+    from sqlalchemy.orm import sessionmaker
+
+    from app.ecoinvent_ef31_loader import LCIDataset
+    from app.lci_import_executor import LciImportJobExecutor, ParseResult
+    from app.models import DatasetCheckpoint, ImportJob
+
+    db_path = tmp_path / "test.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    ImportJob.__table__.create(engine)
+    DatasetCheckpoint.__table__.create(engine)
+
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    job_id = "bulk-fast-skip-job"
+    db.add(ImportJob(job_id=job_id, file_path="/fake/path.7z", file_type="lci", status="running"))
+    db.add(DatasetCheckpoint(job_id=job_id, dataset_key="already.spold", status="running"))
+    db.commit()
+
+    executor = LciImportJobExecutor.__new__(LciImportJobExecutor)
+    executor.db = db
+    executor.job_id = job_id
+    executor.package_version = "ecoinvent_3.11"
+    executor._lock = threading.Lock()
+    executor._stats = defaultdict(int)
+    executor._failed_datasets = []
+    executor._vector_warnings = []
+    executor._global_skipped_dataset_keys = set()
+    executor._perf_stats = {
+        "commit_count": 0,
+        "flush_duration_ms_total": 0.0,
+        "flush_result_count": 0,
+        "batch_result_count": 0,
+        "batch_prefetch_wall_seconds": 0.0,
+        "batch_prefetch_global_wall_seconds": 0.0,
+        "batch_prefetch_checkpoint_wall_seconds": 0.0,
+        "batch_pack_wall_seconds": 0.0,
+        "batch_db_upsert_wall_seconds": 0.0,
+        "batch_checkpoint_wall_seconds": 0.0,
+        "db_upsert_duration_ms_total": 0.0,
+        "db_upsert_batch_count": 0,
+        "commit_seconds": 0.0,
+    }
+    executor._update_global_skipped = lambda count: None
+    executor._update_progress = lambda: None
+
+    result = ParseResult(
+        spold_path="already.spold",
+        dataset=LCIDataset(
+            filename="already.spold",
+            activity_id="act-001",
+            activity_name="Already imported",
+            location="GLO",
+            reference_product_name="Product",
+            reference_product_unit="kg",
+            reference_product_amount=1.0,
+            reference_product_id="rp-001",
+        ),
+        exchanges=[],
+        process_uuid="proc-existing",
+        duration_ms=1,
+        dataset_uuid="act-001:rp-001",
+        global_skip=True,
+        vector_status="reused",
+        vector_nnz=10,
+    )
+
+    LciImportJobExecutor._flush_parse_result_batch(executor, [result])
+
+    checkpoint = db.query(DatasetCheckpoint).filter_by(job_id=job_id, dataset_key="already.spold").one()
+    assert checkpoint.status == "skipped_global"
+    assert checkpoint.vector_status == "reused"
+    assert checkpoint.vector_nnz == 10
+    assert executor._stats["datasets_processed"] == 1
+    assert executor._stats["datasets_skipped_global"] == 1
+    assert executor._stats["vectors_reused"] == 1
+
+
 def test_missing_elementary_flow_metadata_warns_without_failing_dataset(tmp_path):
     """Unresolved flow metadata should not discard an otherwise valid LCI vector."""
     import threading
