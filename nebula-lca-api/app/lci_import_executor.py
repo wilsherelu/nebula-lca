@@ -244,6 +244,9 @@ class LciImportJobExecutor:
             "exchange_duration_ms_total": 0,
             "exchange_parse_count": 0,
             "global_skip_fast_count": 0,
+            "filename_fast_skip_count": 0,
+            "filename_metadata_hit_count": 0,
+            "filename_metadata_miss_count": 0,
             "flush_duration_ms_total": 0.0,
             "flush_result_count": 0,
             "batch_prefetch_wall_seconds": 0.0,
@@ -616,6 +619,88 @@ class LciImportJobExecutor:
                     error="cancelled",
                 )
 
+            # ── Filename-based global fast skip ────────────────────────
+            # ecoinvent LCI filenames are activity_uuid_reference_uuid.spold.
+            # For no-overwrite jobs this lets already-imported datasets skip
+            # XML metadata parsing entirely.
+            filename_ids = _loader.parse_spold_filename_dataset_ids(spold_path)
+            if not self.overwrite_existing and filename_ids is not None:
+                activity_id, ref_product_id, dataset_uuid = filename_ids
+                perf = getattr(self, "_perf_stats", None)
+                if isinstance(perf, dict):
+                    lock = getattr(self, "_lock", None)
+
+                    def _record_filename_hit() -> None:
+                        perf["filename_metadata_hit_count"] = (
+                            int(perf.get("filename_metadata_hit_count", 0) or 0) + 1
+                        )
+
+                    if lock is None:
+                        _record_filename_hit()
+                    else:
+                        with lock:
+                            _record_filename_hit()
+                cached_global = self._global_import_cache.get(dataset_uuid)
+                if (
+                    not self.overwrite_existing
+                    and cached_global
+                    and cached_global.get("status") == "imported"
+                ):
+                    if isinstance(perf, dict):
+                        lock = getattr(self, "_lock", None)
+
+                        def _record_filename_skip() -> None:
+                            perf["filename_fast_skip_count"] = (
+                                int(perf.get("filename_fast_skip_count", 0) or 0) + 1
+                            )
+
+                        if lock is None:
+                            _record_filename_skip()
+                        else:
+                            with lock:
+                                _record_filename_skip()
+                    reused_nnz = int(cached_global.get("vector_nnz") or 0)
+                    ds = _loader.LCIDataset(
+                        filename=spold_path.name,
+                        activity_id=activity_id,
+                        activity_name="",
+                        location="",
+                        reference_product_name="",
+                        reference_product_unit="",
+                        reference_product_amount=0.0,
+                        reference_product_id=ref_product_id,
+                    )
+                    process_uuid = str(cached_global.get("process_uuid") or _generate_lci_process_uuid(ds))
+                    return ParseResult(
+                        spold_path=str(spold_path),
+                        dataset=ds,
+                        exchanges=[],
+                        process_uuid=process_uuid,
+                        duration_ms=int((time.time() - t0) * 1000),
+                        dataset_uuid=dataset_uuid,
+                        global_skip=True,
+                        reused_process_uuid=process_uuid,
+                        reused_vector_nnz=reused_nnz,
+                        parse_stage="filename",
+                        vector_status="reused" if reused_nnz > 0 else "empty",
+                        vector_nnz=reused_nnz,
+                    )
+            elif not self.overwrite_existing:
+                perf = getattr(self, "_perf_stats", None)
+                if isinstance(perf, dict):
+                    lock = getattr(self, "_lock", None)
+
+                    def _record_filename_miss() -> None:
+                        perf["filename_metadata_miss_count"] = (
+                            int(perf.get("filename_metadata_miss_count", 0) or 0) + 1
+                        )
+
+                    if lock is None:
+                        _record_filename_miss()
+                    else:
+                        with lock:
+                            _record_filename_miss()
+
             # ── Overwrite path: stream metadata + aggregated vector in one pass.
             if self.overwrite_existing:
                 stream_t0 = time.perf_counter()
@@ -649,13 +734,39 @@ class LciImportJobExecutor:
                         write_plan=write_plan,
                     )
 
+            # If the filename already gave us the dataset key and it is not
+            # globally imported, go straight to the full streaming parser.
+            # This avoids a metadata-only XML pass before the real parse.
+            if not self.overwrite_existing and filename_ids is not None:
+                streamed = self._parse_streaming_write_plan(spold_path)
+                if streamed is not None:
+                    ds, procs, dataset_uuid, write_plan = streamed
+                    return ParseResult(
+                        spold_path=str(spold_path),
+                        dataset=ds,
+                        exchanges=[],
+                        process_uuid=procs,
+                        duration_ms=int((time.time() - t0) * 1000),
+                        dataset_uuid=dataset_uuid,
+                        parse_stage="aggregated",
+                        write_plan=write_plan,
+                    )
+
             # ── Metadata parse / single-pass fallback ───────────────────
             single_t0 = time.perf_counter()
             include_exchanges = bool(self.overwrite_existing)
-            single = _loader.parse_spold_dataset_and_exchanges(
-                spold_path,
-                include_exchanges=include_exchanges,
-            )
+            if include_exchanges:
+                single = _loader.parse_spold_dataset_and_exchanges(
+                    spold_path,
+                    include_exchanges=True,
+                )
+            else:
+                ds = _loader.parse_spold_metadata_early(spold_path)
+                single = (
+                    _loader._SinglePassResult(dataset=ds, exchanges=[])
+                    if ds is not None
+                    else None
+                )
             single_elapsed = time.perf_counter() - single_t0
             perf = getattr(self, "_perf_stats", None)
             if isinstance(perf, dict):
@@ -1163,7 +1274,9 @@ class LciImportJobExecutor:
         duration_ms = max(0, int(result.duration_ms or 0))
         self._perf_stats["parse_duration_ms_total"] = int(self._perf_stats.get("parse_duration_ms_total", 0) or 0) + duration_ms
         self._perf_stats["parse_result_count"] = int(self._perf_stats.get("parse_result_count", 0) or 0) + 1
-        if result.parse_stage == "metadata":
+        if result.parse_stage == "filename":
+            pass
+        elif result.parse_stage == "metadata":
             self._perf_stats["metadata_duration_ms_total"] = int(self._perf_stats.get("metadata_duration_ms_total", 0) or 0) + duration_ms
             self._perf_stats["metadata_parse_count"] = int(self._perf_stats.get("metadata_parse_count", 0) or 0) + 1
         else:
@@ -1225,6 +1338,9 @@ class LciImportJobExecutor:
             "queue_max_observed": int(perf.get("queue_max_observed", 0) or 0),
             "avg_parse_ms": round(avg_parse_ms, 3),
             "global_skip_fast_count": int(perf.get("global_skip_fast_count", 0) or 0),
+            "filename_fast_skip_count": int(perf.get("filename_fast_skip_count", 0) or 0),
+            "filename_metadata_hit_count": int(perf.get("filename_metadata_hit_count", 0) or 0),
+            "filename_metadata_miss_count": int(perf.get("filename_metadata_miss_count", 0) or 0),
             "metadata_parse_count": metadata_count,
             "exchange_parse_count": exchange_count,
             "avg_metadata_parse_ms": round(avg_metadata_ms, 3),
