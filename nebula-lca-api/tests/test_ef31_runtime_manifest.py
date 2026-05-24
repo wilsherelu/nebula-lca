@@ -174,6 +174,42 @@ class TestRuntimeManifestFields:
         # artifact_dir should contain the job_id
         assert "job_003" in str(active.get("artifact_dir", ""))
 
+    def test_tiny_runtime_does_not_replace_broad_default_active_manifest(self, tmp_path: Path, monkeypatch) -> None:
+        """Small preview runtimes should not downgrade the default ecoinvent runtime."""
+        import app.services.ef31_runtime_csv as runtime_csv
+
+        output_root = tmp_path / "runtime_default"
+        output_root.mkdir()
+        broad_active = {
+            "job_id": "lcia-official-3.11",
+            "artifact_dir": str(output_root / "lcia-official-3.11"),
+            "flows_count": 9795,
+            "indicators_count": 50,
+            "factors_count": 54215,
+            "active": True,
+        }
+        (output_root / "active_manifest.json").write_text(
+            json.dumps(broad_active),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(runtime_csv, "DEFAULT_EF31_RUNTIME_ROOT", output_root)
+
+        job_dir = tmp_path / "tiny_job"
+        job_dir.mkdir()
+        self._write_job_artifacts(tmp_path, job_dir)
+
+        result = runtime_csv.generate_ef31_runtime_csvs(
+            job_id="tiny_job",
+            output_root=output_root,
+            _job_dir_override=job_dir,
+        )
+
+        active = json.loads((output_root / "active_manifest.json").read_text(encoding="utf-8"))
+        manifest = json.loads((output_root / "tiny_job" / "manifest.json").read_text(encoding="utf-8"))
+        assert result["active"] is False
+        assert manifest["active"] is False
+        assert active["job_id"] == "lcia-official-3.11"
+
     def test_runtime_csv_content(self, tmp_path: Path) -> None:
         """Verify the generated CSVs have correct content."""
         import csv
