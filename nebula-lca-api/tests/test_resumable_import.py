@@ -644,3 +644,34 @@ def test_recover_stale_jobs_resets_running_checkpoints(tmp_path, monkeypatch):
     assert job.status == "cancelled"
     assert checkpoint.status == "pending"
     assert read_job_control_signal(terminal_job_id) is None
+
+
+def test_lcia_runtime_rejects_lci_import_job(tmp_path):
+    """LCI import jobs should not fall through to the LCIA runtime artifact path."""
+    from fastapi import HTTPException
+    from sqlalchemy.orm import sessionmaker
+
+    from app.api.ef31_chunked_import import generate_lcia_runtime_for_job
+    from app.models import ImportJob
+
+    db_path = tmp_path / "test.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    ImportJob.__table__.create(engine)
+
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    job_id = "completed-lci-job"
+    db.add(ImportJob(
+        job_id=job_id,
+        file_path="/fake/path.7z",
+        file_type="lci",
+        status="completed",
+        phase="done",
+    ))
+    db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        generate_lcia_runtime_for_job(job_id, db)
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail["code"] == "LCIA_RUNTIME_UNSUPPORTED_JOB_TYPE"

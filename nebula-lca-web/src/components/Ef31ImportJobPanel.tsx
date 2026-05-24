@@ -610,7 +610,7 @@ export default function Ef31ImportJobPanel(props: {
               {job.status === "failed" && <button type="button" className="pm-primary-btn" onClick={retryFailed} disabled={jobBusy}>{jobBusy ? t.retrying : t.retry}</button>}
             </>
           )}
-          {phase === "done" && job && (
+          {phase === "done" && job?.file_type === "lcia" && (
             <button type="button" className="pm-ghost-btn" onClick={generateRuntime}>{t.generateRuntime}</button>
           )}
         </div>

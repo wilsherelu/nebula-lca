@@ -552,9 +552,17 @@ def generate_lcia_runtime_for_job(
     job = db.query(ImportJob).filter(ImportJob.job_id == job_id).first()
     if job is None:
         raise HTTPException(status_code=404, detail={"code": "JOB_NOT_FOUND", "message": f"No job: {job_id}"})
+    if job.file_type != "lcia":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "LCIA_RUNTIME_UNSUPPORTED_JOB_TYPE",
+                "message": f"LCIA runtime generation only supports LCIA jobs, got {job.file_type}",
+            },
+        )
     stats = job.stats_json or {}
     lcia_excel = stats.get("lcia_excel")
-    if job.file_type == "lcia" and lcia_excel:
+    if lcia_excel:
         try:
             _finish_lcia_job(db, job, Path(str(lcia_excel)))
             refreshed = db.query(ImportJob).filter(ImportJob.job_id == job_id).first()
