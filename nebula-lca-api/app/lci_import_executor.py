@@ -14,6 +14,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -26,6 +27,8 @@ from pathlib import Path
 from queue import Empty, Queue
 from typing import Optional
 
+from sqlalchemy import event
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from . import ecoinvent_ef31_loader as _loader
@@ -189,6 +192,12 @@ class LciImportJobExecutor:
         self.overwrite_existing = overwrite_existing
         self.package_version = package_version
 
+        # Debug mode flags (default False — never active in production)
+        self.debug_parser_blackhole = False
+        self.debug_writer_replay = False
+        self._replay_write_plans: list[LciWritePlan] = []
+        self._driver_timing_listeners: tuple[object, object, object] | None = None
+
         # Pause control
         self._pause_event = threading.Event()
         self._paused = False
@@ -237,6 +246,10 @@ class LciImportJobExecutor:
             "flush_duration_ms_total": 0.0,
             "flush_result_count": 0,
             "batch_prefetch_wall_seconds": 0.0,
+            "batch_prefetch_process_wall_seconds": 0.0,
+            "batch_prefetch_vector_wall_seconds": 0.0,
+            "batch_prefetch_global_wall_seconds": 0.0,
+            "batch_prefetch_checkpoint_wall_seconds": 0.0,
             "batch_pack_wall_seconds": 0.0,
             "batch_db_upsert_wall_seconds": 0.0,
             "batch_checkpoint_wall_seconds": 0.0,
@@ -251,9 +264,40 @@ class LciImportJobExecutor:
             "worker_aggregate_wall_seconds": 0.0,
             "flow_key_resolve_wall_seconds": 0.0,
             "flow_key_missing_count": 0,
+            "flow_key_cache_hits": 0,
+            "flow_key_created": 0,
+            "flow_key_resolve_query_seconds": 0.0,
             "avg_worker_aggregate_ms": 0.0,
             "avg_flow_key_resolve_ms": 0.0,
             "aggregated_result_count": 0,
+            "exchange_object_count": 0,
+            "core_upsert_enabled": False,
+            "core_upsert_wall_seconds": 0.0,
+            "streaming_parser_enabled": False,
+            "stream_parse_wall_seconds": 0.0,
+            # Writer-side exclusive timing
+            "writer_queue_get_block_seconds": 0.0,
+            "writer_queue_drain_nowait_seconds": 0.0,
+            "db_execute_seconds": 0.0,
+            "db_fetch_seconds": 0.0,
+            "orm_materialize_seconds": 0.0,
+            "flow_resolve_sql_seconds": 0.0,
+            "flow_resolve_python_seconds": 0.0,
+            "pack_sort_seconds": 0.0,
+            "pack_compress_seconds": 0.0,
+            "upsert_execute_seconds": 0.0,
+            "commit_seconds": 0.0,
+            "session_clear_gc_seconds": 0.0,
+            # Worker-side exclusive timing
+            "file_read_seconds": 0.0,
+            "xml_parse_seconds": 0.0,
+            "exchange_extract_seconds": 0.0,
+            "unit_canonicalize_seconds": 0.0,
+            "aggregate_seconds": 0.0,
+            "result_serialize_seconds": 0.0,
+            "queue_put_block_seconds": 0.0,
+            # Queue occupancy sampling (for p50/p95/max)
+            "_queue_occupancy_samples": [],
         }
 
         # Pre-load MasterData flows (shared across workers)
@@ -268,6 +312,9 @@ class LciImportJobExecutor:
         result = ImportResult(job_id=self.job_id)
 
         try:
+            # Register SQLAlchemy driver-level timing for cursor executes
+            self._register_driver_timing()
+
             self._load_master_data()
 
             spold_files = self._discover_spold_files()
@@ -331,6 +378,8 @@ class LciImportJobExecutor:
             self._error_summary = str(exc)[:1024]
             logger.exception("[%s] Import job failed: %s", self.job_id, exc)
             self._update_job_status("failed")
+        finally:
+            self._unregister_driver_timing()
 
         return self._finish_result(start_time, result)
 
@@ -563,12 +612,62 @@ class LciImportJobExecutor:
                     error="cancelled",
                 )
 
-            # ── Metadata parse / single-pass parse ──────────────────────
+            # ── Overwrite path: stream metadata + aggregated vector in one pass.
+            if self.overwrite_existing:
+                stream_t0 = time.perf_counter()
+                streamed = self._parse_streaming_write_plan(spold_path)
+                stream_elapsed = time.perf_counter() - stream_t0
+                if streamed is not None:
+                    ds, procs, dataset_uuid, write_plan = streamed
+                    perf = getattr(self, "_perf_stats", None)
+                    if isinstance(perf, dict):
+                        lock = getattr(self, "_lock", None)
+                        def _record_stream_time():
+                            perf["xml_parse_seconds"] = (
+                                float(perf.get("xml_parse_seconds", 0.0) or 0.0) + stream_elapsed
+                            )
+                            perf["aggregate_seconds"] = (
+                                float(perf.get("aggregate_seconds", 0.0) or 0.0) + stream_elapsed
+                            )
+                        if lock is None:
+                            _record_stream_time()
+                        else:
+                            with lock:
+                                _record_stream_time()
+                    return ParseResult(
+                        spold_path=str(spold_path),
+                        dataset=ds,
+                        exchanges=[],
+                        process_uuid=procs,
+                        duration_ms=int((time.time() - t0) * 1000),
+                        dataset_uuid=dataset_uuid,
+                        parse_stage="aggregated",
+                        write_plan=write_plan,
+                    )
+
+            # ── Metadata parse / single-pass fallback ───────────────────
+            single_t0 = time.perf_counter()
             include_exchanges = bool(self.overwrite_existing)
             single = _loader.parse_spold_dataset_and_exchanges(
                 spold_path,
                 include_exchanges=include_exchanges,
             )
+            single_elapsed = time.perf_counter() - single_t0
+            perf = getattr(self, "_perf_stats", None)
+            if isinstance(perf, dict):
+                lock = getattr(self, "_lock", None)
+                def _record_single_pass_time():
+                    perf["file_read_seconds"] = (
+                        float(perf.get("file_read_seconds", 0.0) or 0.0) + single_elapsed
+                    )
+                    perf["xml_parse_seconds"] = (
+                        float(perf.get("xml_parse_seconds", 0.0) or 0.0) + single_elapsed
+                    )
+                if lock is None:
+                    _record_single_pass_time()
+                else:
+                    with lock:
+                        _record_single_pass_time()
             if single is None:
                 return ParseResult(
                     spold_path=str(spold_path),
@@ -588,6 +687,19 @@ class LciImportJobExecutor:
             # ── Global dedup (fast skip — no exchange parsing needed) ───
             cached_global = self._global_import_cache.get(dataset_uuid)
             if not self.overwrite_existing and cached_global and cached_global.get("status") == "imported":
+                # Fast skip: record file read time only
+                perf = getattr(self, "_perf_stats", None)
+                if isinstance(perf, dict):
+                    lock = getattr(self, "_lock", None)
+                    def _record_fast_skip_time():
+                        perf["file_read_seconds"] = (
+                            float(perf.get("file_read_seconds", 0.0) or 0.0) + single_elapsed
+                        )
+                    if lock is None:
+                        _record_fast_skip_time()
+                    else:
+                        with lock:
+                            _record_fast_skip_time()
                 reused_nnz = int(cached_global.get("vector_nnz") or 0)
                 return ParseResult(
                     spold_path=str(spold_path),
@@ -605,6 +717,20 @@ class LciImportJobExecutor:
                 )
 
             if not include_exchanges:
+                streamed = self._parse_streaming_write_plan(spold_path)
+                if streamed is not None:
+                    ds, procs, dataset_uuid, write_plan = streamed
+                    return ParseResult(
+                        spold_path=str(spold_path),
+                        dataset=ds,
+                        exchanges=[],
+                        process_uuid=procs,
+                        duration_ms=int((time.time() - t0) * 1000),
+                        dataset_uuid=dataset_uuid,
+                        parse_stage="aggregated",
+                        write_plan=write_plan,
+                    )
+
                 single = _loader.parse_spold_dataset_and_exchanges(
                     spold_path,
                     include_exchanges=True,
@@ -654,6 +780,72 @@ class LciImportJobExecutor:
                 parse_stage="metadata",
             )
 
+    def _parse_streaming_write_plan(
+        self,
+        spold_path: Path,
+    ) -> tuple[object, str, str, LciWritePlan] | None:
+        """Parse and aggregate one SPOLD file directly into a write plan."""
+        stream_t0 = time.perf_counter()
+        stream = _loader.parse_spold_streaming_agg(
+            spold_path,
+            unit_conversion_cache=getattr(self, "_unit_conversion_cache", None) or {},
+            elem_flow_lookup=getattr(self, "_elem_flow_lookup", None) or {},
+            flow_metadata_cache=getattr(self, "_flow_metadata_cache", None) or {},
+        )
+        elapsed = time.perf_counter() - stream_t0
+        perf = getattr(self, "_perf_stats", None)
+        if isinstance(perf, dict):
+            lock = getattr(self, "_lock", None)
+
+            def _record_stream_stats() -> None:
+                perf["streaming_parser_enabled"] = True
+                perf["stream_parse_wall_seconds"] = (
+                    float(perf.get("stream_parse_wall_seconds", 0.0) or 0.0) + elapsed
+                )
+                perf["exchange_object_count"] = int(perf.get("exchange_object_count", 0) or 0)
+
+            if lock is None:
+                _record_stream_stats()
+            else:
+                with lock:
+                    _record_stream_stats()
+        if stream is None:
+            return None
+
+        ds = stream.dataset
+        procs = _generate_lci_process_uuid(ds)
+        dataset_uuid = self._dataset_uuid_for(ds)
+        process_json = dict(stream.process_json or {})
+        process_json["process_uuid"] = procs
+
+        write_plan = LciWritePlan(
+            spold_path=str(spold_path),
+            process_uuid=procs,
+            dataset_uuid=dataset_uuid,
+            process_json=process_json,
+            flow_key_aggs=stream.flow_key_aggs,
+            missing_flow_uuids=stream.missing_flow_uuids,
+            warning=stream.warning,
+            has_exchanges=bool(stream.flow_key_aggs),
+            canonicalized=stream.canonicalized,
+            pack_warnings=stream.pack_warnings,
+        )
+        perf = getattr(self, "_perf_stats", None)
+        if isinstance(perf, dict):
+            lock = getattr(self, "_lock", None)
+
+            def _record_aggregate_count() -> None:
+                perf["aggregated_result_count"] = (
+                    int(perf.get("aggregated_result_count", 0) or 0) + 1
+                )
+
+            if lock is None:
+                _record_aggregate_count()
+            else:
+                with lock:
+                    _record_aggregate_count()
+        return ds, procs, dataset_uuid, write_plan
+
     def _build_write_plan(
         self,
         *,
@@ -683,6 +875,7 @@ class LciImportJobExecutor:
             "source": "ecoinvent_3.11",
         }
 
+        # ── Exchange extraction + unit canonicalize + aggregation ─────
         flow_key_aggs: dict[tuple[str, str, str, str, str], float] = {}
         missing_flow_uuids: set[str] = set()
         pack_warnings: list[str] = []
@@ -692,6 +885,7 @@ class LciImportJobExecutor:
         unit_cache = getattr(self, '_unit_conversion_cache', None) or {}
         meta_cache = getattr(self, '_flow_metadata_cache', None) or {}
 
+        extract_t = time.perf_counter()
         for ex in exchanges:
             exc_id = getattr(ex, 'exchange_id', '')
             if not exc_id or float(getattr(ex, 'amount', 0)) == 0:
@@ -732,6 +926,7 @@ class LciImportJobExecutor:
 
             key = (exc_id, compartment, subcompartment, direction, canon_unit)
             flow_key_aggs[key] = flow_key_aggs.get(key, 0.0) + amount_f
+        extract_elapsed = time.perf_counter() - extract_t
 
         warning = None
         if missing_flow_uuids:
@@ -752,6 +947,12 @@ class LciImportJobExecutor:
                 )
                 perf["aggregated_result_count"] = (
                     int(perf.get("aggregated_result_count", 0) or 0) + 1
+                )
+                perf["exchange_extract_seconds"] = (
+                    float(perf.get("exchange_extract_seconds", 0.0) or 0.0) + extract_elapsed
+                )
+                perf["aggregate_seconds"] = (
+                    float(perf.get("aggregate_seconds", 0.0) or 0.0) + elapsed_ms / 1000
                 )
 
             if lock is None:
@@ -904,16 +1105,33 @@ class LciImportJobExecutor:
             result_queue.put(sentinel)
 
     def _put_parse_result(self, result_queue: Queue[ParseResult | object], result: ParseResult) -> None:
+        put_t0 = time.perf_counter()
         while True:
             try:
                 result_queue.put(result, timeout=0.5)
+                put_elapsed = time.perf_counter() - put_t0
+                self._perf_stats["queue_put_block_seconds"] = (
+                    float(self._perf_stats.get("queue_put_block_seconds", 0.0) or 0.0) + put_elapsed
+                )
+                occupancy = result_queue.qsize()
+                # Sample queue occupancy for p50/p95/max
+                samples = self._perf_stats.get("_queue_occupancy_samples", [])
+                samples.append(occupancy)
+                # Keep a rolling window to avoid unbounded memory growth
+                if len(samples) > 10000:
+                    self._perf_stats["_queue_occupancy_samples"] = samples[-5000:]
+                    samples = self._perf_stats["_queue_occupancy_samples"]
                 self._perf_stats["queue_max_observed"] = max(
                     int(self._perf_stats.get("queue_max_observed", 0)),
-                    result_queue.qsize(),
+                    occupancy,
                 )
                 return
             except Exception:
                 if self._cancel_requested:
+                    put_elapsed = time.perf_counter() - put_t0
+                    self._perf_stats["queue_put_block_seconds"] = (
+                        float(self._perf_stats.get("queue_put_block_seconds", 0.0) or 0.0) + put_elapsed
+                    )
                     return
 
     def _flush_parse_result_batch(self, results: list[ParseResult]) -> None:
@@ -925,7 +1143,12 @@ class LciImportJobExecutor:
                 self._flush_single(pr)
             self._mark_checkpoints_complete(results)
         self._update_progress()
+        commit_t0 = time.perf_counter()
         self.db.commit()
+        commit_elapsed = time.perf_counter() - commit_t0
+        self._perf_stats["commit_seconds"] = (
+            float(self._perf_stats.get("commit_seconds", 0.0) or 0.0) + commit_elapsed
+        )
         elapsed_ms = (time.perf_counter() - t0) * 1000
         self._perf_stats["commit_count"] += 1
         self._perf_stats["flush_duration_ms_total"] += elapsed_ms
@@ -1006,6 +1229,10 @@ class LciImportJobExecutor:
             "masterdata_reused": bool(perf.get("masterdata_reused", False)),
             "masterdata_wall_seconds": round(float(perf.get("masterdata_wall_seconds", 0.0) or 0.0), 3),
             "batch_prefetch_wall_seconds": round(float(perf.get("batch_prefetch_wall_seconds", 0.0) or 0.0), 3),
+            "batch_prefetch_process_wall_seconds": round(float(perf.get("batch_prefetch_process_wall_seconds", 0.0) or 0.0), 3),
+            "batch_prefetch_vector_wall_seconds": round(float(perf.get("batch_prefetch_vector_wall_seconds", 0.0) or 0.0), 3),
+            "batch_prefetch_global_wall_seconds": round(float(perf.get("batch_prefetch_global_wall_seconds", 0.0) or 0.0), 3),
+            "batch_prefetch_checkpoint_wall_seconds": round(float(perf.get("batch_prefetch_checkpoint_wall_seconds", 0.0) or 0.0), 3),
             "batch_pack_wall_seconds": round(float(perf.get("batch_pack_wall_seconds", 0.0) or 0.0), 3),
             "batch_db_upsert_wall_seconds": round(float(perf.get("batch_db_upsert_wall_seconds", 0.0) or 0.0), 3),
             "batch_checkpoint_wall_seconds": round(float(perf.get("batch_checkpoint_wall_seconds", 0.0) or 0.0), 3),
@@ -1019,13 +1246,389 @@ class LciImportJobExecutor:
             "flow_key_resolve_wall_seconds": round(float(perf.get("flow_key_resolve_wall_seconds", 0.0) or 0.0), 3),
             "flow_key_missing_count": int(perf.get("flow_key_missing_count", 0) or 0),
             "aggregated_result_count": int(perf.get("aggregated_result_count", 0) or 0),
+            "flow_key_cache_hits": int(perf.get("flow_key_cache_hits", 0) or 0),
+            "flow_key_created": int(perf.get("flow_key_created", 0) or 0),
+            "flow_key_resolve_query_seconds": round(float(perf.get("flow_key_resolve_query_seconds", 0.0) or 0.0), 3),
+            "exchange_object_count": int(perf.get("exchange_object_count", 0) or 0),
+            "core_upsert_enabled": bool(perf.get("core_upsert_enabled", False)),
+            "core_upsert_wall_seconds": round(float(perf.get("core_upsert_wall_seconds", 0.0) or 0.0), 3),
+            "streaming_parser_enabled": bool(perf.get("streaming_parser_enabled", False)),
+            "stream_parse_wall_seconds": round(float(perf.get("stream_parse_wall_seconds", 0.0) or 0.0), 3),
+            # Writer exclusive timing
+            "writer_queue_get_block_seconds": round(float(perf.get("writer_queue_get_block_seconds", 0.0) or 0.0), 3),
+            "writer_queue_drain_nowait_seconds": round(float(perf.get("writer_queue_drain_nowait_seconds", 0.0) or 0.0), 3),
+            "db_execute_seconds": round(float(perf.get("db_execute_seconds", 0.0) or 0.0), 3),
+            "db_fetch_seconds": round(float(perf.get("db_fetch_seconds", 0.0) or 0.0), 3),
+            "orm_materialize_seconds": round(float(perf.get("orm_materialize_seconds", 0.0) or 0.0), 3),
+            "flow_resolve_sql_seconds": round(float(perf.get("flow_resolve_sql_seconds", 0.0) or 0.0), 3),
+            "flow_resolve_python_seconds": round(float(perf.get("flow_resolve_python_seconds", 0.0) or 0.0), 3),
+            "pack_sort_seconds": round(float(perf.get("pack_sort_seconds", 0.0) or 0.0), 3),
+            "pack_compress_seconds": round(float(perf.get("pack_compress_seconds", 0.0) or 0.0), 3),
+            "upsert_execute_seconds": round(float(perf.get("upsert_execute_seconds", 0.0) or 0.0), 3),
+            "commit_seconds": round(float(perf.get("commit_seconds", 0.0) or 0.0), 3),
+            "session_clear_gc_seconds": round(float(perf.get("session_clear_gc_seconds", 0.0) or 0.0), 3),
+            # Worker exclusive timing
+            "file_read_seconds": round(float(perf.get("file_read_seconds", 0.0) or 0.0), 3),
+            "xml_parse_seconds": round(float(perf.get("xml_parse_seconds", 0.0) or 0.0), 3),
+            "exchange_extract_seconds": round(float(perf.get("exchange_extract_seconds", 0.0) or 0.0), 3),
+            "unit_canonicalize_seconds": round(float(perf.get("unit_canonicalize_seconds", 0.0) or 0.0), 3),
+            "aggregate_seconds": round(float(perf.get("aggregate_seconds", 0.0) or 0.0), 3),
+            "result_serialize_seconds": round(float(perf.get("result_serialize_seconds", 0.0) or 0.0), 3),
+            "queue_put_block_seconds": round(float(perf.get("queue_put_block_seconds", 0.0) or 0.0), 3),
+            # Queue occupancy stats
+            "queue_occupancy_p50": 0.0,
+            "queue_occupancy_p95": 0.0,
+            "queue_occupancy_max": 0,
+            # Debug mode stats
+            "debug_parser_blackhole": False,
+            "debug_writer_replay": False,
+            "blackhole_drain_count": 0,
         }
+        # Fill debug mode stats
+        result["debug_parser_blackhole"] = bool(perf.get("debug_parser_blackhole", False))
+        result["debug_writer_replay"] = bool(perf.get("debug_writer_replay", False))
+        result["blackhole_drain_count"] = int(perf.get("blackhole_drain_count", 0) or 0)
+        # Compute queue occupancy percentiles from samples
+        samples = perf.get("_queue_occupancy_samples", [])
+        if samples:
+            sorted_samples = sorted(samples)
+            n = len(sorted_samples)
+            result["queue_occupancy_p50"] = round(float(sorted_samples[n // 2]), 1)
+            result["queue_occupancy_p95"] = round(float(sorted_samples[int(n * 0.95)]), 1)
+            result["queue_occupancy_max"] = max(sorted_samples)
+        return result
 
     # ── DB flush (single thread) ───────────────────────────────────────
 
+    def _is_sqlite(self) -> bool:
+        """Check if the current database is SQLite."""
+        bind = self.db.get_bind()
+        return getattr(getattr(bind, "dialect", None), "name", None) == "sqlite"
+
+    def _register_driver_timing(self) -> None:
+        """Register SQLAlchemy event listeners for cursor-level timing."""
+        if getattr(self, "_driver_timing_listeners", None) is not None:
+            return
+        engine = self.db.get_bind() if hasattr(self.db, "get_bind") else getattr(self.db, "bind", None)
+        if engine is None:
+            return
+
+        t0_storage = {"t0": 0.0}
+
+        def _before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+            t0_storage["t0"] = time.perf_counter()
+
+        def _after_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+            elapsed = time.perf_counter() - t0_storage["t0"]
+            lock = getattr(self, "_lock", None)
+            perf = getattr(self, "_perf_stats", None)
+            if perf is None:
+                return
+
+            def _record():
+                if isinstance(statement, str) and statement.strip().startswith("SELECT"):
+                    perf["db_fetch_seconds"] = (
+                        float(perf.get("db_fetch_seconds", 0.0) or 0.0) + elapsed
+                    )
+                else:
+                    perf["db_execute_seconds"] = (
+                        float(perf.get("db_execute_seconds", 0.0) or 0.0) + elapsed
+                    )
+
+            if lock is None:
+                _record()
+            else:
+                with lock:
+                    _record()
+
+        event.listen(engine, "before_cursor_execute", _before_cursor_execute)
+        event.listen(engine, "after_cursor_execute", _after_cursor_execute)
+        self._driver_timing_listeners = (engine, _before_cursor_execute, _after_cursor_execute)
+
+    def _unregister_driver_timing(self) -> None:
+        listeners = getattr(self, "_driver_timing_listeners", None)
+        if not listeners:
+            return
+        engine, before_listener, after_listener = listeners
+        for name, listener in (
+            ("before_cursor_execute", before_listener),
+            ("after_cursor_execute", after_listener),
+        ):
+            try:
+                event.remove(engine, name, listener)
+            except Exception:
+                pass
+        self._driver_timing_listeners = None
+
+    def _core_upsert_reference_processes(self, rows: list[dict]) -> None:
+        """SQLite-optimized bulk upsert for ReferenceProcess.
+
+        Each dict must have: process_uuid, process_name, process_name_en, process_type,
+        process_json, source_file, import_mode, import_report_json.
+        """
+        if not rows:
+            return
+        if self._is_sqlite():
+            now = datetime.utcnow()
+            values = [{**r, "created_at": now, "updated_at": now} for r in rows]
+            stmt = sqlite_insert(ReferenceProcess).values(values)
+            excluded = stmt.excluded
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["process_uuid"],
+                set_={
+                    "process_name": excluded.process_name,
+                    "process_name_en": excluded.process_name_en,
+                    "process_type": excluded.process_type,
+                    "reference_flow_uuid": excluded.reference_flow_uuid,
+                    "process_json": excluded.process_json,
+                    "source_file": excluded.source_file,
+                    "source_process_uuid": excluded.source_process_uuid,
+                    "import_mode": excluded.import_mode,
+                    "import_report_json": excluded.import_report_json,
+                    "updated_at": now,
+                },
+            )
+            self.db.execute(stmt)
+            self._perf_stats["core_upsert_enabled"] = True
+        else:
+            # Fallback: ORM bulk
+            for r in rows:
+                proc = ReferenceProcess(
+                    process_uuid=r["process_uuid"],
+                    process_name=r["process_name"],
+                    process_name_en=r["process_name_en"],
+                    process_type=r["process_type"],
+                    reference_flow_uuid=r.get("reference_flow_uuid"),
+                    process_json=r["process_json"],
+                    source_file=r.get("source_file"),
+                    import_mode=r.get("import_mode"),
+                    import_report_json=r.get("import_report_json"),
+                )
+                self.db.merge(proc)
+
+    def _core_upsert_lci_process_vectors(self, rows: list[dict]) -> None:
+        """SQLite-optimized bulk upsert for LciProcessVector."""
+        if not rows:
+            return
+        if self._is_sqlite():
+            now = datetime.utcnow()
+            values = [{**r, "created_at": now, "updated_at": now} for r in rows]
+            stmt = sqlite_insert(LciProcessVector).values(values)
+            excluded = stmt.excluded
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["process_uuid"],
+                set_={
+                    "dataset_level": excluded.dataset_level,
+                    "system_model": excluded.system_model,
+                    "nnz": excluded.nnz,
+                    "axis_id": excluded.axis_id,
+                    "flow_key_ids_blob": excluded.flow_key_ids_blob,
+                    "amounts_blob": excluded.amounts_blob,
+                    "index_dtype": excluded.index_dtype,
+                    "amount_dtype": excluded.amount_dtype,
+                    "compression": excluded.compression,
+                    "canonicalized": excluded.canonicalized,
+                    "checksum": excluded.checksum,
+                    "source": excluded.source,
+                    "source_package_version": excluded.source_package_version,
+                    "updated_at": now,
+                },
+            )
+            self.db.execute(stmt)
+            self._perf_stats["core_upsert_enabled"] = True
+        else:
+            for r in rows:
+                vec = LciProcessVector(**{k: v for k, v in r.items()
+                                         if k in ('process_uuid', 'dataset_level', 'system_model',
+                                                  'nnz', 'axis_id', 'flow_key_ids_blob',
+                                                  'amounts_blob', 'index_dtype', 'amount_dtype',
+                                                  'compression', 'canonicalized', 'checksum',
+                                                  'source', 'source_package_version')})
+                self.db.merge(vec)
+
+    def _core_upsert_global_dataset_imports(self, rows: list[dict]) -> None:
+        """SQLite-optimized bulk upsert for GlobalDatasetImport (unique on source_package_version + dataset_uuid)."""
+        if not rows:
+            return
+        if self._is_sqlite():
+            now = datetime.utcnow()
+            values = [{**r, "updated_at": now} for r in rows]
+            stmt = sqlite_insert(GlobalDatasetImport).values(values)
+            excluded = stmt.excluded
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["source_package_version", "dataset_uuid"],
+                set_={
+                    "dataset_filename": excluded.dataset_filename,
+                    "process_uuid": excluded.process_uuid,
+                    "activity_id": excluded.activity_id,
+                    "reference_product_id": excluded.reference_product_id,
+                    "status": excluded.status,
+                    "vector_nnz": excluded.vector_nnz,
+                    "checksum": excluded.checksum,
+                    "last_job_id": excluded.last_job_id,
+                    "error_message": excluded.error_message,
+                    "imported_at": excluded.imported_at,
+                    "updated_at": now,
+                },
+            )
+            self.db.execute(stmt)
+            self._perf_stats["core_upsert_enabled"] = True
+        else:
+            for r in rows:
+                g = GlobalDatasetImport(**{k: v for k, v in r.items()
+                                           if k in ('id', 'source_package_version', 'dataset_uuid',
+                                                    'dataset_filename', 'process_uuid', 'activity_id',
+                                                    'reference_product_id', 'status', 'vector_nnz',
+                                                    'checksum', 'last_job_id', 'error_message',
+                                                    'imported_at')})
+                self.db.merge(g)
+        # Rebuild the in-memory cache after upsert
+        for r in rows:
+            if r.get("status") == "imported":
+                self._global_import_cache[r["dataset_uuid"]] = {
+                    "status": "imported",
+                    "process_uuid": r.get("process_uuid"),
+                    "vector_nnz": int(r.get("vector_nnz") or 0),
+                }
+
+    def debug_replay_writer(self) -> dict:
+        """Replay writer logic for cached ``LciWritePlan`` objects.
+
+        This is a **debug-only** method.  It does NOT affect the normal
+        import pipeline.  Call it after a ``debug_writer_replay`` run to
+        measure pack/resolve/upsert timings in isolation.
+
+        Returns a dict with ``vectors_written``, ``empty_vectors``, ``nnz``,
+        and ``flow_keys_created``.
+        """
+        if not self._replay_write_plans:
+            return {
+                "vectors_written": 0, "empty_vectors": 0,
+                "nnz": 0, "flow_keys_created": 0,
+                "error": "No cached write plans",
+            }
+
+        write_plan_results: list[LciWritePlan] = []
+        all_keys: set[tuple[str, str, str, str, str]] = set()
+
+        for wp in self._replay_write_plans:
+            write_plan_results.append(wp)
+            all_keys.update(wp.flow_key_aggs.keys())
+
+        # Batch resolve flow keys
+        created = self._batch_resolve_flow_keys(all_keys)
+
+        # Resolve key IDs
+        key_id_map: dict[tuple[str, str, str, str, str], int] = {}
+        for lk in all_keys:
+            cached = self._flow_key_cache.get(lk)
+            if cached is not None:
+                key_id_map[lk] = cached
+                continue
+            fu, comp, subcomp, direction, canon = lk
+            resolved = self._get_flow_key_id(
+                flow_uuid=fu, compartment=comp, subcompartment=subcomp,
+                direction=direction, canonical_unit=canon,
+            )
+            if resolved is not None:
+                key_id_map[lk] = resolved
+
+        vectors_written = 0
+        empty_vectors = 0
+        total_nnz = 0
+
+        for wp in write_plan_results:
+            if not wp.flow_key_aggs:
+                empty_vectors += 1
+                continue
+            agg: dict[int, float] = {}
+            for lk, amount in wp.flow_key_aggs.items():
+                fid = key_id_map.get(lk)
+                if fid is not None:
+                    agg[fid] = agg.get(fid, 0.0) + amount
+            if not agg:
+                empty_vectors += 1
+                continue
+            t_sort = time.perf_counter()
+            flow_key_ids = sorted(agg)
+            sort_elapsed = time.perf_counter() - t_sort
+            amounts = [agg[k] for k in flow_key_ids]
+            from .lci_vector_codec import pack_lci_vector
+            t_compress = time.perf_counter()
+            packed = pack_lci_vector(flow_key_ids, amounts)
+            compress_elapsed = time.perf_counter() - t_compress
+            self._perf_stats["pack_sort_seconds"] = (
+                float(self._perf_stats.get("pack_sort_seconds", 0.0) or 0.0) + sort_elapsed
+            )
+            self._perf_stats["pack_compress_seconds"] = (
+                float(self._perf_stats.get("pack_compress_seconds", 0.0) or 0.0) + compress_elapsed
+            )
+            vectors_written += 1
+            total_nnz += packed.nnz
+            self.db.add(ReferenceProcess(
+                process_uuid=wp.process_uuid,
+                process_name=wp.process_json.get("process_name", ""),
+                process_name_en=wp.process_json.get("process_name_en", ""),
+                process_type="lci_dataset",
+                reference_flow_uuid=None,
+                process_json=wp.process_json,
+                source_file=wp.spold_path,
+                import_mode="debug_replay",
+                import_report_json={"debug_replay": True},
+            ))
+            self.db.add(LciProcessVector(
+                process_uuid=wp.process_uuid,
+                dataset_level="linked_lci",
+                system_model=None,
+                nnz=packed.nnz,
+                axis_id=None,
+                flow_key_ids_blob=packed.flow_key_ids_blob,
+                amounts_blob=packed.amounts_blob,
+                index_dtype=packed.index_dtype,
+                amount_dtype=packed.amount_dtype,
+                compression=packed.compression,
+                canonicalized=wp.canonicalized,
+                checksum=packed.checksum,
+                source=self.package_version,
+                source_package_version=self.package_version,
+            ))
+
+        self.db.commit()
+        return {
+            "vectors_written": vectors_written,
+            "empty_vectors": empty_vectors,
+            "nnz": total_nnz,
+            "flow_keys_created": created,
+        }
+
     def _flush_result_batch_bulk(self, results: list[ParseResult]) -> None:
-        """Flush a parse-result batch with one prefetch/upsert/checkpoint pass."""
+        """Flush a parse-result batch with one prefetch/upsert/checkpoint pass.
+
+        If ``debug_parser_blackhole`` is True, drains the queue without
+        writing DB / resolving flow-keys / packing vectors.
+        """
         if not results:
+            return
+
+        # ── Parser blackhole mode ──────────────────────────────────────
+        if getattr(self, "debug_parser_blackhole", False):
+            # Skip all DB work — just count drained batches
+            self._perf_stats["blackhole_drain_count"] = (
+                int(self._perf_stats.get("blackhole_drain_count", 0) or 0) + len(results)
+            )
+            self._perf_stats["debug_parser_blackhole"] = True
+            return
+
+        # ── Writer replay mode: cache write_plans without writing DB ───
+        if getattr(self, "debug_writer_replay", False):
+            for pr in results:
+                wp = getattr(pr, "write_plan", None)
+                if wp is not None:
+                    self._replay_write_plans.append(wp)
+            self._perf_stats["debug_writer_replay"] = True
+            self._perf_stats["blackhole_drain_count"] = (
+                int(self._perf_stats.get("blackhole_drain_count", 0) or 0) + len(results)
+            )
             return
 
         for pr in results:
@@ -1045,6 +1648,7 @@ class LciImportJobExecutor:
             pr.dataset_uuid = pr.dataset_uuid or self._dataset_uuid_for(pr.dataset)
 
         prefetch_t0 = time.perf_counter()
+        fetch_t0 = time.perf_counter()
         global_rows_by_uuid: dict[str, GlobalDatasetImport] = {}
         dataset_uuids = [pr.dataset_uuid for pr in normal_results if pr.dataset_uuid]
         if dataset_uuids:
@@ -1057,6 +1661,7 @@ class LciImportJobExecutor:
                 .all()
             )
             global_rows_by_uuid = {row.dataset_uuid: row for row in global_rows if row.dataset_uuid}
+        fetch_elapsed = time.perf_counter() - fetch_t0
 
         write_results: list[ParseResult] = []
         for pr in normal_results:
@@ -1072,23 +1677,11 @@ class LciImportJobExecutor:
             else:
                 write_results.append(pr)
 
-        process_uuids = [pr.process_uuid for pr in write_results if pr.process_uuid]
-        process_rows = (
-            self.db.query(ReferenceProcess)
-            .filter(ReferenceProcess.process_uuid.in_(process_uuids))
-            .all()
-            if process_uuids
-            else []
-        )
-        process_by_uuid = {row.process_uuid: row for row in process_rows}
-        vector_rows = (
-            self.db.query(LciProcessVector)
-            .filter(LciProcessVector.process_uuid.in_(process_uuids))
-            .all()
-            if process_uuids
-            else []
-        )
-        vector_by_uuid = {row.process_uuid: row for row in vector_rows}
+        global_prefetch_elapsed = time.perf_counter() - prefetch_t0
+
+        # Only pre-fetch checkpoints — no process/vector pre-fetch needed
+        # because core upsert uses INSERT OR REPLACE (no ORM lookup)
+        checkpoint_prefetch_t0 = time.perf_counter()
         checkpoint_keys = [Path(pr.spold_path).name for pr in results]
         checkpoint_rows = (
             self.db.query(DatasetCheckpoint)
@@ -1101,9 +1694,26 @@ class LciImportJobExecutor:
             else []
         )
         checkpoint_by_key = {row.dataset_key: row for row in checkpoint_rows}
+        checkpoint_prefetch_elapsed = time.perf_counter() - checkpoint_prefetch_t0
+
+        # Split prefetch timing
+        self._perf_stats["batch_prefetch_global_wall_seconds"] = (
+            float(self._perf_stats.get("batch_prefetch_global_wall_seconds", 0.0) or 0.0)
+            + global_prefetch_elapsed
+        )
+        self._perf_stats["batch_prefetch_checkpoint_wall_seconds"] = (
+            float(self._perf_stats.get("batch_prefetch_checkpoint_wall_seconds", 0.0) or 0.0)
+            + checkpoint_prefetch_elapsed
+        )
         self._perf_stats["batch_prefetch_wall_seconds"] = (
             float(self._perf_stats.get("batch_prefetch_wall_seconds", 0.0) or 0.0)
-            + (time.perf_counter() - prefetch_t0)
+            + global_prefetch_elapsed
+            + checkpoint_prefetch_elapsed
+        )
+        # Exclusive timing: DB fetch (SQLAlchemy query execution + row fetch)
+        self._perf_stats["db_fetch_seconds"] = (
+            float(self._perf_stats.get("db_fetch_seconds", 0.0) or 0.0)
+            + fetch_elapsed
         )
 
         pack_t0 = time.perf_counter()
@@ -1182,10 +1792,20 @@ class LciImportJobExecutor:
                         if fid is not None:
                             agg[fid] = agg.get(fid, 0.0) + amount
                     if agg:
+                        t_sort = time.perf_counter()
                         flow_key_ids = sorted(agg)
+                        sort_elapsed = time.perf_counter() - t_sort
                         amounts = [agg[k] for k in flow_key_ids]
                         from .lci_vector_codec import pack_lci_vector
+                        t_compress = time.perf_counter()
                         packed = pack_lci_vector(flow_key_ids, amounts)
+                        compress_elapsed = time.perf_counter() - t_compress
+                        self._perf_stats["pack_sort_seconds"] = (
+                            float(self._perf_stats.get("pack_sort_seconds", 0.0) or 0.0) + sort_elapsed
+                        )
+                        self._perf_stats["pack_compress_seconds"] = (
+                            float(self._perf_stats.get("pack_compress_seconds", 0.0) or 0.0) + compress_elapsed
+                        )
                         packed_by_process[pr.process_uuid] = _PackedVector(
                             nnz=packed.nnz,
                             flow_key_ids_blob=packed.flow_key_ids_blob,
@@ -1233,24 +1853,31 @@ class LciImportJobExecutor:
                         self._vector_warnings.extend(packed.warnings)
 
         # ── Reused / empty vectors (for processes that were NOT written) ──
+        # No pre-fetch needed; use INSERT OR REPLACE which handles updates.
         for pr in write_results:
             if pr.process_uuid in packed_by_process:
                 continue
-            existing_vector = vector_by_uuid.get(pr.process_uuid)
-            if existing_vector and not self.overwrite_existing:
-                pr.vector_status = "reused"
-                pr.vector_nnz = int(existing_vector.nnz or 0)
-                with self._lock:
-                    self._stats["vectors_reused"] += 1
-            else:
-                pr.vector_status = "empty"
-                pr.vector_nnz = 0
-                with self._lock:
-                    self._stats["empty_vectors"] += 1
-                    if self.overwrite_existing:
-                        self._vector_warnings.append(
-                            f"{Path(pr.spold_path).name}: no elementary vector rows"
-                        )
+            # Only check for reuse when overwrite=False
+            if not self.overwrite_existing:
+                existing_vector = (
+                    self.db.query(LciProcessVector)
+                    .filter(LciProcessVector.process_uuid == pr.process_uuid)
+                    .first()
+                )
+                if existing_vector is not None:
+                    pr.vector_status = "reused"
+                    pr.vector_nnz = int(existing_vector.nnz or 0)
+                    with self._lock:
+                        self._stats["vectors_reused"] += 1
+                    continue
+            pr.vector_status = "empty"
+            pr.vector_nnz = 0
+            with self._lock:
+                self._stats["empty_vectors"] += 1
+                if self.overwrite_existing:
+                    self._vector_warnings.append(
+                        f"{Path(pr.spold_path).name}: no elementary vector rows"
+                    )
 
         pack_elapsed = time.perf_counter() - pack_t0
         self._perf_stats["batch_pack_wall_seconds"] = (
@@ -1267,83 +1894,110 @@ class LciImportJobExecutor:
         )
 
         upsert_t0 = time.perf_counter()
-        new_processes: list[ReferenceProcess] = []
-        new_vectors: list[LciProcessVector] = []
-        new_globals: list[GlobalDatasetImport] = []
+
+        # ── Build upsert data (dict-based, no ORM pre-fetch needed) ──────
+        process_upsert_rows: list[dict] = []
+        vector_upsert_rows: list[dict] = []
+        global_upsert_rows: list[dict] = []
+
         for pr in write_results:
             ds = pr.dataset
             if ds is None:
                 continue
             wp = getattr(pr, 'write_plan', None)
             process_json = wp.process_json if wp else self._build_lci_process_json(pr)
-            existing_process = process_by_uuid.get(pr.process_uuid)
-            if existing_process is None:
-                new_processes.append(
-                    ReferenceProcess(
-                        process_uuid=pr.process_uuid,
-                        process_name=ds.activity_name or pr.process_uuid,
-                        process_name_en=ds.activity_name,
-                        process_type="lci_dataset",
-                        reference_flow_uuid=None,
-                        process_json=process_json,
-                        source_file=pr.spold_path,
-                        import_mode="ecoinvent_ef31_lci",
-                        import_report_json={"package_version": self.package_version},
-                    )
-                )
-                process_by_uuid[pr.process_uuid] = new_processes[-1]
-                with self._lock:
-                    self._stats["processes_inserted"] += 1
-            else:
-                existing_process.process_name = ds.activity_name or pr.process_uuid
-                existing_process.process_name_en = ds.activity_name
-                existing_process.process_type = "lci_dataset"
-                existing_process.process_json = process_json
-                existing_process.source_file = pr.spold_path
-                with self._lock:
-                    self._stats["processes_updated"] += 1
+            dataset_uuid = pr.dataset_uuid or self._dataset_uuid_for(ds)
+            pr.dataset_uuid = dataset_uuid
 
+            # Collect process upsert data
+            process_upsert_rows.append({
+                "process_uuid": pr.process_uuid,
+                "process_name": ds.activity_name or pr.process_uuid,
+                "process_name_en": ds.activity_name,
+                "process_type": "lci_dataset",
+                "reference_flow_uuid": None,
+                "process_json": process_json,
+                "source_file": pr.spold_path,
+                "import_mode": "ecoinvent_ef31_lci",
+                "import_report_json": {"package_version": self.package_version},
+            })
+
+            # Collect vector upsert data
             packed = packed_by_process.get(pr.process_uuid)
             if packed is not None:
-                existing_vector = vector_by_uuid.get(pr.process_uuid)
-                if existing_vector is None:
-                    new_vectors.append(self._new_lci_process_vector(pr.process_uuid, packed))
-                    vector_by_uuid[pr.process_uuid] = new_vectors[-1]
-                else:
-                    self._update_lci_process_vector(existing_vector, packed)
+                vector_upsert_rows.append({
+                    "process_uuid": pr.process_uuid,
+                    "dataset_level": "linked_lci",
+                    "system_model": None,
+                    "nnz": packed.nnz,
+                    "axis_id": None,
+                    "flow_key_ids_blob": packed.flow_key_ids_blob,
+                    "amounts_blob": packed.amounts_blob,
+                    "index_dtype": packed.index_dtype,
+                    "amount_dtype": packed.amount_dtype,
+                    "compression": packed.compression,
+                    "canonicalized": packed.canonicalized,
+                    "checksum": packed.checksum,
+                    "source": self.package_version,
+                    "source_package_version": self.package_version,
+                })
 
-            global_row = global_rows_by_uuid.get(pr.dataset_uuid or "")
-            if global_row is None:
-                global_row = GlobalDatasetImport(
-                    source_package_version=self.package_version,
-                    dataset_uuid=pr.dataset_uuid or self._dataset_uuid_for(ds),
-                    status="imported",
-                )
-                global_rows_by_uuid[global_row.dataset_uuid] = global_row
-                new_globals.append(global_row)
-            global_row.status = "imported"
-            global_row.dataset_filename = pr.spold_path
-            global_row.process_uuid = pr.process_uuid
-            global_row.activity_id = ds.activity_id
-            global_row.reference_product_id = ds.reference_product_id
-            global_row.vector_nnz = int(pr.vector_nnz or 0)
-            global_row.last_job_id = self.job_id
-            global_row.error_message = pr.warning
-            global_row.imported_at = datetime.utcnow()
-            self._global_import_cache[global_row.dataset_uuid] = {
-                "status": "imported",
+            # Collect global dataset import upsert data
+            global_upsert_rows.append({
+                "source_package_version": self.package_version,
+                "dataset_uuid": dataset_uuid,
+                "dataset_filename": pr.spold_path,
                 "process_uuid": pr.process_uuid,
+                "activity_id": ds.activity_id,
+                "reference_product_id": ds.reference_product_id,
+                "status": "imported",
                 "vector_nnz": int(pr.vector_nnz or 0),
-            }
+                "last_job_id": self.job_id,
+                "error_message": pr.warning,
+                "imported_at": datetime.utcnow(),
+            })
             with self._lock:
                 self._stats["datasets_processed"] += 1
 
-        if new_processes:
-            self.db.add_all(new_processes)
-        if new_vectors:
-            self.db.add_all(new_vectors)
-        if new_globals:
-            self.db.add_all(new_globals)
+        # ── Core bulk upsert (SQLite-optimized) ─────────────────────────
+        existing_process_uuids: set[str] = set()
+        if process_upsert_rows:
+            process_prefetch_t0 = time.perf_counter()
+            process_uuids = [row["process_uuid"] for row in process_upsert_rows]
+            existing_process_uuids = {
+                row[0]
+                for row in self.db.query(ReferenceProcess.process_uuid)
+                .filter(ReferenceProcess.process_uuid.in_(process_uuids))
+                .all()
+            }
+            self._perf_stats["batch_prefetch_process_wall_seconds"] = (
+                float(self._perf_stats.get("batch_prefetch_process_wall_seconds", 0.0) or 0.0)
+                + (time.perf_counter() - process_prefetch_t0)
+            )
+
+        core_upsert_t0 = time.perf_counter()
+        upsert_exec_t0 = time.perf_counter()
+        if process_upsert_rows:
+            self._core_upsert_reference_processes(process_upsert_rows)
+            updated_count = sum(1 for row in process_upsert_rows if row["process_uuid"] in existing_process_uuids)
+            inserted_count = len(process_upsert_rows) - updated_count
+            with self._lock:
+                self._stats["processes_inserted"] += inserted_count
+                self._stats["processes_updated"] += updated_count
+        if vector_upsert_rows:
+            self._core_upsert_lci_process_vectors(vector_upsert_rows)
+        if global_upsert_rows:
+            self._core_upsert_global_dataset_imports(global_upsert_rows)
+        upsert_exec_elapsed = time.perf_counter() - upsert_exec_t0
+        self._perf_stats["upsert_execute_seconds"] = (
+            float(self._perf_stats.get("upsert_execute_seconds", 0.0) or 0.0) + upsert_exec_elapsed
+        )
+        core_upsert_total = time.perf_counter() - core_upsert_t0
+        self._perf_stats["core_upsert_wall_seconds"] = (
+            float(self._perf_stats.get("core_upsert_wall_seconds", 0.0) or 0.0)
+            + core_upsert_total
+        )
+
         self._perf_stats["batch_db_upsert_wall_seconds"] = (
             float(self._perf_stats.get("batch_db_upsert_wall_seconds", 0.0) or 0.0)
             + (time.perf_counter() - upsert_t0)
@@ -1410,11 +2064,39 @@ class LciImportJobExecutor:
         if not logical_keys:
             return 0
 
-        uuids_list = sorted({key[0] for key in logical_keys})
+        t0 = time.perf_counter()
+
+        # Check cache hits first
+        cached_hits = 0
+        uncached_keys = set()
+        for key in logical_keys:
+            if key in self._flow_key_cache:
+                cached_hits += 1
+            else:
+                uncached_keys.add(key)
+
+        self._perf_stats["flow_key_cache_hits"] = (
+            int(self._perf_stats.get("flow_key_cache_hits", 0) or 0) + cached_hits
+        )
+
+        if not uncached_keys:
+            # All hits — record python-only time
+            elapsed = time.perf_counter() - t0
+            self._perf_stats["flow_resolve_python_seconds"] = (
+                float(self._perf_stats.get("flow_resolve_python_seconds", 0.0) or 0.0) + elapsed
+            )
+            return 0
+
+        uuids_list = sorted({key[0] for key in uncached_keys})
+        fetch_t = time.perf_counter()
         existing = (
             self.db.query(LciBiosphereFlowKey)
             .filter(LciBiosphereFlowKey.flow_uuid.in_(uuids_list))
             .all()
+        )
+        fetch_elapsed = time.perf_counter() - fetch_t
+        self._perf_stats["flow_resolve_sql_seconds"] = (
+            float(self._perf_stats.get("flow_resolve_sql_seconds", 0.0) or 0.0) + fetch_elapsed
         )
         new_items: list[LciBiosphereFlowKey] = []
         existing_by_key: dict[tuple[str, str, str, str, str], int] = {}
@@ -1428,7 +2110,7 @@ class LciImportJobExecutor:
             )
             existing_by_key[key] = int(row.flow_key_id)
 
-        for logical_key in sorted(logical_keys):
+        for logical_key in sorted(uncached_keys):
             if logical_key in existing_by_key:
                 continue
             flow_uuid, compartment, subcompartment, direction, canonical_unit = logical_key
@@ -1444,8 +2126,13 @@ class LciImportJobExecutor:
             new_items.append(item)
 
         if new_items:
+            exec_t = time.perf_counter()
             self.db.add_all(new_items)
             self.db.flush()
+            exec_elapsed = time.perf_counter() - exec_t
+            self._perf_stats["db_execute_seconds"] = (
+                float(self._perf_stats.get("db_execute_seconds", 0.0) or 0.0) + exec_elapsed
+            )
             for item in new_items:
                 key = (
                     item.flow_uuid,
@@ -1458,6 +2145,14 @@ class LciImportJobExecutor:
 
         # Update job-level cache with all resolved keys
         self._flow_key_cache.update(existing_by_key)
+
+        elapsed = time.perf_counter() - t0
+        self._perf_stats["flow_key_resolve_query_seconds"] = (
+            float(self._perf_stats.get("flow_key_resolve_query_seconds", 0.0) or 0.0) + elapsed
+        )
+        self._perf_stats["flow_key_created"] = (
+            int(self._perf_stats.get("flow_key_created", 0) or 0) + len(new_items)
+        )
         return len(new_items)
 
     def _get_flow_key_id(
@@ -1578,9 +2273,20 @@ class LciImportJobExecutor:
             )
             agg[flow_key_id] = agg.get(flow_key_id, 0.0) + amount
 
+        t_sort = time.perf_counter()
         flow_key_ids = sorted(agg)
+        sort_elapsed = time.perf_counter() - t_sort
         amounts = [agg[key] for key in flow_key_ids]
+        from .lci_vector_codec import pack_lci_vector
+        t_compress = time.perf_counter()
         packed = pack_lci_vector(flow_key_ids, amounts)
+        compress_elapsed = time.perf_counter() - t_compress
+        self._perf_stats["pack_sort_seconds"] = (
+            float(self._perf_stats.get("pack_sort_seconds", 0.0) or 0.0) + sort_elapsed
+        )
+        self._perf_stats["pack_compress_seconds"] = (
+            float(self._perf_stats.get("pack_compress_seconds", 0.0) or 0.0) + compress_elapsed
+        )
         return _PackedVector(
             nnz=packed.nnz,
             flow_key_ids_blob=packed.flow_key_ids_blob,

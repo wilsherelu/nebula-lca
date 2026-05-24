@@ -58,6 +58,7 @@ Last updated: 2026-05-24
 - 尚未完成的内容：放入 future-development-plan.md。
 - 已完成或过期的内容：放入 historical-archive-index.md。
 - 有冲突时，以 2026-05-24 之后的 handoff 和 git 当前代码为准。
+- ecoinvent LCI 导入事项不要放进通用 future-development-plan.md，应放入 docs/dev/ecoinvent-lci-import-future-plan.md。
 
 交付要求：
 - 先阅读相关文档，列出将要整理的文件清单。

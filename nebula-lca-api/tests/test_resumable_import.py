@@ -631,6 +631,207 @@ def test_parse_one_overwrite_bypasses_global_fast_skip(tmp_path, monkeypatch):
     assert result.write_plan.canonicalized is True
 
 
+def test_streaming_write_plan_matches_single_pass_fixture():
+    """Streaming aggregation should preserve the existing single-pass vector keys."""
+    import threading
+
+    from app.ecoinvent_ef31_loader import parse_spold_dataset_and_exchanges
+    from app.ef31_db_service import _generate_lci_process_uuid
+    from app.lci_import_executor import LciImportJobExecutor
+
+    fixture = Path("tests/fixtures/ef31_lci/electricity_medium_voltage_ch.spold")
+    executor = LciImportJobExecutor.__new__(LciImportJobExecutor)
+    executor.package_version = "ecoinvent_3.11"
+    executor._lock = threading.Lock()
+    executor._unit_conversion_cache = {"kilogram": (1.0, "kg"), "joule": (1.0, "J")}
+    executor._elem_flow_lookup = {}
+    executor._flow_metadata_cache = {}
+    executor._perf_stats = {
+        "stream_parse_wall_seconds": 0.0,
+        "exchange_object_count": 0,
+        "aggregated_result_count": 0,
+        "worker_aggregate_wall_seconds": 0.0,
+    }
+
+    streamed = LciImportJobExecutor._parse_streaming_write_plan(executor, fixture)
+    assert streamed is not None
+    _, _, _, streaming_plan = streamed
+
+    single = parse_spold_dataset_and_exchanges(fixture, include_exchanges=True)
+    assert single is not None
+    procs = _generate_lci_process_uuid(single.dataset)
+    legacy_plan = LciImportJobExecutor._build_write_plan(
+        executor,
+        spold_path=fixture,
+        ds=single.dataset,
+        exchanges=single.exchanges,
+        procs=procs,
+        dataset_uuid=f"{single.dataset.activity_id}:{single.dataset.reference_product_id}",
+    )
+
+    assert streaming_plan.flow_key_aggs == legacy_plan.flow_key_aggs
+    assert executor._perf_stats["streaming_parser_enabled"] is True
+
+
+def test_sqlite_core_upsert_path_is_active(tmp_path):
+    """SQLite core upsert should really run instead of silently falling back to ORM merge."""
+    import threading
+    from collections import defaultdict
+
+    from sqlalchemy.orm import sessionmaker
+
+    from app.lci_import_executor import LciImportJobExecutor
+    from app.models import GlobalDatasetImport, ReferenceProcess
+
+    db_path = tmp_path / "test.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    ReferenceProcess.__table__.create(engine)
+    GlobalDatasetImport.__table__.create(engine)
+
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    executor = LciImportJobExecutor.__new__(LciImportJobExecutor)
+    executor.db = db
+    executor.package_version = "ecoinvent_3.11"
+    executor._lock = threading.Lock()
+    executor._stats = defaultdict(int)
+    executor._global_import_cache = {}
+    executor._perf_stats = {"core_upsert_enabled": False}
+
+    assert LciImportJobExecutor._is_sqlite(executor) is True
+
+    LciImportJobExecutor._core_upsert_reference_processes(executor, [{
+        "process_uuid": "proc-001",
+        "process_name": "Process 1",
+        "process_name_en": "Process 1",
+        "process_type": "lci_dataset",
+        "reference_flow_uuid": None,
+        "process_json": {"v": 1},
+        "source_file": "one.spold",
+        "source_process_uuid": None,
+        "import_mode": "ecoinvent_ef31_lci",
+        "import_report_json": {"package_version": "ecoinvent_3.11"},
+    }])
+    LciImportJobExecutor._core_upsert_global_dataset_imports(executor, [{
+        "source_package_version": "ecoinvent_3.11",
+        "dataset_uuid": "dataset-001",
+        "dataset_filename": "one.spold",
+        "process_uuid": "proc-001",
+        "activity_id": "act-001",
+        "reference_product_id": "rp-001",
+        "status": "imported",
+        "vector_nnz": 3,
+        "last_job_id": "job-001",
+        "error_message": None,
+    }])
+    db.commit()
+
+    assert executor._perf_stats["core_upsert_enabled"] is True
+    assert db.query(ReferenceProcess).count() == 1
+    assert db.query(GlobalDatasetImport).count() == 1
+    assert db.query(GlobalDatasetImport).first().last_job_id == "job-001"
+
+    LciImportJobExecutor._core_upsert_reference_processes(executor, [{
+        "process_uuid": "proc-001",
+        "process_name": "Process 1 updated",
+        "process_name_en": "Process 1 updated",
+        "process_type": "lci_dataset",
+        "reference_flow_uuid": None,
+        "process_json": {"v": 2},
+        "source_file": "one.spold",
+        "source_process_uuid": None,
+        "import_mode": "ecoinvent_ef31_lci",
+        "import_report_json": {"package_version": "ecoinvent_3.11"},
+    }])
+    db.commit()
+
+    row = db.get(ReferenceProcess, "proc-001")
+    assert row.process_name == "Process 1 updated"
+    assert row.process_json == {"v": 2}
+    assert db.query(ReferenceProcess).count() == 1
+
+
+def test_debug_writer_replay_mode_caches_plans_without_db_writes():
+    """writer_replay mode should cache write plans and skip normal DB work."""
+    from collections import defaultdict
+
+    from app.ecoinvent_ef31_loader import LCIDataset
+    from app.lci_import_executor import LciImportJobExecutor, LciWritePlan, ParseResult
+
+    executor = LciImportJobExecutor.__new__(LciImportJobExecutor)
+    executor.debug_parser_blackhole = False
+    executor.debug_writer_replay = True
+    executor._replay_write_plans = []
+    executor._perf_stats = {"debug_writer_replay": False, "blackhole_drain_count": 0}
+    executor._stats = defaultdict(int)
+
+    write_plan = LciWritePlan(
+        spold_path="one.spold",
+        process_uuid="proc-001",
+        dataset_uuid="dataset-001",
+        process_json={"process_uuid": "proc-001", "process_name": "Process"},
+        flow_key_aggs={("flow-001", "air", "", "output", "kg"): 1.0},
+        has_exchanges=True,
+    )
+    result = ParseResult(
+        spold_path="one.spold",
+        dataset=LCIDataset(
+            filename="one.spold",
+            activity_id="act-001",
+            activity_name="Process",
+            location="GLO",
+            reference_product_name="Product",
+            reference_product_unit="kg",
+            reference_product_amount=1.0,
+            reference_product_id="rp-001",
+        ),
+        exchanges=[],
+        process_uuid="proc-001",
+        duration_ms=1,
+        dataset_uuid="dataset-001",
+        write_plan=write_plan,
+    )
+
+    LciImportJobExecutor._flush_result_batch_bulk(executor, [result])
+
+    assert executor._perf_stats["debug_writer_replay"] is True
+    assert executor._perf_stats["blackhole_drain_count"] == 1
+    assert executor._replay_write_plans == [write_plan]
+    assert executor._stats["datasets_processed"] == 0
+
+
+def test_driver_timing_unregisters_listener(tmp_path):
+    """Driver-level SQL timing should not leave listeners attached after cleanup."""
+    import threading
+
+    from sqlalchemy import text
+    from sqlalchemy.orm import sessionmaker
+
+    from app.lci_import_executor import LciImportJobExecutor
+    from app.models import ImportJob
+
+    db_path = tmp_path / "test.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    ImportJob.__table__.create(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+
+    executor = LciImportJobExecutor.__new__(LciImportJobExecutor)
+    executor.db = db
+    executor._lock = threading.Lock()
+    executor._perf_stats = {"db_fetch_seconds": 0.0, "db_execute_seconds": 0.0}
+    executor._driver_timing_listeners = None
+
+    LciImportJobExecutor._register_driver_timing(executor)
+    db.execute(text("SELECT 1")).all()
+    before_unregister = executor._perf_stats["db_fetch_seconds"]
+    assert before_unregister > 0
+
+    LciImportJobExecutor._unregister_driver_timing(executor)
+    db.execute(text("SELECT 1")).all()
+    assert executor._perf_stats["db_fetch_seconds"] == before_unregister
+
+
 def test_global_fast_skip_flush_marks_checkpoint_and_stats(tmp_path):
     """Fast skipped parse results should update stats and checkpoint without DB lookup."""
     import threading
