@@ -896,6 +896,8 @@ class TestEf31RuntimeCsvEndpoint:
             )
         assert preview_resp.status_code == 200, preview_resp.json()
         job_id = preview_resp.json()["job_id"]
+        active_manifest_path = Path("runtime") / "ef31" / "active_manifest.json"
+        active_before = active_manifest_path.read_text(encoding="utf-8") if active_manifest_path.exists() else None
 
         runtime_resp = client.post(f"/import/ef31/runtime-csv/{job_id}")
         assert runtime_resp.status_code == 200, runtime_resp.json()
@@ -903,7 +905,7 @@ class TestEf31RuntimeCsvEndpoint:
         assert data["job_id"] == job_id
         assert data["runtime_schema_version"] == "ef31-runtime-artifact-v1"
         assert data["runtime_id"] == job_id
-        assert data["active"] is True
+        assert data["active"] is False
         assert data["env_var"] == "NEBULA_LCA_EF31_DIR"
         assert data["flows_count"] >= 1
         assert data["indicators_count"] >= 1
@@ -914,7 +916,8 @@ class TestEf31RuntimeCsvEndpoint:
         assert (Path(data["output_dir"]) / "indicator_index.csv").exists()
         assert (Path(data["output_dir"]) / "lcia_factors.csv").exists()
         assert (Path(data["output_dir"]) / "manifest.json").exists()
-        assert (Path(data["output_dir"]).parent / "active_manifest.json").exists()
+        active_after = active_manifest_path.read_text(encoding="utf-8") if active_manifest_path.exists() else None
+        assert active_after == active_before
 
         report_resp = client.get(f"/import/ef31/reports/{job_id}")
         assert report_resp.status_code == 200, report_resp.json()

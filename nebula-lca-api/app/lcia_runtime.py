@@ -44,6 +44,7 @@ def generate_lcia_runtime_artifact(
     lcia_excel_path: str | Path,
     elementary_flows: list[dict],
     output_root: Optional[Path] = None,
+    activate: bool = False,
 ) -> dict:
     """Generate LCIA runtime artifacts from a raw LCIA Excel file.
 
@@ -51,7 +52,7 @@ def generate_lcia_runtime_artifact(
     1. Parse LCIA Excel → indicators + CFs
     2. Match CFs to elementary flows
     3. Write flow_index.csv, indicator_index.csv, lcia_factors.csv
-    4. Write active_manifest.json
+    4. Optionally write active_manifest.json when activate=True
 
     Returns:
         Manifest dict with flows_count, indicators_count, factors_count, etc.
@@ -193,7 +194,7 @@ def generate_lcia_runtime_artifact(
         "job_id": output_dir.name,
         "output_dir": str(output_dir),
         "artifact_dir": str(output_dir),
-        "active": True,
+        "active": False,
         "files": {
             "flow_index": "flow_index.csv",
             "indicator_index": "indicator_index.csv",
@@ -208,13 +209,13 @@ def generate_lcia_runtime_artifact(
         "generated_at": str(uuid.uuid1()),
     }
 
-    activate = should_update_active_manifest(output_dir.parent, manifest)
-    manifest["active"] = activate
+    should_activate = bool(activate) and should_update_active_manifest(output_dir.parent, manifest)
+    manifest["active"] = should_activate
     manifest_text = json.dumps(manifest, ensure_ascii=False, default=str)
     (output_dir / "manifest.json").write_text(manifest_text, encoding="utf-8")
     (output_dir / "runtime_summary.json").write_text(manifest_text, encoding="utf-8")
     (output_dir / "active_manifest.json").write_text(manifest_text, encoding="utf-8")
-    if activate:
+    if should_activate:
         (output_dir.parent / ACTIVE_MANIFEST_NAME).write_text(manifest_text, encoding="utf-8")
 
     logger.info(
