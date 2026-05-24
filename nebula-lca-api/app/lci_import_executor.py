@@ -350,7 +350,7 @@ class LciImportJobExecutor:
             )
             .count()
         )
-        return units_count >= 100 and elementary_count >= 9000 and intermediate_count >= 4000
+        return units_count >= 100 and elementary_count >= 9795 and intermediate_count >= 4000
 
     def _load_elementary_flow_lookup_from_db(self) -> None:
         from .models import FlowRecord

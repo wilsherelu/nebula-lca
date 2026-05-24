@@ -862,7 +862,7 @@ def test_masterdata_reuses_existing_db_catalog(tmp_path, monkeypatch):
     db.add(UnitGroup(name="mass", reference_unit="kg"))
     for idx in range(100):
         db.add(UnitDefinition(unit_group="mass", unit_name=f"unit-{idx}", factor_to_reference=1.0, is_reference=idx == 0))
-    for idx in range(9000):
+    for idx in range(9795):
         db.add(FlowRecord(
             flow_uuid=f"elementary-{idx}",
             flow_name=f"Elementary {idx}",
@@ -906,7 +906,7 @@ def test_masterdata_reuses_existing_db_catalog(tmp_path, monkeypatch):
     LciImportJobExecutor._load_master_data(executor)
 
     assert executor._perf_stats["masterdata_reused"] is True
-    assert len(executor._elementary_flows) == 9000
+    assert len(executor._elementary_flows) == 9795
     assert "elementary-0" in executor._elem_flow_lookup
 
 

@@ -374,6 +374,41 @@ class TestElementaryFlowImport:
         # Second import should skip (no replace mode)
         assert result2["skipped"] == 3 or result2["inserted"] == 0
 
+    def test_ecoinvent_elementary_flow_overwrites_conflicting_product_flow(self, db_session, sample_units_xml, sample_elementary_xml):
+        db_session.add(
+            FlowRecord(
+                flow_uuid="flow-co2-air-001",
+                flow_name="Legacy product",
+                flow_name_en="Legacy product",
+                flow_type="Product flow",
+                default_unit="kg",
+                unit_group="Units of mass",
+                compartment="legacy",
+                source="tiangong",
+                is_custom=True,
+                tidas_compatible=True,
+                allocation_properties={"legacy": True},
+            )
+        )
+        db_session.commit()
+
+        result = import_ecoinvent_elementary_flows(
+            db_session,
+            data_dir=str(sample_units_xml.parent),
+            source="ecoinvent_3.11",
+        )
+
+        flow = db_session.get(FlowRecord, "flow-co2-air-001")
+        assert result["conflicts_overwritten"] == 1
+        assert flow.flow_name == "CO2"
+        assert flow.flow_name_en == "CO2"
+        assert flow.flow_type == "Elementary flow"
+        assert flow.compartment == "air"
+        assert flow.source == "ecoinvent_3.11"
+        assert flow.is_custom is False
+        assert flow.tidas_compatible is False
+        assert flow.allocation_properties is None
+
 
 # ======================================================================
 # Tests: Intermediate flow import
