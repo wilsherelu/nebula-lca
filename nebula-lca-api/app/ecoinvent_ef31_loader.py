@@ -23,6 +23,7 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field, asdict, is_dataclass
 from pathlib import Path
@@ -45,6 +46,16 @@ NS = {'es': 'http://www.EcoInvent.org/EcoSpold02'}
 
 # EF 3.1 method filter
 EF31_METHODS = {'EF v3.1', 'EF v3.1 no LT'}
+
+
+def _spold_process_uuid(ds):
+    """Generate process UUID from a dataset — mirrors ef31_db_service._generate_lci_process_uuid."""
+    activity_id = str(getattr(ds, "activity_id", "") or "")
+    reference_product_id = str(getattr(ds, "reference_product_id", "") or "")
+    parts = [part for part in (activity_id, reference_product_id) if part]
+    if parts:
+        return ":".join(parts)
+    return Path(getattr(ds, "filename", "") or "").stem
 
 
 @dataclass
@@ -780,6 +791,294 @@ class _SinglePassResult:
     """Internal payload for single-pass SPOLD parsing."""
     dataset: LCIDataset
     exchanges: list[LCIElementaryExchange]
+
+
+@dataclass
+class _StreamingAggResult:
+    """Streaming-aggregate result: metadata + flow_key_aggs dict.
+
+    Used by the streaming parser to skip creating intermediate exchange
+    objects entirely — directly accumulates aggregated amounts per
+    logical flow key in one pass.
+    """
+    dataset: LCIDataset
+    # (flow_uuid, compartment, subcompartment, direction, canonical_unit) -> amount
+    flow_key_aggs: dict[tuple[str, str, str, str, str], float] = field(default_factory=dict)
+    # Process JSON ready for ReferenceProcess
+    process_json: dict = field(default_factory=dict)
+    missing_flow_uuids: list[str] = field(default_factory=list)
+    warning: str | None = None
+    canonicalized: bool = True
+    pack_warnings: list[str] = field(default_factory=list)
+
+
+def parse_spold_streaming_agg(
+    spold_path: Path,
+    *,
+    unit_conversion_cache: dict[str, tuple[float, str]] | None = None,
+    elem_flow_lookup: dict[str, object] | None = None,
+    flow_metadata_cache: dict[str, tuple[str, str]] | None = None,
+) -> Optional[_StreamingAggResult]:
+    """Streaming parse of a .spold file: metadata + aggregated flow keys.
+
+    Walks the parsed XML tree and directly accumulates ``flow_key_aggs``
+    without creating
+    ``LCIElementaryExchange`` dataclass objects. This is the key
+    optimization for reducing memory and CPU overhead.
+
+    Returns ``None`` when metadata parsing fails.
+    """
+    if not spold_path.exists():
+        return None
+
+    t0 = time.perf_counter()
+    unit_cache = unit_conversion_cache or {}
+    elem_lookup = elem_flow_lookup or {}
+    meta_cache = flow_metadata_cache or {}
+
+    try:
+        tree = ET.parse(str(spold_path))
+        root = tree.getroot()
+
+        # Handle namespace
+        ns_match = re.match(r'\{(.+)\}', root.tag)
+        ns = {'es': ns_match.group(1)} if ns_match else {}
+
+        # ── Extract metadata (same as single-pass) ────────────────────
+        activity_elem = root.find('.//es:activity', ns)
+        activity_id = ""
+        activity_name = ""
+        location = ""
+
+        if activity_elem is not None:
+            activity_id = activity_elem.get('id', '')
+            activity_name = child_text(activity_elem, 'activityName')
+            if not activity_name:
+                activity_name = activity_elem.get('activityName', '')
+
+        geo_elem = root.find('.//es:activityDescription/es:geography', ns)
+        location = child_text(geo_elem, 'shortname')
+        if not location:
+            location = activity_elem.get('location', '') if activity_elem is not None else ""
+
+        # Extract reference product
+        ref_product_name = ""
+        ref_product_unit = ""
+        ref_product_amount = 0.0
+        ref_product_id = ""
+        inter_exchanges = root.findall('.//es:intermediateExchange', ns)
+
+        def _fill_rp(inter_exc: ET.Element) -> None:
+            nonlocal ref_product_name, ref_product_unit, ref_product_amount, ref_product_id
+            ref_product_name = child_text(inter_exc, 'name') or inter_exc.get('name', '')
+            ref_product_unit = child_text(inter_exc, 'unitName') or inter_exc.get('unit', '')
+            amount_str = inter_exc.get('amount', '0')
+            try:
+                ref_product_amount = float(amount_str)
+            except ValueError:
+                ref_product_amount = 0.0
+            rp_exchange_id = inter_exc.get('intermediateExchangeId', '') or inter_exc.get('id', '')
+            if rp_exchange_id:
+                ref_product_id = rp_exchange_id
+
+        for inter_exc in inter_exchanges:
+            if inter_exc.get('variableName', '') == "RP":
+                _fill_rp(inter_exc)
+                break
+        if not ref_product_name:
+            for inter_exc in inter_exchanges:
+                if child_text(inter_exc, 'outputGroup') == "0":
+                    _fill_rp(inter_exc)
+                    break
+        if not ref_product_name and inter_exchanges:
+            _fill_rp(inter_exchanges[0])
+
+        if not activity_id:
+            return None
+
+        ds = LCIDataset(
+            filename=spold_path.name,
+            activity_id=activity_id,
+            activity_name=activity_name,
+            location=location,
+            reference_product_name=ref_product_name,
+            reference_product_unit=ref_product_unit,
+            reference_product_amount=ref_product_amount,
+            reference_product_id=ref_product_id,
+        )
+
+        flow_key_aggs: dict[tuple[str, str, str, str, str], float] = {}
+        missing_flow_uuids: set[str] = set()
+        pack_warnings: list[str] = []
+        canonicalized = True
+        exchange_count = 0
+
+        # ── Streaming aggregation of elementary exchanges ─────────────
+        for elem_exc in root.iter():
+            tag = elem_exc.tag.split('}')[-1]
+            if tag not in ('elementaryExchange', 'exchange'):
+                continue
+            if tag == 'exchange' and elem_exc.get('type', '') != 'elementary':
+                continue
+
+            exc_id = (
+                elem_exc.get('elementaryExchangeId', '') or
+                elem_exc.get('id', '')
+            )
+            if not exc_id:
+                continue
+
+            amount_str = elem_exc.get('amount', '0')
+            try:
+                amount = float(amount_str)
+            except ValueError:
+                amount = 0.0
+
+            if amount == 0:
+                continue
+
+            # Get direction
+            output_group = 0
+            input_group = 0
+            direction_hint = ""
+            raw_input_group = elem_exc.get('inputGroup', '')
+            if raw_input_group:
+                try:
+                    input_group = int(raw_input_group)
+                except ValueError:
+                    input_group = 1 if raw_input_group.strip() else 0
+            raw_output_group = elem_exc.get('outputGroup', '')
+            if raw_output_group:
+                try:
+                    output_group = int(raw_output_group)
+                except ValueError:
+                    output_group = 0
+                    if raw_output_group.strip().lower() in {"output", "input"}:
+                        direction_hint = raw_output_group.strip().lower()
+            for child in elem_exc:
+                child_tag = child.tag.split('}')[-1]
+                child_text_val = (child.text or '').strip()
+                if child_tag == 'outputGroup':
+                    try:
+                        output_group = int(child_text_val)
+                    except ValueError:
+                        output_group = 0
+                        if child_text_val.lower() in {"output", "input"}:
+                            direction_hint = child_text_val.lower()
+                elif child_tag == 'inputGroup':
+                    try:
+                        input_group = int(child_text_val)
+                    except ValueError:
+                        input_group = 1 if child_text_val else 0
+
+            direction = "input" if input_group > 0 else (
+                "output" if output_group > 0 else (
+                    "input" if output_group < 0 else direction_hint
+                )
+            )
+
+            # Get unit
+            unit_elem = None
+            for child in elem_exc:
+                if child.tag.split('}')[-1] == 'unitName':
+                    unit_elem = (child.text or '').strip()
+                    break
+            unit_raw = unit_elem if unit_elem else elem_exc.get('unit', '')
+
+            # Unit canonicalization
+            canon_unit = unit_raw
+            if unit_raw.strip():
+                conv = unit_cache.get(unit_raw.strip())
+                if conv is not None:
+                    factor, ref = conv
+                    amount = amount * factor
+                    canon_unit = ref
+                else:
+                    canon_unit = unit_raw.strip()
+                    canonicalized = False
+                    pack_warnings.append(
+                        f"Missing unit conversion for flow={exc_id} unit={unit_raw}"
+                    )
+
+            # Get compartment
+            compartment = ""
+            subcompartment = ""
+            ef = elem_lookup.get(exc_id)
+            if ef is not None and not isinstance(ef, str):
+                compartment = getattr(ef, 'compartment', '') or ''
+                subcompartment = getattr(ef, 'subcompartment', '') or ''
+            elif exc_id in meta_cache:
+                compartment = meta_cache.get(exc_id, ("", ""))[0]
+            else:
+                missing_flow_uuids.add(exc_id)
+
+            key = (exc_id, compartment, subcompartment, direction, canon_unit)
+            flow_key_aggs[key] = flow_key_aggs.get(key, 0.0) + amount
+            exchange_count += 1
+
+        # Also handle fallback format
+        if not flow_key_aggs:
+            for exc in root.iter():
+                if exc.tag.split('}')[-1] != 'exchange':
+                    continue
+                if exc.get('type', '') != 'elementary':
+                    continue
+                exc_id = exc.get('id', '')
+                if not exc_id:
+                    continue
+                exc_name = exc.get('name', '')
+                unit = exc.get('unit', '')
+                direction = exc.get('direction', '')
+                amount_str = exc.get('amount', '0')
+                try:
+                    amount = float(amount_str)
+                except ValueError:
+                    amount = 0.0
+                if amount == 0:
+                    continue
+                flow_key_aggs[(exc_id, '', '', direction, unit)] = flow_key_aggs.get((exc_id, '', '', direction, unit), 0.0) + amount
+                exchange_count += 1
+
+        warning = None
+        if missing_flow_uuids:
+            shown = ", ".join(sorted(missing_flow_uuids)[:5])
+            if len(missing_flow_uuids) > 5:
+                shown += f", ... (+{len(missing_flow_uuids) - 5} more)"
+            warning = f"missing elementary flow metadata refs: {shown}"
+
+        process_json = {
+            "process_uuid": _spold_process_uuid(ds),
+            "activity_id": activity_id,
+            "process_name": activity_name,
+            "location": location,
+            "reference_product": ref_product_name,
+            "reference_product_id": ref_product_id,
+            "reference_product_unit": ref_product_unit,
+            "reference_product_amount": ref_product_amount,
+            "exchange_count": exchange_count,
+            "source": "ecoinvent_3.11",
+        }
+
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.debug(
+            "Streaming parse %s: %d exchanges, %d keys, %.1fms",
+            spold_path.name, exchange_count, len(flow_key_aggs), elapsed_ms,
+        )
+
+        return _StreamingAggResult(
+            dataset=ds,
+            flow_key_aggs=flow_key_aggs,
+            process_json=process_json,
+            missing_flow_uuids=sorted(missing_flow_uuids),
+            warning=warning,
+            canonicalized=canonicalized,
+            pack_warnings=pack_warnings,
+        )
+
+    except Exception as e:
+        logger.warning("Streaming parse failed for %s: %s (falling back)", spold_path, e)
+        # Fall back to single-pass
+        return None  # Let caller handle fallback
 
 
 def parse_spold_dataset_and_exchanges(
