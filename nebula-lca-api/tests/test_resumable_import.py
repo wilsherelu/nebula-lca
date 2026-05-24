@@ -688,6 +688,100 @@ def test_global_fast_skip_flush_marks_checkpoint_and_stats(tmp_path):
     assert executor._stats["vectors_reused"] == 1
 
 
+def test_missing_elementary_flow_metadata_warns_without_failing_dataset(tmp_path):
+    """Unresolved flow metadata should not discard an otherwise valid LCI vector."""
+    import threading
+    from collections import defaultdict
+
+    from sqlalchemy.orm import sessionmaker
+
+    from app.ecoinvent_ef31_loader import LCIDataset, LCIElementaryExchange
+    from app.lci_import_executor import LciImportJobExecutor, ParseResult
+    from app.models import DatasetCheckpoint, GlobalDatasetImport, ImportJob, ReferenceProcess
+
+    db_path = tmp_path / "test.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    ImportJob.__table__.create(engine)
+    DatasetCheckpoint.__table__.create(engine)
+    ReferenceProcess.__table__.create(engine)
+    GlobalDatasetImport.__table__.create(engine)
+
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    job_id = "missing-flow-warning-job"
+    db.add(ImportJob(job_id=job_id, file_path="/fake/path.7z", file_type="lci"))
+    db.add(DatasetCheckpoint(job_id=job_id, dataset_key="gangue.spold", status="running"))
+    db.commit()
+
+    executor = LciImportJobExecutor.__new__(LciImportJobExecutor)
+    executor.db = db
+    executor.job_id = job_id
+    executor.package_version = "ecoinvent_3.11"
+    executor.overwrite_existing = True
+    executor._lock = threading.Lock()
+    executor._stats = defaultdict(int)
+    executor._failed_datasets = []
+    executor._vector_warnings = []
+    executor._global_import_cache = {}
+    executor._global_skipped_dataset_keys = set()
+    executor._elem_flow_lookup = {"known-flow": "known-flow"}
+    executor._write_process_vector = lambda *args, **kwargs: {
+        "nnz": 2,
+        "vectors_written": 1,
+        "warnings": [],
+    }
+
+    result = ParseResult(
+        spold_path="gangue.spold",
+        dataset=LCIDataset(
+            filename="gangue.spold",
+            activity_id="act-001",
+            activity_name="Gangue process",
+            location="GLO",
+            reference_product_name="Product",
+            reference_product_unit="kg",
+            reference_product_amount=1.0,
+            reference_product_id="rp-001",
+        ),
+        exchanges=[
+            LCIElementaryExchange(
+                dataset_filename="gangue.spold",
+                exchange_id="known-flow",
+                exchange_name="Known",
+                unit="kg",
+                direction="output",
+                amount=1.0,
+            ),
+            LCIElementaryExchange(
+                dataset_filename="gangue.spold",
+                exchange_id="missing-flow",
+                exchange_name="Missing",
+                unit="kg",
+                direction="input",
+                amount=2.0,
+            ),
+        ],
+        process_uuid="act-001:rp-001",
+        duration_ms=1,
+    )
+
+    executor._flush_single(result)
+    executor._mark_checkpoints_complete([result])
+    db.commit()
+
+    checkpoint = db.query(DatasetCheckpoint).filter_by(job_id=job_id, dataset_key="gangue.spold").one()
+    global_row = db.query(GlobalDatasetImport).filter_by(dataset_uuid="act-001:rp-001").one()
+
+    assert checkpoint.status == "imported"
+    assert checkpoint.vector_status == "written"
+    assert checkpoint.vector_nnz == 2
+    assert checkpoint.error_message == "missing elementary flow metadata refs: missing-flow"
+    assert global_row.status == "imported"
+    assert global_row.error_message == "missing elementary flow metadata refs: missing-flow"
+    assert executor._stats["processes_failed"] == 0
+    assert executor._stats["vectors_written"] == 1
+
+
 def test_cache_built_once_per_job(tmp_path):
     """Unit conversion / flow key caches should be built once, not per-process."""
     import threading
