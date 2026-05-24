@@ -1639,6 +1639,8 @@ class LciImportJobExecutor:
                     self._stats["datasets_processed"] += 1
                     self._stats["processes_failed"] += 1
                     self._failed_datasets.append(pr.spold_path)
+            elif pr.global_skip:
+                self._record_global_skip_result(pr)
 
         normal_results = [
             pr for pr in results
