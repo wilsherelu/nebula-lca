@@ -567,6 +567,78 @@ def test_cache_built_once_per_job(tmp_path):
     assert executor._flow_metadata_cache == {}
 
 
+def test_masterdata_reuses_existing_db_catalog(tmp_path, monkeypatch):
+    """Existing ecoinvent MasterData catalog should skip XML re-import on later jobs."""
+    import threading
+    from collections import defaultdict
+
+    from sqlalchemy.orm import sessionmaker
+
+    from app.lci_import_executor import LciImportJobExecutor
+    from app.models import FlowRecord, ImportJob, UnitDefinition, UnitGroup
+    from app import ingest_ecoinvent
+
+    db_path = tmp_path / "test.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    ImportJob.__table__.create(engine)
+    UnitGroup.__table__.create(engine)
+    UnitDefinition.__table__.create(engine)
+    FlowRecord.__table__.create(engine)
+
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    db.add(ImportJob(job_id="masterdata-reuse", file_path="/fake/path.7z", file_type="lci"))
+    db.add(UnitGroup(name="mass", reference_unit="kg"))
+    for idx in range(100):
+        db.add(UnitDefinition(unit_group="mass", unit_name=f"unit-{idx}", factor_to_reference=1.0, is_reference=idx == 0))
+    for idx in range(9000):
+        db.add(FlowRecord(
+            flow_uuid=f"elementary-{idx}",
+            flow_name=f"Elementary {idx}",
+            flow_type="Elementary flow",
+            default_unit="kg",
+            unit_group="mass",
+            source="ecoinvent_3.11",
+        ))
+    for idx in range(4000):
+        db.add(FlowRecord(
+            flow_uuid=f"product-{idx}",
+            flow_name=f"Product {idx}",
+            flow_type="Product flow",
+            default_unit="kg",
+            unit_group="mass",
+            source="ecoinvent_3.11",
+        ))
+    db.commit()
+
+    executor = LciImportJobExecutor.__new__(LciImportJobExecutor)
+    executor.db = db
+    executor.job_id = "masterdata-reuse"
+    executor.master_data_dir = tmp_path
+    executor._lock = threading.Lock()
+    executor._stats = defaultdict(int)
+    executor._perf_stats = {}
+    executor._elementary_flows = []
+    executor._elem_flow_lookup = {}
+    executor._unit_conversion_cache = {}
+    executor._flow_key_cache = {}
+    executor._flow_metadata_cache = {}
+    executor._update_job_phase = lambda phase: None
+
+    def fail_import(*args, **kwargs):
+        raise AssertionError("MasterData XML import should be skipped")
+
+    monkeypatch.setattr(ingest_ecoinvent, "import_ecoinvent_units", fail_import)
+    monkeypatch.setattr(ingest_ecoinvent, "import_ecoinvent_elementary_flows", fail_import)
+    monkeypatch.setattr(ingest_ecoinvent, "import_ecoinvent_intermediate_flows", fail_import)
+
+    LciImportJobExecutor._load_master_data(executor)
+
+    assert executor._perf_stats["masterdata_reused"] is True
+    assert len(executor._elementary_flows) == 9000
+    assert "elementary-0" in executor._elem_flow_lookup
+
+
 def test_control_signal_file_written(tmp_path):
     """Control signal API should write file even when DB is locked."""
     import json
@@ -665,6 +737,8 @@ def test_progress_stats_json_updates(tmp_path):
     assert job.stats_json["commit_count"] == 0
     assert job.stats_json["write_batch_size"] == LciImportJobExecutor.DEFAULT_WRITE_BATCH_SIZE
     assert job.stats_json["avg_parse_ms"] == 0.0
+    assert job.stats_json["masterdata_reused"] is False
+    assert job.stats_json["masterdata_wall_seconds"] == 0.0
 
 
 def test_recover_stale_jobs_resets_running_checkpoints(tmp_path, monkeypatch):
