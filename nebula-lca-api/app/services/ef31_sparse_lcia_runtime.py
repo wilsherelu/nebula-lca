@@ -44,6 +44,7 @@ def try_run_direct_sparse_lcia(
     runtime = load_active_ef31_sparse_runtime(runtime_root=runtime_root)
     if runtime is None:
         return None
+    runtime = _filter_runtime_by_methods(runtime, lcia_methods)
 
     expanded = expand_graph_lci_inventory(db, graph)
     if expanded.missing_vectors:
@@ -210,13 +211,51 @@ def _characterize_by_process(
 
 def _is_direct_sparse_candidate(graph: HybridGraph, lcia_methods: list[str] | None) -> bool:
     methods = lcia_methods or ["EF v3.1"]
-    if any(str(method).strip() != "EF v3.1" for method in methods):
+    if not all(str(method).strip() for method in methods):
         return False
     if not graph.nodes:
         return False
     if graph.exchanges:
         return False
     return all(node.node_kind == "lci_dataset" for node in graph.nodes)
+
+
+def _filter_runtime_by_methods(runtime: Ef31SparseRuntime, lcia_methods: list[str] | None) -> Ef31SparseRuntime:
+    selected = {str(method).strip() for method in (lcia_methods or ["EF v3.1"]) if str(method).strip()}
+    selected_rows = [
+        (old_pos, row)
+        for old_pos, row in enumerate(runtime.indicator_index)
+        if str(row.get("method_en") or row.get("method_zh") or "").strip() in selected
+    ]
+    indicator_rows = [row for _, row in selected_rows]
+    if not indicator_rows:
+        return Ef31SparseRuntime(
+            runtime_dir=runtime.runtime_dir,
+            indicator_index=[],
+            cf_by_flow_uuid={},
+            flow_name_by_uuid=runtime.flow_name_by_uuid,
+        )
+    old_to_new = {old_pos: new_pos for new_pos, (old_pos, _) in enumerate(selected_rows)}
+    remapped_rows = []
+    for pos, row in enumerate(indicator_rows):
+        item = dict(row)
+        item["indicator_index"] = pos
+        remapped_rows.append(item)
+    cf_by_flow_uuid: dict[str, list[tuple[int, float]]] = {}
+    for flow_uuid, factors in runtime.cf_by_flow_uuid.items():
+        remapped = [
+            (old_to_new[indicator_pos], coefficient)
+            for indicator_pos, coefficient in factors
+            if indicator_pos in old_to_new
+        ]
+        if remapped:
+            cf_by_flow_uuid[flow_uuid] = remapped
+    return Ef31SparseRuntime(
+        runtime_dir=runtime.runtime_dir,
+        indicator_index=remapped_rows,
+        cf_by_flow_uuid=cf_by_flow_uuid,
+        flow_name_by_uuid=runtime.flow_name_by_uuid,
+    )
 
 
 def _resolve_runtime_dir(root: Path) -> Path | None:

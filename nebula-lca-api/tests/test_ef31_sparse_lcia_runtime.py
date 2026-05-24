@@ -177,6 +177,35 @@ def test_direct_sparse_lcia_reports_missing_cf_flows(tmp_path: Path) -> None:
         engine.dispose()
 
 
+def test_direct_sparse_lcia_filters_selected_method_family(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime-method-filter"
+    _write_runtime(runtime_root)
+    with (runtime_root / "indicator_index.csv").open("a", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.writer(handle, delimiter=";")
+        writer.writerow([1, "EF v3.1 no LT", "EF v3.1 no LT", "Climate change no LT", "Climate change no LT", "Climate change no LT"])
+    with (runtime_root / "lcia_factors.csv").open("a", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle, delimiter=";")
+        writer.writerow([1, 0, 10.0])
+
+    db, engine = _db_session()
+    try:
+        _seed_lci_vector(db)
+        result = try_run_direct_sparse_lcia(
+            db=db,
+            graph=_graph(amount=1.0),
+            lcia_methods=["EF v3.1"],
+            runtime_root=runtime_root,
+        )
+
+        assert result is not None
+        assert len(result.solver_output["indicator_index"]) == 1
+        assert result.solver_output["indicator_index"][0]["method_en"] == "EF v3.1"
+        assert result.solver_output["values"] == [[3.5]]
+    finally:
+        db.close()
+        engine.dispose()
+
+
 def test_lcia_upload_runtime_becomes_active_ef31_runtime(tmp_path: Path) -> None:
     from app.lcia_runtime import generate_lcia_runtime_artifact
 
@@ -187,10 +216,12 @@ def test_lcia_upload_runtime_becomes_active_ef31_runtime(tmp_path: Path) -> None
     cf_sheet = workbook.create_sheet("CFs")
     cf_sheet.append(["Method", "Category", "Indicator", "Name", "Compartment", "Subcompartment", "CF"])
     cf_sheet.append(["EF v3.1", "Climate change", "GWP 100a", "Carbon dioxide", "air", "", 1.0])
+    cf_sheet.append(["ReCiPe 2016 midpoint", "Climate change", "GWP 100a", "Carbon dioxide", "air", "", 1.25])
 
     ind_sheet = workbook.create_sheet("Indicators")
     ind_sheet.append(["Method", "Category", "Indicator", "Indicator Unit"])
     ind_sheet.append(["EF v3.1", "Climate change", "GWP 100a", "kg CO2 eq"])
+    ind_sheet.append(["ReCiPe 2016 midpoint", "Climate change", "GWP 100a", "kg CO2 eq"])
 
     xlsx_path = tmp_path / "LCIA Implementation 3.11.xlsx"
     workbook.save(xlsx_path)
@@ -211,12 +242,13 @@ def test_lcia_upload_runtime_becomes_active_ef31_runtime(tmp_path: Path) -> None
         activate=True,
     )
 
-    assert manifest["factors_count"] == 1
+    assert manifest["factors_count"] == 2
     assert (runtime_root / "active_manifest.json").exists()
 
     runtime = load_active_ef31_sparse_runtime(runtime_root=runtime_root)
     assert runtime is not None
-    assert runtime.cf_by_flow_uuid == {"flow-co2": [(0, 1.0)]}
+    assert {row["method_en"] for row in runtime.indicator_index} == {"EF v3.1", "ReCiPe 2016 midpoint"}
+    assert runtime.cf_by_flow_uuid == {"flow-co2": [(0, 1.0), (1, 1.25)]}
 
 
 def test_lcia_runtime_fallback_uses_only_ecoinvent_lci_flow_space(tmp_path: Path, monkeypatch) -> None:

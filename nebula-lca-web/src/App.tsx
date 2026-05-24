@@ -2049,6 +2049,7 @@ export default function App() {
   const [repairProcessInfoNodeId, setRepairProcessInfoNodeId] = useState<string | undefined>(undefined);
   const [productDetailViewKey, setProductDetailViewKey] = useState("");
   const [lciaMethodOptions, setLciaMethodOptions] = useState<string[]>(["EF v3.1"]);
+  const [lciaMethodIndicatorCounts, setLciaMethodIndicatorCounts] = useState<Record<string, number>>({});
   const lciaMethodRestrictsToEf31 = currentSourcePolicy === "tidas_compliant"
     || (currentSourcePolicy !== "ecoinvent_strict" && hasNonEcoElementaryFlows);
   const availableLciaMethodOptions = useMemo(() => {
@@ -3074,13 +3075,26 @@ export default function App() {
         if (!response.ok) {
           return;
         }
-        const payload = (await response.json()) as { methods?: unknown[]; default_method?: unknown };
+        const payload = (await response.json()) as {
+          methods?: unknown[];
+          default_method?: unknown;
+          method_indicator_counts?: Record<string, unknown>;
+        };
         const methods = (payload.methods ?? [])
           .map((item) => String(item ?? "").trim())
           .filter(Boolean);
         if (methods.length > 0) {
           setLciaMethodOptions(methods);
         }
+        const counts: Record<string, number> = {};
+        Object.entries(payload.method_indicator_counts ?? {}).forEach(([method, count]) => {
+          const key = String(method).trim();
+          const value = Number(count ?? 0);
+          if (key && Number.isFinite(value)) {
+            counts[key] = value;
+          }
+        });
+        setLciaMethodIndicatorCounts(counts);
         const defaultMethod = String(payload.default_method ?? "EF v3.1").trim();
         if (defaultMethod) {
           setLciaMethodSelection(defaultMethod);
@@ -3629,7 +3643,7 @@ export default function App() {
     setStatusText("正在运行求解...");
     setLastRun(null);
     try {
-      const lciaMethods = methodSelection === "all" ? [] : [methodSelection];
+      const lciaMethods = [methodSelection || "EF v3.1"];
       const body = JSON.stringify({
         graph,
         model_version_id: projectId && version ? `${projectId}:${version}` : undefined,
@@ -5872,9 +5886,10 @@ export default function App() {
                   disabled={busy}
                 >
                   {availableLciaMethodOptions.map((method) => (
-                    <option key={method} value={method}>{method}</option>
+                    <option key={method} value={method}>
+                      {method}{lciaMethodIndicatorCounts[method] ? ` (${lciaMethodIndicatorCounts[method]} ${uiLanguage === "zh" ? "指标" : "indicators"})` : ""}
+                    </option>
                   ))}
-                  {!lciaMethodRestrictsToEf31 && <option value="all">{uiLanguage === "zh" ? "全部方法" : "All methods"}</option>}
                 </select>
               </label>
               <div className="target-product-preview span-2">
@@ -5891,8 +5906,8 @@ export default function App() {
                         ? "模型包含 TIDAS/EF/天工基本流，只能使用 EF v3.1"
                         : "Model contains non-ecoinvent elementary flows: only EF v3.1 available"
                     : uiLanguage === "zh"
-                      ? "当前可使用全部 LCIA 方法；默认 EF v3.1"
-                      : "All LCIA methods available; default EF v3.1"}
+                      ? "当前使用 ecoinvent 基本流，可选择 ecoinvent LCIA 方法集"
+                      : "Ecoinvent elementary flows can use ecoinvent LCIA method sets"}
                 </strong>
                 <span>
                   {hasNonEcoElementaryFlows
@@ -5904,8 +5919,8 @@ export default function App() {
                         ? "非 ecoinvent 基本流需要 EF v3.1 指标集。选择其他方法将导致结果偏低或不可比。"
                         : "Non-ecoinvent elementary flows require EF v3.1 indicators. Using other methods will produce incomplete results."
                     : uiLanguage === "zh"
-                      ? "当前模型基本流来源兼容全部 LCIA 方法。"
-                      : "Elementary flow sources in this model are compatible with all LCIA methods."}
+                      ? "默认 EF v3.1；每次只计算当前选中的方法集。"
+                      : "Default is EF v3.1; each run uses only the selected method set."}
                 </span>
               </div>
             </div>

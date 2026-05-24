@@ -20,7 +20,6 @@ from typing import Optional
 from app.config import PROJECT_ROOT
 from app.ecoinvent_ef31_loader import (
     parse_lcia_excel,
-    filter_cf_ef31,
     match_cf_to_flows as _match_cf_to_flows,
 )
 from app.services.ef31_runtime_csv import (
@@ -61,9 +60,9 @@ def generate_lcia_runtime_artifact(
     if not lcia_path.exists():
         raise FileNotFoundError(f"LCIA Excel not found: {lcia_path}")
 
-    # Parse LCIA Excel
+    # Parse LCIA Excel. Keep all ecoinvent LCIA method families in the runtime;
+    # EF-only compatibility is enforced at request time for TIDAS/ILCD flow spaces.
     indicators, all_cfs = parse_lcia_excel(lcia_path)
-    ef31_cfs = filter_cf_ef31(all_cfs)
 
     # Build flow lookup
     flow_lookup = {
@@ -75,7 +74,7 @@ def generate_lcia_runtime_artifact(
     # Match CFs to flows
     # Convert CFs to format expected by match_cf_to_flows
     cf_objects = []
-    for cf in ef31_cfs:
+    for cf in all_cfs:
         class _Cf:
             pass
         obj = _Cf()

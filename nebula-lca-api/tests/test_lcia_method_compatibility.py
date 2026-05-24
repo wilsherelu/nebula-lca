@@ -153,7 +153,42 @@ def test_lcia_methods_collapse_legacy_indicator_names_to_ef31_only(tmp_path, mon
 
     assert payload["default_method"] == "EF v3.1"
     assert payload["methods"] == ["EF v3.1"]
+    assert payload["method_indicator_counts"] == {"EF v3.1": 2}
+    assert payload["total_indicators"] == 2
     assert payload["source_label"] == "legacy_ef3.1_indicator_index"
+
+
+def test_lcia_methods_reports_runtime_method_indicator_counts(tmp_path, monkeypatch):
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    runtime_dir = runtime_root / "official"
+    runtime_dir.mkdir()
+    (runtime_dir / "indicator_index.csv").write_text(
+        "\n".join(
+            [
+                "indicator_index;method_en;method_zh;indicator_en;indicator_zh;ecoinvent_category",
+                "0;EF v3.1;EF v3.1;acidification;;acidification",
+                "1;EF v3.1;EF v3.1;climate change;;climate change",
+                "2;EF v3.1 no LT;EF v3.1 no LT;acidification no LT;;acidification no LT",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (runtime_dir / "manifest.json").write_text(
+        '{"flows_count": 1000, "indicators_count": 10, "factors_count": 1000}',
+        encoding="utf-8",
+    )
+    (runtime_root / "active_manifest.json").write_text(
+        f'{{"artifact_dir": "{runtime_dir.as_posix()}"}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(reference_data, "DEFAULT_EF31_RUNTIME_ROOT", runtime_root)
+
+    payload = reference_data.list_lcia_methods()
+
+    assert payload["methods"] == ["EF v3.1", "EF v3.1 no LT"]
+    assert payload["method_indicator_counts"] == {"EF v3.1": 2, "EF v3.1 no LT": 1}
+    assert payload["total_indicators"] == 3
 
 
 def test_flows_api_exposes_source_and_custom_flags(client):
