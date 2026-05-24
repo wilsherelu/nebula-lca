@@ -770,6 +770,218 @@ def parse_spold_exchanges(spold_path: Path) -> List[LCIElementaryExchange]:
     return exchanges
 
 
+# ── Single-pass parser ─────────────────────────────────────────────────────
+# Combines metadata + elementary exchange parsing into one ET.parse() call
+# to reduce I/O and DOM traversal cost on .spold files.
+
+
+@dataclass
+class _SinglePassResult:
+    """Internal payload for single-pass SPOLD parsing."""
+    dataset: LCIDataset
+    exchanges: list[LCIElementaryExchange]
+
+
+def parse_spold_dataset_and_exchanges(
+    spold_path: Path,
+    *,
+    include_exchanges: bool = True,
+) -> Optional[_SinglePassResult]:
+    """Single-pass parse of a .spold file: metadata + elementary exchanges.
+
+    Uses one ``ET.parse()`` call and walks the DOM once to extract both
+    the ``LCIDataset`` and, when requested, all ``elementaryExchange`` elements.
+    Falls back to the original two-pass path on error or when the file
+    doesn't exist (e.g. during tests with mocked parsers).
+
+    Returns ``None`` when metadata parsing fails (same as ``parse_spold_file``).
+    """
+    # Fast path: if the file doesn't exist (e.g. mocked tests),
+    # delegate to the two-pass functions which may be monkey-patched.
+    if not spold_path.exists():
+        ds = parse_spold_file(spold_path)
+        if ds is None:
+            return None
+        exchanges = parse_spold_exchanges(spold_path) if include_exchanges else []
+        return _SinglePassResult(dataset=ds, exchanges=exchanges or [])
+    try:
+        tree = ET.parse(str(spold_path))
+        root = tree.getroot()
+
+        # Handle namespace
+        ns_match = re.match(r'\{(.+)\}', root.tag)
+        ns = {'es': ns_match.group(1)} if ns_match else {}
+
+        # ── Extract metadata ──────────────────────────────────────────
+        activity_elem = root.find('.//es:activity', ns)
+        activity_id = ""
+        activity_name = ""
+        location = ""
+
+        if activity_elem is not None:
+            activity_id = activity_elem.get('id', '')
+            activity_name = child_text(activity_elem, 'activityName')
+            if not activity_name:
+                activity_name = activity_elem.get('activityName', '')
+
+        geo_elem = root.find('.//es:activityDescription/es:geography', ns)
+        location = child_text(geo_elem, 'shortname')
+        if not location:
+            location = activity_elem.get('location', '') if activity_elem is not None else ""
+
+        # Extract reference product
+        ref_product_name = ""
+        ref_product_unit = ""
+        ref_product_amount = 0.0
+        ref_product_id = ""
+        inter_exchanges = root.findall('.//es:intermediateExchange', ns)
+
+        def _fill_rp(inter_exc: ET.Element) -> None:
+            nonlocal ref_product_name, ref_product_unit, ref_product_amount, ref_product_id
+            ref_product_name = child_text(inter_exc, 'name') or inter_exc.get('name', '')
+            ref_product_unit = child_text(inter_exc, 'unitName') or inter_exc.get('unit', '')
+            amount_str = inter_exc.get('amount', '0')
+            try:
+                ref_product_amount = float(amount_str)
+            except ValueError:
+                ref_product_amount = 0.0
+            rp_exchange_id = inter_exc.get('intermediateExchangeId', '') or inter_exc.get('id', '')
+            if rp_exchange_id:
+                ref_product_id = rp_exchange_id
+
+        for inter_exc in inter_exchanges:
+            if inter_exc.get('variableName', '') == "RP":
+                _fill_rp(inter_exc)
+                break
+        if not ref_product_name:
+            for inter_exc in inter_exchanges:
+                if child_text(inter_exc, 'outputGroup') == "0":
+                    _fill_rp(inter_exc)
+                    break
+        if not ref_product_name and inter_exchanges:
+            _fill_rp(inter_exchanges[0])
+
+        if not activity_id:
+            return None
+
+        ds = LCIDataset(
+            filename=spold_path.name,
+            activity_id=activity_id,
+            activity_name=activity_name,
+            location=location,
+            reference_product_name=ref_product_name,
+            reference_product_unit=ref_product_unit,
+            reference_product_amount=ref_product_amount,
+            reference_product_id=ref_product_id,
+        )
+
+        if not include_exchanges:
+            return _SinglePassResult(dataset=ds, exchanges=[])
+
+        # ── Extract elementary exchanges (single pass) ────────────────
+        exchanges: list[LCIElementaryExchange] = []
+        for elem_exc in root.findall('.//es:elementaryExchange', ns):
+            exc_id = elem_exc.get('elementaryExchangeId', '') or elem_exc.get('id', '')
+            amount_str = elem_exc.get('amount', '0')
+            try:
+                amount = float(amount_str)
+            except ValueError:
+                amount = 0.0
+
+            exc_name = ""
+            unit_name = ""
+            output_group = 0
+            input_group = 0
+            direction_hint = ""
+            raw_input_group = elem_exc.get('inputGroup', '')
+            if raw_input_group:
+                try:
+                    input_group = int(raw_input_group)
+                except ValueError:
+                    input_group = 1 if raw_input_group.strip() else 0
+            raw_output_group = elem_exc.get('outputGroup', '')
+            if raw_output_group:
+                try:
+                    output_group = int(raw_output_group)
+                except ValueError:
+                    output_group = 0
+                    if raw_output_group.strip().lower() in {"output", "input"}:
+                        direction_hint = raw_output_group.strip().lower()
+
+            for child in elem_exc:
+                tag = child.tag.split('}')[-1]
+                if tag == 'name':
+                    exc_name = (child.text or '').strip()
+                elif tag == 'unitName':
+                    unit_name = (child.text or '').strip()
+                elif tag == 'outputGroup':
+                    raw_child = (child.text or '').strip()
+                    try:
+                        output_group = int(raw_child)
+                    except ValueError:
+                        output_group = 0
+                        if raw_child.lower() in {"output", "input"}:
+                            direction_hint = raw_child.lower()
+                elif tag == 'inputGroup':
+                    raw_child = (child.text or '').strip()
+                    try:
+                        input_group = int(raw_child)
+                    except ValueError:
+                        input_group = 1 if raw_child else 0
+
+            direction = "input" if input_group > 0 else (
+                "output" if output_group > 0 else (
+                    "input" if output_group < 0 else direction_hint
+                )
+            )
+
+            if exc_id:
+                exchanges.append(LCIElementaryExchange(
+                    dataset_filename=spold_path.name,
+                    exchange_id=exc_id,
+                    exchange_name=exc_name,
+                    unit=unit_name if unit_name else f"[unitId:{elem_exc.get('unitId', '')}]",
+                    direction=direction,
+                    amount=amount,
+                ))
+
+        # Fallback: older format with type='elementary'
+        if not exchanges:
+            for exc in root.findall('.//es:exchange', ns):
+                if exc.get('type', '') != 'elementary':
+                    continue
+                exc_id = exc.get('id', '')
+                exc_name = exc.get('name', '')
+                unit = exc.get('unit', '')
+                direction = exc.get('direction', '')
+                amount_str = exc.get('amount', '0')
+                try:
+                    amount = float(amount_str)
+                except ValueError:
+                    amount = 0.0
+                if exc_id:
+                    exchanges.append(LCIElementaryExchange(
+                        dataset_filename=spold_path.name,
+                        exchange_id=exc_id,
+                        exchange_name=exc_name,
+                        unit=unit,
+                        direction=direction,
+                        amount=amount,
+                    ))
+
+        return _SinglePassResult(dataset=ds, exchanges=exchanges)
+
+    except Exception as e:
+        logger.warning("Single-pass parse failed for %s: %s (falling back to two-pass)", spold_path, e)
+        # Fall back to original two-pass
+        ds = parse_spold_file(spold_path)
+        if ds is None:
+            return None
+        if include_exchanges and spold_path.exists():
+            return _SinglePassResult(dataset=ds, exchanges=parse_spold_exchanges(spold_path))
+        return _SinglePassResult(dataset=ds, exchanges=[])
+
+
 def write_csv(data: List[Union[dict, Any]], filepath: Path, fieldnames: Optional[List[str]] = None):
     """Write list of dicts or dataclasses to CSV."""
     if not data:

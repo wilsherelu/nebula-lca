@@ -525,6 +525,10 @@ def test_parse_one_fast_skips_global_import_without_exchange_parse(tmp_path, mon
     executor._paused = False
     executor._cancel_requested = False
     executor._pause_event = threading.Event()
+    executor._unit_conversion_cache = {"kg": (1.0, "kg")}
+    executor._flow_metadata_cache = {"flow-001": ("air", "urban air")}
+    executor._elem_flow_lookup = {}
+    executor._perf_stats = {}
     executor._global_import_cache = {
         "act-001:rp-001": {
             "status": "imported",
@@ -557,6 +561,7 @@ def test_parse_one_fast_skips_global_import_without_exchange_parse(tmp_path, mon
 
     assert result.global_skip is True
     assert result.parse_stage == "metadata"
+    assert result.write_plan is None
     assert result.process_uuid == "proc-existing"
     assert result.vector_status == "reused"
     assert result.vector_nnz == 10
@@ -575,6 +580,10 @@ def test_parse_one_overwrite_bypasses_global_fast_skip(tmp_path, monkeypatch):
     executor._paused = False
     executor._cancel_requested = False
     executor._pause_event = threading.Event()
+    executor._unit_conversion_cache = {"kg": (1.0, "kg")}
+    executor._flow_metadata_cache = {"flow-001": ("air", "urban air")}
+    executor._elem_flow_lookup = {}
+    executor._perf_stats = {}
     executor._global_import_cache = {
         "act-001:rp-001": {
             "status": "imported",
@@ -615,8 +624,11 @@ def test_parse_one_overwrite_bypasses_global_fast_skip(tmp_path, monkeypatch):
     result = LciImportJobExecutor._parse_one(executor, tmp_path / "overwrite.spold")
 
     assert result.global_skip is False
-    assert result.parse_stage == "exchanges"
-    assert len(result.exchanges) == 1
+    assert result.parse_stage == "aggregated"
+    assert result.write_plan is not None
+    assert result.write_plan.has_exchanges is True
+    assert result.write_plan.flow_key_aggs
+    assert result.write_plan.canonicalized is True
 
 
 def test_global_fast_skip_flush_marks_checkpoint_and_stats(tmp_path):

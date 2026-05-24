@@ -48,7 +48,7 @@ class ParseResult:
     """Parsed dataset + exchanges from a single .spold file."""
     spold_path: str
     dataset: Optional[object]  # LCIDataset
-    exchanges: list[object]    # list[LCIElementaryExchange]
+    exchanges: list[object]    # list[LCIElementaryExchange] (kept for compat)
     process_uuid: str
     duration_ms: int
     error: str | None = None
@@ -60,6 +60,8 @@ class ParseResult:
     vector_status: str | None = None  # written | reused | empty | failed
     vector_nnz: int | None = None
     warning: str | None = None
+    # Worker-produced write plan (non-DB payload, set by _build_write_plan)
+    write_plan: LciWritePlan | None = None
 
 
 @dataclass
@@ -82,6 +84,32 @@ class _PackedVector:
     canonicalized: bool
     compressed_bytes: int
     warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
+class LciWritePlan:
+    """Worker-produced write plan for the DB writer.
+
+    Contains only in-memory data (no ORM objects) so it can be
+    created by parser threads without touching the DB session.
+    """
+    spold_path: str
+    process_uuid: str
+    dataset_uuid: str
+    process_json: dict
+    # Aggregated flow key map: (flow_uuid, compartment, subcompartment, direction, canonical_unit) -> amount
+    flow_key_aggs: dict[tuple[str, str, str, str, str], float] = field(default_factory=dict)
+    # Missing flow uuids the writer needs to resolve
+    missing_flow_uuids: list[str] = field(default_factory=list)
+    # Vector-level warning (missing elementary refs, etc.)
+    warning: str | None = None
+    # Precomputed packed vector (from worker if cache hits, else writer packs)
+    packed_blob: bytes | None = None
+    packed_nnz: int = 0
+    # Stats hints
+    has_exchanges: bool = False
+    canonicalized: bool = True
+    pack_warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -218,6 +246,14 @@ class LciImportJobExecutor:
             "db_upsert_duration_ms_total": 0.0,
             "db_upsert_batch_count": 0,
             "bulk_writer_enabled": True,
+            "single_parse_enabled": True,
+            "worker_aggregate_enabled": True,
+            "worker_aggregate_wall_seconds": 0.0,
+            "flow_key_resolve_wall_seconds": 0.0,
+            "flow_key_missing_count": 0,
+            "avg_worker_aggregate_ms": 0.0,
+            "avg_flow_key_resolve_ms": 0.0,
+            "aggregated_result_count": 0,
         }
 
         # Pre-load MasterData flows (shared across workers)
@@ -503,7 +539,15 @@ class LciImportJobExecutor:
     # ── Concurrent parsing ─────────────────────────────────────────────
 
     def _parse_one(self, spold_path: Path) -> ParseResult:
-        """Parse a single .spold file in a worker thread."""
+        """Parse a single .spold file in a worker thread.
+
+        Strategy:
+        1. Parse metadata first when global fast-skip is possible.
+        2. Global dedup check before exchange parsing.
+        3. For normal datasets: parse exchanges and build a ``LciWritePlan`` in the worker
+           (unit canonicalize + logical key aggregation), stored as
+           ``ParseResult.write_plan``.  The writer only does DB upserts.
+        """
         t0 = time.time()
         try:
             # Check pause
@@ -519,20 +563,29 @@ class LciImportJobExecutor:
                     error="cancelled",
                 )
 
-            ds = _loader.parse_spold_file(spold_path)
-            if ds is None:
+            # ── Metadata parse / single-pass parse ──────────────────────
+            include_exchanges = bool(self.overwrite_existing)
+            single = _loader.parse_spold_dataset_and_exchanges(
+                spold_path,
+                include_exchanges=include_exchanges,
+            )
+            if single is None:
                 return ParseResult(
                     spold_path=str(spold_path),
                     dataset=None,
                     exchanges=[],
                     process_uuid="",
                     duration_ms=int((time.time() - t0) * 1000),
-                    error="parse_spold_file returned None",
+                    error="parse_spold_dataset_and_exchanges returned None",
                     parse_stage="metadata",
                 )
 
+            ds = single.dataset
+            exchanges = single.exchanges  # list[LCIElementaryExchange]
             procs = _generate_lci_process_uuid(ds)
             dataset_uuid = self._dataset_uuid_for(ds)
+
+            # ── Global dedup (fast skip — no exchange parsing needed) ───
             cached_global = self._global_import_cache.get(dataset_uuid)
             if not self.overwrite_existing and cached_global and cached_global.get("status") == "imported":
                 reused_nnz = int(cached_global.get("vector_nnz") or 0)
@@ -551,15 +604,44 @@ class LciImportJobExecutor:
                     vector_nnz=reused_nnz,
                 )
 
-            exs = _loader.parse_spold_exchanges(spold_path)
+            if not include_exchanges:
+                single = _loader.parse_spold_dataset_and_exchanges(
+                    spold_path,
+                    include_exchanges=True,
+                )
+                if single is None:
+                    return ParseResult(
+                        spold_path=str(spold_path),
+                        dataset=None,
+                        exchanges=[],
+                        process_uuid="",
+                        duration_ms=int((time.time() - t0) * 1000),
+                        error="parse_spold_dataset_and_exchanges returned None",
+                        parse_stage="metadata",
+                    )
+                ds = single.dataset
+                exchanges = single.exchanges
+                procs = _generate_lci_process_uuid(ds)
+                dataset_uuid = self._dataset_uuid_for(ds)
+
+            # ── Worker-side aggregation ─────────────────────────────────
+            write_plan = self._build_write_plan(
+                spold_path=spold_path,
+                ds=ds,
+                exchanges=exchanges,
+                procs=procs,
+                dataset_uuid=dataset_uuid,
+            )
+
             return ParseResult(
                 spold_path=str(spold_path),
                 dataset=ds,
-                exchanges=exs or [],
+                exchanges=[],
                 process_uuid=procs,
                 duration_ms=int((time.time() - t0) * 1000),
                 dataset_uuid=dataset_uuid,
-                parse_stage="exchanges",
+                parse_stage="aggregated",
+                write_plan=write_plan,
             )
         except Exception as exc:
             return ParseResult(
@@ -571,6 +653,124 @@ class LciImportJobExecutor:
                 error=str(exc),
                 parse_stage="metadata",
             )
+
+    def _build_write_plan(
+        self,
+        *,
+        spold_path: str | Path,
+        ds: object,
+        exchanges: list[object],
+        procs: str,
+        dataset_uuid: str,
+    ) -> LciWritePlan:
+        """Build an ``LciWritePlan`` from parsed exchanges in a worker thread.
+
+        No DB access — only in-memory unit canonicalize + logical key
+        aggregation.  The writer thread does DB upserts and final vector pack.
+        """
+        t0 = time.perf_counter()
+        spold_str = str(spold_path)
+        process_json = {
+            "process_uuid": procs,
+            "activity_id": ds.activity_id,
+            "process_name": ds.activity_name,
+            "location": ds.location,
+            "reference_product": ds.reference_product_name,
+            "reference_product_id": ds.reference_product_id,
+            "reference_product_unit": ds.reference_product_unit,
+            "reference_product_amount": ds.reference_product_amount,
+            "exchange_count": len(exchanges),
+            "source": "ecoinvent_3.11",
+        }
+
+        flow_key_aggs: dict[tuple[str, str, str, str, str], float] = {}
+        missing_flow_uuids: set[str] = set()
+        pack_warnings: list[str] = []
+        canonicalized = True
+        has_exchanges = False
+        elem_lookup = getattr(self, '_elem_flow_lookup', None) or {}
+        unit_cache = getattr(self, '_unit_conversion_cache', None) or {}
+        meta_cache = getattr(self, '_flow_metadata_cache', None) or {}
+
+        for ex in exchanges:
+            exc_id = getattr(ex, 'exchange_id', '')
+            if not exc_id or float(getattr(ex, 'amount', 0)) == 0:
+                continue
+            has_exchanges = True
+
+            unit_raw = getattr(ex, 'unit', '') or ''
+            direction = getattr(ex, 'direction', '') or ''
+            amount_f = float(getattr(ex, 'amount', 0))
+
+            # Unit canonicalize
+            canon_unit = unit_raw
+            if unit_raw.strip():
+                conv = unit_cache.get(unit_raw.strip())
+                if conv is not None:
+                    factor, ref = conv
+                    amount_f = amount_f * factor
+                    canon_unit = ref
+                else:
+                    canon_unit = unit_raw.strip()
+                    canonicalized = False
+                    pack_warnings.append(
+                        f"Missing unit conversion for process={procs} flow={exc_id} unit={unit_raw}"
+                    )
+
+            # Missing flow check
+            compartment = ""
+            subcompartment = ""
+            if elem_lookup and exc_id in elem_lookup:
+                ef = elem_lookup[exc_id]
+                compartment = getattr(ef, 'compartment', '') or ''
+                subcompartment = getattr(ef, 'subcompartment', '') or ''
+            elif exc_id in meta_cache:
+                meta = meta_cache.get(exc_id, ("", ""))
+                compartment = meta[0]
+            else:
+                missing_flow_uuids.add(exc_id)
+
+            key = (exc_id, compartment, subcompartment, direction, canon_unit)
+            flow_key_aggs[key] = flow_key_aggs.get(key, 0.0) + amount_f
+
+        warning = None
+        if missing_flow_uuids:
+            shown = ", ".join(sorted(missing_flow_uuids)[:5])
+            if len(missing_flow_uuids) > 5:
+                shown += f", ... (+{len(missing_flow_uuids) - 5} more)"
+            warning = f"missing elementary flow metadata refs: {shown}"
+
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        perf = getattr(self, "_perf_stats", None)
+        if isinstance(perf, dict):
+            lock = getattr(self, "_lock", None)
+
+            def _record_worker_aggregate_stats() -> None:
+                perf["worker_aggregate_wall_seconds"] = (
+                    float(perf.get("worker_aggregate_wall_seconds", 0.0) or 0.0)
+                    + elapsed_ms / 1000
+                )
+                perf["aggregated_result_count"] = (
+                    int(perf.get("aggregated_result_count", 0) or 0) + 1
+                )
+
+            if lock is None:
+                _record_worker_aggregate_stats()
+            else:
+                with lock:
+                    _record_worker_aggregate_stats()
+        return LciWritePlan(
+            spold_path=spold_str,
+            process_uuid=procs,
+            dataset_uuid=dataset_uuid,
+            process_json=process_json,
+            flow_key_aggs=flow_key_aggs,
+            missing_flow_uuids=sorted(missing_flow_uuids),
+            warning=warning,
+            has_exchanges=has_exchanges,
+            canonicalized=canonicalized,
+            pack_warnings=pack_warnings,
+        )
 
     def _parse_files_concurrent(self, files: list[Path]) -> list[ParseResult]:
         results: list[ParseResult] = []
@@ -813,6 +1013,12 @@ class LciImportJobExecutor:
             "avg_pack_ms": round(avg_pack_ms, 3),
             "avg_db_upsert_ms": round(avg_db_upsert_ms, 3),
             "bulk_writer_enabled": bool(perf.get("bulk_writer_enabled", False)),
+            "single_parse_enabled": bool(perf.get("single_parse_enabled", False)),
+            "worker_aggregate_enabled": bool(perf.get("worker_aggregate_enabled", False)),
+            "worker_aggregate_wall_seconds": round(float(perf.get("worker_aggregate_wall_seconds", 0.0) or 0.0), 3),
+            "flow_key_resolve_wall_seconds": round(float(perf.get("flow_key_resolve_wall_seconds", 0.0) or 0.0), 3),
+            "flow_key_missing_count": int(perf.get("flow_key_missing_count", 0) or 0),
+            "aggregated_result_count": int(perf.get("aggregated_result_count", 0) or 0),
         }
 
     # ── DB flush (single thread) ───────────────────────────────────────
@@ -902,29 +1108,136 @@ class LciImportJobExecutor:
 
         pack_t0 = time.perf_counter()
         packed_by_process: dict[str, _PackedVector] = {}
+
+        # ── Batch flow key resolution (writer-side optimization) ──────
+        # Collect all logical keys from write_plans and resolve in bulk.
+        all_logical_keys: set[tuple[str, str, str, str, str]] = set()
+
         for pr in write_results:
-            self._apply_missing_flow_warning(pr)
-            vector_exchanges = [
-                _VectorExchange(
-                    flow_uuid=ex.exchange_id,
-                    amount=float(ex.amount),
-                    unit=ex.unit,
-                    direction=ex.direction,
-                )
-                for ex in pr.exchanges
-                if ex.exchange_id and ex.amount != 0
-            ]
-            if vector_exchanges:
-                packed = self._pack_vector_exchanges(pr.process_uuid, vector_exchanges)
-                packed_by_process[pr.process_uuid] = packed
-                pr.vector_status = "written"
-                pr.vector_nnz = packed.nnz
-                with self._lock:
-                    self._stats["vectors_written"] += 1
-                    self._stats["nnz_total"] += packed.nnz
-                    self._vector_warnings.extend(packed.warnings)
-            elif pr.process_uuid in vector_by_uuid and not self.overwrite_existing:
-                existing_vector = vector_by_uuid[pr.process_uuid]
+            wp = getattr(pr, 'write_plan', None)
+            if wp is None:
+                # Fallback: old-parse ParseResult with exchanges list
+                self._apply_missing_flow_warning(pr)
+                vector_exchanges = [
+                    _VectorExchange(
+                        flow_uuid=ex.exchange_id,
+                        amount=float(ex.amount),
+                        unit=ex.unit,
+                        direction=ex.direction,
+                    )
+                    for ex in pr.exchanges
+                    if ex.exchange_id and ex.amount != 0
+                ]
+                if vector_exchanges:
+                    packed = self._pack_vector_exchanges(pr.process_uuid, vector_exchanges)
+                    packed_by_process[pr.process_uuid] = packed
+                continue
+
+            for logical_key in wp.flow_key_aggs:
+                all_logical_keys.add(logical_key)
+
+        # Resolve logical keys -> flow_key_ids in bulk (using job-level cache)
+        created_flow_key_count = 0
+        if all_logical_keys:
+            created_flow_key_count = self._batch_resolve_flow_keys(all_logical_keys)
+
+        key_id_map: dict[tuple[str, str, str, str, str], int] = {}
+        for logical_key in all_logical_keys:
+            flow_uuid, comp, subcomp, direction, canon_unit = logical_key
+            cached = self._flow_key_cache.get(logical_key)
+            if cached is not None:
+                key_id_map[logical_key] = cached
+                continue
+            # Fallback: single query (should be cached after batch_resolve)
+            resolved = self._get_flow_key_id(
+                flow_uuid=flow_uuid, compartment=comp, subcompartment=subcomp,
+                direction=direction, canonical_unit=canon_unit,
+            )
+            if resolved is not None:
+                key_id_map[logical_key] = resolved
+                self._flow_key_cache[logical_key] = resolved
+
+        # Pack vectors from write plans using resolved key IDs
+        flow_key_resolve_ms = (time.perf_counter() - pack_t0) * 1000
+        self._perf_stats["flow_key_resolve_wall_seconds"] = (
+            float(self._perf_stats.get("flow_key_resolve_wall_seconds", 0.0) or 0.0)
+            + flow_key_resolve_ms / 1000
+        )
+        self._perf_stats["flow_key_missing_count"] = (
+            int(self._perf_stats.get("flow_key_missing_count", 0) or 0)
+            + created_flow_key_count
+        )
+
+        pack_t1 = time.perf_counter()
+        for pr in write_results:
+            wp = getattr(pr, 'write_plan', None)
+            if wp is not None:
+                self._apply_missing_flow_warning(pr)
+                pr.warning = wp.warning or pr.warning
+                self._vector_warnings.extend(wp.pack_warnings)
+                if wp.flow_key_aggs:
+                    agg: dict[int, float] = {}
+                    for logical_key, amount in wp.flow_key_aggs.items():
+                        fid = key_id_map.get(logical_key)
+                        if fid is not None:
+                            agg[fid] = agg.get(fid, 0.0) + amount
+                    if agg:
+                        flow_key_ids = sorted(agg)
+                        amounts = [agg[k] for k in flow_key_ids]
+                        from .lci_vector_codec import pack_lci_vector
+                        packed = pack_lci_vector(flow_key_ids, amounts)
+                        packed_by_process[pr.process_uuid] = _PackedVector(
+                            nnz=packed.nnz,
+                            flow_key_ids_blob=packed.flow_key_ids_blob,
+                            amounts_blob=packed.amounts_blob,
+                            index_dtype=packed.index_dtype,
+                            amount_dtype=packed.amount_dtype,
+                            compression=packed.compression,
+                            checksum=packed.checksum,
+                            canonicalized=wp.canonicalized,
+                            compressed_bytes=len(packed.flow_key_ids_blob) + len(packed.amounts_blob),
+                            warnings=wp.pack_warnings,
+                        )
+                        pr.vector_status = "written"
+                        pr.vector_nnz = packed.nnz
+                        with self._lock:
+                            self._stats["vectors_written"] += 1
+                            self._stats["nnz_total"] += packed.nnz
+                    else:
+                        pr.vector_status = "empty"
+                        pr.vector_nnz = 0
+                else:
+                    pr.vector_status = "empty"
+                    pr.vector_nnz = 0
+            else:
+                # Fallback: old-parse ParseResult with exchanges list
+                self._apply_missing_flow_warning(pr)
+                vector_exchanges = [
+                    _VectorExchange(
+                        flow_uuid=ex.exchange_id,
+                        amount=float(ex.amount),
+                        unit=ex.unit,
+                        direction=ex.direction,
+                    )
+                    for ex in pr.exchanges
+                    if ex.exchange_id and ex.amount != 0
+                ]
+                if vector_exchanges:
+                    packed = self._pack_vector_exchanges(pr.process_uuid, vector_exchanges)
+                    packed_by_process[pr.process_uuid] = packed
+                    pr.vector_status = "written"
+                    pr.vector_nnz = packed.nnz
+                    with self._lock:
+                        self._stats["vectors_written"] += 1
+                        self._stats["nnz_total"] += packed.nnz
+                        self._vector_warnings.extend(packed.warnings)
+
+        # ── Reused / empty vectors (for processes that were NOT written) ──
+        for pr in write_results:
+            if pr.process_uuid in packed_by_process:
+                continue
+            existing_vector = vector_by_uuid.get(pr.process_uuid)
+            if existing_vector and not self.overwrite_existing:
                 pr.vector_status = "reused"
                 pr.vector_nnz = int(existing_vector.nnz or 0)
                 with self._lock:
@@ -938,6 +1251,7 @@ class LciImportJobExecutor:
                         self._vector_warnings.append(
                             f"{Path(pr.spold_path).name}: no elementary vector rows"
                         )
+
         pack_elapsed = time.perf_counter() - pack_t0
         self._perf_stats["batch_pack_wall_seconds"] = (
             float(self._perf_stats.get("batch_pack_wall_seconds", 0.0) or 0.0)
@@ -960,7 +1274,8 @@ class LciImportJobExecutor:
             ds = pr.dataset
             if ds is None:
                 continue
-            process_json = self._build_lci_process_json(pr)
+            wp = getattr(pr, 'write_plan', None)
+            process_json = wp.process_json if wp else self._build_lci_process_json(pr)
             existing_process = process_by_uuid.get(pr.process_uuid)
             if existing_process is None:
                 new_processes.append(
@@ -1083,6 +1398,120 @@ class LciImportJobExecutor:
             return "imported"
         return "skipped"
 
+    def _batch_resolve_flow_keys(self, logical_keys: set[tuple[str, str, str, str, str]]) -> int:
+        """Batch-resolve ``LciBiosphereFlowKey`` records for logical flow keys.
+
+        Called once per batch in the writer thread.  Creates or fetches
+        flow key records in a single pass, then updates the job-level
+        ``_flow_key_cache``.
+        """
+        from .models import LciBiosphereFlowKey
+
+        if not logical_keys:
+            return 0
+
+        uuids_list = sorted({key[0] for key in logical_keys})
+        existing = (
+            self.db.query(LciBiosphereFlowKey)
+            .filter(LciBiosphereFlowKey.flow_uuid.in_(uuids_list))
+            .all()
+        )
+        new_items: list[LciBiosphereFlowKey] = []
+        existing_by_key: dict[tuple[str, str, str, str, str], int] = {}
+        for row in existing:
+            key = (
+                row.flow_uuid,
+                row.compartment or "",
+                row.subcompartment or "",
+                row.direction,
+                row.canonical_unit,
+            )
+            existing_by_key[key] = int(row.flow_key_id)
+
+        for logical_key in sorted(logical_keys):
+            if logical_key in existing_by_key:
+                continue
+            flow_uuid, compartment, subcompartment, direction, canonical_unit = logical_key
+            item = LciBiosphereFlowKey(
+                flow_uuid=flow_uuid,
+                compartment=compartment,
+                subcompartment=subcompartment,
+                direction=direction,
+                canonical_unit=canonical_unit,
+                source=self.package_version,
+                source_package_version=self.package_version,
+            )
+            new_items.append(item)
+
+        if new_items:
+            self.db.add_all(new_items)
+            self.db.flush()
+            for item in new_items:
+                key = (
+                    item.flow_uuid,
+                    item.compartment or "",
+                    item.subcompartment or "",
+                    item.direction,
+                    item.canonical_unit,
+                )
+                existing_by_key[key] = int(item.flow_key_id)
+
+        # Update job-level cache with all resolved keys
+        self._flow_key_cache.update(existing_by_key)
+        return len(new_items)
+
+    def _get_flow_key_id(
+        self,
+        *,
+        flow_uuid: str,
+        compartment: str,
+        subcompartment: str,
+        direction: str,
+        canonical_unit: str,
+    ) -> int | None:
+        """Resolve a single logical flow key → flow_key_id (single query).
+
+        Falls back to creating the record if not found.
+        """
+        from .models import LciBiosphereFlowKey
+
+        key = (flow_uuid, compartment, subcompartment, direction, canonical_unit)
+        cached = self._flow_key_cache.get(key)
+        if cached is not None:
+            return cached
+
+        row = (
+            self.db.query(LciBiosphereFlowKey)
+            .filter(
+                LciBiosphereFlowKey.flow_uuid == flow_uuid,
+                LciBiosphereFlowKey.compartment == compartment,
+                LciBiosphereFlowKey.subcompartment == subcompartment,
+                LciBiosphereFlowKey.direction == direction,
+                LciBiosphereFlowKey.canonical_unit == canonical_unit,
+            )
+            .first()
+        )
+        if row is not None:
+            fid = int(row.flow_key_id)
+            self._flow_key_cache[key] = fid
+            return fid
+
+        # Create new record
+        item = LciBiosphereFlowKey(
+            flow_uuid=flow_uuid,
+            compartment=compartment,
+            subcompartment=subcompartment,
+            direction=direction,
+            canonical_unit=canonical_unit,
+            source=self.package_version,
+            source_package_version=self.package_version,
+        )
+        self.db.add(item)
+        self.db.flush()
+        fid = int(item.flow_key_id)
+        self._flow_key_cache[key] = fid
+        return fid
+
     def _apply_missing_flow_warning(self, pr: ParseResult) -> None:
         elem_flow_lookup = self._elem_flow_lookup
         missing_refs = []
@@ -1102,6 +1531,10 @@ class LciImportJobExecutor:
 
     def _build_lci_process_json(self, pr: ParseResult) -> dict:
         ds = pr.dataset
+        # Prefer write_plan for accurate exchange_count (write plan uses
+        # the original parsed count, not pr.exchanges which is kept for compat)
+        wp = getattr(pr, 'write_plan', None)
+        exchange_count = wp.process_json.get("exchange_count", len(pr.exchanges)) if wp else len(pr.exchanges)
         return {
             "process_uuid": pr.process_uuid,
             "activity_id": ds.activity_id,
@@ -1111,7 +1544,7 @@ class LciImportJobExecutor:
             "reference_product_id": ds.reference_product_id,
             "reference_product_unit": ds.reference_product_unit,
             "reference_product_amount": ds.reference_product_amount,
-            "exchange_count": len(pr.exchanges),
+            "exchange_count": exchange_count,
             "source": "ecoinvent_3.11",
         }
 
