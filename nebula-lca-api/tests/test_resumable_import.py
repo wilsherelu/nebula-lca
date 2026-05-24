@@ -567,6 +567,60 @@ def test_parse_one_fast_skips_global_import_without_exchange_parse(tmp_path, mon
     assert result.vector_nnz == 10
 
 
+def test_parse_one_filename_fast_skip_avoids_xml_parsers(tmp_path, monkeypatch):
+    """UUID-based ecoinvent filenames should fast skip before XML parsing."""
+    import threading
+
+    import app.lci_import_executor as executor_module
+    from app.lci_import_executor import LciImportJobExecutor
+
+    activity_id = "00082bd6-67b0-509f-a229-7428fb2418ca"
+    product_id = "ad5a20dd-4c4d-499d-8dc1-254ebab8f3bf"
+    dataset_uuid = f"{activity_id}:{product_id}"
+    spold_path = tmp_path / f"{activity_id}_{product_id}.spold"
+
+    executor = LciImportJobExecutor.__new__(LciImportJobExecutor)
+    executor.overwrite_existing = False
+    executor._paused = False
+    executor._cancel_requested = False
+    executor._pause_event = threading.Event()
+    executor._global_import_cache = {
+        dataset_uuid: {
+            "status": "imported",
+            "process_uuid": "proc-existing",
+            "vector_nnz": 10,
+        }
+    }
+    executor._perf_stats = {
+        "filename_fast_skip_count": 0,
+        "filename_metadata_hit_count": 0,
+        "filename_metadata_miss_count": 0,
+    }
+    executor._lock = threading.Lock()
+
+    monkeypatch.setattr(
+        executor_module._loader,
+        "parse_spold_metadata_early",
+        lambda path: (_ for _ in ()).throw(AssertionError("metadata parser should not run")),
+    )
+    monkeypatch.setattr(
+        executor_module._loader,
+        "parse_spold_streaming_agg",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("streaming parser should not run")),
+    )
+
+    result = LciImportJobExecutor._parse_one(executor, spold_path)
+
+    assert result.global_skip is True
+    assert result.parse_stage == "filename"
+    assert result.dataset_uuid == dataset_uuid
+    assert result.process_uuid == "proc-existing"
+    assert result.vector_status == "reused"
+    assert result.vector_nnz == 10
+    assert executor._perf_stats["filename_metadata_hit_count"] == 1
+    assert executor._perf_stats["filename_fast_skip_count"] == 1
+
+
 def test_parse_one_overwrite_bypasses_global_fast_skip(tmp_path, monkeypatch):
     """Overwrite imports must parse exchanges even if global cache has a hit."""
     import threading

@@ -46,6 +46,9 @@ NS = {'es': 'http://www.EcoInvent.org/EcoSpold02'}
 
 # EF 3.1 method filter
 EF31_METHODS = {'EF v3.1', 'EF v3.1 no LT'}
+_UUID_PATTERN = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
 
 
 def _spold_process_uuid(ds):
@@ -56,6 +59,20 @@ def _spold_process_uuid(ds):
     if parts:
         return ":".join(parts)
     return Path(getattr(ds, "filename", "") or "").stem
+
+
+def parse_spold_filename_dataset_ids(spold_path: Path | str) -> tuple[str, str, str] | None:
+    """Parse activity/product UUIDs from ``activity_uuid_product_uuid.spold``."""
+    path = Path(spold_path)
+    if path.suffix.lower() != ".spold":
+        return None
+    parts = path.stem.split("_", 1)
+    if len(parts) != 2:
+        return None
+    activity_id, reference_product_id = parts
+    if not (_UUID_PATTERN.match(activity_id) and _UUID_PATTERN.match(reference_product_id)):
+        return None
+    return activity_id, reference_product_id, f"{activity_id}:{reference_product_id}"
 
 
 @dataclass
@@ -554,7 +571,10 @@ def parse_filename_to_activity(csv_path: Path) -> List[dict]:
     
     mappings = []
     with open(csv_path, 'r', encoding='utf-8-sig') as f:
-        reader = csv.DictReader(f)
+        sample = f.read(4096)
+        f.seek(0)
+        delimiter = ';' if sample.count(';') > sample.count(',') else ','
+        reader = csv.DictReader(f, delimiter=delimiter)
         for row in reader:
             mappings.append({
                 'filename': row.get('Filename', ''),
@@ -565,6 +585,80 @@ def parse_filename_to_activity(csv_path: Path) -> List[dict]:
     
     logger.info(f"Parsed {len(mappings)} filename-to-activity mappings")
     return mappings
+
+
+def parse_spold_metadata_early(spold_path: Path) -> Optional[LCIDataset]:
+    """Parse only dataset metadata, stopping before elementary exchanges.
+
+    Falls back to ``parse_spold_file`` when the file is missing so existing
+    tests that monkeypatch the legacy parser continue to work.
+    """
+    if not spold_path.exists():
+        return parse_spold_file(spold_path)
+
+    try:
+        activity_id = ""
+        activity_name = ""
+        location = ""
+        ref_product_name = ""
+        ref_product_unit = ""
+        ref_product_amount = 0.0
+        ref_product_id = ""
+        fallback_intermediate: ET.Element | None = None
+
+        def fill_reference_product(inter_exc: ET.Element) -> None:
+            nonlocal ref_product_name, ref_product_unit, ref_product_amount, ref_product_id
+            ref_product_name = child_text(inter_exc, 'name') or inter_exc.get('name', '')
+            ref_product_unit = child_text(inter_exc, 'unitName') or inter_exc.get('unit', '')
+            amount_str = inter_exc.get('amount', '0')
+            try:
+                ref_product_amount = float(amount_str)
+            except ValueError:
+                ref_product_amount = 0.0
+            rp_exchange_id = inter_exc.get('intermediateExchangeId', '') or inter_exc.get('id', '')
+            if rp_exchange_id:
+                ref_product_id = rp_exchange_id
+
+        context = ET.iterparse(str(spold_path), events=['end'])
+        for _, elem in context:
+            tag = elem.tag.split('}')[-1]
+            if tag == 'activity':
+                activity_id = elem.get('id', '')
+                activity_name = child_text(elem, 'activityName') or elem.get('activityName', '')
+                if not location:
+                    location = elem.get('location', '')
+            elif tag == 'geography':
+                location = child_text(elem, 'shortname') or location
+            elif tag == 'intermediateExchange':
+                if fallback_intermediate is None:
+                    fallback_intermediate = elem
+                if elem.get('variableName', '') == "RP":
+                    fill_reference_product(elem)
+                elif not ref_product_name and child_text(elem, 'outputGroup') == "0":
+                    fill_reference_product(elem)
+            elif tag == 'elementaryExchange':
+                break
+
+            if activity_id and ref_product_id:
+                break
+
+        if not ref_product_name and fallback_intermediate is not None:
+            fill_reference_product(fallback_intermediate)
+        if not activity_id:
+            return None
+        return LCIDataset(
+            filename=spold_path.name,
+            activity_id=activity_id,
+            activity_name=activity_name,
+            location=location,
+            reference_product_name=ref_product_name,
+            reference_product_unit=ref_product_unit,
+            reference_product_amount=ref_product_amount,
+            reference_product_id=ref_product_id,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to parse metadata from {spold_path}: {e}")
+        return parse_spold_file(spold_path)
 
 
 def parse_spold_file(spold_path: Path) -> Optional[LCIDataset]:

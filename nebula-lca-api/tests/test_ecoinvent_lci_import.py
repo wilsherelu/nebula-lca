@@ -45,6 +45,7 @@ from app.ingest_ecoinvent import (
     write_ecoinvent_process_vector,
     _guess_unit_group_from_name,
 )
+from app.ecoinvent_ef31_loader import parse_filename_to_activity, parse_spold_filename_dataset_ids
 
 
 # ======================================================================
@@ -694,6 +695,37 @@ class TestLciVectorCodec:
     def test_pack_requires_sorted_keys(self):
         with pytest.raises(ValueError):
             pack_lci_vector([2, 1], [1.0, 2.0])
+
+
+class TestEcoinventFilenameMetadata:
+    def test_parse_spold_filename_dataset_ids(self):
+        parsed = parse_spold_filename_dataset_ids(
+            "00082bd6-67b0-509f-a229-7428fb2418ca_ad5a20dd-4c4d-499d-8dc1-254ebab8f3bf.spold"
+        )
+
+        assert parsed == (
+            "00082bd6-67b0-509f-a229-7428fb2418ca",
+            "ad5a20dd-4c4d-499d-8dc1-254ebab8f3bf",
+            "00082bd6-67b0-509f-a229-7428fb2418ca:ad5a20dd-4c4d-499d-8dc1-254ebab8f3bf",
+        )
+        assert parse_spold_filename_dataset_ids("not-a-dataset.spold") is None
+
+    def test_filename_lookup_supports_semicolon_csv(self, tmp_path):
+        csv_path = tmp_path / "FilenameToActivityLookup.csv"
+        csv_path.write_text(
+            "Filename;ActivityName;Location;ReferenceProduct\n"
+            "one.spold;Process;GLO;Product\n",
+            encoding="utf-8",
+        )
+
+        rows = parse_filename_to_activity(csv_path)
+
+        assert rows == [{
+            "filename": "one.spold",
+            "activity_name": "Process",
+            "location": "GLO",
+            "reference_product": "Product",
+        }]
 
 
 # ======================================================================
