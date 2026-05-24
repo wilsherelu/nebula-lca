@@ -123,6 +123,7 @@ def get_tidas_policy_reference() -> dict:
 @_base_router.get("/reference/lcia-methods")
 def list_lcia_methods() -> dict:
     EF31_CANONICAL_METHODS = {"EF v3.1"}
+    EF31_RUNTIME_METHODS = {"EF v3.1", "EF v3.1 no LT"}
     LEGACY_INDICATORS_AS_METHODS = {"Acidification", "Climate change"}
 
     def _read_runtime_summary(csv_path: Path) -> dict:
@@ -138,8 +139,8 @@ def list_lcia_methods() -> dict:
         except (OSError, json.JSONDecodeError):
             return {}
 
-    def _read_methods(csv_path: Path) -> set[str]:
-        rows: set[str] = set()
+    def _read_method_counts(csv_path: Path) -> dict[str, int]:
+        rows: dict[str, int] = {}
         if csv_path.exists():
             with csv_path.open("r", encoding="utf-8-sig", newline="") as handle:
                 sample = handle.read(2048)
@@ -149,7 +150,7 @@ def list_lcia_methods() -> dict:
                 for row in reader:
                     method = str(row.get("method_en") or row.get("method") or "").strip()
                     if method:
-                        rows.add(method)
+                        rows[method] = rows.get(method, 0) + 1
         return rows
 
     def _is_legacy_ef31_indicator_set(methods: set[str]) -> bool:
@@ -160,6 +161,8 @@ def list_lcia_methods() -> dict:
         (e.g. 'EF v3.1').  We detect this by checking if top-level names overlap with
         known EF3.1 indicator categories.
         """
+        if methods & EF31_RUNTIME_METHODS:
+            return False
         return bool(LEGACY_INDICATORS_AS_METHODS & methods)
 
     def _collapse_to_canonical(methods: set[str]) -> tuple[set[str], str]:
@@ -192,7 +195,8 @@ def list_lcia_methods() -> dict:
     if runtime_candidates:
         scored = []
         for path in runtime_candidates:
-            methods_for_path = _read_methods(path)
+            counts_for_path = _read_method_counts(path)
+            methods_for_path = set(counts_for_path)
             summary = _read_runtime_summary(path)
             indicators_count = int(summary.get("indicators_count") or len(methods_for_path))
             flows_count = int(summary.get("flows_count") or 0)
@@ -205,22 +209,30 @@ def list_lcia_methods() -> dict:
                 scored,
                 key=lambda item: (item[2], item[3], item[4], item[0].stat().st_mtime),
             )
+            method_counts = _read_method_counts(csv_path)
         else:
             base = Path(settings.nebula_lca_ef31_dir)
             csv_path = base if base.is_file() else base / "indicator_index.csv"
-            methods = _read_methods(csv_path)
+            method_counts = _read_method_counts(csv_path)
+            methods = set(method_counts)
     else:
         base = Path(settings.nebula_lca_ef31_dir)
         csv_path = base if base.is_file() else base / "indicator_index.csv"
-        methods = _read_methods(csv_path)
+        method_counts = _read_method_counts(csv_path)
+        methods = set(method_counts)
 
     methods, source_label = _collapse_to_canonical(methods)
+    if source_label == "legacy_ef3.1_indicator_index":
+        method_counts = {"EF v3.1": sum(method_counts.values())}
     if not methods:
         methods = set(EF31_CANONICAL_METHODS)
+        method_counts = {"EF v3.1": 0}
 
     return {
         "default_method": "EF v3.1",
         "methods": sorted(methods),
+        "method_indicator_counts": {method: int(method_counts.get(method, 0)) for method in sorted(methods)},
+        "total_indicators": int(sum(method_counts.get(method, 0) for method in methods)),
         "source": str(csv_path) if csv_path.exists() else "",
         "source_label": source_label,
     }
