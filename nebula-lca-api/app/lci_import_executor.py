@@ -51,6 +51,7 @@ class ParseResult:
     parse_stage: str = "exchanges"
     vector_status: str | None = None  # written | reused | empty | failed
     vector_nnz: int | None = None
+    warning: str | None = None
 
 
 @dataclass
@@ -455,7 +456,7 @@ class LciImportJobExecutor:
                 cp.vector_status = pr.vector_status
                 cp.vector_nnz = pr.vector_nnz
                 cp.duration_ms = pr.duration_ms
-                cp.error_message = pr.error
+                cp.error_message = pr.error or pr.warning
                 self.db.flush()
 
     # ── Concurrent parsing ─────────────────────────────────────────────
@@ -814,7 +815,9 @@ class LciImportJobExecutor:
                 self._update_global_skipped(1)
                 return
 
-        # Check for missing elementary flow refs
+        # Check for unresolved elementary flow metadata. Do not fail the whole
+        # dataset: ecoinvent LCI can reference flows that are absent from the
+        # current flow_catalog view because of source-space UUID collisions.
         elem_flow_lookup = self._elem_flow_lookup
         missing_refs = []
         if elem_flow_lookup:
@@ -823,20 +826,15 @@ class LciImportJobExecutor:
                     missing_refs.append(exc.exchange_id)
 
         if missing_refs:
-            pr.vector_status = "failed"
-            pr.vector_nnz = 0
+            unique_missing = sorted(set(missing_refs))
+            shown = ", ".join(unique_missing[:5])
+            if len(unique_missing) > 5:
+                shown += f", ... (+{len(unique_missing) - 5} more)"
+            pr.warning = f"missing elementary flow metadata refs: {shown}"
             with self._lock:
-                self._stats["datasets_processed"] += 1
-                self._stats["processes_failed"] += 1
-                self._failed_datasets.append(pr.spold_path)
-            # Record global failure for this dataset
-            self._update_global_status(
-                dataset_uuid, "failed", pr.spold_path, procs,
-                error_msg="missing elementary flow refs",
-                activity_id=ds.activity_id,
-                reference_product_id=ds.reference_product_id,
-            )
-            return
+                self._vector_warnings.append(
+                    f"{Path(pr.spold_path).name}: {pr.warning}"
+                )
 
         # Build process_json
         process_json = {
@@ -940,6 +938,7 @@ class LciImportJobExecutor:
             pr.spold_path,
             procs,
             nnz=nnz_written,
+            error_msg=pr.warning,
             activity_id=ds.activity_id,
             reference_product_id=ds.reference_product_id,
         )
