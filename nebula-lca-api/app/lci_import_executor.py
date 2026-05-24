@@ -271,6 +271,7 @@ class LciImportJobExecutor:
         """
         if not self.master_data_dir or not self.master_data_dir.exists():
             return
+        started = time.perf_counter()
         try:
             self._update_job_phase("masterdata")
             self.db.commit()
@@ -283,15 +284,20 @@ class LciImportJobExecutor:
                 _build_flow_metadata_cache,
             )
 
-            import_ecoinvent_units(self.db, data_dir=str(self.master_data_dir), package_version="ecoinvent_3.11")
-            import_ecoinvent_elementary_flows(self.db, data_dir=str(self.master_data_dir), source="ecoinvent_3.11")
-            import_ecoinvent_intermediate_flows(self.db, data_dir=str(self.master_data_dir), source="ecoinvent_3.11")
+            if self._has_loaded_master_data():
+                self._load_elementary_flow_lookup_from_db()
+                self._perf_stats["masterdata_reused"] = True
+            else:
+                import_ecoinvent_units(self.db, data_dir=str(self.master_data_dir), package_version="ecoinvent_3.11")
+                import_ecoinvent_elementary_flows(self.db, data_dir=str(self.master_data_dir), source="ecoinvent_3.11")
+                import_ecoinvent_intermediate_flows(self.db, data_dir=str(self.master_data_dir), source="ecoinvent_3.11")
 
-            units_map = _loader.parse_units(self.master_data_dir)
-            self._elementary_flows = _loader.parse_elementary_exchanges(
-                self.master_data_dir, units_map
-            )
-            self._elem_flow_lookup = {f.flow_uuid: f for f in self._elementary_flows}
+                units_map = _loader.parse_units(self.master_data_dir)
+                self._elementary_flows = _loader.parse_elementary_exchanges(
+                    self.master_data_dir, units_map
+                )
+                self._elem_flow_lookup = {f.flow_uuid: f for f in self._elementary_flows}
+                self._perf_stats["masterdata_reused"] = False
 
             # Build job-level caches ONCE (not per-process)
             try:
@@ -309,6 +315,45 @@ class LciImportJobExecutor:
             logger.warning(f"[{self.job_id}] Failed to load MasterData: {exc}")
             self._elementary_flows = []
             self._elem_flow_lookup = {}
+        finally:
+            self._perf_stats["masterdata_wall_seconds"] = round(time.perf_counter() - started, 3)
+
+    def _has_loaded_master_data(self) -> bool:
+        from .models import FlowRecord, UnitDefinition
+
+        units_count = self.db.query(UnitDefinition.id).count()
+        elementary_count = (
+            self.db.query(FlowRecord.flow_uuid)
+            .filter(
+                FlowRecord.flow_type == "Elementary flow",
+                FlowRecord.source.in_(["ecoinvent", "ecoinvent_3.11"]),
+            )
+            .count()
+        )
+        intermediate_count = (
+            self.db.query(FlowRecord.flow_uuid)
+            .filter(
+                FlowRecord.flow_type.in_(["Product flow", "Waste flow"]),
+                FlowRecord.source.in_(["ecoinvent", "ecoinvent_3.11"]),
+            )
+            .count()
+        )
+        return units_count >= 100 and elementary_count >= 9000 and intermediate_count >= 4000
+
+    def _load_elementary_flow_lookup_from_db(self) -> None:
+        from .models import FlowRecord
+
+        rows = (
+            self.db.query(FlowRecord.flow_uuid)
+            .filter(
+                FlowRecord.flow_type == "Elementary flow",
+                FlowRecord.source.in_(["ecoinvent", "ecoinvent_3.11"]),
+            )
+            .all()
+        )
+        flow_uuids = [row[0] for row in rows if row[0]]
+        self._elementary_flows = flow_uuids
+        self._elem_flow_lookup = {flow_uuid: flow_uuid for flow_uuid in flow_uuids}
 
     # ── File discovery ─────────────────────────────────────────────────
 
@@ -634,6 +679,8 @@ class LciImportJobExecutor:
             "queue_max_observed": int(perf.get("queue_max_observed", 0) or 0),
             "avg_parse_ms": round(avg_parse_ms, 3),
             "avg_flush_ms": round(avg_flush_ms, 3),
+            "masterdata_reused": bool(perf.get("masterdata_reused", False)),
+            "masterdata_wall_seconds": round(float(perf.get("masterdata_wall_seconds", 0.0) or 0.0), 3),
         }
 
     # ── DB flush (single thread) ───────────────────────────────────────
