@@ -295,11 +295,11 @@ class TestPreviewJobLciaArtifacts:
 
         summary_path = output_root / "summary-test" / "runtime_summary.json"
         manifest_path = output_root / "summary-test" / "manifest.json"
-        active_path = output_root / "active_manifest.json"
         assert summary_path.exists()
         assert manifest_path.exists()
-        assert active_path.exists()
+        assert not (output_root / "active_manifest.json").exists()
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        assert summary["active"] is False
         assert summary["flows_count"] >= 2
         assert summary["indicators_count"] >= 1
         assert summary["factors_count"] == 2

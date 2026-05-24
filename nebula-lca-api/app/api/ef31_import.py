@@ -147,12 +147,16 @@ def commit_ef31_lci_import(
 
 @_api_router.post("/ef31/runtime-csv/{job_id}", response_model=Ef31RuntimeCsvResponse)
 @_base_router.post("/ef31/runtime-csv/{job_id}", response_model=Ef31RuntimeCsvResponse)
-def generate_ef31_runtime_csv(job_id: str, db: Session = Depends(get_db)) -> Ef31RuntimeCsvResponse:
+def generate_ef31_runtime_csv(
+    job_id: str,
+    activate: bool = Query(False, description="Explicitly promote generated runtime to active_manifest.json"),
+    db: Session = Depends(get_db),
+) -> Ef31RuntimeCsvResponse:
     """Generate solver runtime CSVs for a previewed EF 3.1 import job."""
     try:
         from app.services.ef31_runtime_csv import generate_ef31_runtime_csvs
 
-        summary = generate_ef31_runtime_csvs(job_id, overwrite=True)
+        summary = generate_ef31_runtime_csvs(job_id, overwrite=True, activate=activate)
         summary["env_var"] = "NEBULA_LCA_EF31_DIR"
 
         row = db.get(DebugDiagnostic, job_id)

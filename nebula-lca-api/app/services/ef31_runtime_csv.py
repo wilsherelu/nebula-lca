@@ -57,6 +57,7 @@ def generate_ef31_runtime_csvs(
     job_id: str,
     output_root: Optional[Path] = None,
     overwrite: bool = False,
+    activate: bool = False,
     _job_dir_override: Optional[Path] = None,
 ) -> dict:
     """Generate solver-compatible EF 3.1 runtime CSV files from a preview job.
@@ -66,6 +67,9 @@ def generate_ef31_runtime_csvs(
         output_root: Where to write the CSVs.  Defaults to
             ``nebula-lca-api/runtime/ef31/{job_id}/``.
         overwrite: If False, raises ValueError when output dir already exists.
+        activate: If True, update ``active_manifest.json`` after generation.
+            Defaults to False so preview/test artifacts cannot silently replace
+            the active production runtime.
         _job_dir_override: Internal test-only parameter to override where
             job artifacts are read from (bypasses _IMPORT_CACHE_ROOT).
 
@@ -242,7 +246,7 @@ def generate_ef31_runtime_csvs(
         "job_id": job_id,
         "output_dir": str(output_dir),
         "artifact_dir": str(output_dir),
-        "active": True,
+        "active": False,
         "files": {
             "flow_index": "flow_index.csv",
             "indicator_index": "indicator_index.csv",
@@ -255,13 +259,13 @@ def generate_ef31_runtime_csvs(
         "cf_unmatched": len(unmatched),
         "cf_ambiguous": len(ambiguous),
     }
-    activate = should_update_active_manifest(output_root, summary)
-    summary["active"] = activate
+    should_activate = bool(activate) and should_update_active_manifest(output_root, summary)
+    summary["active"] = should_activate
     with open(output_dir / "runtime_summary.json", "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
     with open(output_dir / "manifest.json", "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
-    if activate:
+    if should_activate:
         with open(output_root / ACTIVE_MANIFEST_NAME, "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2, ensure_ascii=False)
 

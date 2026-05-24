@@ -208,6 +208,7 @@ def test_lcia_upload_runtime_becomes_active_ef31_runtime(tmp_path: Path) -> None
             }
         ],
         output_root=artifact_dir,
+        activate=True,
     )
 
     assert manifest["factors_count"] == 1
