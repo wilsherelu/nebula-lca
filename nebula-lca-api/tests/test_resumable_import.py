@@ -782,6 +782,97 @@ def test_missing_elementary_flow_metadata_warns_without_failing_dataset(tmp_path
     assert executor._stats["vectors_written"] == 1
 
 
+def test_bulk_writer_flushes_empty_dataset_without_flush_single(tmp_path):
+    """Batch writer should upsert process/global/checkpoint without per-dataset flush."""
+    import threading
+    from collections import defaultdict
+
+    from sqlalchemy.orm import sessionmaker
+
+    from app.ecoinvent_ef31_loader import LCIDataset
+    from app.lci_import_executor import LciImportJobExecutor, ParseResult
+    from app.models import (
+        DatasetCheckpoint,
+        GlobalDatasetImport,
+        ImportJob,
+        LciProcessVector,
+        ReferenceProcess,
+    )
+
+    db_path = tmp_path / "test.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    ImportJob.__table__.create(engine)
+    DatasetCheckpoint.__table__.create(engine)
+    ReferenceProcess.__table__.create(engine)
+    LciProcessVector.__table__.create(engine)
+    GlobalDatasetImport.__table__.create(engine)
+
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    job_id = "bulk-writer-job"
+    db.add(ImportJob(job_id=job_id, file_path="/fake/path.7z", file_type="lci", status="running"))
+    db.add(DatasetCheckpoint(job_id=job_id, dataset_key="empty.spold", status="running"))
+    db.commit()
+
+    executor = LciImportJobExecutor.__new__(LciImportJobExecutor)
+    executor.db = db
+    executor.job_id = job_id
+    executor.package_version = "ecoinvent_3.11"
+    executor.overwrite_existing = True
+    executor._lock = threading.Lock()
+    executor._stats = defaultdict(int)
+    executor._failed_datasets = []
+    executor._vector_warnings = []
+    executor._global_import_cache = {}
+    executor._global_skipped_dataset_keys = set()
+    executor._elem_flow_lookup = {}
+    executor._unit_conversion_cache = {}
+    executor._flow_key_cache = {}
+    executor._flow_metadata_cache = {}
+    executor._write_batch_size = 32
+    executor._perf_stats = {
+        "commit_count": 0,
+        "flush_duration_ms_total": 0.0,
+        "flush_result_count": 0,
+        "batch_result_count": 0,
+        "bulk_writer_enabled": True,
+    }
+    executor._flush_single = lambda result: (_ for _ in ()).throw(AssertionError("_flush_single should not be called"))
+
+    result = ParseResult(
+        spold_path="empty.spold",
+        dataset=LCIDataset(
+            filename="empty.spold",
+            activity_id="act-empty",
+            activity_name="Empty process",
+            location="GLO",
+            reference_product_name="Product",
+            reference_product_unit="kg",
+            reference_product_amount=1.0,
+            reference_product_id="rp-empty",
+        ),
+        exchanges=[],
+        process_uuid="act-empty:rp-empty",
+        duration_ms=1,
+    )
+
+    executor._flush_parse_result_batch([result])
+
+    checkpoint = db.query(DatasetCheckpoint).filter_by(job_id=job_id, dataset_key="empty.spold").one()
+    process = db.get(ReferenceProcess, "act-empty:rp-empty")
+    global_row = db.query(GlobalDatasetImport).filter_by(dataset_uuid="act-empty:rp-empty").one()
+
+    assert checkpoint.status == "imported"
+    assert checkpoint.vector_status == "empty"
+    assert checkpoint.vector_nnz == 0
+    assert process is not None
+    assert global_row.status == "imported"
+    assert global_row.vector_nnz == 0
+    assert executor._stats["datasets_processed"] == 1
+    assert executor._stats["empty_vectors"] == 1
+    assert executor._perf_stats["commit_count"] == 1
+
+
 def test_cache_built_once_per_job(tmp_path):
     """Unit conversion / flow key caches should be built once, not per-process."""
     import threading

@@ -21,6 +21,7 @@ import uuid
 from collections import defaultdict
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from queue import Empty, Queue
 from typing import Optional
@@ -29,7 +30,14 @@ from sqlalchemy.orm import Session
 
 from . import ecoinvent_ef31_loader as _loader
 from .ef31_db_service import _generate_lci_process_uuid
-from .models import DatasetCheckpoint, ImportJob, LciExchangeMatrix, LciProcessVector
+from .models import (
+    DatasetCheckpoint,
+    GlobalDatasetImport,
+    ImportJob,
+    LciExchangeMatrix,
+    LciProcessVector,
+    ReferenceProcess,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +60,28 @@ class ParseResult:
     vector_status: str | None = None  # written | reused | empty | failed
     vector_nnz: int | None = None
     warning: str | None = None
+
+
+@dataclass
+class _VectorExchange:
+    flow_uuid: str
+    amount: float
+    unit: str
+    direction: str
+
+
+@dataclass
+class _PackedVector:
+    nnz: int
+    flow_key_ids_blob: bytes
+    amounts_blob: bytes
+    index_dtype: str
+    amount_dtype: str
+    compression: str
+    checksum: str
+    canonicalized: bool
+    compressed_bytes: int
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -178,6 +208,16 @@ class LciImportJobExecutor:
             "global_skip_fast_count": 0,
             "flush_duration_ms_total": 0.0,
             "flush_result_count": 0,
+            "batch_prefetch_wall_seconds": 0.0,
+            "batch_pack_wall_seconds": 0.0,
+            "batch_db_upsert_wall_seconds": 0.0,
+            "batch_checkpoint_wall_seconds": 0.0,
+            "batch_result_count": 0,
+            "pack_duration_ms_total": 0.0,
+            "pack_result_count": 0,
+            "db_upsert_duration_ms_total": 0.0,
+            "db_upsert_batch_count": 0,
+            "bulk_writer_enabled": True,
         }
 
         # Pre-load MasterData flows (shared across workers)
@@ -224,6 +264,7 @@ class LciImportJobExecutor:
                     self._update_job_status("paused")
                 else:
                     self._run_parse_write_pipeline(pending_files)
+                    self._update_progress()
 
             with self._lock:
                 result.datasets_processed = self._stats["datasets_processed"]
@@ -677,15 +718,19 @@ class LciImportJobExecutor:
 
     def _flush_parse_result_batch(self, results: list[ParseResult]) -> None:
         t0 = time.perf_counter()
-        for pr in results:
-            self._flush_single(pr)
-        self._mark_checkpoints_complete(results)
+        if hasattr(self.db, "query"):
+            self._flush_result_batch_bulk(results)
+        else:
+            for pr in results:
+                self._flush_single(pr)
+            self._mark_checkpoints_complete(results)
         self._update_progress()
         self.db.commit()
         elapsed_ms = (time.perf_counter() - t0) * 1000
         self._perf_stats["commit_count"] += 1
         self._perf_stats["flush_duration_ms_total"] += elapsed_ms
         self._perf_stats["flush_result_count"] += len(results)
+        self._perf_stats["batch_result_count"] = int(self._perf_stats.get("batch_result_count", 0) or 0) + len(results)
 
     def _record_parse_result_stats(self, result: ParseResult) -> None:
         duration_ms = max(0, int(result.duration_ms or 0))
@@ -727,10 +772,28 @@ class LciImportJobExecutor:
             if exchange_count
             else 0.0
         )
+        commit_count = int(perf.get("commit_count", 0) or 0)
+        pack_count = int(perf.get("pack_result_count", 0) or 0)
+        upsert_count = int(perf.get("db_upsert_batch_count", 0) or 0)
+        avg_batch_size = (
+            float(perf.get("batch_result_count", 0) or 0) / commit_count
+            if commit_count
+            else 0.0
+        )
+        avg_pack_ms = (
+            float(perf.get("pack_duration_ms_total", 0.0) or 0.0) / pack_count
+            if pack_count
+            else 0.0
+        )
+        avg_db_upsert_ms = (
+            float(perf.get("db_upsert_duration_ms_total", 0.0) or 0.0) / upsert_count
+            if upsert_count
+            else 0.0
+        )
         return {
             "parse_wall_seconds": round(float(perf.get("parse_wall_seconds", 0.0) or 0.0), 3),
             "write_wall_seconds": round(float(perf.get("write_wall_seconds", 0.0) or 0.0), 3),
-            "commit_count": int(perf.get("commit_count", 0) or 0),
+            "commit_count": commit_count,
             "write_batch_size": int(perf.get("write_batch_size", write_batch_size) or write_batch_size),
             "queue_max_observed": int(perf.get("queue_max_observed", 0) or 0),
             "avg_parse_ms": round(avg_parse_ms, 3),
@@ -742,9 +805,393 @@ class LciImportJobExecutor:
             "avg_flush_ms": round(avg_flush_ms, 3),
             "masterdata_reused": bool(perf.get("masterdata_reused", False)),
             "masterdata_wall_seconds": round(float(perf.get("masterdata_wall_seconds", 0.0) or 0.0), 3),
+            "batch_prefetch_wall_seconds": round(float(perf.get("batch_prefetch_wall_seconds", 0.0) or 0.0), 3),
+            "batch_pack_wall_seconds": round(float(perf.get("batch_pack_wall_seconds", 0.0) or 0.0), 3),
+            "batch_db_upsert_wall_seconds": round(float(perf.get("batch_db_upsert_wall_seconds", 0.0) or 0.0), 3),
+            "batch_checkpoint_wall_seconds": round(float(perf.get("batch_checkpoint_wall_seconds", 0.0) or 0.0), 3),
+            "avg_batch_size": round(avg_batch_size, 3),
+            "avg_pack_ms": round(avg_pack_ms, 3),
+            "avg_db_upsert_ms": round(avg_db_upsert_ms, 3),
+            "bulk_writer_enabled": bool(perf.get("bulk_writer_enabled", False)),
         }
 
     # ── DB flush (single thread) ───────────────────────────────────────
+
+    def _flush_result_batch_bulk(self, results: list[ParseResult]) -> None:
+        """Flush a parse-result batch with one prefetch/upsert/checkpoint pass."""
+        if not results:
+            return
+
+        for pr in results:
+            if pr.error:
+                pr.vector_status = "failed"
+                pr.vector_nnz = 0
+                with self._lock:
+                    self._stats["datasets_processed"] += 1
+                    self._stats["processes_failed"] += 1
+                    self._failed_datasets.append(pr.spold_path)
+
+        normal_results = [
+            pr for pr in results
+            if not pr.error and pr.dataset is not None and not pr.global_skip
+        ]
+        for pr in normal_results:
+            pr.dataset_uuid = pr.dataset_uuid or self._dataset_uuid_for(pr.dataset)
+
+        prefetch_t0 = time.perf_counter()
+        global_rows_by_uuid: dict[str, GlobalDatasetImport] = {}
+        dataset_uuids = [pr.dataset_uuid for pr in normal_results if pr.dataset_uuid]
+        if dataset_uuids:
+            global_rows = (
+                self.db.query(GlobalDatasetImport)
+                .filter(
+                    GlobalDatasetImport.source_package_version == self.package_version,
+                    GlobalDatasetImport.dataset_uuid.in_(dataset_uuids),
+                )
+                .all()
+            )
+            global_rows_by_uuid = {row.dataset_uuid: row for row in global_rows if row.dataset_uuid}
+
+        write_results: list[ParseResult] = []
+        for pr in normal_results:
+            global_row = global_rows_by_uuid.get(pr.dataset_uuid or "")
+            if not self.overwrite_existing and global_row is not None and global_row.status == "imported":
+                reused_nnz = int(global_row.vector_nnz or 0)
+                pr.global_skip = True
+                pr.vector_status = "reused" if reused_nnz > 0 else "empty"
+                pr.vector_nnz = reused_nnz
+                if global_row.process_uuid:
+                    pr.process_uuid = global_row.process_uuid
+                self._record_global_skip_result(pr)
+            else:
+                write_results.append(pr)
+
+        process_uuids = [pr.process_uuid for pr in write_results if pr.process_uuid]
+        process_rows = (
+            self.db.query(ReferenceProcess)
+            .filter(ReferenceProcess.process_uuid.in_(process_uuids))
+            .all()
+            if process_uuids
+            else []
+        )
+        process_by_uuid = {row.process_uuid: row for row in process_rows}
+        vector_rows = (
+            self.db.query(LciProcessVector)
+            .filter(LciProcessVector.process_uuid.in_(process_uuids))
+            .all()
+            if process_uuids
+            else []
+        )
+        vector_by_uuid = {row.process_uuid: row for row in vector_rows}
+        checkpoint_keys = [Path(pr.spold_path).name for pr in results]
+        checkpoint_rows = (
+            self.db.query(DatasetCheckpoint)
+            .filter(
+                DatasetCheckpoint.job_id == self.job_id,
+                DatasetCheckpoint.dataset_key.in_(checkpoint_keys),
+            )
+            .all()
+            if checkpoint_keys
+            else []
+        )
+        checkpoint_by_key = {row.dataset_key: row for row in checkpoint_rows}
+        self._perf_stats["batch_prefetch_wall_seconds"] = (
+            float(self._perf_stats.get("batch_prefetch_wall_seconds", 0.0) or 0.0)
+            + (time.perf_counter() - prefetch_t0)
+        )
+
+        pack_t0 = time.perf_counter()
+        packed_by_process: dict[str, _PackedVector] = {}
+        for pr in write_results:
+            self._apply_missing_flow_warning(pr)
+            vector_exchanges = [
+                _VectorExchange(
+                    flow_uuid=ex.exchange_id,
+                    amount=float(ex.amount),
+                    unit=ex.unit,
+                    direction=ex.direction,
+                )
+                for ex in pr.exchanges
+                if ex.exchange_id and ex.amount != 0
+            ]
+            if vector_exchanges:
+                packed = self._pack_vector_exchanges(pr.process_uuid, vector_exchanges)
+                packed_by_process[pr.process_uuid] = packed
+                pr.vector_status = "written"
+                pr.vector_nnz = packed.nnz
+                with self._lock:
+                    self._stats["vectors_written"] += 1
+                    self._stats["nnz_total"] += packed.nnz
+                    self._vector_warnings.extend(packed.warnings)
+            elif pr.process_uuid in vector_by_uuid and not self.overwrite_existing:
+                existing_vector = vector_by_uuid[pr.process_uuid]
+                pr.vector_status = "reused"
+                pr.vector_nnz = int(existing_vector.nnz or 0)
+                with self._lock:
+                    self._stats["vectors_reused"] += 1
+            else:
+                pr.vector_status = "empty"
+                pr.vector_nnz = 0
+                with self._lock:
+                    self._stats["empty_vectors"] += 1
+                    if self.overwrite_existing:
+                        self._vector_warnings.append(
+                            f"{Path(pr.spold_path).name}: no elementary vector rows"
+                        )
+        pack_elapsed = time.perf_counter() - pack_t0
+        self._perf_stats["batch_pack_wall_seconds"] = (
+            float(self._perf_stats.get("batch_pack_wall_seconds", 0.0) or 0.0)
+            + pack_elapsed
+        )
+        self._perf_stats["pack_duration_ms_total"] = (
+            float(self._perf_stats.get("pack_duration_ms_total", 0.0) or 0.0)
+            + pack_elapsed * 1000
+        )
+        self._perf_stats["pack_result_count"] = (
+            int(self._perf_stats.get("pack_result_count", 0) or 0)
+            + len([pr for pr in write_results if pr.process_uuid in packed_by_process])
+        )
+
+        upsert_t0 = time.perf_counter()
+        new_processes: list[ReferenceProcess] = []
+        new_vectors: list[LciProcessVector] = []
+        new_globals: list[GlobalDatasetImport] = []
+        for pr in write_results:
+            ds = pr.dataset
+            if ds is None:
+                continue
+            process_json = self._build_lci_process_json(pr)
+            existing_process = process_by_uuid.get(pr.process_uuid)
+            if existing_process is None:
+                new_processes.append(
+                    ReferenceProcess(
+                        process_uuid=pr.process_uuid,
+                        process_name=ds.activity_name or pr.process_uuid,
+                        process_name_en=ds.activity_name,
+                        process_type="lci_dataset",
+                        reference_flow_uuid=None,
+                        process_json=process_json,
+                        source_file=pr.spold_path,
+                        import_mode="ecoinvent_ef31_lci",
+                        import_report_json={"package_version": self.package_version},
+                    )
+                )
+                process_by_uuid[pr.process_uuid] = new_processes[-1]
+                with self._lock:
+                    self._stats["processes_inserted"] += 1
+            else:
+                existing_process.process_name = ds.activity_name or pr.process_uuid
+                existing_process.process_name_en = ds.activity_name
+                existing_process.process_type = "lci_dataset"
+                existing_process.process_json = process_json
+                existing_process.source_file = pr.spold_path
+                with self._lock:
+                    self._stats["processes_updated"] += 1
+
+            packed = packed_by_process.get(pr.process_uuid)
+            if packed is not None:
+                existing_vector = vector_by_uuid.get(pr.process_uuid)
+                if existing_vector is None:
+                    new_vectors.append(self._new_lci_process_vector(pr.process_uuid, packed))
+                    vector_by_uuid[pr.process_uuid] = new_vectors[-1]
+                else:
+                    self._update_lci_process_vector(existing_vector, packed)
+
+            global_row = global_rows_by_uuid.get(pr.dataset_uuid or "")
+            if global_row is None:
+                global_row = GlobalDatasetImport(
+                    source_package_version=self.package_version,
+                    dataset_uuid=pr.dataset_uuid or self._dataset_uuid_for(ds),
+                    status="imported",
+                )
+                global_rows_by_uuid[global_row.dataset_uuid] = global_row
+                new_globals.append(global_row)
+            global_row.status = "imported"
+            global_row.dataset_filename = pr.spold_path
+            global_row.process_uuid = pr.process_uuid
+            global_row.activity_id = ds.activity_id
+            global_row.reference_product_id = ds.reference_product_id
+            global_row.vector_nnz = int(pr.vector_nnz or 0)
+            global_row.last_job_id = self.job_id
+            global_row.error_message = pr.warning
+            global_row.imported_at = datetime.utcnow()
+            self._global_import_cache[global_row.dataset_uuid] = {
+                "status": "imported",
+                "process_uuid": pr.process_uuid,
+                "vector_nnz": int(pr.vector_nnz or 0),
+            }
+            with self._lock:
+                self._stats["datasets_processed"] += 1
+
+        if new_processes:
+            self.db.add_all(new_processes)
+        if new_vectors:
+            self.db.add_all(new_vectors)
+        if new_globals:
+            self.db.add_all(new_globals)
+        self._perf_stats["batch_db_upsert_wall_seconds"] = (
+            float(self._perf_stats.get("batch_db_upsert_wall_seconds", 0.0) or 0.0)
+            + (time.perf_counter() - upsert_t0)
+        )
+        self._perf_stats["db_upsert_duration_ms_total"] = (
+            float(self._perf_stats.get("db_upsert_duration_ms_total", 0.0) or 0.0)
+            + (time.perf_counter() - upsert_t0) * 1000
+        )
+        self._perf_stats["db_upsert_batch_count"] = int(self._perf_stats.get("db_upsert_batch_count", 0) or 0) + 1
+
+        checkpoint_t0 = time.perf_counter()
+        new_checkpoints: list[DatasetCheckpoint] = []
+        for pr in results:
+            key = Path(pr.spold_path).name
+            cp = checkpoint_by_key.get(key)
+            if cp is None:
+                cp = DatasetCheckpoint(job_id=self.job_id, dataset_key=key, status="pending")
+                checkpoint_by_key[key] = cp
+                new_checkpoints.append(cp)
+            cp.status = self._checkpoint_status_for(pr)
+            cp.process_uuid = pr.process_uuid
+            cp.vector_status = pr.vector_status
+            cp.vector_nnz = pr.vector_nnz
+            cp.duration_ms = pr.duration_ms
+            cp.error_message = pr.error or pr.warning
+        if new_checkpoints:
+            self.db.add_all(new_checkpoints)
+        self._perf_stats["batch_checkpoint_wall_seconds"] = (
+            float(self._perf_stats.get("batch_checkpoint_wall_seconds", 0.0) or 0.0)
+            + (time.perf_counter() - checkpoint_t0)
+        )
+
+        self.db.flush()
+
+    def _record_global_skip_result(self, pr: ParseResult) -> None:
+        with self._lock:
+            self._stats["datasets_processed"] += 1
+            self._stats["datasets_skipped_global"] += 1
+            if pr.vector_status == "reused":
+                self._stats["vectors_reused"] += 1
+            else:
+                self._stats["empty_vectors"] += 1
+            self._global_skipped_dataset_keys.add(Path(pr.spold_path).name)
+        self._update_global_skipped(1)
+
+    def _checkpoint_status_for(self, pr: ParseResult) -> str:
+        if pr.error:
+            return "failed"
+        if pr.global_skip or Path(pr.spold_path).name in self._global_skipped_dataset_keys:
+            return "skipped_global"
+        if pr.dataset:
+            return "imported"
+        return "skipped"
+
+    def _apply_missing_flow_warning(self, pr: ParseResult) -> None:
+        elem_flow_lookup = self._elem_flow_lookup
+        missing_refs = []
+        if elem_flow_lookup:
+            for exc in pr.exchanges:
+                if exc.exchange_id and exc.exchange_id not in elem_flow_lookup:
+                    missing_refs.append(exc.exchange_id)
+        if not missing_refs:
+            return
+        unique_missing = sorted(set(missing_refs))
+        shown = ", ".join(unique_missing[:5])
+        if len(unique_missing) > 5:
+            shown += f", ... (+{len(unique_missing) - 5} more)"
+        pr.warning = f"missing elementary flow metadata refs: {shown}"
+        with self._lock:
+            self._vector_warnings.append(f"{Path(pr.spold_path).name}: {pr.warning}")
+
+    def _build_lci_process_json(self, pr: ParseResult) -> dict:
+        ds = pr.dataset
+        return {
+            "process_uuid": pr.process_uuid,
+            "activity_id": ds.activity_id,
+            "process_name": ds.activity_name,
+            "location": ds.location,
+            "reference_product": ds.reference_product_name,
+            "reference_product_id": ds.reference_product_id,
+            "reference_product_unit": ds.reference_product_unit,
+            "reference_product_amount": ds.reference_product_amount,
+            "exchange_count": len(pr.exchanges),
+            "source": "ecoinvent_3.11",
+        }
+
+    def _pack_vector_exchanges(self, process_uuid: str, exchanges: list[_VectorExchange]) -> _PackedVector:
+        from .ingest_ecoinvent import (
+            _canonicalize_lci_exchange_unit_cached,
+            _get_or_create_lci_flow_key_cached,
+        )
+        from .lci_vector_codec import pack_lci_vector
+
+        agg: dict[int, float] = {}
+        canonicalized = True
+        warnings: list[str] = []
+        for ex in exchanges:
+            amount, canonical_unit, unit_ok = _canonicalize_lci_exchange_unit_cached(
+                float(ex.amount), ex.unit, self._unit_conversion_cache
+            )
+            if not unit_ok:
+                canonicalized = False
+                warnings.append(
+                    f"Missing unit conversion for process={process_uuid} flow={ex.flow_uuid} unit={ex.unit}"
+                )
+            flow_key_id = _get_or_create_lci_flow_key_cached(
+                self.db,
+                flow_uuid=ex.flow_uuid,
+                direction=ex.direction,
+                canonical_unit=canonical_unit,
+                package_version=self.package_version,
+                flow_key_cache=self._flow_key_cache,
+                flow_metadata_cache=self._flow_metadata_cache,
+            )
+            agg[flow_key_id] = agg.get(flow_key_id, 0.0) + amount
+
+        flow_key_ids = sorted(agg)
+        amounts = [agg[key] for key in flow_key_ids]
+        packed = pack_lci_vector(flow_key_ids, amounts)
+        return _PackedVector(
+            nnz=packed.nnz,
+            flow_key_ids_blob=packed.flow_key_ids_blob,
+            amounts_blob=packed.amounts_blob,
+            index_dtype=packed.index_dtype,
+            amount_dtype=packed.amount_dtype,
+            compression=packed.compression,
+            checksum=packed.checksum,
+            canonicalized=canonicalized,
+            compressed_bytes=len(packed.flow_key_ids_blob) + len(packed.amounts_blob),
+            warnings=warnings,
+        )
+
+    def _new_lci_process_vector(self, process_uuid: str, packed: _PackedVector) -> LciProcessVector:
+        return LciProcessVector(
+            process_uuid=process_uuid,
+            dataset_level="linked_lci",
+            system_model=None,
+            nnz=packed.nnz,
+            axis_id=None,
+            flow_key_ids_blob=packed.flow_key_ids_blob,
+            amounts_blob=packed.amounts_blob,
+            index_dtype=packed.index_dtype,
+            amount_dtype=packed.amount_dtype,
+            compression=packed.compression,
+            canonicalized=packed.canonicalized,
+            checksum=packed.checksum,
+            source=self.package_version,
+            source_package_version=self.package_version,
+        )
+
+    def _update_lci_process_vector(self, row: LciProcessVector, packed: _PackedVector) -> None:
+        row.dataset_level = "linked_lci"
+        row.nnz = packed.nnz
+        row.axis_id = None
+        row.flow_key_ids_blob = packed.flow_key_ids_blob
+        row.amounts_blob = packed.amounts_blob
+        row.index_dtype = packed.index_dtype
+        row.amount_dtype = packed.amount_dtype
+        row.compression = packed.compression
+        row.canonicalized = packed.canonicalized
+        row.checksum = packed.checksum
+        row.source = self.package_version
+        row.source_package_version = self.package_version
 
     def _flush_single(self, pr: ParseResult) -> None:
         """Flush one parse result to the DB (called by main thread)."""
