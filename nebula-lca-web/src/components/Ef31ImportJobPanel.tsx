@@ -205,7 +205,7 @@ export default function Ef31ImportJobPanel(props: {
   const [fileType, setFileType] = useState<"lci" | "lcia">("lci");
   const [uploadBusy, setUploadBusy] = useState(false);
   const [jobBusy, setJobBusy] = useState(false);
-  const [workers, setWorkers] = useState(4);
+  const [workers, setWorkers] = useState(2);
   const [limit, setLimit] = useState<number | null>(100);
   const [overwriteExisting, setOverwriteExisting] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -230,6 +230,7 @@ export default function Ef31ImportJobPanel(props: {
     setFileType("lci");
     setUploadBusy(false);
     setJobBusy(false);
+    setWorkers(2);
     setLimit(100);
     setOverwriteExisting(false);
     setShowAdvanced(false);

@@ -438,6 +438,79 @@ def test_global_dataset_skip_marks_job_checkpoint(tmp_path):
     assert executor._stats["processes_inserted"] == 0
 
 
+def test_parse_write_pipeline_flushes_full_batch_and_remainder(tmp_path):
+    """Pipeline should write every parse result with one writer and bounded commits."""
+    import threading
+    from collections import defaultdict
+    from pathlib import Path
+
+    from app.lci_import_executor import LciImportJobExecutor, ParseResult
+
+    class DummyDb:
+        def __init__(self):
+            self.commit_count = 0
+
+        def commit(self):
+            self.commit_count += 1
+
+    executor = LciImportJobExecutor.__new__(LciImportJobExecutor)
+    executor.db = DummyDb()
+    executor.job_id = "pipeline-test"
+    executor.workers = 2
+    executor._paused = False
+    executor._cancel_requested = False
+    executor._lock = threading.Lock()
+    executor._stats = defaultdict(int)
+    executor._global_skipped_dataset_keys = set()
+    executor._write_batch_size = 32
+    executor._queue_maxsize = 8
+    executor._write_flush_interval_seconds = 30.0
+    executor._perf_stats = {
+        "parse_wall_seconds": 0.0,
+        "write_wall_seconds": 0.0,
+        "commit_count": 0,
+        "write_batch_size": executor._write_batch_size,
+        "queue_max_observed": 0,
+        "parse_duration_ms_total": 0,
+        "parse_result_count": 0,
+        "flush_duration_ms_total": 0.0,
+        "flush_result_count": 0,
+    }
+    flushed: list[str] = []
+    checkpoint_batches: list[int] = []
+
+    def parse_one(path: Path) -> ParseResult:
+        return ParseResult(
+            spold_path=str(path),
+            dataset=None,
+            exchanges=[],
+            process_uuid=path.stem,
+            duration_ms=5,
+            error="parse_spold_file returned None",
+        )
+
+    def flush_single(result: ParseResult) -> None:
+        flushed.append(Path(result.spold_path).name)
+
+    def mark_complete(results: list[ParseResult]) -> None:
+        checkpoint_batches.append(len(results))
+
+    executor._parse_one = parse_one
+    executor._flush_single = flush_single
+    executor._mark_checkpoints_complete = mark_complete
+    executor._update_progress = lambda: None
+    executor._check_control_signals = lambda: (False, False)
+
+    files = [tmp_path / f"dataset-{idx}.spold" for idx in range(33)]
+    LciImportJobExecutor._run_parse_write_pipeline(executor, files)
+
+    assert sorted(flushed) == sorted(path.name for path in files)
+    assert sorted(checkpoint_batches) == [1, 32]
+    assert executor.db.commit_count == 2
+    assert executor._perf_stats["commit_count"] == 2
+    assert executor._build_performance_stats()["avg_parse_ms"] == 5.0
+
+
 def test_cache_built_once_per_job(tmp_path):
     """Unit conversion / flow key caches should be built once, not per-process."""
     import threading
@@ -589,6 +662,9 @@ def test_progress_stats_json_updates(tmp_path):
     assert job.stats_json["vectors_reused"] == 2
     assert job.stats_json["empty_vectors"] == 1
     assert job.stats_json["vector_nnz_total"] == 500
+    assert job.stats_json["commit_count"] == 0
+    assert job.stats_json["write_batch_size"] == LciImportJobExecutor.DEFAULT_WRITE_BATCH_SIZE
+    assert job.stats_json["avg_parse_ms"] == 0.0
 
 
 def test_recover_stale_jobs_resets_running_checkpoints(tmp_path, monkeypatch):

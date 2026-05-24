@@ -19,10 +19,10 @@ import threading
 import time
 import uuid
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from dataclasses import dataclass, field
 from pathlib import Path
-from queue import Queue, Empty
+from queue import Empty, Queue
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -81,6 +81,7 @@ class ImportResult:
     vector_nnz_total: int = 0
     vector_warnings: list = field(default_factory=list)
     failed_datasets: list[str] = field(default_factory=list)
+    performance_stats: dict = field(default_factory=dict)
     duration_seconds: float = 0.0
     error_summary: str | None = None
 
@@ -95,6 +96,10 @@ class LciImportJobExecutor:
     Parser threads produce ParseResult objects which are collected
     and flushed by the writer.
     """
+
+    DEFAULT_WRITE_BATCH_SIZE = 32
+    DEFAULT_QUEUE_MAXSIZE = 128
+    DEFAULT_WRITE_FLUSH_INTERVAL_SECONDS = 2.0
 
     def __init__(
         self,
@@ -149,6 +154,20 @@ class LciImportJobExecutor:
         self._error_summary: str | None = None
         self._total_count = 0
         self._global_skipped_dataset_keys: set[str] = set()
+        self._write_batch_size = self.DEFAULT_WRITE_BATCH_SIZE
+        self._queue_maxsize = self.DEFAULT_QUEUE_MAXSIZE
+        self._write_flush_interval_seconds = self.DEFAULT_WRITE_FLUSH_INTERVAL_SECONDS
+        self._perf_stats = {
+            "parse_wall_seconds": 0.0,
+            "write_wall_seconds": 0.0,
+            "commit_count": 0,
+            "write_batch_size": self._write_batch_size,
+            "queue_max_observed": 0,
+            "parse_duration_ms_total": 0,
+            "parse_result_count": 0,
+            "flush_duration_ms_total": 0.0,
+            "flush_result_count": 0,
+        }
 
         # Pre-load MasterData flows (shared across workers)
         self._elementary_flows = []
@@ -184,27 +203,15 @@ class LciImportJobExecutor:
             self._mark_datasets_running(pending_files, checkpoints)
             self.db.commit()
 
-            parse_results: list[ParseResult] = []
-            batch_size = max(self.workers * 8, 16)
-            for offset in range(0, len(pending_files), batch_size):
-                # Check signal files before each batch
+            if pending_files:
                 sig_pause, sig_cancel = self._check_control_signals()
                 if sig_cancel:
                     self._cancel_requested = True
                     self._update_job_status("cancelled")
-                    break
-                if sig_pause:
+                elif sig_pause:
                     self._update_job_status("paused")
-                    break
-
-                batch = pending_files[offset: offset + batch_size]
-                batch_results = self._parse_files_concurrent(batch)
-                for pr in batch_results:
-                    self._flush_single(pr)
-                self._mark_checkpoints_complete(batch_results)
-                self._update_progress()
-                self.db.commit()
-                parse_results.extend(batch_results)
+                else:
+                    self._run_parse_write_pipeline(pending_files)
 
             with self._lock:
                 result.datasets_processed = self._stats["datasets_processed"]
@@ -220,9 +227,10 @@ class LciImportJobExecutor:
                 result.vector_nnz_total = self._stats["nnz_total"]
                 result.vector_warnings = list(self._vector_warnings)
                 result.failed_datasets = list(self._failed_datasets)
+                result.performance_stats = self._build_performance_stats()
 
             current_status = self._get_requested_status()
-            if current_status == "paused":
+            if current_status == "paused" or self._paused:
                 self._update_job_status("paused")
             elif current_status == "cancelled" or self._cancel_requested:
                 self._update_job_status("cancelled")
@@ -461,6 +469,172 @@ class LciImportJobExecutor:
                 except Exception as exc:
                     logger.warning(f"Future error: {exc}")
         return results
+
+    def _run_parse_write_pipeline(self, files: list[Path]) -> None:
+        """Parse files concurrently while the main thread flushes DB batches."""
+        result_queue: Queue[ParseResult | object] = Queue(maxsize=self._queue_maxsize)
+        sentinel = object()
+        writer_started = time.perf_counter()
+
+        producer = threading.Thread(
+            target=self._produce_parse_results,
+            args=(files, result_queue, sentinel),
+            daemon=True,
+        )
+        producer.start()
+
+        pending: list[ParseResult] = []
+        last_flush = time.perf_counter()
+        while True:
+            timeout = max(0.1, min(0.5, self._write_flush_interval_seconds - (time.perf_counter() - last_flush)))
+            try:
+                item = result_queue.get(timeout=timeout)
+            except Empty:
+                if pending and time.perf_counter() - last_flush >= self._write_flush_interval_seconds:
+                    self._flush_parse_result_batch(pending)
+                    pending = []
+                    last_flush = time.perf_counter()
+                continue
+
+            if item is sentinel:
+                break
+            pending.append(item)  # type: ignore[arg-type]
+            if len(pending) >= self._write_batch_size:
+                self._flush_parse_result_batch(pending)
+                pending = []
+                last_flush = time.perf_counter()
+
+        if pending:
+            self._flush_parse_result_batch(pending)
+        producer.join()
+        self._perf_stats["write_wall_seconds"] += time.perf_counter() - writer_started
+
+    def _produce_parse_results(
+        self,
+        files: list[Path],
+        result_queue: Queue[ParseResult | object],
+        sentinel: object,
+    ) -> None:
+        """Producer side of the bounded parse/write pipeline."""
+        parse_started = time.perf_counter()
+        next_index = 0
+        in_flight = {}
+        max_in_flight = max(self.workers * 4, self.workers)
+
+        def submit_more(pool: ThreadPoolExecutor) -> None:
+            nonlocal next_index
+            while (
+                next_index < len(files)
+                and len(in_flight) < max_in_flight
+                and not self._cancel_requested
+                and not self._paused
+            ):
+                path = files[next_index]
+                in_flight[pool.submit(self._parse_one, path)] = path
+                next_index += 1
+
+        try:
+            with ThreadPoolExecutor(max_workers=self.workers) as pool:
+                submit_more(pool)
+                while in_flight:
+                    done, _ = wait(in_flight, timeout=0.5, return_when=FIRST_COMPLETED)
+                    if not done:
+                        sig_pause, sig_cancel = self._check_control_signals()
+                        if sig_cancel:
+                            self._cancel_requested = True
+                        if sig_pause:
+                            self._paused = True
+                        if self._cancel_requested or self._paused:
+                            for future in in_flight:
+                                future.cancel()
+                            break
+                        continue
+
+                    for future in done:
+                        path = in_flight.pop(future)
+                        if future.cancelled():
+                            continue
+                        try:
+                            result = future.result()
+                        except Exception as exc:
+                            result = ParseResult(
+                                spold_path=str(path),
+                                dataset=None,
+                                exchanges=[],
+                                process_uuid="",
+                                duration_ms=0,
+                                error=str(exc),
+                            )
+                        self._record_parse_result_stats(result)
+                        self._put_parse_result(result_queue, result)
+
+                    sig_pause, sig_cancel = self._check_control_signals()
+                    if sig_cancel:
+                        self._cancel_requested = True
+                    if sig_pause:
+                        self._paused = True
+                    if self._cancel_requested or self._paused:
+                        for future in in_flight:
+                            future.cancel()
+                        break
+                    submit_more(pool)
+        finally:
+            self._perf_stats["parse_wall_seconds"] += time.perf_counter() - parse_started
+            result_queue.put(sentinel)
+
+    def _put_parse_result(self, result_queue: Queue[ParseResult | object], result: ParseResult) -> None:
+        while True:
+            try:
+                result_queue.put(result, timeout=0.5)
+                self._perf_stats["queue_max_observed"] = max(
+                    int(self._perf_stats.get("queue_max_observed", 0)),
+                    result_queue.qsize(),
+                )
+                return
+            except Exception:
+                if self._cancel_requested:
+                    return
+
+    def _flush_parse_result_batch(self, results: list[ParseResult]) -> None:
+        t0 = time.perf_counter()
+        for pr in results:
+            self._flush_single(pr)
+        self._mark_checkpoints_complete(results)
+        self._update_progress()
+        self.db.commit()
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        self._perf_stats["commit_count"] += 1
+        self._perf_stats["flush_duration_ms_total"] += elapsed_ms
+        self._perf_stats["flush_result_count"] += len(results)
+
+    def _record_parse_result_stats(self, result: ParseResult) -> None:
+        self._perf_stats["parse_duration_ms_total"] += max(0, int(result.duration_ms or 0))
+        self._perf_stats["parse_result_count"] += 1
+
+    def _build_performance_stats(self) -> dict:
+        perf = getattr(self, "_perf_stats", {})
+        write_batch_size = int(getattr(self, "_write_batch_size", self.DEFAULT_WRITE_BATCH_SIZE))
+        parse_count = int(perf.get("parse_result_count", 0) or 0)
+        flush_count = int(perf.get("flush_result_count", 0) or 0)
+        avg_parse_ms = (
+            float(perf.get("parse_duration_ms_total", 0) or 0) / parse_count
+            if parse_count
+            else 0.0
+        )
+        avg_flush_ms = (
+            float(perf.get("flush_duration_ms_total", 0.0) or 0.0) / flush_count
+            if flush_count
+            else 0.0
+        )
+        return {
+            "parse_wall_seconds": round(float(perf.get("parse_wall_seconds", 0.0) or 0.0), 3),
+            "write_wall_seconds": round(float(perf.get("write_wall_seconds", 0.0) or 0.0), 3),
+            "commit_count": int(perf.get("commit_count", 0) or 0),
+            "write_batch_size": int(perf.get("write_batch_size", write_batch_size) or write_batch_size),
+            "queue_max_observed": int(perf.get("queue_max_observed", 0) or 0),
+            "avg_parse_ms": round(avg_parse_ms, 3),
+            "avg_flush_ms": round(avg_flush_ms, 3),
+        }
 
     # ── DB flush (single thread) ───────────────────────────────────────
 
@@ -844,6 +1018,7 @@ class LciImportJobExecutor:
                     "vectors_reused": vectors_reused,
                     "empty_vectors": empty_vectors,
                     "vector_nnz_total": nnz_total,
+                    **self._build_performance_stats(),
                 }
                 job.updated_at = __import__("datetime").datetime.utcnow()
                 self.db.flush()
