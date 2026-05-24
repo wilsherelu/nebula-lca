@@ -1436,7 +1436,7 @@ class ImportJobCreateRequest(BaseModel):
     """Request to create an import job from an uploaded file or local path."""
     file_path: str = Field(..., description="Path to the uploaded file (or local path)")
     file_type: Literal["lci", "lcia"] = Field(default="lci", description="Type of data being imported")
-    workers: int = Field(default=4, ge=1, le=8, description="Number of parallel parser workers")
+    workers: int = Field(default=2, ge=1, le=8, description="Number of parallel parser workers")
     limit: int | None = Field(default=None, description="Max datasets to import (None = full)")
     overwrite_existing: bool = Field(default=False, description="If true, re-import datasets that are already imported globally")
 

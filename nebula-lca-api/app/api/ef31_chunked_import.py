@@ -217,6 +217,7 @@ def _run_job_background(job_id: str, resume_from_failed: bool) -> None:
             "vector_nnz_total": result.vector_nnz_total,
             "failed_datasets": result.failed_datasets,
             "duration_seconds": result.duration_seconds,
+            **result.performance_stats,
         }
         job.updated_at = datetime.utcnow()
         db.commit()
