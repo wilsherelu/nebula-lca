@@ -63,6 +63,14 @@ def pack_lci_vector(
     index_raw = _pack_uint32(flow_key_ids)
     amount_raw = _pack_float64(amounts)
     checksum = hashlib.sha256(index_raw + amount_raw).hexdigest()
+    if compression_level <= 0:
+        return PackedLciVector(
+            flow_key_ids_blob=index_raw,
+            amounts_blob=amount_raw,
+            nnz=len(flow_key_ids),
+            checksum=checksum,
+            compression="none",
+        )
     return PackedLciVector(
         flow_key_ids_blob=zlib.compress(index_raw, level=compression_level),
         amounts_blob=zlib.compress(amount_raw, level=compression_level),
@@ -78,19 +86,29 @@ def unpack_lci_vector(
     nnz: int,
     compression: str = "zlib",
 ) -> tuple[list[int], list[float]]:
-    if compression != "zlib":
+    if compression == "zlib":
+        index_raw = zlib.decompress(flow_key_ids_blob)
+        amount_raw = zlib.decompress(amounts_blob)
+    elif compression == "none":
+        index_raw = flow_key_ids_blob
+        amount_raw = amounts_blob
+    else:
         raise ValueError(f"Unsupported LCI vector compression: {compression}")
-    flow_key_ids = _unpack_uint32(zlib.decompress(flow_key_ids_blob))
-    amounts = _unpack_float64(zlib.decompress(amounts_blob))
+    flow_key_ids = _unpack_uint32(index_raw)
+    amounts = _unpack_float64(amount_raw)
     if len(flow_key_ids) != nnz or len(amounts) != nnz:
         raise ValueError("LCI vector blob length does not match nnz")
     return flow_key_ids, amounts
 
 
 def unpack_lci_flow_key_ids(*, flow_key_ids_blob: bytes, nnz: int, compression: str = "zlib") -> list[int]:
-    if compression != "zlib":
+    if compression == "zlib":
+        index_raw = zlib.decompress(flow_key_ids_blob)
+    elif compression == "none":
+        index_raw = flow_key_ids_blob
+    else:
         raise ValueError(f"Unsupported LCI vector compression: {compression}")
-    flow_key_ids = _unpack_uint32(zlib.decompress(flow_key_ids_blob))
+    flow_key_ids = _unpack_uint32(index_raw)
     if len(flow_key_ids) != nnz:
         raise ValueError("LCI flow-key axis blob length does not match nnz")
     return flow_key_ids

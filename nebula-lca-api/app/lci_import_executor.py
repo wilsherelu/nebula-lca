@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 import uuid
@@ -168,6 +169,16 @@ class LciImportJobExecutor:
     DEFAULT_WRITE_FLUSH_INTERVAL_SECONDS = 2.0
     DEFAULT_VECTOR_COMPRESSION_LEVEL = 1
 
+    @classmethod
+    def _configured_vector_compression_level(cls) -> int:
+        raw = os.getenv("LCI_VECTOR_COMPRESSION_LEVEL")
+        if raw is None or not raw.strip():
+            return cls.DEFAULT_VECTOR_COMPRESSION_LEVEL
+        try:
+            return max(0, min(9, int(raw.strip())))
+        except ValueError:
+            return cls.DEFAULT_VECTOR_COMPRESSION_LEVEL
+
     def __init__(
         self,
         job_id: str,
@@ -231,6 +242,8 @@ class LciImportJobExecutor:
         self._write_batch_size = self.DEFAULT_WRITE_BATCH_SIZE
         self._queue_maxsize = self.DEFAULT_QUEUE_MAXSIZE
         self._write_flush_interval_seconds = self.DEFAULT_WRITE_FLUSH_INTERVAL_SECONDS
+        self._vector_compression_level = self._configured_vector_compression_level()
+        self._vector_compression_mode = "none" if self._vector_compression_level == 0 else "zlib"
         self._perf_stats = {
             "parse_wall_seconds": 0.0,
             "write_wall_seconds": 0.0,
@@ -292,7 +305,8 @@ class LciImportJobExecutor:
             "upsert_execute_seconds": 0.0,
             "checkpoint_core_upsert_enabled": False,
             "checkpoint_upsert_execute_seconds": 0.0,
-            "vector_compression_level": self.DEFAULT_VECTOR_COMPRESSION_LEVEL,
+            "vector_compression_level": self._vector_compression_level,
+            "vector_compression_mode": self._vector_compression_mode,
             "commit_seconds": 0.0,
             "session_clear_gc_seconds": 0.0,
             # Worker-side exclusive timing
@@ -1387,7 +1401,8 @@ class LciImportJobExecutor:
             "upsert_execute_seconds": round(float(perf.get("upsert_execute_seconds", 0.0) or 0.0), 3),
             "checkpoint_core_upsert_enabled": bool(perf.get("checkpoint_core_upsert_enabled", False)),
             "checkpoint_upsert_execute_seconds": round(float(perf.get("checkpoint_upsert_execute_seconds", 0.0) or 0.0), 3),
-            "vector_compression_level": int(perf.get("vector_compression_level", self.DEFAULT_VECTOR_COMPRESSION_LEVEL) or self.DEFAULT_VECTOR_COMPRESSION_LEVEL),
+            "vector_compression_level": int(perf.get("vector_compression_level", self.DEFAULT_VECTOR_COMPRESSION_LEVEL)),
+            "vector_compression_mode": str(perf.get("vector_compression_mode", "zlib") or "zlib"),
             "commit_seconds": round(float(perf.get("commit_seconds", 0.0) or 0.0), 3),
             "session_clear_gc_seconds": round(float(perf.get("session_clear_gc_seconds", 0.0) or 0.0), 3),
             # Worker exclusive timing
@@ -1731,7 +1746,8 @@ class LciImportJobExecutor:
             amounts = [agg[k] for k in flow_key_ids]
             from .lci_vector_codec import pack_lci_vector
             t_compress = time.perf_counter()
-            packed = pack_lci_vector(flow_key_ids, amounts)
+            compression_level = int(getattr(self, "_vector_compression_level", self.DEFAULT_VECTOR_COMPRESSION_LEVEL))
+            packed = pack_lci_vector(flow_key_ids, amounts, compression_level=compression_level)
             compress_elapsed = time.perf_counter() - t_compress
             self._perf_stats["pack_sort_seconds"] = (
                 float(self._perf_stats.get("pack_sort_seconds", 0.0) or 0.0) + sort_elapsed
@@ -1954,10 +1970,11 @@ class LciImportJobExecutor:
                         amounts = [agg[k] for k in flow_key_ids]
                         from .lci_vector_codec import pack_lci_vector
                         t_compress = time.perf_counter()
+                        compression_level = int(getattr(self, "_vector_compression_level", self.DEFAULT_VECTOR_COMPRESSION_LEVEL))
                         packed = pack_lci_vector(
                             flow_key_ids,
                             amounts,
-                            compression_level=self.DEFAULT_VECTOR_COMPRESSION_LEVEL,
+                            compression_level=compression_level,
                         )
                         compress_elapsed = time.perf_counter() - t_compress
                         self._perf_stats["pack_sort_seconds"] = (
@@ -2442,7 +2459,8 @@ class LciImportJobExecutor:
         amounts = [agg[key] for key in flow_key_ids]
         from .lci_vector_codec import pack_lci_vector
         t_compress = time.perf_counter()
-        packed = pack_lci_vector(flow_key_ids, amounts)
+        compression_level = int(getattr(self, "_vector_compression_level", self.DEFAULT_VECTOR_COMPRESSION_LEVEL))
+        packed = pack_lci_vector(flow_key_ids, amounts, compression_level=compression_level)
         compress_elapsed = time.perf_counter() - t_compress
         self._perf_stats["pack_sort_seconds"] = (
             float(self._perf_stats.get("pack_sort_seconds", 0.0) or 0.0) + sort_elapsed
