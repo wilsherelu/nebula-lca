@@ -132,6 +132,7 @@ def import_ecoinvent_elementary_flows(
 
     inserted = 0
     updated = 0
+    conflicts_overwritten = 0
     skipped = 0
     errors: list[str] = []
 
@@ -149,19 +150,21 @@ def import_ecoinvent_elementary_flows(
             if item is None:
                 skipped += 1
                 continue
-            # Update missing fields
-            if not item.flow_name or item.flow_name == flow.flow_uuid:
-                item.flow_name = flow.flow_name
-            if not item.flow_name_en:
-                item.flow_name_en = flow.flow_name_en
-            if not item.default_unit:
-                item.default_unit = flow.default_unit
-            if not item.unit_group:
-                item.unit_group = unit_group
-            if not item.compartment:
-                item.compartment = flow.compartment
-            if item.source is None or item.source == "ef3.1":
-                item.source = source
+            if item.flow_type != "Elementary flow" or item.source != source:
+                conflicts_overwritten += 1
+            item.flow_name = flow.flow_name or item.flow_name or flow.flow_uuid
+            item.flow_name_en = flow.flow_name_en or item.flow_name_en
+            item.flow_type = "Elementary flow"
+            item.default_unit = flow.default_unit or item.default_unit or "kg"
+            item.unit_group = unit_group
+            item.compartment = flow.compartment
+            item.source = source
+            item.is_custom = False
+            item.tidas_compatible = False
+            item.tidas_unit_group = None
+            item.tidas_flow_property_uuid = None
+            item.tidas_reference_source = None
+            item.allocation_properties = None
             updated += 1
         else:
             db.add(
@@ -180,7 +183,13 @@ def import_ecoinvent_elementary_flows(
             inserted += 1
 
     db.commit()
-    return {"inserted": inserted, "updated": updated, "skipped": skipped, "errors": errors}
+    return {
+        "inserted": inserted,
+        "updated": updated,
+        "conflicts_overwritten": conflicts_overwritten,
+        "skipped": skipped,
+        "errors": errors,
+    }
 
 
 def import_ecoinvent_intermediate_flows(
