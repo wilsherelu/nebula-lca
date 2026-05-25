@@ -25,7 +25,7 @@ DEFAULT_TIDAS_REFERENCE_CATALOG_PATH = (
     Path(__file__).resolve().parent.parent
     / "data"
     / "Tiangong"
-    / "tidas_reference_catalog_20260525.json"
+    / "tidas_reference_catalog.json"
 )
 
 
@@ -96,8 +96,12 @@ def lookup_classification_entries(dataset_type: str | None, fallback: list[dict[
 
     Falls back to ``fallback`` list when catalog is absent or type is unknown.
 
-    Each entry is a dict with keys ``@id``, ``@name``, and optional ``category``
+    Each entry is a dict with keys ``classId`` (or ``@id``), ``name`` (or
+    ``@name``), ``level`` (optional, defaults to 0), and optional ``category``
     (for hierarchical nesting).
+
+    Catalog entries may have ``classId`` / ``level`` / ``name`` keys (the ILCD
+    catalog serialisation format) or legacy ``@id`` / ``@name`` keys.
     """
     catalog = load_tidas_reference_catalog()
     if not catalog:
@@ -199,6 +203,68 @@ def _flow_property_by_uuid(seed: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return result
 
 
+# Known English → Chinese translations for common flow property unit groups.
+# When the seed has no name_zh, these provide safe fallbacks.
+_FLOW_PROPERTY_ZH_TRANSLATIONS: dict[str, str] = {
+    "mass": "质量",
+    "mass*distance": "质量距离",
+    "mass distance": "质量距离",
+    "volume": "体积",
+    "energy": "能量",
+    "number of items": "数量",
+    "item(s)": "项",
+    "unit(s)": "单位",
+    "currency": "货币",
+    "length": "长度",
+    "time": "时间",
+    "area": "面积",
+    "temperature": "温度",
+    "pressure": "压力",
+    "amount of substance": "物质的量",
+    "mol": "摩尔",
+    "electric current": "电流",
+    "kilogram": "千克",
+    "gram": "克",
+    "joule": "焦耳",
+    "watt": "瓦特",
+    "litre": "升",
+    "liters": "升",
+    "meter": "米",
+    "meters": "米",
+    "kilometer": "千米",
+    "square meter": "平方米",
+    "cubic meter": "立方米",
+    "decibel": "分贝",
+    "sej": "社会环境焦耳",
+    "pct": "百分比",
+    "percent": "百分比",
+    "h": "小时",
+    "day": "天",
+    "year": "年",
+}
+
+
+def _safe_zh_translation(name_en: str) -> str | None:
+    """Return a safe Chinese translation for a flow property name, or None.
+
+    Returns None when we cannot produce a reliable Chinese name, so the
+    caller can omit the ``zh`` entry entirely (ILCD validator accepts
+    single-language items).
+    """
+    key = str(name_en or "").strip().lower()
+    if not key:
+        return None
+    # Exact match first
+    if key in _FLOW_PROPERTY_ZH_TRANSLATIONS:
+        return _FLOW_PROPERTY_ZH_TRANSLATIONS[key]
+    # Substring match for compound units like "Units of mass", "Mass*time"
+    for pattern, zh in _FLOW_PROPERTY_ZH_TRANSLATIONS.items():
+        if pattern in key or key in pattern:
+            return zh
+    # No reliable translation → caller should omit zh
+    return None
+
+
 def _short_description(mapping: dict[str, Any], flow_property: dict[str, Any]) -> list[dict[str, str]]:
     descriptions = mapping.get("short_description") or flow_property.get("short_description")
     if isinstance(descriptions, list) and descriptions:
@@ -210,11 +276,21 @@ def _short_description(mapping: dict[str, Any], flow_property: dict[str, Any]) -
         or flow_property.get("name")
         or "Unspecified"
     ).strip()
-    name_zh = str(mapping.get("name_zh") or flow_property.get("name_zh") or name_en).strip()
-    return [
-        {"#text": name_en, "@xml:lang": "en"},
-        {"#text": name_zh, "@xml:lang": "zh"},
-    ]
+    name_zh = str(mapping.get("name_zh") or flow_property.get("name_zh") or "").strip()
+
+    # If seed provides name_zh, use it directly
+    if name_zh:
+        return [
+            {"#text": name_en, "@xml:lang": "en"},
+            {"#text": name_zh, "@xml:lang": "zh"},
+        ]
+
+    # No name_zh in seed — use known translation table; omit zh if unknown
+    zh = _safe_zh_translation(name_en)
+    items = [{"#text": name_en, "@xml:lang": "en"}]
+    if zh:
+        items.append({"#text": zh, "@xml:lang": "zh"})
+    return items
 
 
 @lru_cache(maxsize=1)
@@ -328,3 +404,203 @@ def get_tidas_allowed_unit_groups() -> list[str]:
                 add(alias, allowed_from_mappings, seen_from_mappings)
 
     return allowed_from_mappings or allowed_from_unit_groups
+
+
+# ---------------------------------------------------------------------------
+# Bundled reference dataset generation
+# ---------------------------------------------------------------------------
+
+
+def build_tidas_source_dataset(
+    ref_object_id: str,
+    short_description_en: str,
+    short_description_zh: str | None = None,
+) -> dict[str, Any]:
+    """Build a minimal valid ILCD sourceDataSet.
+
+    The dataset is self-contained and can be written directly into a ZIP.
+    """
+    return {
+        "sourceDataSet": {
+            "@locations": "../ILCDLocations.xml",
+            "@version": "1.1",
+            "@xmlns": "http://lca.jrc.it/ILCD/Source",
+            "@xmlns:common": "http://lca.jrc.it/ILCD/Common",
+            "@xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+            "@xsi:schemaLocation": "http://lca.jrc.it/ILCD/Source ../../schemas/ILCD_SourceDataSet.xsd",
+            "administrativeInformation": {
+                "common:commissionerAndGoal": {
+                    "common:intendedApplications": [
+                        {"#text": "Generated by Nebula LCA", "@xml:lang": "en"},
+                    ],
+                    "common:referenceToCommissioner": {
+                        "@refObjectId": "11111111-1111-4111-8111-111111111111",
+                        "@type": "contact data set",
+                        "@uri": "../contacts/11111111-1111-4111-8111-111111111111.xml",
+                        "common:shortDescription": {"#text": "TianGong LCA", "@xml:lang": "en"},
+                    },
+                },
+                "dataEntryBy": {
+                    "common:timeStamp": "2026-01-01T00:00:00Z",
+                    "common:referenceToDataSetFormat": {
+                        "@refObjectId": "a97a0155-0234-4b87-b4ce-a45da52f2a40",
+                        "@type": "source data set",
+                        "@version": "03.00.003",
+                    },
+                    "common:referenceToPersonOrEntityEnteringTheData": {
+                        "@refObjectId": "11111111-1111-4111-8111-111111111111",
+                        "@type": "contact data set",
+                        "@uri": "../contacts/11111111-1111-4111-8111-111111111111.xml",
+                    },
+                },
+                "publicationAndOwnership": {
+                    "common:dataSetVersion": "03.00.003",
+                    "common:referenceToOwnershipOfDataSet": {
+                        "@refObjectId": "11111111-1111-4111-8111-111111111111",
+                        "@type": "contact data set",
+                        "@uri": "../contacts/11111111-1111-4111-8111-111111111111.xml",
+                    },
+                },
+            },
+            "sourceInformation": {
+                "dataSetInformation": {
+                    "common:UUID": ref_object_id,
+                    "common:generalComment": [
+                        {"#text": "Generated by Nebula LCA", "@xml:lang": "en"},
+                    ],
+                    "name": {
+                        "baseName": [
+                            {"#text": "Reference Source", "@xml:lang": "en"},
+                        ],
+                        "mixAndLocationTypes": [
+                            {"#text": "Reference", "@xml:lang": "en"},
+                        ],
+                        "treatmentStandardsRoutes": [
+                            {"#text": "Unspecified", "@xml:lang": "en"},
+                        ],
+                    },
+                },
+            },
+        }
+    }
+
+
+def build_tidas_contact_dataset(
+    ref_object_id: str,
+    short_description_en: str,
+    short_description_zh: str | None = None,
+) -> dict[str, Any]:
+    """Build a minimal valid ILCD contactDataSet."""
+    return {
+        "contactDataSet": {
+            "@locations": "../ILCDLocations.xml",
+            "@version": "1.1",
+            "@xmlns": "http://lca.jrc.it/ILCD/Contact",
+            "@xmlns:common": "http://lca.jrc.it/ILCD/Common",
+            "@xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+            "@xsi:schemaLocation": "http://lca.jrc.it/ILCD/Contact ../../schemas/ILCD_ContactDataSet.xsd",
+            "administrativeInformation": {
+                "common:commissionerAndGoal": {
+                    "common:intendedApplications": [
+                        {"#text": "Generated by Nebula LCA", "@xml:lang": "en"},
+                    ],
+                },
+                "dataEntryBy": {
+                    "common:timeStamp": "2026-01-01T00:00:00Z",
+                    "common:referenceToDataSetFormat": {
+                        "@refObjectId": "a97a0155-0234-4b87-b4ce-a45da52f2a40",
+                        "@type": "source data set",
+                        "@version": "03.00.003",
+                    },
+                },
+                "publicationAndOwnership": {
+                    "common:dataSetVersion": "01.00.000",
+                },
+            },
+            "contactInformation": {
+                "dataSetInformation": {
+                    "common:UUID": ref_object_id,
+                    "common:generalComment": [
+                        {"#text": "Generated by Nebula LCA", "@xml:lang": "en"},
+                    ],
+                    "name": {
+                        "baseName": [
+                            {"#text": short_description_en, "@xml:lang": "en"},
+                        ],
+                        "mixAndLocationTypes": [
+                            {"#text": "Contact", "@xml:lang": "en"},
+                        ],
+                        "treatmentStandardsRoutes": [
+                            {"#text": "Unspecified", "@xml:lang": "en"},
+                        ],
+                    },
+                },
+            },
+        }
+    }
+
+
+def build_tidas_flow_property_dataset(
+    ref_object_id: str,
+    ref_uri: str,
+    version: str,
+    unit_groups: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build a minimal valid ILCD flowPropertyDataSet.
+
+    Args:
+        ref_object_id: UUID of the flow property
+        ref_uri: URI of the dataset (without path prefix)
+        version: dataset version string
+        unit_groups: list of ILCD unit group dicts to include in flowProperty
+    """
+    unit_groups_block = {"unitGroup": unit_groups} if unit_groups else {}
+
+    return {
+        "flowPropertyDataSet": {
+            "@locations": "../ILCDLocations.xml",
+            "@version": "1.1",
+            "@xmlns": "http://lca.jrc.it/ILCD/FlowProperty",
+            "@xmlns:common": "http://lca.jrc.it/ILCD/Common",
+            "@xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+            "@xsi:schemaLocation": "http://lca.jrc.it/ILCD/FlowProperty ../../schemas/ILCD_FlowPropertyDataSet.xsd",
+            "administrativeInformation": {
+                "common:commissionerAndGoal": {
+                    "common:intendedApplications": [
+                        {"#text": "Generated by Nebula LCA", "@xml:lang": "en"},
+                    ],
+                },
+                "dataEntryBy": {
+                    "common:timeStamp": "2026-01-01T00:00:00Z",
+                    "common:referenceToDataSetFormat": {
+                        "@refObjectId": "a97a0155-0234-4b87-b4ce-a45da52f2a40",
+                        "@type": "source data set",
+                        "@version": "03.00.003",
+                    },
+                },
+                "publicationAndOwnership": {
+                    "common:dataSetVersion": version,
+                },
+            },
+            "flowPropertyInformation": {
+                "dataSetInformation": {
+                    "common:UUID": ref_object_id,
+                    "common:generalComment": [
+                        {"#text": "Generated by Nebula LCA", "@xml:lang": "en"},
+                    ],
+                    "name": {
+                        "baseName": [
+                            {"#text": "Flow Property", "@xml:lang": "en"},
+                        ],
+                        "mixAndLocationTypes": [
+                            {"#text": "Flow Property", "@xml:lang": "en"},
+                        ],
+                        "treatmentStandardsRoutes": [
+                            {"#text": "Unspecified", "@xml:lang": "en"},
+                        ],
+                    },
+                },
+                "flowPropertyVariable": unit_groups_block,
+            },
+        }
+    }

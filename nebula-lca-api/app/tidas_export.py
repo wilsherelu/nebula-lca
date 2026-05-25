@@ -8,6 +8,7 @@ import json
 import zipfile
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -20,7 +21,15 @@ from .flow_unit_semantics import (
 )
 from .models import Model, ModelVersion, FlowRecord, ReferenceProcess, UnitDefinition
 from .schemas import HybridGraph
-from .tidas_reference import get_tidas_flow_property_reference, load_tidas_reference_seed, lookup_classification_entries, get_catalog_skeleton
+from .tidas_reference import (
+    get_tidas_flow_property_reference,
+    load_tidas_reference_seed,
+    lookup_classification_entries,
+    get_catalog_skeleton,
+    build_tidas_source_dataset,
+    build_tidas_contact_dataset,
+    build_tidas_flow_property_dataset,
+)
 from .source_policy import (
     classify_flow_source,
     _collect_biosphere_flow_uuids,
@@ -63,6 +72,24 @@ TIDAS_COMPLIANCE_REF = {
     "@type": "source data set",
     "@uri": "../sources/d92a1a12-2545-49e2-a585-55c259997756.xml",
     "common:shortDescription": {"#text": "ILCD Data Network - Entry-level", "@xml:lang": "en"},
+}
+
+# Known reference UUIDs to bundle in the ZIP.
+# These are generated on-demand by the exporter and referenced via
+# referencesToDataSource / referenceToOwnershipOfDataSet / etc.
+# Key = (type, uuid) -> (description_en, description_zh)
+_BUNDLED_REFERENCE_DESCRIPTIONS: dict[str, tuple[str, str | None]] = {
+    ("source", "a97a0155-0234-4b87-b4ce-a45da52f2a40"): ("ILCD format", "ILCD 数据格式"),
+    ("source", "d92a1a12-2545-49e2-a585-55c259997756"): ("ILCD Data Network - Entry-level", None),
+    ("contact", "f4b4c314-8c4c-4c83-968f-5b3c7724f6a8"): (
+        "Tiangong LCA Data Working Group",
+        "天工LCA数据团队",
+    ),
+    ("contact", "11111111-1111-4111-8111-111111111111"): ("TianGong LCA", None),
+    ("source", "9ba3ac1e-6797-4cc0-afd5-1b8f7bf28c6a"): (
+        "ILCD Data Network - compliance (non-Process)",
+        None,
+    ),
 }
 
 
@@ -703,29 +730,33 @@ def _classification_information(label: Any | None, dataset_type: str | None = No
     """Build classificationInformation from catalog entries when available.
 
     Falls back to legacy ``;``-split logic when catalog is absent or type is unknown.
+
+    Catalog entries provide ``classId`` and ``level`` directly; when the catalog
+    is present we honour those values instead of deriving ``level`` from
+    ``classId`` (which breaks for classId="0" → level=-1).
     """
     # Derive dataset_type from the label if not explicitly provided
     if dataset_type is None:
-        # Heuristic: if label looks like a compartment/category, use "flow"
-        # Otherwise default to generic
         dataset_type = "flow"
 
-    # Get catalog-based classification entries
     catalog_entries = lookup_classification_entries(dataset_type, [])
 
     classes = []
     if catalog_entries:
-        # Build hierarchical classification from catalog entries
         for entry in catalog_entries:
             if not isinstance(entry, dict):
                 continue
             id_val = str(entry.get("@id") or entry.get("classId") or class_id)
             name_val = str(entry.get("@name") or entry.get("name") or "")
-            level_str = ""
-            try:
-                level_str = str(int(id_val) - 1) if id_val.isdigit() else "0"
-            except (ValueError, TypeError):
-                level_str = "0"
+            # Use catalog-level field directly when present (catalog format: {"classId":"0","level":0,...})
+            # Fall back to deriving from classId only for legacy entries without explicit level
+            if "level" in entry:
+                level_str = str(entry["level"])
+            else:
+                try:
+                    level_str = str(int(id_val) - 1) if id_val.isdigit() else "0"
+                except (ValueError, TypeError):
+                    level_str = "0"
             classes.append({
                 "#text": name_val,
                 "@classId": id_val,
@@ -737,17 +768,20 @@ def _classification_information(label: Any | None, dataset_type: str | None = No
                     continue
                 cat_id = str(cat.get("@id") or class_id)
                 cat_name = str(cat.get("@name") or "")
-                try:
-                    cat_level = str(int(cat_id.split(".")[0]) - 1) if cat_id.split(".")[0].isdigit() else "0"
-                except (ValueError, TypeError):
-                    cat_level = "0"
+                if "level" in cat:
+                    cat_level = str(cat["level"])
+                else:
+                    try:
+                        cat_level = str(int(cat_id.split(".")[0]) - 1) if cat_id.split(".")[0].isdigit() else "0"
+                    except (ValueError, TypeError):
+                        cat_level = "0"
                 classes.append({
                     "#text": cat_name,
                     "@classId": cat_id,
                     "@level": cat_level,
                 })
     else:
-        # Legacy fallback: split semicolon-separated class paths
+        # Legacy fallback: split semicolon-separated class paths into hierarchy
         text = str(label or "").strip() or "Unclassified"
         segments = [s.strip() for s in text.split(";") if s.strip()]
         if not segments:
@@ -1051,6 +1085,9 @@ def _build_tidas_exchange(exc: dict, allocation_factors: dict | None = None, ref
             "manualAllocationRequired": True,
             "isReferenceFlow": is_reference_flow,
         }
+    # Strip any legacy referencesToDataSource that may carry over from
+    # pre-existing process_json (empty {} objects fail ILCD validation).
+    tidas_exc.pop("referencesToDataSource", None)
     return tidas_exc
 
 
@@ -1071,8 +1108,6 @@ def _build_flow_data(db: Session, flow_uuid: str, report: ExportReport) -> dict 
         "name": _tidas_name(flow_record.flow_name, flow_record.flow_name_en),
         "classificationInformation": _classification_information(category_label, dataset_type="flow"),
         "common:generalComment": _localized_items(TIDAS_GENERATED_COMMENT, TIDAS_GENERATED_COMMENT),
-        "common:other": {},
-        "common:synonyms": {},
     }
 
     if flow_record.source_updated_at:
@@ -1504,6 +1539,7 @@ def _build_manifest(
     model_uuid: str,
     flow_uuids: list[str],
     process_uuids: list[str],
+    reference_files: list[str] | None = None,
 ) -> dict:
     """Build v2 manifest.json for TIDAS bundle.
 
@@ -1540,6 +1576,20 @@ def _build_manifest(
         for process_uuid in process_uuids
     )
 
+    ref_entries: list[dict] = []
+    for ref_file in reference_files or []:
+        ref_type = ref_file.split("/")[0]  # "sources" / "contacts"
+        ref_table = ref_type.rstrip("s")  # "source" / "contact"
+        ref_id = Path(ref_file).stem
+        ref_entries.append({
+            "table": ref_table,
+            "id": ref_id,
+            "version": version,
+            "file_path": ref_file,
+            "rule_verification": True,
+        })
+    entries.extend(ref_entries)
+
     return {
         "format": "tiangong-tidas-package",
         "version": 2,
@@ -1557,6 +1607,7 @@ def _build_manifest(
             "lifecyclemodels": 1,
             "flows": len(flow_uuids),
             "processes": len(process_uuids),
+            "references": len(ref_entries),
         },
         "total_count": len(entries),
     }
@@ -1986,6 +2037,13 @@ def export_bundle(
     # ── Build ZIP in memory ────────────────────────────────────────────
     zip_buffer = io.BytesIO()
 
+    # Collect all reference UUIDs used across this export so we can
+    # bundle minimal valid datasets for each.
+    ref_uuids_by_type: dict[str, set[str]] = {}  # "source" / "contact" -> set of uuids
+    for desc_key in _BUNDLED_REFERENCE_DESCRIPTIONS:
+        ref_type, ref_uuid = desc_key
+        ref_uuids_by_type.setdefault(ref_type, set()).add(ref_uuid)
+
     with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
         dataset_version = TIDAS_DEFAULT_DATASET_VERSION
 
@@ -2018,8 +2076,32 @@ def export_bundle(
             json.dumps(model_data, ensure_ascii=False, indent=2),
         )
 
+        # ── Write bundled reference datasets ───────────────────────────
+        reference_files: list[str] = []
+        for ref_type, ref_uuids in sorted(ref_uuids_by_type.items()):
+            for ref_uuid in sorted(ref_uuids):
+                desc_key = (ref_type, ref_uuid)
+                desc_en, desc_zh = _BUNDLED_REFERENCE_DESCRIPTIONS[desc_key]
+                file_path = f"{ref_type}s/{ref_uuid}.json"
+                reference_files.append(file_path)
+
+                if ref_type == "source":
+                    dataset = build_tidas_source_dataset(ref_uuid, desc_en, desc_zh)
+                else:
+                    dataset = build_tidas_contact_dataset(ref_uuid, desc_en, desc_zh)
+
+                zf.writestr(
+                    file_path,
+                    json.dumps(dataset, ensure_ascii=False, indent=2),
+                )
+
         # Build and write manifest
-        manifest = _build_manifest(project_id, flow_uuid_list, process_uuid_list)
+        manifest = _build_manifest(
+            project_id,
+            flow_uuid_list,
+            process_uuid_list,
+            reference_files,
+        )
         zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
 
         # Write export report
@@ -2028,6 +2110,8 @@ def export_bundle(
         export_report_data["project_name"] = model.name
         export_report_data["version"] = model_version.version
         export_report_data["display_lang"] = display_lang
+        export_report_data["reference_dataset_count"] = len(reference_files)
+        export_report_data["reference_dataset_paths"] = reference_files
         zf.writestr("export_report.json", json.dumps(export_report_data, ensure_ascii=False, indent=2))
 
     zip_buffer.seek(0)

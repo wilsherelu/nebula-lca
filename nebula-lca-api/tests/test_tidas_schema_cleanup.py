@@ -3,12 +3,14 @@ from __future__ import annotations
 
 from app.tidas_export import (
     ExportReport,
+    _build_flow_data,
     _build_tidas_exchange,
     _classification_information,
     _common_admin_information,
     _process_modelling_and_validation,
     _localized_items,
 )
+from app.models import FlowRecord
 
 
 # ── _localized_items ──────────────────────────────────────────────────────
@@ -139,6 +141,27 @@ def test_admin_info_no_preceding_version():
     """referenceToPrecedingDataSetVersion must not appear."""
     admin = _common_admin_information()
     assert "referenceToPrecedingDataSetVersion" not in admin["publicationAndOwnership"]
+
+
+def test_flow_dataset_omits_empty_optional_text_fields():
+    class _FakeDb:
+        def get(self, model, key):
+            assert model is FlowRecord
+            assert key == "flow-1"
+            return FlowRecord(
+                flow_uuid="flow-1",
+                flow_name="test flow",
+                flow_type="Product flow",
+                default_unit="kg",
+                unit_group="Units of mass",
+                source="test",
+            )
+
+    flow_data = _build_flow_data(_FakeDb(), "flow-1", ExportReport())
+    dsi = flow_data["flowDataSet"]["flowInformation"]["dataSetInformation"]
+
+    assert "common:other" not in dsi
+    assert "common:synonyms" not in dsi
 
 
 def test_process_validation_uses_catalog_skeleton():

@@ -169,8 +169,14 @@ def test_default_tidas_seed_maps_core_unit_groups(monkeypatch):
         sej = get_tidas_flow_property_reference("sej")
         assert kg_km is not None
         assert kg_km["@refObjectId"] == "118f2a40-50ec-457c-aa60-9bc6b6af9931"
+        kg_km_zh = [item for item in kg_km["common:shortDescription"] if item["@xml:lang"] == "zh"]
+        assert kg_km_zh
+        assert any("\u4e00" <= ch <= "\u9fff" for ch in kg_km_zh[0]["#text"])
         assert sej is not None
         assert sej["@refObjectId"] == "16764bbb-d1ea-4eb4-9911-13f0ecd3dfad"
+        sej_zh = [item for item in sej["common:shortDescription"] if item["@xml:lang"] == "zh"]
+        assert sej_zh
+        assert any("\u4e00" <= ch <= "\u9fff" for ch in sej_zh[0]["#text"])
         assert normalize_tidas_unit_group("Unit of kg*km") in allowed
         assert normalize_tidas_unit_group("sej") in allowed
     finally:
