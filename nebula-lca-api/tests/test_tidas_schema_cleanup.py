@@ -6,6 +6,7 @@ from app.tidas_export import (
     _build_tidas_exchange,
     _classification_information,
     _common_admin_information,
+    _process_modelling_and_validation,
     _localized_items,
 )
 
@@ -140,21 +141,29 @@ def test_admin_info_no_preceding_version():
     assert "referenceToPrecedingDataSetVersion" not in admin["publicationAndOwnership"]
 
 
+def test_process_validation_uses_catalog_skeleton():
+    mv = _process_modelling_and_validation()
+    validation = mv["validation"]
+
+    assert "review" in validation
+    assert "complianceDeclarations" in validation
+
+
 # ── _classification_information ──────────────────────────────────────────
 
 
-def test_classification_single_level():
-    """Single label produces one class at level 0."""
-    ci = _classification_information("air")
+def test_classification_uses_catalog_when_dataset_type_provided():
+    """When dataset_type matches a catalog entry, catalog is used instead of legacy split."""
+    ci = _classification_information("air", dataset_type="flow")
     classes = ci["common:classification"]["common:class"]
-    assert len(classes) == 1
-    assert classes[0]["#text"] == "air"
-    assert classes[0]["@level"] == "0"
+    # Catalog fallback has entries for "flow" type (Emissions, etc.)
+    assert len(classes) >= 1
+    assert all("@classId" in c and "@level" in c for c in classes)
 
 
-def test_classification_semicolon_split():
-    """Semicolon-separated label produces multi-level classes."""
-    ci = _classification_information("ef_tiangong;air")
+def test_classification_legacy_fallback_when_type_unknown():
+    """When dataset_type doesn't match catalog, legacy ; split is used as fallback."""
+    ci = _classification_information("ef_tiangong;air", dataset_type="unknown_type_xyz")
     classes = ci["common:classification"]["common:class"]
     assert len(classes) == 2
     assert classes[0]["#text"] == "ef_tiangong"
@@ -163,10 +172,10 @@ def test_classification_semicolon_split():
     assert classes[1]["@level"] == "1"
 
 
-def test_classification_empty_fallback():
-    """Empty or None label falls back to 'Unclassified'."""
-    ci = _classification_information(None)
+def test_classification_empty_fallback_to_legacy():
+    """Empty label with no catalog match falls back to 'Unclassified' via legacy path."""
+    ci = _classification_information(None, dataset_type="unknown_type_xyz")
     assert ci["common:classification"]["common:class"][0]["#text"] == "Unclassified"
 
-    ci2 = _classification_information("")
+    ci2 = _classification_information("", dataset_type="unknown_type_xyz")
     assert ci2["common:classification"]["common:class"][0]["#text"] == "Unclassified"

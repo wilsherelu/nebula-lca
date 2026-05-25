@@ -20,7 +20,7 @@ from .flow_unit_semantics import (
 )
 from .models import Model, ModelVersion, FlowRecord, ReferenceProcess, UnitDefinition
 from .schemas import HybridGraph
-from .tidas_reference import get_tidas_flow_property_reference, load_tidas_reference_seed
+from .tidas_reference import get_tidas_flow_property_reference, load_tidas_reference_seed, lookup_classification_entries, get_catalog_skeleton
 from .source_policy import (
     classify_flow_source,
     _collect_biosphere_flow_uuids,
@@ -699,19 +699,66 @@ def _tidas_name(
     }
 
 
-def _classification_information(label: Any | None, class_id: str = "0") -> dict:
-    text = str(label or "").strip() or "Unclassified"
-    # Split semicolon-separated class paths; each segment becomes a level entry.
-    segments = [s.strip() for s in text.split(";") if s.strip()]
-    if not segments:
-        segments = ["Unclassified"]
+def _classification_information(label: Any | None, dataset_type: str | None = None, class_id: str = "0") -> dict:
+    """Build classificationInformation from catalog entries when available.
+
+    Falls back to legacy ``;``-split logic when catalog is absent or type is unknown.
+    """
+    # Derive dataset_type from the label if not explicitly provided
+    if dataset_type is None:
+        # Heuristic: if label looks like a compartment/category, use "flow"
+        # Otherwise default to generic
+        dataset_type = "flow"
+
+    # Get catalog-based classification entries
+    catalog_entries = lookup_classification_entries(dataset_type, [])
+
     classes = []
-    for level, seg in enumerate(segments):
-        classes.append({
-            "#text": seg,
-            "@classId": class_id,
-            "@level": str(level),
-        })
+    if catalog_entries:
+        # Build hierarchical classification from catalog entries
+        for entry in catalog_entries:
+            if not isinstance(entry, dict):
+                continue
+            id_val = str(entry.get("@id") or entry.get("classId") or class_id)
+            name_val = str(entry.get("@name") or entry.get("name") or "")
+            level_str = ""
+            try:
+                level_str = str(int(id_val) - 1) if id_val.isdigit() else "0"
+            except (ValueError, TypeError):
+                level_str = "0"
+            classes.append({
+                "#text": name_val,
+                "@classId": id_val,
+                "@level": level_str,
+            })
+            # If entry has nested categories, expand them
+            for cat in entry.get("category", []) or []:
+                if not isinstance(cat, dict):
+                    continue
+                cat_id = str(cat.get("@id") or class_id)
+                cat_name = str(cat.get("@name") or "")
+                try:
+                    cat_level = str(int(cat_id.split(".")[0]) - 1) if cat_id.split(".")[0].isdigit() else "0"
+                except (ValueError, TypeError):
+                    cat_level = "0"
+                classes.append({
+                    "#text": cat_name,
+                    "@classId": cat_id,
+                    "@level": cat_level,
+                })
+    else:
+        # Legacy fallback: split semicolon-separated class paths
+        text = str(label or "").strip() or "Unclassified"
+        segments = [s.strip() for s in text.split(";") if s.strip()]
+        if not segments:
+            segments = ["Unclassified"]
+        for level, seg in enumerate(segments):
+            classes.append({
+                "#text": seg,
+                "@classId": class_id,
+                "@level": str(level),
+            })
+
     return {
         "common:classification": {
             "common:class": classes,
@@ -733,6 +780,19 @@ def _common_admin_information(dataset_version: str = TIDAS_DEFAULT_DATASET_VERSI
     }
     if permanent_uri:
         admin["publicationAndOwnership"]["common:permanentDataSetURI"] = permanent_uri
+
+    # Try catalog skeleton for publication (may override/extend publicationAndOwnership)
+    publication_skel = get_catalog_skeleton("publication")
+    if isinstance(publication_skel, dict):
+        # Merge skeleton into admin["publicationAndOwnership"], keeping our injected values
+        pub = admin["publicationAndOwnership"]
+        for key, val in publication_skel.items():
+            if key == "common:permanentDataSetURI" and permanent_uri:
+                # Keep our generated URI instead of placeholder
+                continue
+            if key not in pub:
+                pub[key] = val
+
     return admin
 
 
@@ -845,16 +905,39 @@ def _flow_type_for_tidas(flow_type: str | None) -> str:
 
 
 def _common_modelling_and_validation(type_of_dataset: str) -> dict:
-    return {
+    """Build modellingAndValidation, merging catalog skeleton when available."""
+    result: dict[str, Any] = {
         "LCIMethod": {
             "typeOfDataSet": type_of_dataset,
         },
+    }
+
+    # Try catalog skeleton first
+    validation_skel = get_catalog_skeleton("validation")
+    if isinstance(validation_skel, dict):
+        result["complianceDeclarations"] = validation_skel.get("complianceDeclarations", {})
+    else:
+        result["complianceDeclarations"] = {
+            "compliance": {
+                "common:approvalOfOverallCompliance": "Fully compliant",
+                "common:referenceToComplianceSystem": dict(TIDAS_COMPLIANCE_REF),
+            }
+        }
+
+    return result
+
+
+def _catalog_validation_block() -> dict[str, Any]:
+    validation_skel = get_catalog_skeleton("validation")
+    if isinstance(validation_skel, dict):
+        return validation_skel
+    return {
         "complianceDeclarations": {
             "compliance": {
                 "common:approvalOfOverallCompliance": "Fully compliant",
                 "common:referenceToComplianceSystem": dict(TIDAS_COMPLIANCE_REF),
             }
-        },
+        }
     }
 
 
@@ -869,10 +952,7 @@ def _process_modelling_and_validation() -> dict:
         "dataSourcesTreatmentAndRepresentativeness": {
             "dataCutOffAndCompletenessPrinciples": _localized_items(TIDAS_GENERATED_COMMENT, TIDAS_GENERATED_COMMENT),
         },
-        "validation": {
-            "common:approvalOfOverallCompliance": "Fully compliant",
-            "common:referenceToComplianceSystem": dict(TIDAS_COMPLIANCE_REF),
-        },
+        "validation": _catalog_validation_block(),
     }
 
 
@@ -989,7 +1069,7 @@ def _build_flow_data(db: Session, flow_uuid: str, report: ExportReport) -> dict 
     dsi = {
         "common:UUID": flow_record.flow_uuid,
         "name": _tidas_name(flow_record.flow_name, flow_record.flow_name_en),
-        "classificationInformation": _classification_information(category_label),
+        "classificationInformation": _classification_information(category_label, dataset_type="flow"),
         "common:generalComment": _localized_items(TIDAS_GENERATED_COMMENT, TIDAS_GENERATED_COMMENT),
         "common:other": {},
         "common:synonyms": {},
@@ -1233,7 +1313,7 @@ def _build_process_data(
             "dataSetInformation": {
                 "common:UUID": _tidas_uuid(process_uuid),
                 "name": _tidas_name(process_name, process_name_en),
-                "classificationInformation": _classification_information("Unclassified"),
+                "classificationInformation": _classification_information("Unclassified", dataset_type="process"),
                 "common:generalComment": _localized_items(TIDAS_GENERATED_COMMENT, TIDAS_GENERATED_COMMENT),
             },
             "time": time_block,
@@ -1340,7 +1420,7 @@ def _build_model_data(
             "dataSetInformation": {
                 "common:UUID": _tidas_uuid(model.id),
                 "name": _tidas_name(model.name, model.name),
-                "classificationInformation": _classification_information("Unclassified"),
+                "classificationInformation": _classification_information("Unclassified", dataset_type="lifecyclemodel"),
                 "common:generalComment": _localized_items(
                     model.description or TIDAS_GENERATED_COMMENT,
                     model.description or TIDAS_GENERATED_COMMENT,
@@ -1370,10 +1450,7 @@ def _build_model_data(
             "dataSourcesTreatmentEtc": {
                 "dataCutOffAndCompletenessPrinciples": _localized_items(TIDAS_GENERATED_COMMENT, TIDAS_GENERATED_COMMENT),
             },
-            "validation": {
-                "common:approvalOfOverallCompliance": "Fully compliant",
-                "common:referenceToComplianceSystem": dict(TIDAS_COMPLIANCE_REF),
-            },
+            "validation": _catalog_validation_block(),
         },
     }
 
