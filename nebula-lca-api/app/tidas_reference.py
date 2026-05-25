@@ -21,12 +21,151 @@ DEFAULT_TIDAS_REFERENCE_SEED_PATH = (
     / "tidas_reference_seed.json"
 )
 
+DEFAULT_TIDAS_REFERENCE_CATALOG_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "data"
+    / "Tiangong"
+    / "tidas_reference_catalog_20260525.json"
+)
+
 
 def _seed_path() -> Path:
     override = os.environ.get("NEBULA_TIDAS_REFERENCE_SEED")
     if override:
         return Path(override)
     return DEFAULT_TIDAS_REFERENCE_SEED_PATH
+
+
+def _catalog_path() -> Path:
+    override = os.environ.get("NEBULA_TIDAS_REFERENCE_CATALOG")
+    if override:
+        return Path(override)
+    return DEFAULT_TIDAS_REFERENCE_CATALOG_PATH
+
+
+@lru_cache(maxsize=1)
+def load_tidas_reference_catalog() -> dict[str, Any]:
+    """Load the optional TIDAS reference catalog JSON.
+
+    The catalog is a large static reference file containing locations,
+    classifications, reference objects, and skeleton templates used by
+    the TIDAS exporter to populate classificationInformation,
+    publicationAndOwnership, and modellingAndValidation sections.
+
+    When absent, callers fall back to legacy hardcoded values.
+    """
+    return _load_seed_payload(_catalog_path())
+
+
+# ---------------------------------------------------------------------------
+# Classification helpers (catalog-driven)
+# ---------------------------------------------------------------------------
+
+
+def _normalise_ilcd_dataset_type(raw: str | None) -> str:
+    """Map a Nebula flow_type or ILCD dataset type to a canonical key.
+
+    The ILCD catalog ``fallbackByDatasetType`` uses keys like:
+    ``flow``, ``elementaryFlow``, ``process``, ``lifecyclemodel``,
+    ``flowproperty``, ``unitgroup``, ``contact``, ``source``.
+    """
+    text = str(raw or "").strip().lower()
+    if not text:
+        return ""
+    # Direct match common ILCD types
+    direct = {
+        "flow": "flow",
+        "elementaryflow": "elementaryFlow",
+        "process": "process",
+        "lifecyclemodel": "lifecyclemodel",
+        "flowproperty": "flowproperty",
+        "unitgroup": "unitgroup",
+        "contact": "contact",
+        "source": "source",
+    }
+    if text in direct:
+        return direct[text]
+    # Map Nebula-style flow_type values
+    if text in {"elementary flow", "product flow", "waste flow", "biosphere flow"}:
+        return "flow"
+    return ""
+
+
+def lookup_classification_entries(dataset_type: str | None, fallback: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Return classification entries from catalog for a given dataset type.
+
+    Falls back to ``fallback`` list when catalog is absent or type is unknown.
+
+    Each entry is a dict with keys ``@id``, ``@name``, and optional ``category``
+    (for hierarchical nesting).
+    """
+    catalog = load_tidas_reference_catalog()
+    if not catalog:
+        return fallback
+
+    classifications = catalog.get("classifications", {})
+    fallback_by_type = classifications.get("fallbackByDatasetType", {})
+
+    type_key = _normalise_ilcd_dataset_type(dataset_type)
+    if type_key and type_key in fallback_by_type:
+        return fallback_by_type[type_key]
+
+    # Try to look up in systems (ilcd, isic, etc.)
+    systems = classifications.get("systems", {})
+    ilcd = systems.get("ilcd", [])
+    if isinstance(ilcd, list):
+        for entry in ilcd:
+            if not isinstance(entry, dict):
+                continue
+            data_type = str(entry.get("dataType", "")).lower()
+            if data_type == (str(dataset_type or "").strip().lower().replace(" ", "") if dataset_type else ""):
+                hierarchy = entry.get("hierarchy", [])
+                if hierarchy:
+                    return [{"@id": str(h.get("@id", "")), "@name": str(h.get("@name", ""))} for h in hierarchy]
+
+    return fallback
+
+
+def get_catalog_skeleton(skeleton_key: str) -> dict[str, Any] | str | None:
+    """Return a skeleton template from the catalog, with placeholders replaced.
+
+    Valid skeleton keys correspond to top-level keys in the catalog ``skeletons``
+    object (e.g. ``validation``, ``publication``, ``dataEntryBy``).
+
+    Placeholders like ``{datasetPath}``, ``{datasetId}``, ``{version}`` are
+    replaced with ``None`` so the exporter can inject real values later.
+    """
+    catalog = load_tidas_reference_catalog()
+    if not catalog:
+        return None
+
+    skeletons = catalog.get("skeletons", {})
+    template = skeletons.get(skeleton_key)
+    if template is None:
+        return None
+
+    if isinstance(template, dict):
+        return _substitute_placeholders(template)
+    return template
+
+
+def _substitute_placeholders(obj: Any) -> Any:
+    """Recursively replace ``{...}`` placeholders with empty string in a dict/list."""
+    PLACEHOLDER_RE = re.compile(r"\{[^}]+\}")
+
+    def _replace(text: str) -> str:
+        return PLACEHOLDER_RE.sub("", text)
+
+    def _walk(item: Any) -> Any:
+        if isinstance(item, dict):
+            return {k: _walk(v) for k, v in item.items()}
+        if isinstance(item, list):
+            return [_walk(i) for i in item]
+        if isinstance(item, str):
+            return _replace(item)
+        return item
+
+    return _walk(obj)
 
 
 def normalize_tidas_unit_group(value: str | None) -> str:
