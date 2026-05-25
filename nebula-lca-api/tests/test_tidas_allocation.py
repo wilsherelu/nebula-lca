@@ -54,6 +54,7 @@ def _unit_def(group: str, name: str, factor: float):
 
 def _output_exchange(internal_id: str) -> dict:
     return {
+        "@dataSetInternalID": internal_id,
         "internal_id": internal_id,
         "flow_uuid": f"flow-{internal_id}",
         "direction": "output",
@@ -81,7 +82,8 @@ def test_manual_required_allocation_does_not_write_reference_100_percent():
 
     exchange = _build_tidas_exchange(_output_exchange("p1"), factors, ref_internal_id="p1")
 
-    assert exchange["allocations"]["allocation"] == {}
+    # When allocation_factors is None, allocations key is omitted entirely
+    assert "allocations" not in exchange
     assert exchange["json_tg_allocation"]["manualAllocationRequired"] is True
     assert exchange["json_tg_allocation"]["isReferenceFlow"] is True
 
@@ -120,7 +122,27 @@ def test_complete_user_allocation_is_written():
 
     assert factors == {"p1": 0.25, "p2": 0.75}
     exchange = _build_tidas_exchange(_output_exchange("p2"), factors, ref_internal_id="p1")
-    assert exchange["allocations"]["allocation"]["@allocatedFraction"] == "75%"
+    # Allocation fraction is now a plain number string without '%'
+    assert exchange["allocations"]["allocation"]["@allocatedFraction"] == "75"
+
+
+def test_allocation_lookup_preserves_original_port_id_after_numeric_internal_id():
+    factors = {"p2": 0.75}
+    exchange = _build_tidas_exchange(
+        {
+            "@dataSetInternalID": "1",
+            "internal_id": "p2",
+            "flow_uuid": "flow-p2",
+            "direction": "output",
+            "amount": 1,
+        },
+        factors,
+        ref_internal_id="0",
+    )
+
+    assert exchange["@dataSetInternalID"] == "1"
+    assert exchange["json_tg"]["originalInternalId"] == "p2"
+    assert exchange["allocations"]["allocation"]["@allocatedFraction"] == "75"
 
 
 def test_same_unit_group_converts_units_before_allocation():

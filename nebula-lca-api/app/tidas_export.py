@@ -640,11 +640,43 @@ def _lang_item(text: Any, lang: str) -> dict:
     return {"#text": value, "@xml:lang": lang}
 
 
+def _has_chinese(text: str) -> bool:
+    """Return True if the text contains any CJK characters."""
+    for ch in text:
+        cp = ord(ch)
+        # CJK Unified, CJK Extensions, HK/GK variants, BOPOMOFO, Yi, etc.
+        if (
+            (0x4E00 <= cp <= 0x9FFF)
+            or (0x3400 <= cp <= 0x4DBF)
+            or (0x20000 <= cp <= 0x2A6DF)
+            or (0x2A700 <= cp <= 0x2B73F)
+            or (0x2B740 <= cp <= 0x2B81F)
+            or (0xF900 <= cp <= 0xFAFF)
+            or (0x2F800 <= cp <= 0x2FA1F)
+            or (0x3040 <= cp <= 0x30FF)  # Hiragana/Katakana
+            or (0xAC00 <= cp <= 0xD7AF)  # Hangul
+        ):
+            return True
+    return False
+
+
+def _lang_item(value: Any, lang: str) -> dict:
+    return {"#text": str(value or ""), "@xml:lang": lang}
+
+
+def _auto_detect_lang(text: str) -> str:
+    """Detect language from text content: Chinese → 'zh', else 'en'."""
+    if _has_chinese(text):
+        return "zh"
+    return "en"
+
+
 def _localized_items(zh: Any, en: Any | None = None) -> list[dict]:
-    items = [_lang_item(zh, "zh")]
+    zh_text = str(zh or "").strip()
+    items = [_lang_item(zh_text, _auto_detect_lang(zh_text))]
     en_text = str(en or "").strip()
-    if en_text and en_text != str(zh or "").strip():
-        items.append(_lang_item(en_text, "en"))
+    if en_text and en_text != zh_text:
+        items.append(_lang_item(en_text, _auto_detect_lang(en_text)))
     return items
 
 
@@ -669,32 +701,39 @@ def _tidas_name(
 
 def _classification_information(label: Any | None, class_id: str = "0") -> dict:
     text = str(label or "").strip() or "Unclassified"
+    # Split semicolon-separated class paths; each segment becomes a level entry.
+    segments = [s.strip() for s in text.split(";") if s.strip()]
+    if not segments:
+        segments = ["Unclassified"]
+    classes = []
+    for level, seg in enumerate(segments):
+        classes.append({
+            "#text": seg,
+            "@classId": class_id,
+            "@level": str(level),
+        })
     return {
         "common:classification": {
-            "common:class": [
-                {
-                    "#text": text,
-                    "@classId": class_id,
-                    "@level": "0",
-                }
-            ]
+            "common:class": classes,
         }
     }
 
 
-def _common_admin_information(dataset_version: str = TIDAS_DEFAULT_DATASET_VERSION) -> dict:
-    return {
+def _common_admin_information(dataset_version: str = TIDAS_DEFAULT_DATASET_VERSION, permanent_uri: str | None = None) -> dict:
+    admin: dict[str, Any] = {
         "dataEntryBy": {
             "common:referenceToDataSetFormat": dict(TIDAS_DATASET_FORMAT_REF),
-            "common:referenceToPersonOrEntityEnteringTheData": {},
+            "common:referenceToPersonOrEntityEnteringTheData": dict(TIDAS_OWNERSHIP_REF),
             "common:timeStamp": _utc_timestamp(),
         },
         "publicationAndOwnership": {
             "common:dataSetVersion": dataset_version,
             "common:referenceToOwnershipOfDataSet": dict(TIDAS_OWNERSHIP_REF),
-            "common:referenceToPrecedingDataSetVersion": {},
         },
     }
+    if permanent_uri:
+        admin["publicationAndOwnership"]["common:permanentDataSetURI"] = permanent_uri
+    return admin
 
 
 def _flow_root_attrs() -> dict:
@@ -829,7 +868,10 @@ def _process_modelling_and_validation() -> dict:
         },
         "dataSourcesTreatmentAndRepresentativeness": {
             "dataCutOffAndCompletenessPrinciples": _localized_items(TIDAS_GENERATED_COMMENT, TIDAS_GENERATED_COMMENT),
-            "referenceToDataSource": {},
+        },
+        "validation": {
+            "common:approvalOfOverallCompliance": "Fully compliant",
+            "common:referenceToComplianceSystem": dict(TIDAS_COMPLIANCE_REF),
         },
     }
 
@@ -893,27 +935,30 @@ def _exchange_amount(value: Any) -> Any:
 
 
 def _build_tidas_exchange(exc: dict, allocation_factors: dict | None = None, ref_internal_id: str | None = None) -> dict:
-    internal_id = str(exc.get("internal_id") or exc.get("@dataSetInternalID") or "0")
+    internal_id = str(exc.get("@dataSetInternalID") or "0")
     flow_uuid = exc.get("flow_uuid") or exc.get("flowUuid") or exc.get("@flowUUID") or ""
     direction = _exchange_direction(exc.get("direction"))
     raw_amount = exc.get("amount") if "amount" in exc else exc.get("meanAmount")
     amount = 1 if raw_amount is None and direction == "Output" and internal_id == ref_internal_id else _exchange_amount(raw_amount)
-    tidas_exc = {
+    tidas_exc: dict[str, Any] = {
         "@dataSetInternalID": internal_id,
         "referenceToFlowDataSet": _reference_to_flow(flow_uuid, exc.get("port_name") or exc.get("name") or flow_uuid),
         "exchangeDirection": direction,
-        "meanAmount": amount,
-        "resultingAmount": amount,
-        "dataDerivationTypeStatus": "Calculated",
-        "referencesToDataSource": {"referenceToDataSource": {}},
-        "allocations": {"allocation": {}},
+        "meanAmount": str(amount),
+        "resultingAmount": str(amount),
     }
+    # Keep original port id for Nebula roundtrip
+    original_id = exc.get("internal_id")
+    if original_id is not None:
+        tidas_exc["json_tg"] = {"originalInternalId": str(original_id)}
     if direction == "Output" and allocation_factors is not None:
         factor = allocation_factors.get(internal_id)
+        if factor is None and original_id is not None:
+            factor = allocation_factors.get(str(original_id))
         if factor is not None:
             tidas_exc["allocations"] = {
                 "allocation": {
-                    "@allocatedFraction": f"{factor * 100:g}%",
+                    "@allocatedFraction": str(int(round(factor * 100))) if factor == int(factor * 100) else f"{factor * 100:g}",
                 }
             }
             tidas_exc["json_tg_allocation"] = {
@@ -921,9 +966,10 @@ def _build_tidas_exchange(exc: dict, allocation_factors: dict | None = None, ref
                 "isReferenceFlow": internal_id == ref_internal_id,
             }
     elif direction == "Output" and ref_internal_id:
+        is_reference_flow = internal_id == ref_internal_id or (original_id is not None and str(original_id) == ref_internal_id)
         tidas_exc["json_tg_allocation"] = {
             "manualAllocationRequired": True,
-            "isReferenceFlow": internal_id == ref_internal_id,
+            "isReferenceFlow": is_reference_flow,
         }
     return tidas_exc
 
@@ -952,9 +998,10 @@ def _build_flow_data(db: Session, flow_uuid: str, report: ExportReport) -> dict 
     if flow_record.source_updated_at:
         dsi["common:timeStamp"] = flow_record.source_updated_at
 
+    permanent_uri = f"urn:nebula-lca:tidas:{flow_record.flow_uuid}"
     flow_dataset = {
         **_flow_root_attrs(),
-        "administrativeInformation": _common_admin_information(),
+        "administrativeInformation": _common_admin_information(permanent_uri=permanent_uri),
         "flowInformation": {
             "dataSetInformation": dsi,
             "quantitativeReference": {
@@ -1151,6 +1198,26 @@ def _build_process_data(
             time_representativeness,
         )
     technology_text = str(technology_description or "").strip() or TIDAS_GENERATED_COMMENT
+
+    # Assign schema-valid numeric @dataSetInternalID values and remap graph port ids.
+    original_to_numeric_internal_id: dict[str, str] = {}
+    for idx, exc in enumerate(exchanges):
+        numeric_id = str(idx)
+        original_internal_id = exc.get("internal_id")
+        previous_dataset_id = exc.get("@dataSetInternalID")
+        if original_internal_id is not None:
+            original_to_numeric_internal_id[str(original_internal_id)] = numeric_id
+        if previous_dataset_id is not None:
+            original_to_numeric_internal_id[str(previous_dataset_id)] = numeric_id
+        exc["@dataSetInternalID"] = numeric_id
+
+    ref_internal_id = original_to_numeric_internal_id.get(str(ref_internal_id), str(ref_internal_id))
+    if allocation_factors:
+        allocation_factors = {
+            original_to_numeric_internal_id.get(str(key), str(key)): value
+            for key, value in allocation_factors.items()
+        }
+
     process_dataset = {
         **_process_root_attrs(),
         "administrativeInformation": {
@@ -1158,7 +1225,9 @@ def _build_process_data(
                 "common:intendedApplications": _localized_items(TIDAS_GENERATED_COMMENT, TIDAS_GENERATED_COMMENT),
                 "common:referenceToCommissioner": dict(TIDAS_OWNERSHIP_REF),
             },
-            **_common_admin_information(),
+            **_common_admin_information(
+                permanent_uri=f"urn:nebula-lca:tidas:{_tidas_uuid(process_uuid)}"
+            ),
         },
         "processInformation": {
             "dataSetInformation": {
@@ -1174,9 +1243,7 @@ def _build_process_data(
                     technology_text,
                     technology_text,
                 ),
-                "referenceToTechnologyFlowDiagrammOrPicture": {},
             },
-            "mathematicalRelations": {"variableParameter": {}},
             "quantitativeReference": {
                 "@type": "Reference flow(s)",
                 "referenceToReferenceFlow": ref_internal_id,
@@ -1265,7 +1332,9 @@ def _build_model_data(
                 "common:intendedApplications": _localized_items(TIDAS_GENERATED_COMMENT, TIDAS_GENERATED_COMMENT),
                 "common:referenceToCommissioner": dict(TIDAS_OWNERSHIP_REF),
             },
-            **_common_admin_information(),
+            **_common_admin_information(
+                permanent_uri=f"urn:nebula-lca:tidas:{_tidas_uuid(model.id)}"
+            ),
         },
         "lifeCycleModelInformation": {
             "dataSetInformation": {
@@ -1276,8 +1345,6 @@ def _build_model_data(
                     model.description or TIDAS_GENERATED_COMMENT,
                     model.description or TIDAS_GENERATED_COMMENT,
                 ),
-                "referenceToExternalDocumentation": {},
-                "referenceToResultingProcess": {},
                 "json_tg": {
                     "xflow": graph_json,
                     "project_metadata": {
@@ -1296,12 +1363,17 @@ def _build_model_data(
                 "processes": {
                     "processInstance": process_instance_items,
                 },
-                "referenceToDiagram": {},
             },
             "geography": {"locationOfOperationSupplyOrProduction": {"@location": geography}},
         },
         "modellingAndValidation": {
-            "dataSourcesTreatmentEtc": {},
+            "dataSourcesTreatmentEtc": {
+                "dataCutOffAndCompletenessPrinciples": _localized_items(TIDAS_GENERATED_COMMENT, TIDAS_GENERATED_COMMENT),
+            },
+            "validation": {
+                "common:approvalOfOverallCompliance": "Fully compliant",
+                "common:referenceToComplianceSystem": dict(TIDAS_COMPLIANCE_REF),
+            },
         },
     }
 

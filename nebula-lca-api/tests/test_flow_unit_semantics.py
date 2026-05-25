@@ -323,7 +323,7 @@ def test_tidas_process_exchange_uses_flow_default_amount():
     )
 
     exchange = process_data["processDataSet"]["exchanges"]["exchange"][0]
-    assert exchange["meanAmount"] == 1
+    assert exchange["meanAmount"] == "1.0"
     assert report.errors == []
 
 

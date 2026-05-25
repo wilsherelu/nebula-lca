@@ -342,7 +342,8 @@ class TestTidasExport:
             assert info["time"]["common:referenceYear"] == 2024
             assert info["time"]["common:timeRepresentativenessDescription"][0]["#text"] == "2024 operating data"
             assert info["technology"]["technologyDescriptionAndIncludedProcesses"][0]["#text"] == "Batch process"
-            assert info["quantitativeReference"]["referenceToReferenceFlow"] == "out-oil"
+            assert info["quantitativeReference"]["referenceToReferenceFlow"] == "1"
+            assert process_data["processDataSet"]["exchanges"]["exchange"][1]["json_tg"]["originalInternalId"] == "out-oil"
         finally:
             db.close()
 
