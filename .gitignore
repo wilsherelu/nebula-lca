@@ -36,7 +36,9 @@ exports/
 
 # internal docs not intended for public release
 docs/
+docs/**
 agent-memory/
+agent-memory/**
 
 # local connector credentials, import caches, and external data packages
 local-connectors/
