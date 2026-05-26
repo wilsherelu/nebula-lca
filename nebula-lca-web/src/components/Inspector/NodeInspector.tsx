@@ -5,6 +5,7 @@ import type { AllocationBasisMethod, FlowPort, LcaNodeData, ProcessMode, UnitGro
 import { useLcaGraphStore } from "../../store/lcaGraphStore";
 import { CreateFlowDialog } from "../CreateFlowDialog";
 import { FlowAllocationPropertiesModal, type FlowAllocationProperty } from "../FlowAllocationPropertiesModal";
+import { TidasLocationCascade, normalizeTidasLocationValue } from "../TidasLocationCascade";
 import { MultiProductAllocationModal } from "./MultiProductAllocationModal";
 import type { SourcePolicy } from "../ProjectManagement/ProjectManagement";
 
@@ -435,6 +436,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     referenceProductFlowUuid: "",
     referenceProductText: "",
   });
+  const [processLocationLoadError, setProcessLocationLoadError] = useState("");
   const [tidasAllowedUnitGroups, setTidasAllowedUnitGroups] = useState<Set<string>>(new Set());
   const [unitDefinitions, setUnitDefinitions] = useState<UnitDefinition[]>([]);
   const [flowUnitGroupByUuid, setFlowUnitGroupByUuid] = useState<Record<string, string>>({});
@@ -1073,9 +1075,14 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
       referenceProductFlowUuid: selectedProduct?.flowUuid ?? "",
       referenceProductText: node.data.referenceProduct || selectedProduct?.name || "",
     });
+    setProcessLocationLoadError("");
     setProcessInfoOpen(true);
   };
   const saveProcessInfo = () => {
+    if (processLocationLoadError && processInfoDraft.location.trim()) {
+      onStatus?.(processLocationLoadError);
+      return;
+    }
     const selectedProduct = productOutputs.find((port) => port.flowUuid === processInfoDraft.referenceProductFlowUuid);
     const rawYear = Number(processInfoDraft.referenceYear);
     const referenceYear = Number.isInteger(rawYear) && rawYear >= 1000 && rawYear <= 9999 ? rawYear : 2026;
@@ -1083,7 +1090,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
       ...current,
       data: {
         ...current.data,
-        location: processInfoDraft.location.trim(),
+        location: normalizeTidasLocationValue(processInfoDraft.location),
         referenceYear,
         timeRepresentativeness: processInfoDraft.timeRepresentativeness.trim(),
         technologyDescription: processInfoDraft.technologyDescription.trim() || "Nebula generated",
@@ -2778,14 +2785,16 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
             <div className="process-info-body">
               <label>
                 {t("地理位置", "Geography")}
-                <input
+                <TidasLocationCascade
                   value={processInfoDraft.location}
-                  placeholder={t("留空继承项目地理位置，如 CN", "Blank inherits project geography, e.g. CN")}
-                  onChange={(event) => setProcessInfoDraft((prev) => ({ ...prev, location: event.target.value }))}
+                  uiLanguage={uiLanguage}
+                  blankLabel={t("留空继承项目地理位置", "Blank inherits project geography")}
+                  onChange={(value) => setProcessInfoDraft((prev) => ({ ...prev, location: value }))}
+                  onCatalogStatus={(ok, message) => setProcessLocationLoadError(ok ? "" : message)}
                 />
               </label>
               <label>
-                {t("参考年份", "Reference Year")}
+                {t("数据年份", "Data Year")}
                 <input
                   type="number"
                   min={1000}
@@ -2795,10 +2804,10 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                 />
               </label>
               <label className="process-info-field span-2">
-                {t("时间代表性说明", "Time Representativeness")}
+                {t("时间代表性说明", "Time Representativeness Description")}
                 <input
                   value={processInfoDraft.timeRepresentativeness}
-                  placeholder={t("可选", "Optional")}
+                  placeholder={t("可选，例如 2024 年平均数据", "Optional, e.g. 2024 annual average data")}
                   onChange={(event) => setProcessInfoDraft((prev) => ({ ...prev, timeRepresentativeness: event.target.value }))}
                 />
               </label>
