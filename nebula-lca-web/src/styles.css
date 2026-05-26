@@ -4206,6 +4206,15 @@ body,
   color: #27495a;
 }
 
+.ef31-import-guide-button {
+  border: 0;
+  background: transparent;
+  color: #0d83ff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 .ef31-import-advanced-toggle {
   margin-left: auto;
   border: 0;
@@ -4214,6 +4223,16 @@ body,
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
+}
+
+.ef31-import-full-hint {
+  padding: 10px 12px;
+  border: 1px solid #cfe3f3;
+  border-radius: 8px;
+  background: #f4f9fd;
+  color: #496675;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .ef31-import-advanced {
@@ -4256,6 +4275,91 @@ body,
 .ef31-import-overwrite small {
   color: #7b5a50;
   line-height: 1.45;
+}
+
+.ef31-guide-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 23, 42, 0.28);
+}
+
+.ef31-guide-modal {
+  width: min(720px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 32px));
+  overflow: hidden;
+  border: 1px solid #c8d9e5;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 18px 46px rgba(15, 45, 65, 0.2);
+}
+
+.ef31-guide-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid #e2edf4;
+}
+
+.ef31-guide-head strong {
+  color: #102a38;
+  font-size: 18px;
+}
+
+.ef31-guide-body {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  color: #35586a;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.ef31-guide-body p {
+  margin: 0;
+}
+
+.ef31-guide-links {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ef31-guide-links a {
+  padding: 10px 12px;
+  border: 1px solid #b9d6ec;
+  border-radius: 8px;
+  background: #f7fbff;
+  color: #0b66c5;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.ef31-guide-packages {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #dbe7ef;
+  border-radius: 8px;
+  background: #f8fbfe;
+}
+
+.ef31-guide-packages span {
+  color: #27495a;
+  font-weight: 700;
+}
+
+.ef31-guide-packages code {
+  padding: 8px 10px;
+  border: 1px solid #cfe3f3;
+  border-radius: 6px;
+  background: #fff;
+  color: #102a38;
+  font-size: 13px;
 }
 
 .pm-error {

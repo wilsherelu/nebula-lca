@@ -323,7 +323,7 @@ class ImportJob(Base):
     file_type: Mapped[str] = mapped_column(String(32), nullable=False, default="lci")
     phase: Mapped[str] = mapped_column(String(32), nullable=False, default="created")
     progress_pct: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
-    workers: Mapped[int] = mapped_column(Integer, default=4, nullable=False)
+    workers: Mapped[int] = mapped_column(Integer, default=8, nullable=False)
     limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     error_summary: Mapped[str | None] = mapped_column(String(1024), nullable=True)

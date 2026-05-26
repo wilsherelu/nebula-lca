@@ -43,6 +43,7 @@ const IMPORT_API_BASE = RAW_IMPORT_API_BASE
     ? "http://127.0.0.1:8001/api"
     : API_BASE;
 const DEFAULT_CHUNK_SIZE = 64 * 1024 * 1024;
+const DEFAULT_IMPORT_WORKERS = 8;
 const STATUS_POLL_INTERVAL_MS = 2000;
 const CHUNK_UPLOAD_RETRY_LIMIT = 5;
 const STALE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
@@ -62,10 +63,18 @@ const zhText = {
   chooseFile: "\u9009\u62e9\u6587\u4ef6",
   packageLabel: "LCI/LCIA \u6570\u636e\u5305\uff08.7z / .xlsx\uff09",
   packagePlaceholder: "\u8bf7\u9009\u62e9 .7z \u6216 .xlsx \u6587\u4ef6",
+  guide: "\u6570\u636e\u8d2d\u4e70\u4e0e\u4e0b\u8f7d\u6307\u5357",
+  guideTitle: "ecoinvent \u6570\u636e\u5e93\u8d2d\u4e70\u4e0e\u4e0b\u8f7d",
+  guideIntro: "\u5148\u8d2d\u4e70 ecoinvent \u6388\u6743\uff0c\u518d\u4ece\u5b98\u65b9\u6216\u5408\u4f5c\u5e73\u53f0\u4e0b\u8f7d LCI \u4e0e LCIA \u4e24\u4e2a\u538b\u7f29\u5305\u3002",
+  guideChinese: "\u4e2d\u6587\u8d2d\u4e70\u9875\u9762",
+  guideEnglish: "\u82f1\u6587\u5b98\u65b9\u9875\u9762",
+  guidePackages: "\u9700\u8981\u4e0b\u8f7d\u7684\u4e24\u4e2a\u538b\u7f29\u5305",
+  guideNote: "\u5bfc\u5165 LCI \u65f6\u9009 cutoff_lci_ecoSpold02.7z\uff1b\u5bfc\u5165 LCIA Runtime \u65f6\u9009 LCIA_implementation.7z\u3002\u8bf7\u4fdd\u7559\u539f\u59cb\u538b\u7f29\u5305\u6587\u4ef6\u540d\uff0c\u4e0d\u8981\u5148\u89e3\u538b\u518d\u4e0a\u4f20\u3002",
   advanced: "\u9ad8\u7ea7\u8bbe\u7f6e",
   hideAdvanced: "\u6536\u8d77\u9ad8\u7ea7\u8bbe\u7f6e",
   workers: "\u89e3\u6790\u5e76\u53d1\u6570",
   limit: "\u5bfc\u5165\u524d N \u4e2a\u6570\u636e\u96c6\uff08\u7559\u7a7a = \u5168\u91cf\uff09",
+  fullImportHint: "\u9ed8\u8ba4\u5168\u91cf\u5bfc\u5165\uff0c8 \u5e76\u53d1\u89e3\u6790\uff1b\u5e38\u89c1 Docker/\u5f00\u53d1\u673a\u9884\u4f30\u7ea6 1 \u5c0f\u65f6\uff0c\u5177\u4f53\u53d6\u51b3\u4e8e CPU\u3001\u78c1\u76d8\u548c\u6570\u636e\u5305\u7248\u672c\u3002",
   full: "\u5168\u91cf",
   fileSize: "\u6587\u4ef6\u5927\u5c0f",
   dataType: "\u6570\u636e\u7c7b\u578b",
@@ -110,10 +119,18 @@ const enText = {
   chooseFile: "Browse",
   packageLabel: "LCI/LCIA Package (.7z / .xlsx)",
   packagePlaceholder: "Choose .7z or .xlsx file",
+  guide: "Purchase and download guide",
+  guideTitle: "ecoinvent purchase and download",
+  guideIntro: "Purchase an ecoinvent license first, then download the LCI and LCIA archives from the official or partner platform.",
+  guideChinese: "Chinese purchase page",
+  guideEnglish: "English official page",
+  guidePackages: "Required archive files",
+  guideNote: "Use cutoff_lci_ecoSpold02.7z for LCI import and LCIA_implementation.7z for LCIA Runtime import. Keep the original archive names and upload the archives directly.",
   advanced: "Advanced",
   hideAdvanced: "Hide advanced",
   workers: "Parser Workers",
   limit: "Import first N datasets (empty = full)",
+  fullImportHint: "Default is full import with 8 parser workers. On a typical Docker or development machine, expect about 1 hour; actual time depends on CPU, disk, and package version.",
   full: "full",
   fileSize: "File size",
   dataType: "Data type",
@@ -205,10 +222,11 @@ export default function Ef31ImportJobPanel(props: {
   const [fileType, setFileType] = useState<"lci" | "lcia">("lci");
   const [uploadBusy, setUploadBusy] = useState(false);
   const [jobBusy, setJobBusy] = useState(false);
-  const [workers, setWorkers] = useState(2);
-  const [limit, setLimit] = useState<number | null>(100);
+  const [workers, setWorkers] = useState(DEFAULT_IMPORT_WORKERS);
+  const [limit, setLimit] = useState<number | null>(null);
   const [overwriteExisting, setOverwriteExisting] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
   const [uploadSession, setUploadSession] = useState<UploadSession | null>(null);
   const [job, setJob] = useState<JobStatus | null>(null);
@@ -230,10 +248,11 @@ export default function Ef31ImportJobPanel(props: {
     setFileType("lci");
     setUploadBusy(false);
     setJobBusy(false);
-    setWorkers(2);
-    setLimit(100);
+    setWorkers(DEFAULT_IMPORT_WORKERS);
+    setLimit(null);
     setOverwriteExisting(false);
     setShowAdvanced(false);
+    setShowGuide(false);
     setUploadProgress({ current: 0, total: 0 });
     setUploadSession(null);
     setJob(null);
@@ -511,10 +530,14 @@ export default function Ef31ImportJobPanel(props: {
               <div className="ef31-import-file-meta span-2">
                 <span>{t.fileSize}: <b>{selectedFile ? formatBytes(selectedFile.size) : "-"}</b></span>
                 <span>{t.dataType}: <b>{fileType === "lcia" ? t.lciaType : t.lciType}</b></span>
+                <button type="button" className="ef31-import-guide-button" onClick={() => setShowGuide(true)}>
+                  {t.guide}
+                </button>
                 <button type="button" className="ef31-import-advanced-toggle" onClick={() => setShowAdvanced(!showAdvanced)}>
                   {showAdvanced ? t.hideAdvanced : t.advanced}
                 </button>
               </div>
+              <div className="ef31-import-full-hint span-2">{t.fullImportHint}</div>
               {showAdvanced && (
                 <div className="ef31-import-advanced span-2">
                   <label>
@@ -593,6 +616,30 @@ export default function Ef31ImportJobPanel(props: {
             </label>
           )}
         </div>
+
+        {showGuide && (
+          <div className="ef31-guide-mask" onClick={() => setShowGuide(false)}>
+            <div className="ef31-guide-modal" onClick={(event) => event.stopPropagation()}>
+              <div className="ef31-guide-head">
+                <strong>{t.guideTitle}</strong>
+                <button type="button" className="pm-link-btn" onClick={() => setShowGuide(false)}>{t.close}</button>
+              </div>
+              <div className="ef31-guide-body">
+                <p>{t.guideIntro}</p>
+                <div className="ef31-guide-links">
+                  <a href="https://www.hiqlcd.com/lab/search?source=Ecoinvent" target="_blank" rel="noreferrer">{t.guideChinese}</a>
+                  <a href="https://ecoinvent.org/" target="_blank" rel="noreferrer">{t.guideEnglish}</a>
+                </div>
+                <div className="ef31-guide-packages">
+                  <span>{t.guidePackages}</span>
+                  <code>cutoff_lci_ecoSpold02.7z</code>
+                  <code>LCIA_implementation.7z</code>
+                </div>
+                <p>{t.guideNote}</p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {errorText && <div className="pm-error">{errorText}</div>}
 

@@ -45,6 +45,11 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+
+def _default_effective_worker_limit() -> int:
+    """Return a conservative parser worker cap for the current runtime."""
+    return max(1, min(8, os.cpu_count() or 8))
+
 # ── Event types passed through the parsing queue ────────────────────────────
 
 @dataclass
@@ -186,7 +191,7 @@ class LciImportJobExecutor:
         *,
         spold_dir: str,
         master_data_dir: str | None = None,
-        workers: int = 4,
+        workers: int = 8,
         limit: int | None = None,
         write_matrix_debug: bool = False,
         resume_from_failed: bool = False,
@@ -197,7 +202,7 @@ class LciImportJobExecutor:
         self.db = db
         self.spold_dir = Path(spold_dir)
         self.master_data_dir = Path(master_data_dir) if master_data_dir else None
-        self.workers = max(1, min(8, workers))
+        self.workers = max(1, min(_default_effective_worker_limit(), workers))
         self.limit = limit
         self.write_matrix_debug = write_matrix_debug
         self.resume_from_failed = resume_from_failed
