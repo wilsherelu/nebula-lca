@@ -321,7 +321,11 @@ type TidasExportWarning = {
 type TidasExportPreviewResponse = {
   can_export: boolean;
   flow_count: number;
+  included_flow_count?: number;
+  referenced_flow_count?: number;
   process_count: number;
+  included_process_count?: number;
+  referenced_process_count?: number;
   exported_model_count: number;
   multi_product_process_count: number;
   allocation_warnings: Array<string | TidasExportWarning>;
@@ -1383,8 +1387,16 @@ function TidasExportModal(props: {
         {!previewBusy && preview && (
           <div className="pm-tidas-result">
             <div className="pm-tidas-export-counts">
-              <div>{zh ? "流数量" : "Flows"}: {preview.flow_count}</div>
-              <div>{zh ? "过程数量" : "Processes"}: {preview.process_count}</div>
+              <div>
+                {zh ? "流" : "Flows"}: {zh ? "随包" : "included"} {preview.included_flow_count ?? preview.flow_count}
+                {" / "}
+                {zh ? "引用" : "referenced"} {preview.referenced_flow_count ?? 0}
+              </div>
+              <div>
+                {zh ? "过程" : "Processes"}: {zh ? "随包" : "included"} {preview.included_process_count ?? preview.process_count}
+                {" / "}
+                {zh ? "引用" : "referenced"} {preview.referenced_process_count ?? 0}
+              </div>
               <div>{zh ? "导出模型数量" : "Exported Models"}: {preview.exported_model_count}</div>
               {preview.multi_product_process_count > 0 && (
                 <div>{zh ? "多产品过程" : "Multi-product Processes"}: {preview.multi_product_process_count}</div>
