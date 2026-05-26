@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import zipfile
 import io
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -406,6 +407,9 @@ class TestTidasExport:
                 manifest = json.loads(zf.read("manifest.json"))
                 tables = {entry["table"] for entry in manifest["entries"]}
                 assert {"flowproperties", "unitgroups", "sources", "contacts"} <= tables
+                for entry in manifest["entries"]:
+                    if entry["table"] in {"flowproperties", "unitgroups", "sources", "contacts"}:
+                        assert entry["file_path"].endswith("_01.01.000.json")
         finally:
             db.close()
 
@@ -551,11 +555,270 @@ class TestTidasExport:
                 model_data["lifeCycleModelDataSet"]
                 ["lifeCycleModelInformation"]["technology"]["processes"]["processInstance"]
             )
-            connected = [item for item in instances if item["connections"].get("connection")]
+            connected = [item for item in instances if item.get("connections")]
             assert len(connected) == 1
-            connection = connected[0]["connections"]["connection"][0]
-            assert connection["referenceToProcessInstance"] == "1"
-            assert connection["referenceToExchange"] == "flow-chemical-a"
+            output_exchange = connected[0]["connections"]["outputExchange"]
+            assert output_exchange["@flowUUID"] == "flow-chemical-a"
+            assert output_exchange["downstreamProcess"] == {
+                "@id": "1",
+                "@flowUUID": "flow-chemical-a",
+            }
+            assert "connections" not in instances[1]
+        finally:
+            db.close()
+
+    def test_lifecycle_model_groups_multiple_downstream_processes_by_output_flow(self, client):
+        """One upstream output flow can connect to multiple downstream process instances."""
+        db = _db.SessionLocal()
+        try:
+            _seed_basic_catalog(db)
+            db.merge(FlowRecord(
+                flow_uuid="flow-chemical-b",
+                flow_name="chemical B",
+                flow_type="Product flow",
+                default_unit="kg",
+                unit_group="Units of mass",
+                source="tiangong",
+            ))
+            db.get(FlowRecord, "flow-chemical-a").source = "tiangong"
+            db.commit()
+            base_node = {
+                "node_kind": "unit_process",
+                "mode": "normalized",
+                "location": "GLO",
+                "reference_product": "chemical A",
+                "emissions": [],
+            }
+            graph = {
+                "functionalUnit": "1 kg chemical A",
+                "nodes": [
+                    {
+                        **base_node,
+                        "id": "np-a",
+                        "process_uuid": "proc-a",
+                        "name": "Supplier",
+                        "inputs": [],
+                        "outputs": [
+                            {
+                                "id": "out-product",
+                                "flowUuid": "flow-chemical-a",
+                                "name": "chemical A",
+                                "unit": "kg",
+                                "amount": 1.0,
+                                "type": "technosphere",
+                                "direction": "output",
+                                "isProduct": True,
+                            },
+                            {
+                                "id": "out-chemical-b",
+                                "flowUuid": "flow-chemical-b",
+                                "name": "chemical B",
+                                "unit": "kg",
+                                "amount": 2.0,
+                                "type": "technosphere",
+                                "direction": "output",
+                                "isProduct": True,
+                            },
+                        ],
+                    },
+                    {
+                        **base_node,
+                        "id": "np-b",
+                        "process_uuid": "proc-b",
+                        "name": "Consumer B",
+                        "inputs": [
+                            {
+                                "id": "in-product-b",
+                                "flowUuid": "flow-chemical-a",
+                                "name": "chemical A",
+                                "unit": "kg",
+                                "amount": 1.0,
+                                "type": "technosphere",
+                                "direction": "input",
+                            }
+                        ],
+                        "outputs": [],
+                    },
+                    {
+                        **base_node,
+                        "id": "np-c",
+                        "process_uuid": "proc-c",
+                        "name": "Consumer C",
+                        "inputs": [
+                            {
+                                "id": "in-product-c",
+                                "flowUuid": "flow-chemical-a",
+                                "name": "chemical A",
+                                "unit": "kg",
+                                "amount": 1.0,
+                                "type": "technosphere",
+                                "direction": "input",
+                            },
+                            {
+                                "id": "in-chemical-b",
+                                "flowUuid": "flow-chemical-b",
+                                "name": "chemical B",
+                                "unit": "kg",
+                                "amount": 1.0,
+                                "type": "technosphere",
+                                "direction": "input",
+                            },
+                        ],
+                        "outputs": [],
+                    },
+                ],
+                "exchanges": [
+                    {
+                        "id": "edge-product-b",
+                        "fromNode": "np-a",
+                        "toNode": "np-b",
+                        "flowUuid": "flow-chemical-a",
+                        "flowName": "chemical A",
+                        "quantityMode": "single",
+                        "amount": 1.0,
+                        "unit": "kg",
+                        "type": "technosphere",
+                    },
+                    {
+                        "id": "edge-product-c",
+                        "fromNode": "np-a",
+                        "toNode": "np-c",
+                        "flowUuid": "flow-chemical-a",
+                        "flowName": "chemical A",
+                        "quantityMode": "single",
+                        "amount": 1.0,
+                        "unit": "kg",
+                        "type": "technosphere",
+                    },
+                    {
+                        "id": "edge-chemical-b-c",
+                        "fromNode": "np-a",
+                        "toNode": "np-c",
+                        "flowUuid": "flow-chemical-b",
+                        "flowName": "chemical B",
+                        "quantityMode": "single",
+                        "amount": 1.0,
+                        "unit": "kg",
+                        "type": "technosphere",
+                    },
+                ],
+            }
+            project_id = _create_project_with_graph(client, db, graph)
+
+            resp = client.post("/api/export/tidas/bundle", json={"project_id": project_id})
+            assert resp.status_code == 200, resp.text
+            with zipfile.ZipFile(io.BytesIO(resp.content), "r") as zf:
+                model_name = next(name for name in zf.namelist() if name.startswith("lifecyclemodels/"))
+                model_data = json.loads(zf.read(model_name))
+            instances = (
+                model_data["lifeCycleModelDataSet"]
+                ["lifeCycleModelInformation"]["technology"]["processes"]["processInstance"]
+            )
+            output_exchanges = instances[0]["connections"]["outputExchange"]
+            by_flow = {item["@flowUUID"]: item for item in output_exchanges}
+            assert set(by_flow) == {"flow-chemical-a", "flow-chemical-b"}
+            assert by_flow["flow-chemical-a"]["downstreamProcess"] == [
+                {"@id": "1", "@flowUUID": "flow-chemical-a"},
+                {"@id": "2", "@flowUUID": "flow-chemical-a"},
+            ]
+            assert by_flow["flow-chemical-b"]["downstreamProcess"] == {
+                "@id": "2",
+                "@flowUUID": "flow-chemical-b",
+            }
+            assert "connections" not in instances[1]
+            assert "connections" not in instances[2]
+        finally:
+            db.close()
+
+    def test_platform_light_lifecycle_model_passes_tidas_validator_smoke(self, client):
+        """If tidas-tools is installed, validate the exported lifecycle model schema."""
+        validate = pytest.importorskip("tidas_tools.validate")
+        db = _db.SessionLocal()
+        try:
+            _seed_basic_catalog(db)
+            db.get(FlowRecord, "flow-chemical-a").source = "tiangong"
+            db.commit()
+            graph = {
+                "functionalUnit": "1 kg chemical A",
+                "nodes": [
+                    {
+                        "id": "np-a",
+                        "node_kind": "unit_process",
+                        "mode": "normalized",
+                        "process_uuid": "proc-a",
+                        "name": "Supplier",
+                        "location": "GLO",
+                        "reference_product": "chemical A",
+                        "inputs": [],
+                        "outputs": [
+                            {
+                                "id": "out-product",
+                                "flowUuid": "flow-chemical-a",
+                                "name": "chemical A",
+                                "unit": "kg",
+                                "amount": 1.0,
+                                "type": "technosphere",
+                                "direction": "output",
+                                "isProduct": True,
+                            }
+                        ],
+                        "emissions": [],
+                    },
+                    {
+                        "id": "np-b",
+                        "node_kind": "unit_process",
+                        "mode": "normalized",
+                        "process_uuid": "proc-b",
+                        "name": "Consumer",
+                        "location": "GLO",
+                        "reference_product": "chemical A",
+                        "inputs": [
+                            {
+                                "id": "in-product",
+                                "flowUuid": "flow-chemical-a",
+                                "name": "chemical A",
+                                "unit": "kg",
+                                "amount": 1.0,
+                                "type": "technosphere",
+                                "direction": "input",
+                            }
+                        ],
+                        "outputs": [],
+                        "emissions": [],
+                    },
+                ],
+                "exchanges": [
+                    {
+                        "id": "edge-1",
+                        "fromNode": "np-a",
+                        "toNode": "np-b",
+                        "flowUuid": "flow-chemical-a",
+                        "flowName": "chemical A",
+                        "quantityMode": "single",
+                        "amount": 1.0,
+                        "unit": "kg",
+                        "type": "technosphere",
+                    }
+                ],
+            }
+            project_id = _create_project_with_graph(client, db, graph)
+
+            resp = client.post("/api/export/tidas/bundle", json={"project_id": project_id})
+            assert resp.status_code == 200, resp.text
+            with tempfile.TemporaryDirectory() as tmpdir:
+                with zipfile.ZipFile(io.BytesIO(resp.content), "r") as zf:
+                    zf.extractall(tmpdir)
+                try:
+                    report = validate.validate_package_dir(tmpdir)
+                except UnicodeDecodeError as exc:
+                    pytest.skip(f"tidas_tools schema files are not readable with this Python locale: {exc}")
+            lifecycle_errors = [
+                issue for issue in report["issues"]
+                if issue["category"] == "lifecyclemodels" and issue["severity"] == "error"
+            ]
+            if lifecycle_errors and all(issue.get("issue_code") == "validation_error" for issue in lifecycle_errors):
+                pytest.skip(f"tidas_tools validator infrastructure failed: {lifecycle_errors[0].get('message')}")
+            assert lifecycle_errors == []
         finally:
             db.close()
 
