@@ -22,6 +22,27 @@ os.chdir(API_DIR)
 # ── Tests ────────────────────────────────────────────────────────────────
 
 
+def test_executor_workers_respect_visible_cpu_limit(monkeypatch):
+    """Requested workers are capped by the runtime-visible CPU count and hard limit."""
+    from sqlalchemy.orm import sessionmaker
+
+    from app.lci_import_executor import LciImportJobExecutor
+    from app.models import ImportJob
+
+    monkeypatch.setattr("app.lci_import_executor.os.cpu_count", lambda: 4)
+
+    engine = create_engine("sqlite:///:memory:")
+    ImportJob.__table__.create(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    db.add(ImportJob(job_id="cpu-cap", file_path="/fake/path.7z", file_type="lci", workers=8))
+    db.commit()
+
+    executor = LciImportJobExecutor("cpu-cap", db, spold_dir="/fake/spold", workers=8)
+
+    assert executor.workers == 4
+
+
 def test_checkpoint_skip_imported(tmp_path):
     """Already-imported datasets should be skipped by checkpoint."""
     from sqlalchemy.orm import sessionmaker
