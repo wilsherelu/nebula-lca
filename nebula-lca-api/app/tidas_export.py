@@ -37,14 +37,17 @@ from .tidas_reference import (
 from .source_policy import (
     SOURCE_SPACE_TIANGONG,
     classify_flow_source,
+    classify_process_source,
     _collect_biosphere_flow_uuids,
     _batch_lookup_flow_sources,
 )
 
 TIDAS_DEFAULT_DATASET_VERSION = "01.01.000"
+TIDAS_BUNDLE_MODE_REFERENCE_HYBRID = "tiangong_reference_hybrid"
 TIDAS_BUNDLE_MODE_PLATFORM_LIGHT = "tiangong_platform_light"
 TIDAS_BUNDLE_MODE_SELF_CONTAINED = "self_contained"
 TIDAS_BUNDLE_MODES = {
+    TIDAS_BUNDLE_MODE_REFERENCE_HYBRID,
     TIDAS_BUNDLE_MODE_PLATFORM_LIGHT,
     TIDAS_BUNDLE_MODE_SELF_CONTAINED,
 }
@@ -62,6 +65,8 @@ class _BundleExportPlan:
     bundle_mode: str
     included_flow_uuids: set[str] = field(default_factory=set)
     referenced_flow_uuids: set[str] = field(default_factory=set)
+    included_process_uuids: set[str] = field(default_factory=set)
+    referenced_process_uuids: set[str] = field(default_factory=set)
     blocking: list[dict] = field(default_factory=list)
     warnings: list[dict] = field(default_factory=list)
 
@@ -72,6 +77,14 @@ class _BundleExportPlan:
     @property
     def referenced_flow_count(self) -> int:
         return len(self.referenced_flow_uuids)
+
+    @property
+    def included_process_count(self) -> int:
+        return len(self.included_process_uuids)
+
+    @property
+    def referenced_process_count(self) -> int:
+        return len(self.referenced_process_uuids)
 
 TIDAS_DATASET_FORMAT_REF = {
     "@refObjectId": "a97a0155-0234-4b87-b4ce-a45da52f2a40",
@@ -396,15 +409,26 @@ def _build_flow_type_map(db: Session, flow_uuids: set[str]) -> dict[str, str]:
 
 
 def _normalise_bundle_mode(bundle_mode: str | None) -> str:
-    mode = (bundle_mode or TIDAS_BUNDLE_MODE_PLATFORM_LIGHT).strip()
+    mode = (bundle_mode or TIDAS_BUNDLE_MODE_REFERENCE_HYBRID).strip()
     if mode not in TIDAS_BUNDLE_MODES:
-        return TIDAS_BUNDLE_MODE_PLATFORM_LIGHT
+        return TIDAS_BUNDLE_MODE_REFERENCE_HYBRID
     return mode
+
+
+def _is_tidas_reference_flow(flow_record: FlowRecord) -> bool:
+    return classify_flow_source(flow_record.source, bool(flow_record.is_custom)) == SOURCE_SPACE_TIANGONG
+
+
+def _is_tidas_reference_process(ref_process: ReferenceProcess | None) -> bool:
+    if ref_process is None:
+        return False
+    return classify_process_source(ref_process.source_file, ref_process.import_mode) == SOURCE_SPACE_TIANGONG
 
 
 def _build_bundle_export_plan(
     db: Session,
     flow_uuids: set[str],
+    process_uuids: set[str] | None = None,
     bundle_mode: str | None = None,
 ) -> _BundleExportPlan:
     mode = _normalise_bundle_mode(bundle_mode)
@@ -430,26 +454,50 @@ def _build_bundle_export_plan(
             plan.included_flow_uuids.add(flow_uuid)
             continue
 
-        source_space = classify_flow_source(flow_record.source, bool(flow_record.is_custom))
-        if source_space == SOURCE_SPACE_TIANGONG:
+        if _is_tidas_reference_flow(flow_record):
             plan.referenced_flow_uuids.add(flow_uuid)
             continue
 
-        plan.blocking.append({
-            "code": "TIDAS_LIGHT_MODE_UNSUPPORTED_FLOW",
-            "message": (
-                f"Flow {flow_uuid} is not a Tiangong platform reference flow; "
-                "export as self_contained or replace it with a platform flow."
-            ),
-            "details": {
-                "flow_uuid": flow_uuid,
-                "source": flow_record.source,
-                "source_space": source_space,
-                "is_custom": bool(flow_record.is_custom),
-                "bundle_mode": mode,
-                "repair_target": "flow_source",
-            },
-        })
+        if not bool(flow_record.tidas_compatible):
+            plan.blocking.append({
+                "code": "TIDAS_CUSTOM_FLOW_NOT_COMPATIBLE",
+                "message": (
+                    f"Flow {flow_uuid} is not a Tiangong platform reference flow and is not marked "
+                    "TIDAS-compatible."
+                ),
+                "details": {
+                    "flow_uuid": flow_uuid,
+                    "source": flow_record.source,
+                    "is_custom": bool(flow_record.is_custom),
+                    "bundle_mode": mode,
+                    "repair_target": "flow_source",
+                },
+            })
+            continue
+
+        unit_group = flow_record.tidas_unit_group or flow_record.unit_group
+        if not get_tidas_flow_property_reference(unit_group):
+            plan.blocking.append({
+                "code": "TIDAS_FLOW_PROPERTY_MAPPING_MISSING",
+                "message": f"Flow {flow_uuid} unit group is not mapped to a TIDAS flow property.",
+                "details": {
+                    "flow_uuid": flow_uuid,
+                    "unit_group": unit_group,
+                    "repair_target": "unit_group",
+                },
+            })
+            continue
+
+        plan.included_flow_uuids.add(flow_uuid)
+
+    for process_uuid in sorted(process_uuids or set()):
+        ref_process = db.get(ReferenceProcess, process_uuid)
+        if mode == TIDAS_BUNDLE_MODE_SELF_CONTAINED:
+            plan.included_process_uuids.add(process_uuid)
+        elif _is_tidas_reference_process(ref_process):
+            plan.referenced_process_uuids.add(process_uuid)
+        else:
+            plan.included_process_uuids.add(process_uuid)
 
     return plan
 
@@ -1911,7 +1959,7 @@ def build_tidas_readiness(
         })
         _enrich_readiness_issue_targets(graph_json, blocking)
 
-    bundle_plan = _build_bundle_export_plan(db, flow_uuids, mode)
+    bundle_plan = _build_bundle_export_plan(db, flow_uuids, process_uuids, mode)
     if bundle_plan.blocking:
         _enrich_readiness_issue_targets(graph_json, bundle_plan.blocking)
         blocking.extend(bundle_plan.blocking)
@@ -1962,7 +2010,7 @@ def build_tidas_readiness(
 
     for flow_uuid in sorted(bundle_plan.included_flow_uuids):
         _build_flow_data(db, flow_uuid, export_report)
-    for process_uuid in sorted(process_uuids):
+    for process_uuid in sorted(bundle_plan.included_process_uuids):
         _build_process_data(db, process_uuid, graph_json, export_report, model, flow_type_map)
     _build_model_data(db, model, graph_json, export_report)
 
@@ -2040,6 +2088,10 @@ def build_tidas_readiness(
         "referenced_flow_count": bundle_plan.referenced_flow_count,
         "included_flow_uuids": sorted(bundle_plan.included_flow_uuids),
         "referenced_flow_uuids": sorted(bundle_plan.referenced_flow_uuids),
+        "included_process_count": bundle_plan.included_process_count,
+        "referenced_process_count": bundle_plan.referenced_process_count,
+        "included_process_uuids": sorted(bundle_plan.included_process_uuids),
+        "referenced_process_uuids": sorted(bundle_plan.referenced_process_uuids),
         "process_count": export_report.process_count,
         "exported_model_count": export_report.exported_model_count,
         "multi_product_process_count": export_report.multi_product_process_count,
@@ -2056,7 +2108,7 @@ def _readiness_result(
     warnings: list[dict],
     info: list[dict],
     model: Model | None,
-    bundle_mode: str = TIDAS_BUNDLE_MODE_PLATFORM_LIGHT,
+    bundle_mode: str = TIDAS_BUNDLE_MODE_REFERENCE_HYBRID,
 ) -> dict[str, Any]:
     """Build a minimal readiness result when an early block occurs."""
     return {
@@ -2071,6 +2123,10 @@ def _readiness_result(
         "referenced_flow_count": 0,
         "included_flow_uuids": [],
         "referenced_flow_uuids": [],
+        "included_process_count": 0,
+        "referenced_process_count": 0,
+        "included_process_uuids": [],
+        "referenced_process_uuids": [],
         "process_count": 0,
         "exported_model_count": 0,
         "multi_product_process_count": 0,
@@ -2166,12 +2222,16 @@ def preview_export(
     return {
         "can_export": readiness["can_export"],
         "flow_count": readiness["flow_count"],
-        "bundle_mode": readiness.get("bundle_mode", TIDAS_BUNDLE_MODE_PLATFORM_LIGHT),
+        "bundle_mode": readiness.get("bundle_mode", TIDAS_BUNDLE_MODE_REFERENCE_HYBRID),
         "included_flow_count": readiness.get("included_flow_count", 0),
         "referenced_flow_count": readiness.get("referenced_flow_count", 0),
         "included_flow_uuids": readiness.get("included_flow_uuids", []),
         "referenced_flow_uuids": readiness.get("referenced_flow_uuids", []),
         "process_count": readiness["process_count"],
+        "included_process_count": readiness.get("included_process_count", 0),
+        "referenced_process_count": readiness.get("referenced_process_count", 0),
+        "included_process_uuids": readiness.get("included_process_uuids", []),
+        "referenced_process_uuids": readiness.get("referenced_process_uuids", []),
         "exported_model_count": readiness["exported_model_count"],
         "multi_product_process_count": readiness["multi_product_process_count"],
         "allocation_warnings": readiness.get("allocation_warnings", []),
@@ -2244,7 +2304,7 @@ def export_bundle(
     if missing_flows:
         raise ExportError(f"Cannot export: {len(missing_flows)} flow(s) not found in database")
 
-    bundle_plan = _build_bundle_export_plan(db, flow_uuids, mode)
+    bundle_plan = _build_bundle_export_plan(db, flow_uuids, process_uuids, mode)
     if bundle_plan.blocking:
         raise ExportError(bundle_plan.blocking[0]["message"])
 
@@ -2292,7 +2352,7 @@ def export_bundle(
 
         # Build and write process data as one dataset file per process.
         process_uuid_list: list[str] = []
-        for process_uuid in sorted(process_uuids):
+        for process_uuid in sorted(bundle_plan.included_process_uuids):
             process_data = _build_process_data(db, process_uuid, graph_json, report, model, flow_type_map)
             if process_data:
                 process_uuid_list.append(process_uuid)
@@ -2375,6 +2435,10 @@ def export_bundle(
         export_report_data["referenced_flow_count"] = bundle_plan.referenced_flow_count
         export_report_data["included_flow_uuids"] = sorted(bundle_plan.included_flow_uuids)
         export_report_data["referenced_flow_uuids"] = sorted(bundle_plan.referenced_flow_uuids)
+        export_report_data["included_process_count"] = bundle_plan.included_process_count
+        export_report_data["referenced_process_count"] = bundle_plan.referenced_process_count
+        export_report_data["included_process_uuids"] = sorted(bundle_plan.included_process_uuids)
+        export_report_data["referenced_process_uuids"] = sorted(bundle_plan.referenced_process_uuids)
         export_report_data["reference_dataset_count"] = len(reference_files)
         export_report_data["reference_dataset_paths"] = reference_files
         zf.writestr("export_report.json", json.dumps(export_report_data, ensure_ascii=False, indent=2))
