@@ -543,6 +543,97 @@ def _extract_graph_data(graph_json: dict) -> tuple[set[str], set[str]]:
     return flow_uuids, process_uuids
 
 
+def _read_target_product_config(graph_json: dict) -> dict[str, str]:
+    metadata = graph_json.get("metadata") if isinstance(graph_json, dict) else {}
+    if not isinstance(metadata, dict):
+        return {}
+    preferences = metadata.get("project_preferences")
+    if not isinstance(preferences, dict):
+        return {}
+    target_product = preferences.get("target_product")
+    if not isinstance(target_product, dict):
+        return {}
+
+    process_uuid = str(
+        target_product.get("process_uuid")
+        or target_product.get("processUuid")
+        or ""
+    ).strip()
+    flow_uuid = str(
+        target_product.get("flow_uuid")
+        or target_product.get("flowUuid")
+        or ""
+    ).strip()
+    product_key = str(
+        target_product.get("product_key")
+        or target_product.get("productKey")
+        or ""
+    ).strip()
+    if (not process_uuid or not flow_uuid) and "::" in product_key:
+        legacy_process_uuid, legacy_flow_uuid = product_key.split("::", 1)
+        process_uuid = process_uuid or legacy_process_uuid.strip()
+        flow_uuid = flow_uuid or legacy_flow_uuid.strip()
+
+    result: dict[str, str] = {}
+    if process_uuid:
+        result["process_uuid"] = process_uuid
+    if flow_uuid:
+        result["flow_uuid"] = flow_uuid
+    return result
+
+
+def _derive_model_reference_product(model: Model, graph_json: dict) -> str | None:
+    explicit = str(model.reference_product or "").strip()
+    if explicit:
+        return explicit
+
+    target_product = _read_target_product_config(graph_json)
+    target_process_uuid = target_product.get("process_uuid")
+    target_flow_uuid = target_product.get("flow_uuid")
+
+    first_product_name: str | None = None
+    for node in graph_json.get("nodes", []) or []:
+        if not isinstance(node, dict):
+            continue
+        process_uuid = str(node.get("process_uuid") or node.get("id") or "").strip()
+        node_reference_flow_uuid = str(node.get("reference_product_flow_uuid") or "").strip()
+        node_reference_product = str(node.get("reference_product") or "").strip()
+        if (
+            target_flow_uuid
+            and node_reference_flow_uuid == target_flow_uuid
+            and (not target_process_uuid or process_uuid == target_process_uuid)
+            and node_reference_product
+        ):
+            return node_reference_product
+
+        for port in node.get("outputs", []) or []:
+            if not isinstance(port, dict):
+                continue
+            flow_uuid = str(port.get("flowUuid") or port.get("flow_uuid") or "").strip()
+            port_name = str(port.get("name") or port.get("product_name") or "").strip()
+            is_product = bool(port.get("isProduct")) or str(port.get("type") or "").lower() == "technosphere"
+            if not port_name or not is_product:
+                continue
+            if first_product_name is None:
+                first_product_name = port_name
+            if (
+                target_flow_uuid
+                and flow_uuid == target_flow_uuid
+                and (not target_process_uuid or process_uuid == target_process_uuid)
+            ):
+                return port_name
+
+    return first_product_name
+
+
+def _derive_model_functional_unit(model: Model, graph_json: dict) -> str | None:
+    explicit = str(model.functional_unit or "").strip()
+    if explicit:
+        return explicit
+    graph_functional_unit = str(graph_json.get("functionalUnit") or "").strip()
+    return graph_functional_unit or None
+
+
 def _repair_target_for_unit_group(graph_json: dict, unit_group: str) -> dict:
     target = {"unit_group": unit_group, "repair_target": "unit_group"}
     needle = str(unit_group or "").strip().lower()
@@ -1586,6 +1677,8 @@ def _build_model_data(
         {"model_uuid": model.id},
         f"Model {model.id}",
     )
+    reference_product = _derive_model_reference_product(model, graph_json)
+    functional_unit = _derive_model_functional_unit(model, graph_json)
     process_instance_items = []
     connections_by_instance = _build_lifecycle_process_connections(graph_json, process_instances)
     for instance in process_instances:
@@ -1622,8 +1715,8 @@ def _build_model_data(
                 "json_tg": {
                     "xflow": graph_json,
                     "project_metadata": {
-                        "reference_product": model.reference_product,
-                        "functional_unit": model.functional_unit,
+                        "reference_product": reference_product,
+                        "functional_unit": functional_unit,
                         "system_boundary": model.system_boundary,
                         "time_representativeness": model.time_representativeness,
                         "geography": model.geography,
@@ -1654,8 +1747,8 @@ def _build_model_data(
         # Simplified fields for quick Nebula import
         "model_uuid": model.id,
         "model_name": model.name,
-        "reference_product": model.reference_product,
-        "functional_unit": model.functional_unit,
+        "reference_product": reference_product,
+        "functional_unit": functional_unit,
         "system_boundary": model.system_boundary,
         "time_representativeness": model.time_representativeness,
         "geography": model.geography,
@@ -1672,13 +1765,13 @@ def _build_model_data(
     }
 
     # Check for missing TianGong fields (warnings only)
-    if not model.reference_product:
+    if not reference_product:
         report.add_warning(
             "missing_tiangong_field",
             f"Model {model.id} missing reference_product",
             {"model_uuid": model.id},
         )
-    if not model.functional_unit:
+    if not functional_unit:
         report.add_warning(
             "missing_tiangong_field",
             f"Model {model.id} missing functional_unit",

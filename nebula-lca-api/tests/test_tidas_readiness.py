@@ -43,14 +43,19 @@ def _make_version_mock(graph_json: dict):
     return SimpleNamespace(hybrid_graph_json=graph_json, version=1)
 
 
-def _make_model_mock(project_id: str, source_policy: str = "open_mixed"):
+def _make_model_mock(
+    project_id: str,
+    source_policy: str = "open_mixed",
+    reference_product: str | None = "ref",
+    functional_unit: str | None = "1 kg",
+):
     return SimpleNamespace(
         id=project_id,
         name=f"Project {project_id}",
         source_policy=source_policy,
         allowed_lcia_scope="ef31_only",
-        reference_product="ref",
-        functional_unit="1 kg",
+        reference_product=reference_product,
+        functional_unit=functional_unit,
         system_boundary=None,
         time_representativeness=None,
         geography="CN",
@@ -117,12 +122,23 @@ def _make_graph(
     return {"nodes": nodes, "exchanges": [], "functionalUnit": "1 kg"}
 
 
-def _build_fake_db(project_id: str, flows: dict, graph_json: dict,
-                   source_policy: str = "open_mixed"):
+def _build_fake_db(
+    project_id: str,
+    flows: dict,
+    graph_json: dict,
+    source_policy: str = "open_mixed",
+    reference_product: str | None = "ref",
+    functional_unit: str | None = "1 kg",
+):
     """Build a MagicMock Session."""
     from app.models import Model, ModelVersion, FlowRecord, ReferenceProcess
 
-    model_mock = _make_model_mock(project_id, source_policy)
+    model_mock = _make_model_mock(
+        project_id,
+        source_policy,
+        reference_product=reference_product,
+        functional_unit=functional_unit,
+    )
     version_mock = _make_version_mock(graph_json)
 
     session = MagicMock()
@@ -521,6 +537,40 @@ def test_preview_export_delegates_to_readiness():
     assert isinstance(result["errors"], list)
     for e in result["errors"]:
         assert isinstance(e, str)
+
+
+def test_preview_export_derives_model_reference_product_from_target_product():
+    project_id = "proj-preview-target-product"
+    flows = {
+        "prod-1": _make_flow_mock("prod-1", "Product flow", "Tiangong 1.0"),
+    }
+    graph = _make_graph(product_flow_uuids=["prod-1"])
+    graph["nodes"][0]["reference_product"] = "Target Product"
+    graph["nodes"][0]["reference_product_flow_uuid"] = "prod-1"
+    graph["nodes"][0]["outputs"][0]["name"] = "Target Product"
+    graph["metadata"] = {
+        "project_preferences": {
+            "target_product": {
+                "process_uuid": "proc-1",
+                "flow_uuid": "prod-1",
+                "quantity_mode": "custom",
+                "quantity": 1,
+            }
+        }
+    }
+    db = _build_fake_db(
+        project_id,
+        flows,
+        graph,
+        reference_product=None,
+        functional_unit=None,
+    )
+
+    result = preview_export(db, project_id)
+
+    warning_messages = [w.get("message", "") for w in result["warnings"] if isinstance(w, dict)]
+    assert all("missing reference_product" not in message for message in warning_messages)
+    assert all("missing functional_unit" not in message for message in warning_messages)
 
 
 # ── Tests: export_bundle uses readiness ────────────────────────────────────
