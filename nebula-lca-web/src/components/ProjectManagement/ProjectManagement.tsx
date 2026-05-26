@@ -2,6 +2,7 @@
 import { CreateFlowDialog } from "../CreateFlowDialog";
 import Ef31ImportJobPanel from "../Ef31ImportJobPanel";
 import { FlowAllocationPropertiesModal, type FlowAllocationProperty } from "../FlowAllocationPropertiesModal";
+import { TidasLocationCascade, normalizeTidasLocationValue } from "../TidasLocationCascade";
 
 export type ProjectListItem = {
   project_id: string;
@@ -201,59 +202,6 @@ const sourcePolicyOptions: Array<{ value: SourcePolicy; zh: string; en: string }
   { value: "tidas_compliant", zh: "天工/TIDAS 合规模式", en: "TIDAS Compliant" },
   { value: "ecoinvent_strict", zh: "ecoinvent 严格模式", en: "ecoinvent Strict" },
 ];
-type LocationCodeOption = {
-  code: string;
-  name_en?: string;
-  name_zh?: string;
-  aliases?: string[];
-};
-const normalizeLocationAlias = (value: string): string => value.trim().toLowerCase().replace(/\s+/g, "");
-const normalizeProjectGeographyInput = (value: string, options: LocationCodeOption[] = []): string => {
-  const raw = value.trim();
-  if (!raw) return "";
-  const key = normalizeLocationAlias(raw);
-  for (const option of options) {
-    const candidates = [
-      option.code,
-      option.name_en ?? "",
-      option.name_zh ?? "",
-      ...(option.aliases ?? []),
-    ].filter((candidate) => candidate.trim().length > 0);
-    if (candidates.some((candidate) => normalizeLocationAlias(candidate) === key)) {
-      return option.code;
-    }
-  }
-  return raw;
-};
-const formatLocationOptionLabel = (item: LocationCodeOption, uiLanguage: "zh" | "en"): string => {
-  const primaryName = uiLanguage === "zh" ? item.name_zh : item.name_en;
-  const secondaryName = uiLanguage === "zh" ? item.name_en : item.name_zh;
-  const names = [primaryName, secondaryName].filter((value) => String(value ?? "").trim()).join(" / ");
-  return names ? `${item.code} - ${names}` : item.code;
-};
-const getParentLocationOptions = (options: LocationCodeOption[]): LocationCodeOption[] =>
-  options.filter((item) => item.code !== "NULL" && !item.code.includes("-"));
-const getLocationParentCode = (code: string, options: LocationCodeOption[]): string => {
-  if (!code) return "";
-  const codes = new Set(options.map((item) => item.code));
-  if (codes.has(code) && !code.includes("-")) return code;
-  const parent = code.split("-")[0];
-  return codes.has(parent) ? parent : code;
-};
-const getLocationSegmentCount = (code: string): number => code.split("-").filter(Boolean).length;
-const getLocationLevelOptions = (parentCode: string, options: LocationCodeOption[]): LocationCodeOption[] => {
-  if (!parentCode) return [];
-  const prefix = `${parentCode}-`;
-  const expectedSegments = getLocationSegmentCount(parentCode) + 1;
-  return options.filter((item) => item.code.startsWith(prefix) && getLocationSegmentCount(item.code) === expectedSegments);
-};
-const getSelectedLocationAtLevel = (code: string, level: number, options: LocationCodeOption[]): string => {
-  if (!code) return "";
-  const parts = code.split("-");
-  if (parts.length < level) return "";
-  const candidate = parts.slice(0, level).join("-");
-  return options.some((item) => item.code === candidate) ? candidate : "";
-};
 const normalizeSourcePolicy = (value: unknown): SourcePolicy => {
   if (value === "tidas_compliant" || value === "ecoinvent_strict" || value === "explicit_mapped_mixed") {
     return value;
@@ -548,7 +496,6 @@ function CreateProjectModal(props: {
   const { open, busy, uiLanguage, mode = "create", initialForm, onClose, onSubmit } = props;
   const [form, setForm] = useState<CreateProjectForm>(defaultForm);
   const [errorText, setErrorText] = useState("");
-  const [locationOptions, setLocationOptions] = useState<LocationCodeOption[]>([]);
   const [locationLoadError, setLocationLoadError] = useState("");
   const zh = uiLanguage === "zh";
 
@@ -560,41 +507,6 @@ function CreateProjectModal(props: {
     }
   }, [open, initialForm]);
 
-  useEffect(() => {
-    if (!open) return;
-    let canceled = false;
-    const loadLocations = async () => {
-      try {
-        const resp = await fetch(`${API_BASE}/export/tidas/reference/locations`, { cache: "no-store" });
-        if (!resp.ok) {
-          throw new Error(`HTTP ${resp.status}`);
-        }
-        const payload = (await resp.json()) as { items?: LocationCodeOption[] };
-        const items = Array.isArray(payload.items) ? payload.items.filter((item) => item.code) : [];
-        if (items.length < 50) {
-          throw new Error("TIDAS location catalog is incomplete");
-        }
-        if (!canceled) {
-          setLocationOptions(items);
-          setLocationLoadError("");
-        }
-      } catch {
-        if (!canceled) {
-          setLocationOptions([]);
-          setLocationLoadError(
-            zh
-              ? "TIDAS 地理位置目录加载失败，请检查后端 reference catalog。"
-              : "Failed to load TIDAS location catalog. Check backend reference catalog.",
-          );
-        }
-      }
-    };
-    void loadLocations();
-    return () => {
-      canceled = true;
-    };
-  }, [open]);
-
   if (!open) {
     return null;
   }
@@ -602,13 +514,6 @@ function CreateProjectModal(props: {
   const setField = (key: keyof CreateProjectForm, value: string) => {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
-  const normalizedLocation = normalizeProjectGeographyInput(form.geography, locationOptions);
-  const selectedParentLocation = getLocationParentCode(normalizedLocation, locationOptions);
-  const parentLocationOptions = getParentLocationOptions(locationOptions);
-  const level2LocationOptions = getLocationLevelOptions(selectedParentLocation, locationOptions);
-  const selectedLevel2Location = getSelectedLocationAtLevel(normalizedLocation, 2, locationOptions);
-  const level3LocationOptions = getLocationLevelOptions(selectedLevel2Location, locationOptions);
-  const selectedLevel3Location = getSelectedLocationAtLevel(normalizedLocation, 3, locationOptions);
 
   const submit = async () => {
     if (!form.projectName.trim()) {
@@ -622,7 +527,7 @@ function CreateProjectModal(props: {
     setErrorText("");
     await onSubmit({
       ...form,
-      geography: normalizeProjectGeographyInput(form.geography, locationOptions),
+      geography: normalizeTidasLocationValue(form.geography),
     });
     setForm(defaultForm);
     onClose();
@@ -686,51 +591,12 @@ function CreateProjectModal(props: {
           </label>
           <label>
             <span>{zh ? "地理代表性" : "Geography"}</span>
-            <div className="pm-location-cascade">
-              <select
-                value={selectedParentLocation}
-                disabled={locationOptions.length === 0}
-                onChange={(event) => setField("geography", event.target.value)}
-              >
-                <option value="">
-                  {locationLoadError
-                    ? (zh ? "地理目录加载失败" : "Location catalog failed")
-                    : (zh ? "选择全球、国家或区域" : "Select global, country, or region")}
-                </option>
-                {parentLocationOptions.map((item) => (
-                  <option key={item.code} value={item.code}>
-                    {formatLocationOptionLabel(item, uiLanguage)}
-                  </option>
-                ))}
-              </select>
-              {level2LocationOptions.length > 0 && (
-                <select
-                  value={selectedLevel2Location}
-                  onChange={(event) => setField("geography", event.target.value || selectedParentLocation)}
-                >
-                  <option value="">{zh ? "全部 / 不细分" : "All / no subdivision"}</option>
-                  {level2LocationOptions.map((item) => (
-                    <option key={item.code} value={item.code}>
-                      {formatLocationOptionLabel(item, uiLanguage)}
-                    </option>
-                  ))}
-                </select>
-              )}
-              {level3LocationOptions.length > 0 && (
-                <select
-                  value={selectedLevel3Location}
-                  onChange={(event) => setField("geography", event.target.value || selectedLevel2Location)}
-                >
-                  <option value="">{zh ? "全部 / 不细分到城市" : "All / no city subdivision"}</option>
-                  {level3LocationOptions.map((item) => (
-                    <option key={item.code} value={item.code}>
-                      {formatLocationOptionLabel(item, uiLanguage)}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
-            {locationLoadError && <span className="pm-field-error">{locationLoadError}</span>}
+            <TidasLocationCascade
+              value={form.geography}
+              uiLanguage={uiLanguage}
+              onChange={(value) => setField("geography", value)}
+              onCatalogStatus={(ok, message) => setLocationLoadError(ok ? "" : message)}
+            />
           </label>
           <label className="span-2">
             <span>{zh ? "说明" : "Description"}</span>
@@ -1731,7 +1597,7 @@ export function ProjectManagement(props: Props) {
           functional_unit: form.functionalUnit.trim() || null,
           system_boundary: form.systemBoundary.trim() || null,
           time_representativeness: form.timeRepresentativeness.trim() || null,
-          geography: normalizeProjectGeographyInput(form.geography) || null,
+          geography: normalizeTidasLocationValue(form.geography) || null,
           description: form.description.trim() || null,
         }),
       });
