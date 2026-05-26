@@ -11,6 +11,7 @@ QuantityMode = Literal["single", "dual"]
 ProcessImportMode = Literal["locked", "editable_clone"]
 ProcessTargetKind = Literal["unit_process", "market_process", "lci_dataset", "pts_module"]
 TidasUpsertMode = Literal["skip", "update"]
+TidasBundleMode = Literal["tiangong_platform_light", "self_contained"]
 
 
 _FLOW_SEMANTIC_ALIAS_MAP: dict[str, str] = {
@@ -1269,13 +1270,22 @@ class TidasExportPreviewRequest(BaseModel):
 
     project_id: str = Field(..., description="Project/model ID to export")
     version: int | None = Field(default=None, description="Version number (None = latest)")
+    bundle_mode: TidasBundleMode = Field(
+        default="tiangong_platform_light",
+        description="Export target: platform-light or self-contained debug package",
+    )
 
 
 class TidasExportPreviewResponse(BaseModel):
     """Response for TIDAS bundle export preview."""
 
     can_export: bool = Field(..., description="Whether export can proceed")
+    bundle_mode: TidasBundleMode = Field(default="tiangong_platform_light", description="Selected bundle mode")
     flow_count: int = Field(default=0, description="Number of flows to be exported")
+    included_flow_count: int = Field(default=0, description="Number of flow datasets included in the ZIP")
+    referenced_flow_count: int = Field(default=0, description="Number of flow datasets referenced but not bundled")
+    included_flow_uuids: list[str] = Field(default_factory=list, description="Flow UUIDs included in the ZIP")
+    referenced_flow_uuids: list[str] = Field(default_factory=list, description="Flow UUIDs referenced by process/model data")
     process_count: int = Field(default=0, description="Number of processes to be exported")
     exported_model_count: int = Field(default=0, description="Number of models to be exported")
     multi_product_process_count: int = Field(default=0, description="Number of multi-product processes")
@@ -1296,6 +1306,10 @@ class TidasExportRequest(BaseModel):
     project_id: str = Field(..., description="Project/model ID to export")
     version: int | None = Field(default=None, description="Version number (None = latest)")
     display_lang: str = Field(default="zh", description="Display language preference (zh/en)")
+    bundle_mode: TidasBundleMode = Field(
+        default="tiangong_platform_light",
+        description="Export target: platform-light or self-contained debug package",
+    )
 
 
 class TidasExportReadinessResponse(BaseModel):
@@ -1307,11 +1321,16 @@ class TidasExportReadinessResponse(BaseModel):
     """
     can_export: bool = Field(..., description="Whether export can proceed")
     source_policy: str = Field(default="open_mixed", description="Project source policy")
+    bundle_mode: TidasBundleMode = Field(default="tiangong_platform_light", description="Selected bundle mode")
     blocking: list[dict] = Field(default_factory=list, description="Blocking issues that prevent export")
     warnings: list[dict] = Field(default_factory=list, description="Non-blocking warnings")
     info: list[dict] = Field(default_factory=list, description="Informational summary")
     # Export counts (same as preview)
     flow_count: int = Field(default=0, description="Number of flows to be exported")
+    included_flow_count: int = Field(default=0, description="Number of flow datasets included in the ZIP")
+    referenced_flow_count: int = Field(default=0, description="Number of flow datasets referenced but not bundled")
+    included_flow_uuids: list[str] = Field(default_factory=list, description="Flow UUIDs included in the ZIP")
+    referenced_flow_uuids: list[str] = Field(default_factory=list, description="Flow UUIDs referenced by process/model data")
     process_count: int = Field(default=0, description="Number of processes to be exported")
     exported_model_count: int = Field(default=0, description="Number of models to be exported")
     multi_product_process_count: int = Field(default=0, description="Number of multi-product processes")

@@ -509,10 +509,11 @@ class TestExportBundleSchemaSkeleton:
                 compartment="air",
             ),
         }
+        flows[flow_uuid].unit_group = "Units of mass"
         graph = _make_graph(elementary_flow_uuids=[flow_uuid])
         db = _build_fake_db("proj-schema", flows, graph)
 
-        zip_bytes, report = export_bundle(db, "proj-schema")
+        zip_bytes, report = export_bundle(db, "proj-schema", bundle_mode="self_contained")
         assert report.has_errors() is False
 
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
