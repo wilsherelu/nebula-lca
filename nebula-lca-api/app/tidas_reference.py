@@ -198,6 +198,31 @@ def normalize_tidas_location_code(value: str | None) -> str:
     return fallback
 
 
+def list_tidas_location_options() -> list[dict[str, Any]]:
+    """Return ILCD/TIDAS location options for UI selection."""
+    catalog = load_tidas_reference_catalog()
+    locations = catalog.get("locations", {}) if catalog else {}
+    entries = locations.get("entries") if isinstance(locations, dict) else []
+    options: list[dict[str, Any]] = []
+    for item in entries or []:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "").strip()
+        if not code:
+            continue
+        name = item.get("name") if isinstance(item.get("name"), dict) else {}
+        aliases = item.get("aliases") if isinstance(item.get("aliases"), list) else []
+        options.append({
+            "code": code,
+            "name_en": str(name.get("en") or ""),
+            "name_zh": str(name.get("zh") or ""),
+            "aliases": [str(alias) for alias in aliases if str(alias).strip()],
+        })
+
+    common_order = {"GLO": 0, "CN": 1, "CN-SH": 2, "CN-BJ": 3, "RoW": 4}
+    return sorted(options, key=lambda row: (common_order.get(row["code"], 100), row["code"]))
+
+
 def normalize_tidas_unit_group(value: str | None) -> str:
     text = str(value or "").strip().lower()
     text = re.sub(r"[\s*/\\]+", "_", text)
