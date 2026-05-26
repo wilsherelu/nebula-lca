@@ -253,3 +253,60 @@ class TestGetCatalogSkeleton:
         uri = skel.get("common:permanentDataSetURI", "")
         assert isinstance(uri, str)
         assert "{" not in uri or "}" not in uri
+
+
+def test_normalize_tidas_location_code_uses_catalog_aliases(monkeypatch):
+    monkeypatch.delenv("NEBULA_TIDAS_REFERENCE_CATALOG", raising=False)
+    from app.tidas_reference import load_tidas_reference_catalog, normalize_tidas_location_code
+
+    load_tidas_reference_catalog.cache_clear()
+
+    assert normalize_tidas_location_code("CN") == "CN"
+    assert normalize_tidas_location_code("Shanghai") == "CN-SH"
+    assert normalize_tidas_location_code("") == "GLO"
+    assert normalize_tidas_location_code("not-a-real-location") == "GLO"
+
+
+def test_build_reference_flow_property_and_unit_group_datasets():
+    from app.tidas_reference import (
+        build_tidas_flow_property_dataset,
+        build_tidas_unit_group_dataset,
+        get_tidas_flow_property_bundle_info,
+    )
+
+    info = get_tidas_flow_property_bundle_info("Units of mass")
+    assert info is not None
+    flow_property_uuid = info["reference"]["@refObjectId"]
+    unit_group = info["unit_group"]
+
+    flow_property = build_tidas_flow_property_dataset(
+        flow_property_uuid,
+        info["reference"]["@uri"],
+        info["reference"]["@version"],
+        unit_group,
+        info["reference"]["common:shortDescription"],
+    )
+    fp_info = flow_property["flowPropertyDataSet"]["flowPropertiesInformation"]
+
+    assert "flowPropertyInformation" not in flow_property["flowPropertyDataSet"]
+    assert "flowPropertyVariable" not in fp_info
+    assert "referenceToReferenceUnitGroup" in fp_info["quantitativeReference"]
+
+    unit_group_dataset = build_tidas_unit_group_dataset(unit_group)
+    ug_info = unit_group_dataset["unitGroupDataSet"]["unitGroupInformation"]
+    assert ug_info["dataSetInformation"]["common:UUID"] == unit_group["uuid"]
+    assert ug_info["units"]["unit"]
+
+
+def test_build_source_and_contact_datasets_use_reference_descriptions():
+    from app.tidas_reference import build_tidas_contact_dataset, build_tidas_source_dataset
+
+    source = build_tidas_source_dataset("source-1", "ILCD format", "ILCD 数据格式")
+    source_name = source["sourceDataSet"]["sourceInformation"]["dataSetInformation"]["name"]["baseName"]
+    assert source_name[0]["#text"] == "ILCD format"
+    assert source_name[1]["#text"] == "ILCD 数据格式"
+
+    contact = build_tidas_contact_dataset("contact-1", "TianGong LCA", "天工LCA")
+    contact_name = contact["contactDataSet"]["contactInformation"]["dataSetInformation"]["name"]["baseName"]
+    assert contact_name[0]["#text"] == "TianGong LCA"
+    assert contact_name[1]["#text"] == "天工LCA"

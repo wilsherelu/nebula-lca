@@ -394,6 +394,13 @@ class TestTidasExport:
                 assert any(f.startswith("manifest.json") for f in namelist)
                 assert any(f.startswith("processes/") for f in namelist)
                 assert any(f.startswith("flows/") for f in namelist)
+                assert any(f.startswith("flowproperties/") for f in namelist)
+                assert any(f.startswith("unitgroups/") for f in namelist)
+                assert any(f.startswith("sources/") for f in namelist)
+                assert any(f.startswith("contacts/") for f in namelist)
+                manifest = json.loads(zf.read("manifest.json"))
+                tables = {entry["table"] for entry in manifest["entries"]}
+                assert {"flowproperties", "unitgroups", "sources", "contacts"} <= tables
         finally:
             db.close()
 

@@ -23,12 +23,15 @@ from .models import Model, ModelVersion, FlowRecord, ReferenceProcess, UnitDefin
 from .schemas import HybridGraph
 from .tidas_reference import (
     get_tidas_flow_property_reference,
+    get_tidas_flow_property_bundle_info,
     load_tidas_reference_seed,
     lookup_classification_entries,
     get_catalog_skeleton,
+    normalize_tidas_location_code,
     build_tidas_source_dataset,
     build_tidas_contact_dataset,
     build_tidas_flow_property_dataset,
+    build_tidas_unit_group_dataset,
 )
 from .source_policy import (
     classify_flow_source,
@@ -991,11 +994,17 @@ def _process_modelling_and_validation() -> dict:
 
 
 def _location_value(location: Any | None, report: ExportReport, context: dict, label: str) -> str:
-    value = str(location or "").strip()
-    if value:
-        return value
-    report.add_warning("tidas_placeholder", f"{label} missing geography; using GLO", context)
-    return "GLO"
+    raw_value = str(location or "").strip()
+    normalized = normalize_tidas_location_code(raw_value)
+    if not raw_value:
+        report.add_warning("tidas_placeholder", f"{label} missing geography; using {normalized}", context)
+    elif normalized != raw_value:
+        report.add_warning(
+            "tidas_location_normalized",
+            f"{label} geography normalized from {raw_value!r} to {normalized!r}",
+            {**context, "raw_location": raw_value, "location": normalized},
+        )
+    return normalized
 
 
 def _reference_year_value(value: Any | None, report: ExportReport, context: dict, label: str) -> int:
@@ -1578,8 +1587,7 @@ def _build_manifest(
 
     ref_entries: list[dict] = []
     for ref_file in reference_files or []:
-        ref_type = ref_file.split("/")[0]  # "sources" / "contacts"
-        ref_table = ref_type.rstrip("s")  # "source" / "contact"
+        ref_table = ref_file.split("/")[0]
         ref_id = Path(ref_file).stem
         ref_entries.append({
             "table": ref_table,
@@ -2043,6 +2051,8 @@ def export_bundle(
     for desc_key in _BUNDLED_REFERENCE_DESCRIPTIONS:
         ref_type, ref_uuid = desc_key
         ref_uuids_by_type.setdefault(ref_type, set()).add(ref_uuid)
+    bundled_flow_properties: dict[str, dict[str, Any]] = {}
+    bundled_unit_groups: dict[str, dict[str, Any]] = {}
 
     with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
         dataset_version = TIDAS_DEFAULT_DATASET_VERSION
@@ -2053,6 +2063,18 @@ def export_bundle(
             flow_data = _build_flow_data(db, flow_uuid, report)
             if flow_data:
                 flow_uuid_list.append(flow_uuid)
+                flow_record = db.get(FlowRecord, flow_uuid)
+                if flow_record is not None:
+                    bundle_info = get_tidas_flow_property_bundle_info(flow_record.unit_group)
+                    if bundle_info:
+                        reference = bundle_info.get("reference") or {}
+                        ref_uuid = str(reference.get("@refObjectId") or "").strip()
+                        unit_group = bundle_info.get("unit_group")
+                        if ref_uuid and isinstance(unit_group, dict):
+                            bundled_flow_properties[ref_uuid] = bundle_info
+                            unit_group_uuid = str(unit_group.get("uuid") or "").strip()
+                            if unit_group_uuid:
+                                bundled_unit_groups[unit_group_uuid] = unit_group
                 zf.writestr(
                     f"flows/{flow_uuid}_{dataset_version}.json",
                     json.dumps(flow_data, ensure_ascii=False, indent=2),
@@ -2094,6 +2116,34 @@ def export_bundle(
                     file_path,
                     json.dumps(dataset, ensure_ascii=False, indent=2),
                 )
+
+        for unit_group_uuid, unit_group in sorted(bundled_unit_groups.items()):
+            file_path = f"unitgroups/{unit_group_uuid}.json"
+            reference_files.append(file_path)
+            zf.writestr(
+                file_path,
+                json.dumps(build_tidas_unit_group_dataset(unit_group), ensure_ascii=False, indent=2),
+            )
+
+        for flow_property_uuid, bundle_info in sorted(bundled_flow_properties.items()):
+            reference = bundle_info.get("reference") or {}
+            unit_group = bundle_info.get("unit_group") or {}
+            file_path = f"flowproperties/{flow_property_uuid}.json"
+            reference_files.append(file_path)
+            zf.writestr(
+                file_path,
+                json.dumps(
+                    build_tidas_flow_property_dataset(
+                        flow_property_uuid,
+                        str(reference.get("@uri") or f"../flowproperties/{flow_property_uuid}.xml"),
+                        str(reference.get("@version") or "01.00.000"),
+                        unit_group,
+                        reference.get("common:shortDescription"),
+                    ),
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+            )
 
         # Build and write manifest
         manifest = _build_manifest(
