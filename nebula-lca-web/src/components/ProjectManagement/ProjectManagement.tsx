@@ -556,7 +556,7 @@ function CreateProjectModal(props: {
     let canceled = false;
     const loadLocations = async () => {
       try {
-        const resp = await fetch(`${API_BASE}/export/tidas/reference/locations`, { cache: "force-cache" });
+        const resp = await fetch(`${API_BASE}/export/tidas/reference/locations`, { cache: "no-store" });
         if (!resp.ok) {
           throw new Error(`HTTP ${resp.status}`);
         }
