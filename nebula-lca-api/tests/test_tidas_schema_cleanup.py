@@ -80,6 +80,14 @@ def test_exchange_amounts_are_strings():
     assert exchange["resultingAmount"] == "42"
 
 
+def test_exchange_has_data_derivation_type_status():
+    exchange = _build_tidas_exchange(
+        {"@dataSetInternalID": "0", "flow_uuid": "f1", "direction": "Input", "amount": 1}
+    )
+
+    assert exchange["dataDerivationTypeStatus"] == "Unknown derivation"
+
+
 def test_exchange_allocation_fraction_no_percent():
     """Allocation fraction must be a number string without '%' sign."""
     report = ExportReport()
@@ -167,10 +175,14 @@ def test_flow_dataset_omits_empty_optional_text_fields():
 def test_process_validation_uses_catalog_skeleton():
     mv = _process_modelling_and_validation()
     validation = mv["validation"]
+    data_sources = mv["dataSourcesTreatmentAndRepresentativeness"]
 
     assert "review" in validation
+    assert validation["review"]["@type"] == "Not reviewed"
     assert "complianceDeclarations" in mv
     assert "completeness" not in mv
+    assert "referenceToDataSource" in data_sources
+    assert "annualSupplyOrProductionVolume" in data_sources
 
 
 # ── _classification_information ──────────────────────────────────────────
