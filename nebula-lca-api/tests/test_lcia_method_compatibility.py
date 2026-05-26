@@ -203,6 +203,47 @@ def test_flows_api_exposes_source_and_custom_flags(client):
     assert item["is_custom"] is False
 
 
+def test_flows_api_filters_source_space_before_pagination(client):
+    db = _db_module.SessionLocal()
+    try:
+        db.merge(UnitGroup(name="Units of mass", reference_unit="kg"))
+        db.add(UnitDefinition(unit_group="Units of mass", unit_name="kg", factor_to_reference=1.0, is_reference=True))
+        for idx in range(5):
+            db.merge(
+                FlowRecord(
+                    flow_uuid=f"ecoinvent-flow-{idx}",
+                    flow_name=f"ecoinvent flow {idx}",
+                    flow_type="Elementary flow",
+                    default_unit="kg",
+                    unit_group="Units of mass",
+                    source="ecoinvent_3.11",
+                    is_custom=False,
+                )
+            )
+        for idx in range(3):
+            db.merge(
+                FlowRecord(
+                    flow_uuid=f"ef-flow-{idx}",
+                    flow_name=f"EF flow {idx}",
+                    flow_type="Elementary flow",
+                    default_unit="kg",
+                    unit_group="Units of mass",
+                    source="ef3.1",
+                    is_custom=False,
+                )
+            )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get("/api/flows?type=elementary_flow&source_space=tiangong&page=1&page_size=10")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 3
+    assert [item["flow_id"] for item in payload["items"]] == ["ef-flow-0", "ef-flow-1", "ef-flow-2"]
+
+
 def test_run_model_blocks_non_ef31_for_non_ecoinvent_elementary_flow(client):
     _seed_unit_and_flow(source="ef3.1")
     graph = {

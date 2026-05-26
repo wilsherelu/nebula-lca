@@ -222,6 +222,23 @@ function isFlowAllowedBySourcePolicy(flow: CatalogFlow, target: FlowTarget | nul
   return true;
 }
 
+function flowSourceSpaceForRequest(
+  sourceFilter: string,
+  sourcePolicy: SourcePolicy,
+  isElementaryTarget: boolean,
+): string {
+  if (sourceFilter) {
+    return sourceFilter;
+  }
+  if (isElementaryTarget && sourcePolicy === "tidas_compliant") {
+    return "tiangong";
+  }
+  if (isElementaryTarget && sourcePolicy === "ecoinvent_strict") {
+    return "ecoinvent";
+  }
+  return "";
+}
+
 function toPortFromReference(flow: CatalogFlow, direction: "input" | "output", type: "technosphere" | "biosphere"): FlowPort {
   const suffix = Math.random().toString(36).slice(2, 8);
   return {
@@ -1377,6 +1394,10 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     } else {
       params.set("type", "intermediate_flow");
     }
+    const sourceSpace = flowSourceSpaceForRequest(flowSourceFilter, sourcePolicy, isElementaryTarget);
+    if (sourceSpace) {
+      params.set("source_space", sourceSpace);
+    }
     params.set("_ts", String(Date.now()));
     const endpoint = `${API_BASE}/flows?${params.toString()}`;
     fetch(endpoint, { cache: "no-store" })
@@ -1446,7 +1467,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     return () => {
       canceled = true;
     };
-  }, [flowCategoryLevel1, flowPage, flowPicker.open, flowPicker.target, flowSearchQuery, flowPageSize]);
+  }, [flowCategoryLevel1, flowPage, flowPicker.open, flowPicker.target, flowSearchQuery, flowPageSize, flowSourceFilter, sourcePolicy]);
 
   useEffect(() => {
     if (!flowPicker.open) {
@@ -1459,6 +1480,10 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     params.set("level", "1");
     if (isElementaryTarget) {
       params.set("type", "elementary_flow");
+    }
+    const sourceSpace = flowSourceSpaceForRequest(flowSourceFilter, sourcePolicy, isElementaryTarget);
+    if (sourceSpace) {
+      params.set("source_space", sourceSpace);
     }
     params.set("_ts", String(Date.now()));
     fetch(`${API_BASE}/flows/categories?${params.toString()}`, { cache: "no-store" })
@@ -1489,7 +1514,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     return () => {
       canceled = true;
     };
-  }, [flowPicker.open, flowPicker.target]);
+  }, [flowPicker.open, flowPicker.target, flowSourceFilter, sourcePolicy]);
 
   useEffect(() => {
     let canceled = false;
@@ -1644,13 +1669,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
         }
         return true;
       })
-      .filter((flow) => {
-        if (!flowSourceFilter) {
-          return true;
-        }
-        return flowSourceGroup(flow) === flowSourceFilter;
-      });
-  }, [flowPicker.target, catalogFlows, flowSourceFilter, sourcePolicy, tidasAllowedUnitGroups]);
+  }, [flowPicker.target, catalogFlows, sourcePolicy, tidasAllowedUnitGroups]);
 
   const applyFlowSearch = () => {
     setFlowSearchQuery(flowSearchInput);
