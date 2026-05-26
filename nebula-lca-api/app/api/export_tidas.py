@@ -22,6 +22,7 @@ from ..schemas import (
     TidasExportReadinessResponse,
 )
 from ..tidas_export import ExportError, build_tidas_readiness, export_bundle, preview_export
+from ..tidas_reference import list_tidas_location_options
 
 # ── Routers ────────────────────────────────────────────────────────────────
 # Both /export and /api/export prefixes are registered so that the external
@@ -125,3 +126,10 @@ def readiness_tidas_bundle_export(
         bundle_mode=payload.bundle_mode,
     )
     return TidasExportReadinessResponse(**result)
+
+
+@_api_router.get("/tidas/reference/locations")
+@_base_router.get("/tidas/reference/locations")
+def list_tidas_reference_locations():
+    """Return ILCD/TIDAS location code options from the reference catalog."""
+    return {"items": list_tidas_location_options()}

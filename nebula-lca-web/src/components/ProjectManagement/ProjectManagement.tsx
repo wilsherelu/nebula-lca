@@ -201,10 +201,34 @@ const sourcePolicyOptions: Array<{ value: SourcePolicy; zh: string; en: string }
   { value: "tidas_compliant", zh: "天工/TIDAS 合规模式", en: "TIDAS Compliant" },
   { value: "ecoinvent_strict", zh: "ecoinvent 严格模式", en: "ecoinvent Strict" },
 ];
-const locationCodeOptions = ["GLO", "CN", "CN-SH", "CN-BJ", "RoW"];
-const normalizeProjectGeographyInput = (value: string): string => {
+type LocationCodeOption = {
+  code: string;
+  name_en?: string;
+  name_zh?: string;
+  aliases?: string[];
+};
+const fallbackLocationCodeOptions: LocationCodeOption[] = [
+  { code: "GLO", name_en: "Global", name_zh: "世界", aliases: ["Global", "World", "全球", "世界"] },
+  { code: "CN", name_en: "China", name_zh: "中国", aliases: ["China", "中国", "全国"] },
+  { code: "CN-SH", name_en: "Shanghai", name_zh: "上海", aliases: ["Shanghai", "上海", "上海市"] },
+  { code: "CN-BJ", name_en: "Beijing", name_zh: "北京", aliases: ["Beijing", "北京", "北京市"] },
+  { code: "RoW", name_en: "Rest of world", name_zh: "", aliases: ["row", "rest of world"] },
+];
+const normalizeLocationAlias = (value: string): string => value.trim().toLowerCase().replace(/\s+/g, "");
+const normalizeProjectGeographyInput = (value: string, options: LocationCodeOption[] = fallbackLocationCodeOptions): string => {
   const raw = value.trim();
-  const key = raw.toLowerCase();
+  const key = normalizeLocationAlias(raw);
+  for (const option of options) {
+    const candidates = [
+      option.code,
+      option.name_en ?? "",
+      option.name_zh ?? "",
+      ...(option.aliases ?? []),
+    ];
+    if (candidates.some((candidate) => normalizeLocationAlias(candidate) === key)) {
+      return option.code;
+    }
+  }
   const aliases: Record<string, string> = {
     "中国": "CN",
     "全国": "CN",
@@ -518,6 +542,7 @@ function CreateProjectModal(props: {
   const { open, busy, uiLanguage, mode = "create", initialForm, onClose, onSubmit } = props;
   const [form, setForm] = useState<CreateProjectForm>(defaultForm);
   const [errorText, setErrorText] = useState("");
+  const [locationOptions, setLocationOptions] = useState<LocationCodeOption[]>(fallbackLocationCodeOptions);
   const zh = uiLanguage === "zh";
 
   useEffect(() => {
@@ -526,6 +551,30 @@ function CreateProjectModal(props: {
       setErrorText("");
     }
   }, [open, initialForm]);
+
+  useEffect(() => {
+    if (!open) return;
+    let canceled = false;
+    const loadLocations = async () => {
+      try {
+        const resp = await fetch(`${API_BASE}/export/tidas/reference/locations`, { cache: "force-cache" });
+        if (!resp.ok) return;
+        const payload = (await resp.json()) as { items?: LocationCodeOption[] };
+        const items = Array.isArray(payload.items) ? payload.items.filter((item) => item.code) : [];
+        if (!canceled && items.length > 0) {
+          setLocationOptions(items);
+        }
+      } catch {
+        if (!canceled) {
+          setLocationOptions(fallbackLocationCodeOptions);
+        }
+      }
+    };
+    void loadLocations();
+    return () => {
+      canceled = true;
+    };
+  }, [open]);
 
   if (!open) {
     return null;
@@ -543,7 +592,7 @@ function CreateProjectModal(props: {
     setErrorText("");
     await onSubmit({
       ...form,
-      geography: normalizeProjectGeographyInput(form.geography),
+      geography: normalizeProjectGeographyInput(form.geography, locationOptions),
     });
     setForm(defaultForm);
     onClose();
@@ -614,8 +663,12 @@ function CreateProjectModal(props: {
               onChange={(e) => setField("geography", e.target.value)}
             />
             <datalist id="pm-tidas-location-codes">
-              {locationCodeOptions.map((code) => (
-                <option key={code} value={code} />
+              {locationOptions.map((item) => (
+                <option
+                  key={item.code}
+                  value={item.code}
+                  label={[item.name_zh, item.name_en].filter(Boolean).join(" / ")}
+                />
               ))}
             </datalist>
           </label>

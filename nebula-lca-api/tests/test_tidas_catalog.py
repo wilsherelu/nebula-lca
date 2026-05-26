@@ -64,6 +64,16 @@ class TestLoadReferenceCatalog:
         assert isinstance(entries, list)
         assert len(entries) > 600
 
+    def test_lists_location_options_for_ui(self):
+        """Location options should expose the full catalog for UI search."""
+        from app.tidas_reference import list_tidas_location_options
+
+        options = list_tidas_location_options()
+        codes = {item["code"] for item in options}
+        assert len(options) > 600
+        assert {"GLO", "CN", "CN-SH", "CN-BJ"} <= codes
+        assert options[0]["code"] == "GLO"
+
     def test_env_override_path(self, tmp_path, monkeypatch):
         """NEBULA_TIDAS_REFERENCE_CATALOG env should override default path."""
         # Write a minimal catalog
