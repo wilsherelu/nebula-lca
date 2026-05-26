@@ -57,6 +57,33 @@ _CACHE_TTL_FLOWS_SECONDS: float = 3600.0
 _CACHE_TTL_FLOW_CATEGORIES_SECONDS: float = 3600.0
 
 
+def _apply_source_space_filter(query, source_space: str | None):
+    space = (source_space or "").strip().lower()
+    if not space:
+        return query
+    source_expr = sqla_func.lower(sqla_func.coalesce(FlowRecord.source, ""))
+    if space == "ecoinvent":
+        return query.filter(source_expr.like("%ecoinvent%") | source_expr.like("%ecospread%"))
+    if space == "custom":
+        return query.filter((FlowRecord.is_custom.is_(True)) | source_expr.like("%custom%"))
+    if space == "tiangong":
+        return query.filter(
+            FlowRecord.is_custom.is_not(True),
+            (
+                source_expr.like("%tiangong%")
+                | source_expr.like("%tidas%")
+                | source_expr.like("%official ilcd%")
+                | source_expr.like("%ef3%")
+                | source_expr.like("%ef 3%")
+                | source_expr.like("%ef.%")
+                | source_expr.like("%ilcd%")
+            ),
+        )
+    if space == "unknown":
+        return query.filter((FlowRecord.source.is_(None)) | (sqla_func.trim(FlowRecord.source) == ""))
+    return query
+
+
 def _flow_out_extended(row: FlowRecord) -> FlowOutExtended:
     return FlowOutExtended(
         flow_uuid=row.flow_uuid,
@@ -361,6 +388,7 @@ def list_flows_api(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
     type: str | None = Query(default=None),
+    source_space: str | None = Query(default=None),
     category: str | None = Query(default=None),
     category_level_1: str | None = Query(default=None),
     if_none_match: str | None = Header(default=None, alias="If-None-Match"),
@@ -371,7 +399,8 @@ def list_flows_api(
     level1_key = (category_level_1 or "").strip().lower()
     cache_key = (
         f"flows:v2:rev={cache_revision('flows')}:search={search_key}:page={page}:"
-        f"page_size={page_size}:type={type or ''}:category={category_key}:level1={level1_key}"
+        f"page_size={page_size}:type={type or ''}:source_space={source_space or ''}:"
+        f"category={category_key}:level1={level1_key}"
     )
     cached = cache_get(cache_key, ttl_seconds=_CACHE_TTL_FLOWS_SECONDS)
     if isinstance(cached, dict):
@@ -411,6 +440,7 @@ def list_flows_api(
 
     if type:
         query = query.filter(FlowRecord.flow_type.in_(sorted(type_map[type])))
+    query = _apply_source_space_filter(query, source_space)
 
     if category and category.strip():
         category_token = f"%{category.strip().lower()}%"
@@ -522,6 +552,7 @@ def list_flows_api(
 @api_router.get("/api/flows/categories", response_model=FlowCategoriesResponse)
 def list_flow_categories_api(
     type: str | None = Query(default=None),
+    source_space: str | None = Query(default=None),
     search: str | None = Query(default=None),
     level: int = Query(default=1, ge=1, le=3),
     db: Session = Depends(get_db),
@@ -542,7 +573,7 @@ def list_flow_categories_api(
 
     cache_key = (
         f"flow_categories:v1:rev={cache_revision('flow_categories')}:"
-        f"type={type or ''}:level={level}:search={search or ''}"
+        f"type={type or ''}:source_space={source_space or ''}:level={level}:search={search or ''}"
     )
     cached = cache_get(cache_key, ttl_seconds=_CACHE_TTL_FLOW_CATEGORIES_SECONDS)
     if isinstance(cached, FlowCategoriesResponse):
@@ -551,6 +582,7 @@ def list_flow_categories_api(
     query = db.query(FlowRecord.compartment)
     if type:
         query = query.filter(FlowRecord.flow_type.in_(sorted(type_map[type])))
+    query = _apply_source_space_filter(query, source_space)
     if search and search.strip():
         token = f"%{search.strip().lower()}%"
         query = query.filter(sqla_func.lower(sqla_func.coalesce(FlowRecord.compartment, "")).like(token))
