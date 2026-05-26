@@ -217,6 +217,7 @@ const fallbackLocationCodeOptions: LocationCodeOption[] = [
 const normalizeLocationAlias = (value: string): string => value.trim().toLowerCase().replace(/\s+/g, "");
 const normalizeProjectGeographyInput = (value: string, options: LocationCodeOption[] = fallbackLocationCodeOptions): string => {
   const raw = value.trim();
+  if (!raw) return "";
   const key = normalizeLocationAlias(raw);
   for (const option of options) {
     const candidates = [
@@ -224,7 +225,7 @@ const normalizeProjectGeographyInput = (value: string, options: LocationCodeOpti
       option.name_en ?? "",
       option.name_zh ?? "",
       ...(option.aliases ?? []),
-    ];
+    ].filter((candidate) => candidate.trim().length > 0);
     if (candidates.some((candidate) => normalizeLocationAlias(candidate) === key)) {
       return option.code;
     }
@@ -247,6 +248,26 @@ const normalizeProjectGeographyInput = (value: string, options: LocationCodeOpti
     "rest of world": "RoW",
   };
   return aliases[raw] ?? aliases[key] ?? raw;
+};
+const formatLocationOptionLabel = (item: LocationCodeOption, uiLanguage: "zh" | "en"): string => {
+  const primaryName = uiLanguage === "zh" ? item.name_zh : item.name_en;
+  const secondaryName = uiLanguage === "zh" ? item.name_en : item.name_zh;
+  const names = [primaryName, secondaryName].filter((value) => String(value ?? "").trim()).join(" / ");
+  return names ? `${item.code} - ${names}` : item.code;
+};
+const getParentLocationOptions = (options: LocationCodeOption[]): LocationCodeOption[] =>
+  options.filter((item) => item.code !== "NULL" && !item.code.includes("-"));
+const getLocationParentCode = (code: string, options: LocationCodeOption[]): string => {
+  if (!code) return "";
+  const codes = new Set(options.map((item) => item.code));
+  if (codes.has(code) && !code.includes("-")) return code;
+  const parent = code.split("-")[0];
+  return codes.has(parent) ? parent : code;
+};
+const getLocationChildOptions = (parentCode: string, options: LocationCodeOption[]): LocationCodeOption[] => {
+  if (!parentCode) return [];
+  const prefix = `${parentCode}-`;
+  return options.filter((item) => item.code.startsWith(prefix));
 };
 const normalizeSourcePolicy = (value: unknown): SourcePolicy => {
   if (value === "tidas_compliant" || value === "ecoinvent_strict" || value === "explicit_mapped_mixed") {
@@ -583,6 +604,11 @@ function CreateProjectModal(props: {
   const setField = (key: keyof CreateProjectForm, value: string) => {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
+  const normalizedLocation = normalizeProjectGeographyInput(form.geography, locationOptions);
+  const selectedParentLocation = getLocationParentCode(normalizedLocation, locationOptions);
+  const parentLocationOptions = getParentLocationOptions(locationOptions);
+  const childLocationOptions = getLocationChildOptions(selectedParentLocation, locationOptions);
+  const selectedChildLocation = normalizedLocation !== selectedParentLocation ? normalizedLocation : "";
 
   const submit = async () => {
     if (!form.projectName.trim()) {
@@ -656,21 +682,32 @@ function CreateProjectModal(props: {
           </label>
           <label>
             <span>{zh ? "地理代表性" : "Geography"}</span>
-            <input
-              list="pm-tidas-location-codes"
-              value={form.geography}
-              placeholder="CN / CN-SH / GLO"
-              onChange={(e) => setField("geography", e.target.value)}
-            />
-            <datalist id="pm-tidas-location-codes">
-              {locationOptions.map((item) => (
-                <option
-                  key={item.code}
-                  value={item.code}
-                  label={[item.name_zh, item.name_en].filter(Boolean).join(" / ")}
-                />
-              ))}
-            </datalist>
+            <div className="pm-location-cascade">
+              <select
+                value={selectedParentLocation}
+                onChange={(event) => setField("geography", event.target.value)}
+              >
+                <option value="">{zh ? "选择全球、国家或区域" : "Select global, country, or region"}</option>
+                {parentLocationOptions.map((item) => (
+                  <option key={item.code} value={item.code}>
+                    {formatLocationOptionLabel(item, uiLanguage)}
+                  </option>
+                ))}
+              </select>
+              {childLocationOptions.length > 0 && (
+                <select
+                  value={selectedChildLocation}
+                  onChange={(event) => setField("geography", event.target.value || selectedParentLocation)}
+                >
+                  <option value="">{zh ? "全部 / 不细分" : "All / no subdivision"}</option>
+                  {childLocationOptions.map((item) => (
+                    <option key={item.code} value={item.code}>
+                      {formatLocationOptionLabel(item, uiLanguage)}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
           </label>
           <label className="span-2">
             <span>{zh ? "说明" : "Description"}</span>
