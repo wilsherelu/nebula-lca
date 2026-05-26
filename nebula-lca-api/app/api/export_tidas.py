@@ -44,7 +44,12 @@ def preview_tidas_bundle_export(
     Returns export feasibility report without generating ZIP.
     Use this to check for missing flows/processes before actual export.
     """
-    result = preview_export(db=db, project_id=payload.project_id, version=payload.version)
+    result = preview_export(
+        db=db,
+        project_id=payload.project_id,
+        version=payload.version,
+        bundle_mode=payload.bundle_mode,
+    )
     return TidasExportPreviewResponse(**result)
 
 
@@ -73,6 +78,7 @@ def export_tidas_bundle(
             project_id=payload.project_id,
             version=payload.version,
             display_lang=payload.display_lang,
+            bundle_mode=payload.bundle_mode,
         )
     except ExportError as exc:
         raise HTTPException(
@@ -112,5 +118,10 @@ def readiness_tidas_bundle_export(
     This is intended for UI readiness indicators and pre-flight checks
     before triggering the actual ZIP export.
     """
-    result = build_tidas_readiness(db=db, project_id=payload.project_id, version=payload.version)
+    result = build_tidas_readiness(
+        db=db,
+        project_id=payload.project_id,
+        version=payload.version,
+        bundle_mode=payload.bundle_mode,
+    )
     return TidasExportReadinessResponse(**result)

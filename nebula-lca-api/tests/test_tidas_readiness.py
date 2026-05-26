@@ -176,7 +176,8 @@ def test_readiness_clean_tidas_project():
     assert result["can_export"] is True
     assert result["blocking"] == []
     assert result["source_policy"] == "open_mixed"
-    assert result["flow_count"] > 0
+    assert result["flow_count"] == 0
+    assert result["referenced_flow_count"] > 0
     assert result["process_count"] > 0
 
 

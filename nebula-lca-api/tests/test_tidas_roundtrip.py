@@ -209,6 +209,7 @@ class TestTidasExport:
 
             resp = client.post(f"/api/export/tidas/bundle/preview", json={
                 "project_id": project_id,
+                "bundle_mode": "self_contained",
             })
             assert resp.status_code == 200, resp.text
             data = resp.json()
@@ -331,7 +332,10 @@ class TestTidasExport:
             model.geography = "CN"
             db.commit()
 
-            resp = client.post("/api/export/tidas/bundle", json={"project_id": project_id})
+            resp = client.post("/api/export/tidas/bundle", json={
+                "project_id": project_id,
+                "bundle_mode": "self_contained",
+            })
             assert resp.status_code == 200, resp.text
             with zipfile.ZipFile(io.BytesIO(resp.content), "r") as zf:
                 process_name = next(name for name in zf.namelist() if name.startswith("processes/"))
@@ -385,6 +389,7 @@ class TestTidasExport:
 
             resp = client.post(f"/api/export/tidas/bundle", json={
                 "project_id": project_id,
+                "bundle_mode": "self_contained",
             })
             assert resp.status_code == 200
             assert "application/zip" in resp.headers.get("content-type", "")
@@ -401,6 +406,156 @@ class TestTidasExport:
                 manifest = json.loads(zf.read("manifest.json"))
                 tables = {entry["table"] for entry in manifest["entries"]}
                 assert {"flowproperties", "unitgroups", "sources", "contacts"} <= tables
+        finally:
+            db.close()
+
+    def test_export_platform_light_default_excludes_reference_datasets(self, client):
+        """Default platform-light ZIP only contains processes, lifecycle model, manifest, and report."""
+        db = _db.SessionLocal()
+        try:
+            _seed_basic_catalog(db)
+            db.get(FlowRecord, "flow-chemical-a").source = "tiangong"
+            db.commit()
+            graph = {
+                "functionalUnit": "1 kg chemical A",
+                "nodes": [
+                    {
+                        "id": "np-1",
+                        "node_kind": "unit_process",
+                        "mode": "normalized",
+                        "process_uuid": "proc-chem-a",
+                        "name": "Chemical A Production",
+                        "location": "GLO",
+                        "reference_product": "chemical A",
+                        "inputs": [],
+                        "outputs": [
+                            {
+                                "id": "out-product",
+                                "flowUuid": "flow-chemical-a",
+                                "name": "chemical A",
+                                "unit": "kg",
+                                "amount": 1.0,
+                                "type": "technosphere",
+                                "direction": "output",
+                                "isProduct": True,
+                            }
+                        ],
+                        "emissions": [],
+                    }
+                ],
+                "exchanges": [],
+            }
+            project_id = _create_project_with_graph(client, db, graph)
+
+            resp = client.post("/api/export/tidas/bundle", json={"project_id": project_id})
+            assert resp.status_code == 200, resp.text
+            with zipfile.ZipFile(io.BytesIO(resp.content), "r") as zf:
+                namelist = set(zf.namelist())
+                assert "manifest.json" in namelist
+                assert "export_report.json" in namelist
+                assert any(name.startswith("processes/") for name in namelist)
+                assert any(name.startswith("lifecyclemodels/") for name in namelist)
+                assert not any(name.startswith("flows/") for name in namelist)
+                assert not any(name.startswith("flowproperties/") for name in namelist)
+                assert not any(name.startswith("unitgroups/") for name in namelist)
+                assert not any(name.startswith("sources/") for name in namelist)
+                assert not any(name.startswith("contacts/") for name in namelist)
+                manifest = json.loads(zf.read("manifest.json"))
+                assert manifest["counts"]["flows"] == 0
+                report = json.loads(zf.read("export_report.json"))
+                assert report["bundle_mode"] == "tiangong_platform_light"
+                assert report["referenced_flow_count"] == 1
+        finally:
+            db.close()
+
+    def test_lifecycle_model_exports_process_connections(self, client):
+        """Graph edges are represented in lifeCycleModel processInstance connections."""
+        db = _db.SessionLocal()
+        try:
+            _seed_basic_catalog(db)
+            db.get(FlowRecord, "flow-chemical-a").source = "tiangong"
+            db.commit()
+            graph = {
+                "functionalUnit": "1 kg chemical A",
+                "nodes": [
+                    {
+                        "id": "np-a",
+                        "node_kind": "unit_process",
+                        "mode": "normalized",
+                        "process_uuid": "proc-a",
+                        "name": "Supplier",
+                        "location": "GLO",
+                        "reference_product": "chemical A",
+                        "inputs": [],
+                        "outputs": [
+                            {
+                                "id": "out-product",
+                                "flowUuid": "flow-chemical-a",
+                                "name": "chemical A",
+                                "unit": "kg",
+                                "amount": 1.0,
+                                "type": "technosphere",
+                                "direction": "output",
+                                "isProduct": True,
+                            }
+                        ],
+                        "emissions": [],
+                    },
+                    {
+                        "id": "np-b",
+                        "node_kind": "unit_process",
+                        "mode": "normalized",
+                        "process_uuid": "proc-b",
+                        "name": "Consumer",
+                        "location": "GLO",
+                        "reference_product": "chemical A",
+                        "inputs": [
+                            {
+                                "id": "in-product",
+                                "flowUuid": "flow-chemical-a",
+                                "name": "chemical A",
+                                "unit": "kg",
+                                "amount": 1.0,
+                                "type": "technosphere",
+                                "direction": "input",
+                            }
+                        ],
+                        "outputs": [],
+                        "emissions": [],
+                    },
+                ],
+                "exchanges": [
+                    {
+                        "id": "edge-1",
+                        "fromNode": "np-a",
+                        "toNode": "np-b",
+                        "sourcePortId": "out-product",
+                        "targetPortId": "in-product",
+                        "flowUuid": "flow-chemical-a",
+                        "flowName": "chemical A",
+                        "quantityMode": "single",
+                        "amount": 1.0,
+                        "unit": "kg",
+                        "type": "technosphere",
+                    }
+                ],
+            }
+            project_id = _create_project_with_graph(client, db, graph)
+
+            resp = client.post("/api/export/tidas/bundle", json={"project_id": project_id})
+            assert resp.status_code == 200, resp.text
+            with zipfile.ZipFile(io.BytesIO(resp.content), "r") as zf:
+                model_name = next(name for name in zf.namelist() if name.startswith("lifecyclemodels/"))
+                model_data = json.loads(zf.read(model_name))
+            instances = (
+                model_data["lifeCycleModelDataSet"]
+                ["lifeCycleModelInformation"]["technology"]["processes"]["processInstance"]
+            )
+            connected = [item for item in instances if item["connections"].get("connection")]
+            assert len(connected) == 1
+            connection = connected[0]["connections"]["connection"][0]
+            assert connection["referenceToProcessInstance"] == "1"
+            assert connection["referenceToExchange"] == "flow-chemical-a"
         finally:
             db.close()
 
