@@ -207,15 +207,8 @@ type LocationCodeOption = {
   name_zh?: string;
   aliases?: string[];
 };
-const fallbackLocationCodeOptions: LocationCodeOption[] = [
-  { code: "GLO", name_en: "Global", name_zh: "世界", aliases: ["Global", "World", "全球", "世界"] },
-  { code: "CN", name_en: "China", name_zh: "中国", aliases: ["China", "中国", "全国"] },
-  { code: "CN-SH", name_en: "Shanghai", name_zh: "上海", aliases: ["Shanghai", "上海", "上海市"] },
-  { code: "CN-BJ", name_en: "Beijing", name_zh: "北京", aliases: ["Beijing", "北京", "北京市"] },
-  { code: "RoW", name_en: "Rest of world", name_zh: "", aliases: ["row", "rest of world"] },
-];
 const normalizeLocationAlias = (value: string): string => value.trim().toLowerCase().replace(/\s+/g, "");
-const normalizeProjectGeographyInput = (value: string, options: LocationCodeOption[] = fallbackLocationCodeOptions): string => {
+const normalizeProjectGeographyInput = (value: string, options: LocationCodeOption[] = []): string => {
   const raw = value.trim();
   if (!raw) return "";
   const key = normalizeLocationAlias(raw);
@@ -230,24 +223,7 @@ const normalizeProjectGeographyInput = (value: string, options: LocationCodeOpti
       return option.code;
     }
   }
-  const aliases: Record<string, string> = {
-    "中国": "CN",
-    "全国": "CN",
-    "china": "CN",
-    "中华人民共和国": "CN",
-    "上海": "CN-SH",
-    "上海市": "CN-SH",
-    "shanghai": "CN-SH",
-    "北京": "CN-BJ",
-    "北京市": "CN-BJ",
-    "beijing": "CN-BJ",
-    "全球": "GLO",
-    "global": "GLO",
-    "world": "GLO",
-    "row": "RoW",
-    "rest of world": "RoW",
-  };
-  return aliases[raw] ?? aliases[key] ?? raw;
+  return raw;
 };
 const formatLocationOptionLabel = (item: LocationCodeOption, uiLanguage: "zh" | "en"): string => {
   const primaryName = uiLanguage === "zh" ? item.name_zh : item.name_en;
@@ -563,13 +539,15 @@ function CreateProjectModal(props: {
   const { open, busy, uiLanguage, mode = "create", initialForm, onClose, onSubmit } = props;
   const [form, setForm] = useState<CreateProjectForm>(defaultForm);
   const [errorText, setErrorText] = useState("");
-  const [locationOptions, setLocationOptions] = useState<LocationCodeOption[]>(fallbackLocationCodeOptions);
+  const [locationOptions, setLocationOptions] = useState<LocationCodeOption[]>([]);
+  const [locationLoadError, setLocationLoadError] = useState("");
   const zh = uiLanguage === "zh";
 
   useEffect(() => {
     if (open) {
       setForm(initialForm ?? defaultForm);
       setErrorText("");
+      setLocationLoadError("");
     }
   }, [open, initialForm]);
 
@@ -579,15 +557,26 @@ function CreateProjectModal(props: {
     const loadLocations = async () => {
       try {
         const resp = await fetch(`${API_BASE}/export/tidas/reference/locations`, { cache: "force-cache" });
-        if (!resp.ok) return;
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}`);
+        }
         const payload = (await resp.json()) as { items?: LocationCodeOption[] };
         const items = Array.isArray(payload.items) ? payload.items.filter((item) => item.code) : [];
-        if (!canceled && items.length > 0) {
+        if (items.length < 50) {
+          throw new Error("TIDAS location catalog is incomplete");
+        }
+        if (!canceled) {
           setLocationOptions(items);
+          setLocationLoadError("");
         }
       } catch {
         if (!canceled) {
-          setLocationOptions(fallbackLocationCodeOptions);
+          setLocationOptions([]);
+          setLocationLoadError(
+            zh
+              ? "TIDAS 地理位置目录加载失败，请检查后端 reference catalog。"
+              : "Failed to load TIDAS location catalog. Check backend reference catalog.",
+          );
         }
       }
     };
@@ -613,6 +602,10 @@ function CreateProjectModal(props: {
   const submit = async () => {
     if (!form.projectName.trim()) {
       setErrorText(zh ? "项目名称不能为空。" : "Project Name is required.");
+      return;
+    }
+    if (locationLoadError && form.sourcePolicy === "tidas_compliant") {
+      setErrorText(locationLoadError);
       return;
     }
     setErrorText("");
@@ -685,9 +678,14 @@ function CreateProjectModal(props: {
             <div className="pm-location-cascade">
               <select
                 value={selectedParentLocation}
+                disabled={locationOptions.length === 0}
                 onChange={(event) => setField("geography", event.target.value)}
               >
-                <option value="">{zh ? "选择全球、国家或区域" : "Select global, country, or region"}</option>
+                <option value="">
+                  {locationLoadError
+                    ? (zh ? "地理目录加载失败" : "Location catalog failed")
+                    : (zh ? "选择全球、国家或区域" : "Select global, country, or region")}
+                </option>
                 {parentLocationOptions.map((item) => (
                   <option key={item.code} value={item.code}>
                     {formatLocationOptionLabel(item, uiLanguage)}
@@ -708,6 +706,7 @@ function CreateProjectModal(props: {
                 </select>
               )}
             </div>
+            {locationLoadError && <span className="pm-field-error">{locationLoadError}</span>}
           </label>
           <label className="span-2">
             <span>{zh ? "说明" : "Description"}</span>

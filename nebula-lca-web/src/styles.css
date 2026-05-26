@@ -3949,6 +3949,12 @@ body,
   gap: 8px;
 }
 
+.pm-field-error {
+  color: #b42318;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .pm-inline-checks {
   display: inline-flex;
   align-items: center;
