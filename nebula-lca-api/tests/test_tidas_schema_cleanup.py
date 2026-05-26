@@ -170,6 +170,7 @@ def test_process_validation_uses_catalog_skeleton():
 
     assert "review" in validation
     assert "complianceDeclarations" in mv
+    assert "completeness" not in mv
 
 
 # ── _classification_information ──────────────────────────────────────────

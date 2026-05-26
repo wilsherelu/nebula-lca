@@ -1219,9 +1219,6 @@ def _process_modelling_and_validation() -> dict:
         "LCIMethodAndAllocation": {
             "typeOfDataSet": "Unit process, single operation",
         },
-        "completeness": {
-            "completenessElementaryFlows": {},
-        },
         "dataSourcesTreatmentAndRepresentativeness": {
             "dataCutOffAndCompletenessPrinciples": _localized_items(TIDAS_GENERATED_COMMENT, TIDAS_GENERATED_COMMENT),
         },
@@ -1475,7 +1472,7 @@ def _build_process_data(
             unit_group_switch.pop("source_amount", None)
             unit_group_switch.pop("sourceExternalSaleAmount", None)
             unit_group_switch.pop("source_external_sale_amount", None)
-            return {
+            result = {
                 "internal_id": port.id,
                 "flow_uuid": port.flowUuid,
                 "direction": direction,
@@ -1486,8 +1483,10 @@ def _build_process_data(
                 "current_amount": port.amount,
                 "current_unit": semantics.current_unit,
                 "current_unit_group": semantics.current_unit_group,
-                "unit_group_switch": unit_group_switch,
             }
+            if unit_group_switch:
+                result["unit_group_switch"] = unit_group_switch
+            return result
 
         for port in node_data.inputs:
             exchanges.append(_port_exchange(port, "input"))
