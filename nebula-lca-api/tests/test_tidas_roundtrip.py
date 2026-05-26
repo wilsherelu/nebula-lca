@@ -55,6 +55,7 @@ def client():
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 CO2_FOSSIL_UUID = "08a91e70-3ddc-11dd-923d-0050c2490048"
+CHEMICAL_A_UUID = "11111111-2222-4333-8444-555555555555"
 
 
 def _seed_basic_catalog(db) -> None:
@@ -420,7 +421,14 @@ class TestTidasExport:
         db = _db.SessionLocal()
         try:
             _seed_basic_catalog(db)
-            db.get(FlowRecord, "flow-chemical-a").source = "tiangong"
+            db.merge(FlowRecord(
+                flow_uuid=CHEMICAL_A_UUID,
+                flow_name="chemical A",
+                flow_type="Product flow",
+                default_unit="kg",
+                unit_group="Units of mass",
+                source="tiangong",
+            ))
             db.commit()
             graph = {
                 "functionalUnit": "1 kg chemical A",
@@ -437,7 +445,7 @@ class TestTidasExport:
                         "outputs": [
                             {
                                 "id": "out-product",
-                                "flowUuid": "flow-chemical-a",
+                                "flowUuid": CHEMICAL_A_UUID,
                                 "name": "chemical A",
                                 "unit": "kg",
                                 "amount": 1.0,
@@ -479,7 +487,14 @@ class TestTidasExport:
         db = _db.SessionLocal()
         try:
             _seed_basic_catalog(db)
-            db.get(FlowRecord, "flow-chemical-a").source = "tiangong"
+            db.merge(FlowRecord(
+                flow_uuid=CHEMICAL_A_UUID,
+                flow_name="chemical A",
+                flow_type="Product flow",
+                default_unit="kg",
+                unit_group="Units of mass",
+                source="tiangong",
+            ))
             db.commit()
             graph = {
                 "functionalUnit": "1 kg chemical A",
@@ -496,7 +511,7 @@ class TestTidasExport:
                         "outputs": [
                             {
                                 "id": "out-product",
-                                "flowUuid": "flow-chemical-a",
+                                "flowUuid": CHEMICAL_A_UUID,
                                 "name": "chemical A",
                                 "unit": "kg",
                                 "amount": 1.0,
@@ -518,7 +533,7 @@ class TestTidasExport:
                         "inputs": [
                             {
                                 "id": "in-product",
-                                "flowUuid": "flow-chemical-a",
+                                "flowUuid": CHEMICAL_A_UUID,
                                 "name": "chemical A",
                                 "unit": "kg",
                                 "amount": 1.0,
@@ -537,7 +552,7 @@ class TestTidasExport:
                         "toNode": "np-b",
                         "sourcePortId": "out-product",
                         "targetPortId": "in-product",
-                        "flowUuid": "flow-chemical-a",
+                        "flowUuid": CHEMICAL_A_UUID,
                         "flowName": "chemical A",
                         "quantityMode": "single",
                         "amount": 1.0,
@@ -560,10 +575,10 @@ class TestTidasExport:
             connected = [item for item in instances if item.get("connections")]
             assert len(connected) == 1
             output_exchange = connected[0]["connections"]["outputExchange"]
-            assert output_exchange["@flowUUID"] == "flow-chemical-a"
+            assert output_exchange["@flowUUID"] == CHEMICAL_A_UUID
             assert output_exchange["downstreamProcess"] == {
                 "@id": "1",
-                "@flowUUID": "flow-chemical-a",
+                "@flowUUID": CHEMICAL_A_UUID,
             }
             assert "connections" not in instances[1]
         finally:
@@ -582,7 +597,14 @@ class TestTidasExport:
                 unit_group="Units of mass",
                 source="tiangong",
             ))
-            db.get(FlowRecord, "flow-chemical-a").source = "tiangong"
+            db.merge(FlowRecord(
+                flow_uuid=CHEMICAL_A_UUID,
+                flow_name="chemical A",
+                flow_type="Product flow",
+                default_unit="kg",
+                unit_group="Units of mass",
+                source="tiangong",
+            ))
             db.commit()
             base_node = {
                 "node_kind": "unit_process",
@@ -603,7 +625,7 @@ class TestTidasExport:
                         "outputs": [
                             {
                                 "id": "out-product",
-                                "flowUuid": "flow-chemical-a",
+                                "flowUuid": CHEMICAL_A_UUID,
                                 "name": "chemical A",
                                 "unit": "kg",
                                 "amount": 1.0,
@@ -631,7 +653,7 @@ class TestTidasExport:
                         "inputs": [
                             {
                                 "id": "in-product-b",
-                                "flowUuid": "flow-chemical-a",
+                                "flowUuid": CHEMICAL_A_UUID,
                                 "name": "chemical A",
                                 "unit": "kg",
                                 "amount": 1.0,
@@ -649,7 +671,7 @@ class TestTidasExport:
                         "inputs": [
                             {
                                 "id": "in-product-c",
-                                "flowUuid": "flow-chemical-a",
+                                "flowUuid": CHEMICAL_A_UUID,
                                 "name": "chemical A",
                                 "unit": "kg",
                                 "amount": 1.0,
@@ -674,7 +696,7 @@ class TestTidasExport:
                         "id": "edge-product-b",
                         "fromNode": "np-a",
                         "toNode": "np-b",
-                        "flowUuid": "flow-chemical-a",
+                        "flowUuid": CHEMICAL_A_UUID,
                         "flowName": "chemical A",
                         "quantityMode": "single",
                         "amount": 1.0,
@@ -685,7 +707,7 @@ class TestTidasExport:
                         "id": "edge-product-c",
                         "fromNode": "np-a",
                         "toNode": "np-c",
-                        "flowUuid": "flow-chemical-a",
+                        "flowUuid": CHEMICAL_A_UUID,
                         "flowName": "chemical A",
                         "quantityMode": "single",
                         "amount": 1.0,
@@ -718,10 +740,10 @@ class TestTidasExport:
             )
             output_exchanges = instances[0]["connections"]["outputExchange"]
             by_flow = {item["@flowUUID"]: item for item in output_exchanges}
-            assert set(by_flow) == {"flow-chemical-a", "flow-chemical-b"}
-            assert by_flow["flow-chemical-a"]["downstreamProcess"] == [
-                {"@id": "1", "@flowUUID": "flow-chemical-a"},
-                {"@id": "2", "@flowUUID": "flow-chemical-a"},
+            assert set(by_flow) == {CHEMICAL_A_UUID, "flow-chemical-b"}
+            assert by_flow[CHEMICAL_A_UUID]["downstreamProcess"] == [
+                {"@id": "1", "@flowUUID": CHEMICAL_A_UUID},
+                {"@id": "2", "@flowUUID": CHEMICAL_A_UUID},
             ]
             assert by_flow["flow-chemical-b"]["downstreamProcess"] == {
                 "@id": "2",
@@ -740,7 +762,14 @@ class TestTidasExport:
         db = _db.SessionLocal()
         try:
             _seed_basic_catalog(db)
-            db.get(FlowRecord, "flow-chemical-a").source = "tiangong"
+            db.merge(FlowRecord(
+                flow_uuid=CHEMICAL_A_UUID,
+                flow_name="chemical A",
+                flow_type="Product flow",
+                default_unit="kg",
+                unit_group="Units of mass",
+                source="tiangong",
+            ))
             db.commit()
             graph = {
                 "functionalUnit": "1 kg chemical A",
@@ -757,7 +786,7 @@ class TestTidasExport:
                         "outputs": [
                             {
                                 "id": "out-product",
-                                "flowUuid": "flow-chemical-a",
+                                "flowUuid": CHEMICAL_A_UUID,
                                 "name": "chemical A",
                                 "unit": "kg",
                                 "amount": 1.0,
@@ -779,7 +808,7 @@ class TestTidasExport:
                         "inputs": [
                             {
                                 "id": "in-product",
-                                "flowUuid": "flow-chemical-a",
+                                "flowUuid": CHEMICAL_A_UUID,
                                 "name": "chemical A",
                                 "unit": "kg",
                                 "amount": 1.0,
@@ -796,7 +825,7 @@ class TestTidasExport:
                         "id": "edge-1",
                         "fromNode": "np-a",
                         "toNode": "np-b",
-                        "flowUuid": "flow-chemical-a",
+                        "flowUuid": CHEMICAL_A_UUID,
                         "flowName": "chemical A",
                         "quantityMode": "single",
                         "amount": 1.0,
