@@ -1195,6 +1195,7 @@ def _common_modelling_and_validation(type_of_dataset: str) -> dict:
 def _catalog_validation_block() -> dict[str, Any]:
     return {
         "review": {
+            "@type": "Not reviewed",
             "common:referenceToNameOfReviewerAndInstitution": dict(TIDAS_OWNERSHIP_REF),
             "common:otherReviewDetails": _localized_items("Not reviewed.", "Not reviewed."),
         }
@@ -1221,6 +1222,8 @@ def _process_modelling_and_validation() -> dict:
         },
         "dataSourcesTreatmentAndRepresentativeness": {
             "dataCutOffAndCompletenessPrinciples": _localized_items(TIDAS_GENERATED_COMMENT, TIDAS_GENERATED_COMMENT),
+            "referenceToDataSource": dict(TIDAS_DATASET_FORMAT_REF),
+            "annualSupplyOrProductionVolume": _localized_items("0 unspecified", "0 unspecified"),
         },
         "validation": _catalog_validation_block(),
         "complianceDeclarations": _catalog_compliance_declarations(),
@@ -1303,6 +1306,7 @@ def _build_tidas_exchange(exc: dict, allocation_factors: dict | None = None, ref
         "exchangeDirection": direction,
         "meanAmount": str(amount),
         "resultingAmount": str(amount),
+        "dataDerivationTypeStatus": str(exc.get("dataDerivationTypeStatus") or "Unknown derivation"),
     }
     # Keep original port id for Nebula roundtrip
     original_id = exc.get("internal_id")
