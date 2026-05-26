@@ -3943,6 +3943,12 @@ body,
   color: #27495a;
 }
 
+.pm-location-cascade {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
 .pm-inline-checks {
   display: inline-flex;
   align-items: center;
