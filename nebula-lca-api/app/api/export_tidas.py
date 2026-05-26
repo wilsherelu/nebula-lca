@@ -132,4 +132,13 @@ def readiness_tidas_bundle_export(
 @_base_router.get("/tidas/reference/locations")
 def list_tidas_reference_locations():
     """Return ILCD/TIDAS location code options from the reference catalog."""
-    return {"items": list_tidas_location_options()}
+    items = list_tidas_location_options()
+    if len(items) < 50:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "TIDAS_LOCATION_CATALOG_UNAVAILABLE",
+                "message": "TIDAS location catalog is unavailable or incomplete.",
+            },
+        )
+    return {"items": items}
