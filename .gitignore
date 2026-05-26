@@ -27,6 +27,8 @@ archive/
 _tmp*
 _write_test*
 lca_demo.backup_*
+.tools/
+.tools/**
 
 node_modules/
 dist/

@@ -9,8 +9,10 @@ Covers:
 from __future__ import annotations
 
 import json
+import os
 import zipfile
 import io
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -731,8 +733,10 @@ class TestTidasExport:
             db.close()
 
     def test_platform_light_lifecycle_model_passes_tidas_validator_smoke(self, client):
-        """If tidas-tools is installed, validate the exported lifecycle model schema."""
-        validate = pytest.importorskip("tidas_tools.validate")
+        """If configured, validate the exported lifecycle model with isolated tidas-tools."""
+        validator_python = os.environ.get("TIDAS_VALIDATE_PYTHON")
+        if not validator_python:
+            pytest.skip("TIDAS_VALIDATE_PYTHON is not configured")
         db = _db.SessionLocal()
         try:
             _seed_basic_catalog(db)
@@ -808,17 +812,32 @@ class TestTidasExport:
             with tempfile.TemporaryDirectory() as tmpdir:
                 with zipfile.ZipFile(io.BytesIO(resp.content), "r") as zf:
                     zf.extractall(tmpdir)
-                try:
-                    report = validate.validate_package_dir(tmpdir)
-                except UnicodeDecodeError as exc:
-                    pytest.skip(f"tidas_tools schema files are not readable with this Python locale: {exc}")
+                result = subprocess.run(
+                    [
+                        validator_python,
+                        "-m",
+                        "tidas_tools.validate",
+                        "--input-dir",
+                        tmpdir,
+                        "--report-format",
+                        "json",
+                    ],
+                    check=False,
+                    capture_output=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    env={**os.environ, "PYTHONUTF8": "1"},
+                )
+                if result.returncode != 0 and not result.stdout.strip():
+                    pytest.skip(f"tidas_tools validator could not run: {result.stderr.strip()}")
+                report = json.loads(result.stdout)
             lifecycle_errors = [
                 issue for issue in report["issues"]
                 if issue["category"] == "lifecyclemodels" and issue["severity"] == "error"
             ]
             if lifecycle_errors and all(issue.get("issue_code") == "validation_error" for issue in lifecycle_errors):
                 pytest.skip(f"tidas_tools validator infrastructure failed: {lifecycle_errors[0].get('message')}")
-            assert lifecycle_errors == []
+            assert lifecycle_errors == [], json.dumps(lifecycle_errors, ensure_ascii=False, indent=2)
         finally:
             db.close()
 
