@@ -747,20 +747,20 @@ def _identify_product_outputs(
     for port in outputs:
         if not isinstance(port, dict):
             continue
-        
+
         # Check isProduct flag
         is_product = bool(port.get("isProduct", False))
-        
+
         # Also check flow type from flowUuid lookup
         if not is_product and flow_type_map:
             flow_uuid = port.get("flowUuid")
             if flow_uuid:
                 flow_type = flow_type_map.get(flow_uuid, "")
                 is_product = flow_type in ("Product flow", "waste_flow")
-        
+
         if is_product:
             product_outputs.append(port)
-    
+
     return product_outputs
 
 
@@ -828,14 +828,14 @@ def _select_reference_flow(
     ref_port = product_outputs[0]
     ref_flow_uuid = ref_port.get("flowUuid")
     report.reference_flow_by_process[process_uuid] = ref_flow_uuid
-    
+
     # Warn that we're using fallback
     report.add_warning(
         "allocation",
         f"Multi-product process {process_uuid}: using first product output as reference (no explicit reference_product specified)",
         {"process_uuid": process_uuid, "reference_flow_uuid": ref_flow_uuid},
     )
-    
+
     return ref_port, ref_flow_uuid
 
 

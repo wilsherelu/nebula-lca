@@ -222,27 +222,27 @@ def parse_units(data_dir: Path) -> Dict[str, UnitRecord]:
     if not units_file.exists():
         logger.warning(f"Units.xml not found at {units_file}")
         return {}
-    
+
     units = {}
     context = ET.iterparse(str(units_file), events=['end'])
-    
+
     for event, elem in context:
         if elem.tag.endswith('unit'):
             unit_id = elem.get('id', '')
             name = ""
             unit_type = None
-            
+
             for child in elem:
                 tag = child.tag.split('}')[-1]
                 if tag == 'name':
                     name = (child.text or '').strip()
                 elif tag == 'unitType':
                     unit_type = (child.text or '').strip()
-            
+
             if unit_id:
                 units[unit_id] = UnitRecord(unit_id=unit_id, name=name, unit_type=unit_type)
             elem.clear()
-    
+
     logger.info(f"Parsed {len(units)} units from Units.xml")
     return units
 
@@ -253,10 +253,10 @@ def parse_unit_conversions(data_dir: Path) -> List[UnitConversion]:
     if not conversions_file.exists():
         logger.warning(f"UnitConversions.xml not found at {conversions_file}")
         return []
-    
+
     conversions = []
     context = ET.iterparse(str(conversions_file), events=['end'])
-    
+
     for event, elem in context:
         if elem.tag.endswith('unitConversion'):
             conv_id = elem.get('id', '')
@@ -265,11 +265,11 @@ def parse_unit_conversions(data_dir: Path) -> List[UnitConversion]:
                 factor = float(factor_str)
             except ValueError:
                 factor = 1.0
-            
+
             unit_from = ""
             unit_to = ""
             unit_type = ""
-            
+
             for child in elem:
                 tag = child.tag.split('}')[-1]
                 if tag == 'unitFromName':
@@ -278,7 +278,7 @@ def parse_unit_conversions(data_dir: Path) -> List[UnitConversion]:
                     unit_to = (child.text or '').strip()
                 elif tag == 'unitType':
                     unit_type = (child.text or '').strip()
-            
+
             if conv_id:
                 conversions.append(UnitConversion(
                     conversion_id=conv_id,
@@ -288,7 +288,7 @@ def parse_unit_conversions(data_dir: Path) -> List[UnitConversion]:
                     factor=factor
                 ))
             elem.clear()
-    
+
     logger.info(f"Parsed {len(conversions)} unit conversions from UnitConversions.xml")
     return conversions
 
@@ -299,10 +299,10 @@ def parse_elementary_exchanges(data_dir: Path, units: Dict[str, UnitRecord]) -> 
     if not file_path.exists():
         logger.warning(f"ElementaryExchanges.xml not found at {file_path}")
         return []
-    
+
     flows = []
     context = ET.iterparse(str(file_path), events=['end'])
-    
+
     for event, elem in context:
         elem_tag = elem.tag.split('}')[-1]
         if elem_tag in ('elementaryExchange', 'ElementaryFlow'):
@@ -310,12 +310,12 @@ def parse_elementary_exchanges(data_dir: Path, units: Dict[str, UnitRecord]) -> 
             unit_id = elem.get('unitId', '')
             cas_number = elem.get('casNumber') or child_text(elem, 'CAS') or None
             formula = elem.get('formula') or child_text(elem, 'formula') or None
-            
+
             flow_name = ""
             flow_name_en = ""
             compartment = ""
             subcompartment = ""
-            
+
             for child in elem:
                 tag = child.tag.split('}')[-1]
                 if tag == 'name':
@@ -338,9 +338,9 @@ def parse_elementary_exchanges(data_dir: Path, units: Dict[str, UnitRecord]) -> 
                                 subcompartment = (sub.text or '').strip()
                     else:
                         compartment = (child.text or '').strip()
-            
+
             unit_name = units.get(unit_id, UnitRecord(unit_id, unit_id)).name if unit_id else ""
-            
+
             flow = ElementaryFlow(
                 flow_uuid=flow_uuid,
                 flow_name=flow_name,
@@ -353,7 +353,7 @@ def parse_elementary_exchanges(data_dir: Path, units: Dict[str, UnitRecord]) -> 
             )
             flows.append(flow)
             elem.clear()
-    
+
     logger.info(f"Parsed {len(flows)} elementary exchanges")
     return flows
 
@@ -364,10 +364,10 @@ def parse_intermediate_exchanges(data_dir: Path, units: Dict[str, UnitRecord]) -
     if not file_path.exists():
         logger.warning(f"IntermediateExchanges.xml not found at {file_path}")
         return []
-    
+
     flows = []
     context = ET.iterparse(str(file_path), events=['end'])
-    
+
     for event, elem in context:
         if elem.tag.endswith('intermediateExchange'):
             flow_uuid = elem.get('id', '')
@@ -418,7 +418,7 @@ def parse_intermediate_exchanges(data_dir: Path, units: Dict[str, UnitRecord]) -
             )
             flows.append(flow)
             elem.clear()
-    
+
     logger.info(f"Parsed {len(flows)} intermediate exchanges")
     return flows
 
@@ -428,11 +428,11 @@ def parse_lcia_excel(lcia_path: Path) -> tuple[List[Indicator], List[Characteriz
     if not lcia_path.exists():
         logger.warning(f"LCIA Excel file not found at {lcia_path}")
         return [], []
-    
+
     if pd is None:
         logger.error("pandas not installed, cannot parse Excel files")
         return [], []
-    
+
     indicators = []
     cfs = []
 
@@ -455,7 +455,7 @@ def parse_lcia_excel(lcia_path: Path) -> tuple[List[Indicator], List[Characteriz
         except Exception:
             pass
         return float(value or 0)
-    
+
     try:
         df_ind = pd.read_excel(lcia_path, sheet_name='Indicators')
         for _, row in df_ind.iterrows():
@@ -468,7 +468,7 @@ def parse_lcia_excel(lcia_path: Path) -> tuple[List[Indicator], List[Characteriz
         logger.info(f"Parsed {len(indicators)} indicators")
     except Exception as e:
         logger.warning(f"Failed to read Indicators sheet: {e}")
-    
+
     try:
         df_cf = pd.read_excel(lcia_path, sheet_name='CFs')
         for _, row in df_cf.iterrows():
@@ -484,7 +484,7 @@ def parse_lcia_excel(lcia_path: Path) -> tuple[List[Indicator], List[Characteriz
         logger.info(f"Parsed {len(cfs)} characterization factors")
     except Exception as e:
         logger.warning(f"Failed to read CFs sheet: {e}")
-    
+
     return indicators, cfs
 
 
@@ -498,7 +498,7 @@ def match_cf_to_flows(
     elementary_flows: List[ElementaryFlow]
 ) -> tuple[List[dict], List[dict], List[dict]]:
     """Match CFs to elementary flows using normalized name + compartment + subcompartment.
-    
+
     Returns:
         (matched_rows, unmatched_rows, ambiguous_rows)
     """
@@ -510,20 +510,20 @@ def match_cf_to_flows(
             normalize_text(flow.subcompartment),
         )
         flow_index.setdefault(key, []).append(flow)
-    
+
     matched = []
     unmatched = []
     ambiguous = []
-    
+
     for cf in cfs:
         key = (
             normalize_text(cf.flow_name),
             normalize_text(cf.compartment),
             normalize_text(cf.subcompartment),
         )
-        
+
         flows = flow_index.get(key, [])
-        
+
         if len(flows) == 1:
             matched.append({
                 'cf_method': cf.method,
@@ -558,7 +558,7 @@ def match_cf_to_flows(
                 'cf_subcompartment': cf.subcompartment,
                 'cf_value': cf.cf_value,
             })
-    
+
     logger.info(f"CF matching: {len(matched)} matched, {len(unmatched)} unmatched, {len(ambiguous)} ambiguous")
     return matched, unmatched, ambiguous
 
@@ -568,7 +568,7 @@ def parse_filename_to_activity(csv_path: Path) -> List[dict]:
     if not csv_path.exists():
         logger.warning(f"FilenameToActivityLookup.csv not found at {csv_path}")
         return []
-    
+
     mappings = []
     with open(csv_path, 'r', encoding='utf-8-sig') as f:
         sample = f.read(4096)
@@ -582,7 +582,7 @@ def parse_filename_to_activity(csv_path: Path) -> List[dict]:
                 'location': row.get('Location', ''),
                 'reference_product': row.get('ReferenceProduct', ''),
             })
-    
+
     logger.info(f"Parsed {len(mappings)} filename-to-activity mappings")
     return mappings
 
@@ -663,7 +663,7 @@ def parse_spold_metadata_early(spold_path: Path) -> Optional[LCIDataset]:
 
 def parse_spold_file(spold_path: Path) -> Optional[LCIDataset]:
     """Parse a single .spold LCI dataset file (ecoSpold02 format).
-    
+
     Real ecoSpold02 LCI structure:
     - activity/@id: activity UUID
     - activity/activityName: activity name (child element, not attribute)
@@ -674,33 +674,33 @@ def parse_spold_file(spold_path: Path) -> Optional[LCIDataset]:
     try:
         tree = ET.parse(str(spold_path))
         root = tree.getroot()
-        
+
         # Handle namespace
         ns_match = re.match(r'\{(.+)\}', root.tag)
         ns = {'es': ns_match.group(1)} if ns_match else {}
-        
+
         # Extract activity info
         activity_elem = root.find('.//es:activity', ns)
         activity_id = ""
         activity_name = ""
         location = ""
-        
+
         if activity_elem is not None:
             activity_id = activity_elem.get('id', '')
-            
+
             # activityName is a child element (not attribute in ecoSpold02 LCI)
             activity_name = child_text(activity_elem, 'activityName')
-            
+
             # Fallback: try activityName attribute (older format)
             if not activity_name:
                 activity_name = activity_elem.get('activityName', '')
-            
+
         # geography is under activityDescription, not activity.
         geo_elem = root.find('.//es:activityDescription/es:geography', ns)
         location = child_text(geo_elem, 'shortname')
         if not location:
             location = activity_elem.get('location', '') if activity_elem is not None else ""
-        
+
         # Extract reference product
         # Real ecoSpold02 LCI uses:
         # - intermediateExchange with @variableName="RP" (Reference Product)
@@ -761,7 +761,7 @@ def parse_spold_file(spold_path: Path) -> Optional[LCIDataset]:
 
 def parse_spold_exchanges(spold_path: Path) -> List[LCIElementaryExchange]:
     """Parse elementary exchanges from a .spold file (ecoSpold02 format).
-    
+
     Real ecoSpold02 LCI uses:
     - elementaryExchange with @elementaryExchangeId linking to MasterData
     - Children: name, unitName, compartment, outputGroup
@@ -772,10 +772,10 @@ def parse_spold_exchanges(spold_path: Path) -> List[LCIElementaryExchange]:
     try:
         tree = ET.parse(str(spold_path))
         root = tree.getroot()
-        
+
         ns_match = re.match(r'\{(.+)\}', root.tag)
         ns = {'es': ns_match.group(1)} if ns_match else {}
-        
+
         # First try: parse elementaryExchange elements directly (ecoSpold02 LCI)
         for elem_exc in root.findall('.//es:elementaryExchange', ns):
             # Use elementaryExchangeId as the flow UUID (links to MasterData)
@@ -785,7 +785,7 @@ def parse_spold_exchanges(spold_path: Path) -> List[LCIElementaryExchange]:
                 amount = float(amount_str)
             except ValueError:
                 amount = 0.0
-            
+
             # Parse child elements for name, unit, direction
             exc_name = ""
             unit_name = ""
@@ -806,7 +806,7 @@ def parse_spold_exchanges(spold_path: Path) -> List[LCIElementaryExchange]:
                     output_group = 0
                     if raw_output_group.strip().lower() in {"output", "input"}:
                         direction_hint = raw_output_group.strip().lower()
-            
+
             for child in elem_exc:
                 tag = child.tag.split('}')[-1]
                 if tag == 'name':
@@ -827,12 +827,12 @@ def parse_spold_exchanges(spold_path: Path) -> List[LCIElementaryExchange]:
                         input_group = int(raw_child_input_group)
                     except ValueError:
                         input_group = 1 if raw_child_input_group else 0
-            
+
             # Determine direction from ecoSpold groups.
             # Real ecoSpold02 resource flows commonly use inputGroup; older fixtures may encode
             # resources as negative outputGroup.
             direction = "input" if input_group > 0 else ("output" if output_group > 0 else ("input" if output_group < 0 else direction_hint))
-            
+
             if exc_id:
                 exchanges.append(LCIElementaryExchange(
                     dataset_filename=spold_path.name,
@@ -842,14 +842,14 @@ def parse_spold_exchanges(spold_path: Path) -> List[LCIElementaryExchange]:
                     direction=direction,
                     amount=amount,
                 ))
-        
+
         # Fallback: try exchange elements with type='elementary' (older format)
         if not exchanges:
             for exc in root.findall('.//es:exchange', ns):
                 exc_type = exc.get('type', '')
                 if exc_type != 'elementary':
                     continue
-                
+
                 exc_id = exc.get('id', '')
                 exc_name = exc.get('name', '')
                 unit = exc.get('unit', '')
@@ -859,7 +859,7 @@ def parse_spold_exchanges(spold_path: Path) -> List[LCIElementaryExchange]:
                     amount = float(amount_str)
                 except ValueError:
                     amount = 0.0
-                
+
                 if exc_id:
                     exchanges.append(LCIElementaryExchange(
                         dataset_filename=spold_path.name,
@@ -871,7 +871,7 @@ def parse_spold_exchanges(spold_path: Path) -> List[LCIElementaryExchange]:
                     ))
     except Exception as e:
         logger.warning(f"Failed to parse exchanges from {spold_path}: {e}")
-    
+
     return exchanges
 
 
@@ -1380,18 +1380,18 @@ def write_csv(data: List[Union[dict, Any]], filepath: Path, fieldnames: Optional
     if not data:
         logger.info(f"Skipping empty CSV: {filepath}")
         return
-    
+
     if is_dataclass(data[0]) and not isinstance(data[0], dict):
         data = [asdict(row) for row in data]
-    
+
     if not fieldnames:
         fieldnames = list(data[0].keys())
-    
+
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
         writer.writeheader()
         writer.writerows(data)
-    
+
     logger.info(f"Wrote {len(data)} rows to {filepath}")
 
 
@@ -1403,54 +1403,54 @@ def cmd_inspect_foundation(args):
     """Inspect EF 3.1 foundation data (MasterData + LCIA Excel)."""
     master_dir = Path(args.master_data_dir)
     lcia_path = Path(args.lcia_implementation)
-    
+
     if not master_dir.exists():
         logger.error(f"Master data directory not found: {master_dir}")
         sys.exit(1)
     if not lcia_path.exists():
         logger.error(f"LCIA implementation file not found: {lcia_path}")
         sys.exit(1)
-    
+
     print(f"\n=== EF 3.1 Foundation Inspection ===")
     print(f"Master data directory: {master_dir}")
     print(f"LCIA implementation: {lcia_path}\n")
-    
+
     units = parse_units(master_dir)
     print(f"Units: {len(units)}")
-    
+
     conversions = parse_unit_conversions(master_dir)
     print(f"Unit conversions: {len(conversions)}")
-    
+
     elem_flows = parse_elementary_exchanges(master_dir, units)
     print(f"Elementary flows: {len(elem_flows)}")
-    
+
     inter_flows = parse_intermediate_exchanges(master_dir, units)
     print(f"Intermediate flows: {len(inter_flows)}")
-    
+
     indicators, cfs = parse_lcia_excel(lcia_path)
     print(f"Indicators (total): {len(indicators)}")
     print(f"Characterization factors (total): {len(cfs)}")
-    
+
     # EF 3.1 filter
     ef31_cfs = filter_cf_ef31(cfs)
     print(f"CFs (EF v3.1 only): {len(ef31_cfs)}")
-    
+
     # Compartment distribution
     compartments = {}
     for f in elem_flows:
         comp = f.compartment or "(none)"
         compartments[comp] = compartments.get(comp, 0) + 1
-    
+
     print(f"\nElementary flow compartments (top 10):")
     for comp, count in sorted(compartments.items(), key=lambda x: -x[1])[:10]:
         print(f"  {comp}: {count}")
-    
+
     # Intermediate flow types
     flow_types = {}
     for f in inter_flows:
         ft = f.flow_type
         flow_types[ft] = flow_types.get(ft, 0) + 1
-    
+
     print(f"\nIntermediate flow types:")
     for ft, count in sorted(flow_types.items(), key=lambda x: -x[1]):
         print(f"  {ft}: {count}")
@@ -1462,39 +1462,39 @@ def cmd_export_foundation_preview(args):
     lcia_path = Path(args.lcia_implementation)
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    
+
     if not master_dir.exists():
         logger.error(f"Master data directory not found: {master_dir}")
         sys.exit(1)
     if not lcia_path.exists():
         logger.error(f"LCIA implementation file not found: {lcia_path}")
         sys.exit(1)
-    
+
     print(f"\n=== EF 3.1 Foundation Export Preview ===")
     print(f"Master data directory: {master_dir}")
     print(f"LCIA implementation: {lcia_path}")
     print(f"Output directory: {out_dir}\n")
-    
+
     units = parse_units(master_dir)
     conversions = parse_unit_conversions(master_dir)
     elem_flows = parse_elementary_exchanges(master_dir, units)
     inter_flows = parse_intermediate_exchanges(master_dir, units)
     indicators, cfs = parse_lcia_excel(lcia_path)
-    
+
     # Filter to EF 3.1
     ef31_indicators = [ind for ind in indicators if is_ef31_method(ind.method)]
     ef31_cfs = filter_cf_ef31(cfs)
-    
+
     # Match CFs
     matched, unmatched, ambiguous = match_cf_to_flows(ef31_cfs, elem_flows)
-    
+
     # Write CSVs
     write_csv(elem_flows, out_dir / "elementary_flows.csv", fieldnames=[
         'flow_uuid', 'flow_name', 'flow_name_en', 'flow_type',
         'default_unit', 'unit_group', 'compartment', 'subcompartment',
         'cas_number', 'formula', 'source'
     ])
-    
+
     write_csv(inter_flows, out_dir / "intermediate_flows.csv", fieldnames=[
         'flow_uuid', 'flow_name', 'flow_name_en', 'flow_type',
         'default_unit', 'unit_group', 'classification', 'source'
@@ -1509,26 +1509,26 @@ def cmd_export_foundation_preview(args):
     write_csv(conversions, out_dir / "unit_conversions.csv", fieldnames=[
         'conversion_id', 'unit_from_name', 'unit_to_name', 'unit_type', 'factor'
     ])
-    
+
     write_csv(ef31_indicators, out_dir / "ef31_indicators.csv", fieldnames=[
         'method', 'category', 'indicator', 'indicator_unit'
     ])
-    
+
     write_csv(matched, out_dir / "ef31_characterization_factors.csv", fieldnames=[
         'cf_method', 'cf_indicator', 'cf_flow_name', 'cf_compartment',
         'cf_subcompartment', 'cf_value', 'matched_flow_uuid', 'matched_flow_name'
     ])
-    
+
     write_csv(unmatched, out_dir / "unmatched_cf_rows.csv", fieldnames=[
         'cf_method', 'cf_indicator', 'cf_flow_name', 'cf_compartment',
         'cf_subcompartment', 'cf_value'
     ])
-    
+
     write_csv(ambiguous, out_dir / "ambiguous_cf_rows.csv", fieldnames=[
         'cf_method', 'cf_indicator', 'cf_flow_name', 'cf_compartment',
         'cf_subcompartment', 'cf_value', 'matched_flow_uuids', 'matched_flow_names'
     ])
-    
+
     # Write report
     report = FoundationReport(
         master_data_dir=str(master_dir),
@@ -1545,11 +1545,11 @@ def cmd_export_foundation_preview(args):
         cf_rows_unmatched=len(unmatched),
         cf_rows_ambiguous=len(ambiguous),
     )
-    
+
     with open(out_dir / "foundation_report.json", 'w', encoding='utf-8') as f:
         json.dump(asdict(report), f, indent=2, ensure_ascii=False)
     logger.info(f"Wrote report to {out_dir / 'foundation_report.json'}")
-    
+
     print(f"\n=== Summary ===")
     print(f"Elementary flows: {len(elem_flows)}")
     print(f"Intermediate flows: {len(inter_flows)}")
@@ -1579,37 +1579,37 @@ def cmd_preview_lci(args):
     limit = int(args.limit) if args.limit else 100
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    
+
     if not lci_dir.exists():
         logger.error(f"LCI directory not found: {lci_dir}")
         sys.exit(1)
     if not master_dir.exists():
         logger.error(f"Master data directory not found: {master_dir}")
         sys.exit(1)
-    
+
     print(f"\n=== EF 3.1 LCI Dataset Preview ===")
     print(f"LCI directory: {lci_dir}")
     print(f"Master data directory: {master_dir}")
     print(f"Limit: {limit} datasets")
     print(f"Output directory: {out_dir}\n")
-    
+
     # Parse master data for elementary flow registry
     units = parse_units(master_dir)
     elem_flows = parse_elementary_exchanges(master_dir, units)
     elem_flow_ids = {f.flow_uuid for f in elem_flows}
-    
+
     # Find datasets directory
     datasets_dir = lci_dir / "datasets"
     if not datasets_dir.exists():
         datasets_dir = lci_dir
-    
+
     spold_files = list(datasets_dir.glob("*.spold"))[:limit]
     print(f"Found {len(spold_files)} .spold files (limit={limit})")
-    
+
     datasets = []
     all_exchanges = []
     missing_refs = []
-    
+
     for i, spold_path in enumerate(spold_files):
         dataset = parse_spold_file(spold_path)
         if dataset:
@@ -1617,7 +1617,7 @@ def cmd_preview_lci(args):
             exchanges = parse_spold_exchanges(spold_path)
             dataset.exchange_count = len(exchanges)
             all_exchanges.extend(exchanges)
-            
+
             # Check for missing elementary flow refs
             for exc in exchanges:
                 if exc.exchange_id and exc.exchange_id not in elem_flow_ids:
@@ -1627,25 +1627,25 @@ def cmd_preview_lci(args):
                             'exchange_id': exc.exchange_id,
                             'exchange_name': exc.exchange_name,
                         })
-        
+
         if (i + 1) % 20 == 0:
             logger.info(f"Parsed {i + 1}/{len(spold_files)} datasets...")
-    
+
     # Write CSVs
     write_csv(datasets, out_dir / "lci_datasets.csv", fieldnames=[
         'filename', 'activity_id', 'activity_name', 'location',
         'reference_product_name', 'reference_product_unit',
         'reference_product_amount', 'exchange_count'
     ])
-    
+
     write_csv(all_exchanges, out_dir / "lci_elementary_exchanges.csv", fieldnames=[
         'dataset_filename', 'exchange_id', 'exchange_name', 'unit', 'direction', 'amount'
     ])
-    
+
     write_csv(missing_refs, out_dir / "missing_elementary_flow_refs.csv", fieldnames=[
         'dataset_filename', 'exchange_id', 'exchange_name'
     ])
-    
+
     # Write report
     report = LCIPreviewReport(
         lci_dir=str(lci_dir),
@@ -1656,11 +1656,11 @@ def cmd_preview_lci(args):
         lci_elementary_exchanges_count=len(all_exchanges),
         missing_elementary_refs=len(missing_refs),
     )
-    
+
     with open(out_dir / "lci_preview_report.json", 'w', encoding='utf-8') as f:
         json.dump(asdict(report), f, indent=2, ensure_ascii=False)
     logger.info(f"Wrote report to {out_dir / 'lci_preview_report.json'}")
-    
+
     print(f"\n=== Summary ===")
     print(f"Datasets scanned: {len(spold_files)}")
     print(f"Datasets parsed: {len(datasets)}")
@@ -1676,22 +1676,22 @@ def cmd_preview_lci(args):
 # Stage 3: Archive Support
 # =============================================================================
 
-def selective_extract_7z(archive_path: Path, dest_dir: Path, 
+def selective_extract_7z(archive_path: Path, dest_dir: Path,
                           spold_limit: Optional[int] = None) -> dict:
     """Selectively extract files from .7z archive.
-    
+
     Only extracts:
     - MasterData/*.xml
     - FilenameToActivityLookup.csv (if present)
     - LCIA Implementation 3.11.xlsx
     - First N datasets/*.spold files (controlled by spold_limit)
-    
+
     Returns dict of extracted paths.
     """
     if py7zr is None:
         logger.error("py7zr not installed, cannot extract .7z archives")
         sys.exit(1)
-    
+
     result = {
         'master_dir': None,
         'datasets_dir': None,
@@ -1700,17 +1700,17 @@ def selective_extract_7z(archive_path: Path, dest_dir: Path,
         'spold_count_total': 0,     # total found in archive (before limit)
         'master_data_count': 0,
     }
-    
+
     logger.info(f"Scanning archive: {archive_path}")
     with py7zr.SevenZipFile(str(archive_path), mode='r') as z:
         all_members = z.getnames()
-        
+
         # Categorize members
         master_data_files = []
         spold_files = []
         lcia_excel_path = None
         filename_lookup_path = None
-        
+
         for member in all_members:
             # Normalize backslashes (Windows py7zr may return \)
             m = member.replace('\\', '/')
@@ -1729,25 +1729,25 @@ def selective_extract_7z(archive_path: Path, dest_dir: Path,
             # Also check for datasets at root level
             elif m.startswith('datasets/') and m.endswith('.spold'):
                 spold_files.append(member)
-        
+
         # Record total before applying limit
         result['spold_count_total'] = len(spold_files)
 
         # Limit spold files
         if spold_limit and spold_limit > 0:
             spold_files = spold_files[:spold_limit]
-        
+
         # Build extraction list
         extract_list = master_data_files + spold_files
         if lcia_excel_path:
             extract_list.append(lcia_excel_path)
         if filename_lookup_path:
             extract_list.append(filename_lookup_path)
-        
+
         if not extract_list:
             logger.warning(f"No relevant files found in archive: {archive_path}")
             return result
-        
+
         logger.info(f"Extracting {len(extract_list)} files from archive...")
         logger.info(f"  - MasterData files: {len(master_data_files)}")
         logger.info(f"  - LCI datasets (.spold): {len(spold_files)}")
@@ -1755,11 +1755,11 @@ def selective_extract_7z(archive_path: Path, dest_dir: Path,
             logger.info(f"  - LCIA Excel: {lcia_excel_path}")
         if filename_lookup_path:
             logger.info(f"  - FilenameToActivityLookup.csv: {filename_lookup_path}")
-        
+
         # Extract selected files
         with py7zr.SevenZipFile(str(archive_path), mode='r') as z:
             z.extract(path=str(dest_dir), targets=extract_list)
-        
+
         result['spold_count'] = len(spold_files)
         result['master_data_count'] = len(master_data_files)
 
@@ -1768,12 +1768,12 @@ def selective_extract_7z(archive_path: Path, dest_dir: Path,
             if item.is_dir():
                 result['master_dir'] = item
                 break
-        
+
         for item in dest_dir.rglob("datasets"):
             if item.is_dir():
                 result['datasets_dir'] = item
                 break
-        
+
         # Find LCIA Excel
         if lcia_excel_path:
             # Extract relative path from archive
@@ -1782,7 +1782,7 @@ def selective_extract_7z(archive_path: Path, dest_dir: Path,
                 if item.is_file():
                     result['lcia_excel'] = item
                     break
-    
+
     return result
 
 
@@ -1912,18 +1912,18 @@ def cmd_preview_archives(args):
                 'reference_product_name', 'reference_product_unit',
                 'reference_product_amount', 'exchange_count'
             ])
-            
+
             write_csv(all_exchanges, out_dir / "lci_elementary_exchanges.csv", fieldnames=[
                 'dataset_filename', 'exchange_id', 'exchange_name', 'unit', 'direction', 'amount'
             ])
-            
+
             write_csv(missing_refs, out_dir / "missing_elementary_flow_refs.csv", fieldnames=[
                 'dataset_filename', 'exchange_id', 'exchange_name'
             ])
-            
+
             print(f"Datasets parsed: {len(datasets)}")
             print(f"LCI elementary exchanges: {len(all_exchanges)}")
-        
+
         # Write archive report
         report = {
             'lci_archive': str(lci_archive) if lci_archive else None,
@@ -1980,20 +1980,20 @@ Examples:
 """
     )
     subparsers = parser.add_subparsers(dest='command', required=True)
-    
+
     # Stage 1: inspect-foundation
     inspect_parser = subparsers.add_parser('inspect-foundation', help='Inspect EF 3.1 foundation data')
     inspect_parser.add_argument('--master-data-dir', required=True, help='Path to MasterData directory')
     inspect_parser.add_argument('--lcia-implementation', required=True, help='Path to LCIA Implementation 3.11.xlsx')
     inspect_parser.set_defaults(func=cmd_inspect_foundation)
-    
+
     # Stage 1: export-foundation-preview
     export_parser = subparsers.add_parser('export-foundation-preview', help='Export foundation preview CSVs')
     export_parser.add_argument('--master-data-dir', required=True, help='Path to MasterData directory')
     export_parser.add_argument('--lcia-implementation', required=True, help='Path to LCIA Implementation 3.11.xlsx')
     export_parser.add_argument('--out', required=True, help='Output directory for CSVs and report')
     export_parser.set_defaults(func=cmd_export_foundation_preview)
-    
+
     # Stage 2: preview-lci
     lci_parser = subparsers.add_parser('preview-lci', help='Preview LCI datasets')
     lci_parser.add_argument('--lci-dir', required=True, help='Path to extracted LCI directory')
@@ -2001,7 +2001,7 @@ Examples:
     lci_parser.add_argument('--limit', type=int, default=100, help='Max datasets to parse (default: 100)')
     lci_parser.add_argument('--out', required=True, help='Output directory')
     lci_parser.set_defaults(func=cmd_preview_lci)
-    
+
     # Stage 3: preview-archives
     archive_parser = subparsers.add_parser('preview-archives', help='Preview from .7z archives')
     archive_parser.add_argument('--lci-archive', help='Path to LCI .7z archive')
@@ -2009,7 +2009,7 @@ Examples:
     archive_parser.add_argument('--limit', type=int, default=100, help='Max datasets to parse (default: 100)')
     archive_parser.add_argument('--out', required=True, help='Output directory')
     archive_parser.set_defaults(func=cmd_preview_archives)
-    
+
     args = parser.parse_args()
     args.func(args)
 

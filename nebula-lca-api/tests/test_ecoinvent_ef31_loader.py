@@ -18,7 +18,7 @@ class TestNormalizeText:
         assert normalize_text("Ammonia") == "ammonia"
         assert normalize_text("  Ammonia  ") == "ammonia"
         assert normalize_text("non-urban   air") == "non-urban air"
-    
+
     def test_none_empty(self):
         assert normalize_text(None) == ""
         assert normalize_text("") == ""
@@ -28,7 +28,7 @@ class TestIsEF31Method:
     def test_ef31_methods(self):
         assert is_ef31_method("EF v3.1") is True
         assert is_ef31_method("EF v3.1 no LT") is True
-    
+
     def test_non_ef31_methods(self):
         assert is_ef31_method("CML v4.8 2016 no LT") is False
         assert is_ef31_method("ReCiPe 2016") is False
@@ -72,7 +72,7 @@ class TestIntermediateFlowClassification:
             classification="Waste"
         )
         assert flow.flow_type == "Waste flow"
-    
+
     def test_product_flow(self):
         flow = IntermediateFlow(
             flow_uuid="prod-1",
@@ -81,7 +81,7 @@ class TestIntermediateFlowClassification:
             classification="Material"
         )
         assert flow.flow_type == "Product flow"
-    
+
     def test_classification_value_parsing(self):
         """Test that classificationValue is correctly extracted from classification element."""
         # This simulates the real IntermediateExchanges.xml structure:
@@ -121,7 +121,7 @@ class TestMatchCfToFlows:
         assert len(unmatched) == 0
         assert len(ambiguous) == 0
         assert matched[0]['matched_flow_uuid'] == "flow-1"
-    
+
     def test_unmatched_cf(self):
         flows = [
             ElementaryFlow(flow_uuid="flow-1", flow_name="Ammonia", compartment="air"),
@@ -137,7 +137,7 @@ class TestMatchCfToFlows:
         assert len(matched) == 0
         assert len(unmatched) == 1
         assert len(ambiguous) == 0
-    
+
     def test_ambiguous_match(self):
         flows = [
             ElementaryFlow(flow_uuid="flow-1", flow_name="Ammonia", compartment="air"),
@@ -156,7 +156,7 @@ class TestMatchCfToFlows:
         assert len(ambiguous) == 1
         assert "flow-1" in ambiguous[0]['matched_flow_uuids']
         assert "flow-2" in ambiguous[0]['matched_flow_uuids']
-    
+
     def test_normalized_match(self):
         """Test that normalization works for whitespace/case variations."""
         flows = [
@@ -172,7 +172,7 @@ class TestMatchCfToFlows:
         matched, unmatched, ambiguous = match_cf_to_flows(cfs, flows)
         assert len(matched) == 1
         assert matched[0]['matched_flow_uuid'] == "flow-1"
-    
+
     def test_compartment_subcompartment_match(self):
         """Test CF matching requires name + compartment + subcompartment."""
         flows = [
