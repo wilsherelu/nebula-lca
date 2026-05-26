@@ -172,6 +172,32 @@ def _substitute_placeholders(obj: Any) -> Any:
     return _walk(obj)
 
 
+def _normalise_catalog_alias(value: str | None) -> str:
+    return "".join(str(value or "").strip().lower().split())
+
+
+def normalize_tidas_location_code(value: str | None) -> str:
+    """Normalize a user/project geography value to an ILCD/TIDAS location code."""
+    text = str(value or "").strip()
+    catalog = load_tidas_reference_catalog()
+    fallback = str(catalog.get("locations", {}).get("fallback", {}).get("code") or "GLO")
+    if not text:
+        return fallback
+
+    locations = catalog.get("locations", {}) if catalog else {}
+    entries = locations.get("entries") if isinstance(locations, dict) else None
+    known_codes = {str(item.get("code")) for item in entries or [] if isinstance(item, dict) and item.get("code")}
+    if text in known_codes:
+        return text
+
+    aliases = locations.get("aliasToCode") if isinstance(locations, dict) else None
+    if isinstance(aliases, dict):
+        normalized = _normalise_catalog_alias(text)
+        if normalized in aliases:
+            return str(aliases[normalized])
+    return fallback
+
+
 def normalize_tidas_unit_group(value: str | None) -> str:
     text = str(value or "").strip().lower()
     text = re.sub(r"[\s*/\\]+", "_", text)
@@ -200,6 +226,18 @@ def _flow_property_by_uuid(seed: dict[str, Any]) -> dict[str, dict[str, Any]]:
         uuid = str(item.get("flow_property_uuid") or item.get("uuid") or "").strip()
         if uuid:
             result[uuid] = item
+    return result
+
+
+def _unit_group_by_name(seed: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for item in seed.get("unit_groups") or []:
+        if not isinstance(item, dict):
+            continue
+        for candidate in (item.get("name"), item.get("default_unit"), item.get("reference_unit")):
+            normalized = normalize_tidas_unit_group(candidate)
+            if normalized:
+                result[normalized] = item
     return result
 
 
@@ -265,10 +303,51 @@ def _safe_zh_translation(name_en: str) -> str | None:
     return None
 
 
+def _contains_cjk(value: str | None) -> bool:
+    for ch in str(value or ""):
+        if "\u4e00" <= ch <= "\u9fff":
+            return True
+    return False
+
+
+def _safe_localized_items(name_en: str, name_zh: str | None = None) -> list[dict[str, str]]:
+    items = [{"#text": str(name_en or "Unspecified").strip() or "Unspecified", "@xml:lang": "en"}]
+    zh_text = str(name_zh or "").strip()
+    if zh_text and _contains_cjk(zh_text):
+        items.append({"#text": zh_text, "@xml:lang": "zh"})
+        return items
+    translated = _safe_zh_translation(items[0]["#text"])
+    if translated:
+        items.append({"#text": translated, "@xml:lang": "zh"})
+    return items
+
+
+def _sanitize_short_description_items(items: list[Any]) -> list[dict[str, str]]:
+    sanitized: list[dict[str, str]] = []
+    english_text = ""
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("#text") or "").strip()
+        lang = str(item.get("@xml:lang") or "en").strip()
+        if not text:
+            continue
+        if lang == "zh" and not _contains_cjk(text):
+            continue
+        if lang == "en":
+            english_text = english_text or text
+        sanitized.append({"#text": text, "@xml:lang": lang})
+    if not sanitized and english_text:
+        sanitized.append({"#text": english_text, "@xml:lang": "en"})
+    return sanitized
+
+
 def _short_description(mapping: dict[str, Any], flow_property: dict[str, Any]) -> list[dict[str, str]]:
     descriptions = mapping.get("short_description") or flow_property.get("short_description")
     if isinstance(descriptions, list) and descriptions:
-        return descriptions
+        sanitized = _sanitize_short_description_items(descriptions)
+        if sanitized:
+            return sanitized
 
     name_en = str(
         mapping.get("name_en")
@@ -278,19 +357,7 @@ def _short_description(mapping: dict[str, Any], flow_property: dict[str, Any]) -
     ).strip()
     name_zh = str(mapping.get("name_zh") or flow_property.get("name_zh") or "").strip()
 
-    # If seed provides name_zh, use it directly
-    if name_zh:
-        return [
-            {"#text": name_en, "@xml:lang": "en"},
-            {"#text": name_zh, "@xml:lang": "zh"},
-        ]
-
-    # No name_zh in seed — use known translation table; omit zh if unknown
-    zh = _safe_zh_translation(name_en)
-    items = [{"#text": name_en, "@xml:lang": "en"}]
-    if zh:
-        items.append({"#text": zh, "@xml:lang": "zh"})
-    return items
+    return _safe_localized_items(name_en, name_zh)
 
 
 @lru_cache(maxsize=1)
@@ -360,6 +427,45 @@ def get_tidas_flow_property_reference(unit_group: str | None) -> dict[str, Any] 
             "common:shortDescription": _short_description(mapping, flow_property),
         }
 
+    return None
+
+
+def get_tidas_flow_property_bundle_info(unit_group: str | None) -> dict[str, Any] | None:
+    """Return flow-property and unit-group seed rows needed for ZIP bundling."""
+    normalized = normalize_tidas_unit_group(unit_group)
+    if not normalized:
+        return None
+
+    seed = load_tidas_reference_seed()
+    flow_properties = _flow_property_by_uuid(seed)
+    unit_groups = _unit_group_by_name(seed)
+    for mapping in seed.get("unit_group_mappings") or []:
+        if not isinstance(mapping, dict):
+            continue
+        candidates = {
+            normalize_tidas_unit_group(mapping.get("source_unit_group")),
+            normalize_tidas_unit_group(mapping.get("tidas_unit_group")),
+        }
+        aliases = mapping.get("aliases")
+        if isinstance(aliases, list):
+            candidates.update(normalize_tidas_unit_group(alias) for alias in aliases)
+        if normalized not in candidates:
+            continue
+        status = str(mapping.get("mapping_status") or "allowed").strip().lower()
+        if status not in {"allowed", "exact", "approved"}:
+            return None
+        flow_property_uuid = str(mapping.get("flow_property_uuid") or "").strip()
+        unit_group_key = normalize_tidas_unit_group(mapping.get("tidas_unit_group") or mapping.get("source_unit_group"))
+        unit_group = unit_groups.get(unit_group_key)
+        if not flow_property_uuid or not unit_group:
+            return None
+        flow_property = flow_properties.get(flow_property_uuid, {})
+        return {
+            "mapping": mapping,
+            "flow_property": flow_property,
+            "unit_group": unit_group,
+            "reference": get_tidas_flow_property_reference(unit_group.get("name") or unit_group.get("default_unit")),
+        }
     return None
 
 
@@ -469,9 +575,7 @@ def build_tidas_source_dataset(
                         {"#text": "Generated by Nebula LCA", "@xml:lang": "en"},
                     ],
                     "name": {
-                        "baseName": [
-                            {"#text": "Reference Source", "@xml:lang": "en"},
-                        ],
+                        "baseName": _safe_localized_items(short_description_en, short_description_zh),
                         "mixAndLocationTypes": [
                             {"#text": "Reference", "@xml:lang": "en"},
                         ],
@@ -524,9 +628,7 @@ def build_tidas_contact_dataset(
                         {"#text": "Generated by Nebula LCA", "@xml:lang": "en"},
                     ],
                     "name": {
-                        "baseName": [
-                            {"#text": short_description_en, "@xml:lang": "en"},
-                        ],
+                        "baseName": _safe_localized_items(short_description_en, short_description_zh),
                         "mixAndLocationTypes": [
                             {"#text": "Contact", "@xml:lang": "en"},
                         ],
@@ -540,11 +642,68 @@ def build_tidas_contact_dataset(
     }
 
 
+def build_tidas_unit_group_dataset(unit_group: dict[str, Any]) -> dict[str, Any]:
+    """Build a minimal ILCD unitGroupDataSet from the reference seed."""
+    unit_group_uuid = str(unit_group.get("uuid") or "").strip()
+    name = str(unit_group.get("name") or unit_group.get("reference_unit") or "Unit group").strip()
+    version = str(unit_group.get("version") or "01.00.000").strip()
+    reference_unit = str(unit_group.get("reference_unit") or unit_group.get("default_unit") or "").strip()
+    units = []
+    for idx, unit in enumerate(unit_group.get("units") or []):
+        if not isinstance(unit, dict):
+            continue
+        unit_id = str(unit.get("@dataSetInternalID") or idx)
+        unit_name = str(unit.get("name") or "").strip()
+        if not unit_name:
+            continue
+        units.append({
+            "@dataSetInternalID": unit_id,
+            "name": unit_name,
+            "meanValue": str(unit.get("meanValue") if unit.get("meanValue") is not None else 1),
+        })
+
+    return {
+        "unitGroupDataSet": {
+            "@locations": "../ILCDLocations.xml",
+            "@version": "1.1",
+            "@xmlns": "http://lca.jrc.it/ILCD/UnitGroup",
+            "@xmlns:common": "http://lca.jrc.it/ILCD/Common",
+            "@xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+            "@xsi:schemaLocation": "http://lca.jrc.it/ILCD/UnitGroup ../../schemas/ILCD_UnitGroupDataSet.xsd",
+            "unitGroupInformation": {
+                "dataSetInformation": {
+                    "common:UUID": unit_group_uuid,
+                    "name": {"baseName": _safe_localized_items(name)},
+                    "common:generalComment": [{"#text": "Generated by Nebula LCA", "@xml:lang": "en"}],
+                },
+                "quantitativeReference": {
+                    "referenceToReferenceUnit": reference_unit,
+                },
+                "units": {"unit": units},
+            },
+            "administrativeInformation": {
+                "dataEntryBy": {
+                    "common:timeStamp": "2026-01-01T00:00:00Z",
+                    "common:referenceToDataSetFormat": {
+                        "@refObjectId": "a97a0155-0234-4b87-b4ce-a45da52f2a40",
+                        "@type": "source data set",
+                        "@version": "03.00.003",
+                    },
+                },
+                "publicationAndOwnership": {
+                    "common:dataSetVersion": version,
+                },
+            },
+        }
+    }
+
+
 def build_tidas_flow_property_dataset(
     ref_object_id: str,
     ref_uri: str,
     version: str,
-    unit_groups: list[dict[str, Any]],
+    unit_group: dict[str, Any],
+    short_description: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Build a minimal valid ILCD flowPropertyDataSet.
 
@@ -552,9 +711,12 @@ def build_tidas_flow_property_dataset(
         ref_object_id: UUID of the flow property
         ref_uri: URI of the dataset (without path prefix)
         version: dataset version string
-        unit_groups: list of ILCD unit group dicts to include in flowProperty
+        unit_group: unit group seed row referenced by this flow property
     """
-    unit_groups_block = {"unitGroup": unit_groups} if unit_groups else {}
+    unit_group_uuid = str(unit_group.get("uuid") or "").strip()
+    unit_group_version = str(unit_group.get("version") or "01.00.000").strip()
+    unit_group_name = str(unit_group.get("name") or unit_group.get("reference_unit") or "Unit group").strip()
+    descriptions = short_description or _safe_localized_items("Flow Property")
 
     return {
         "flowPropertyDataSet": {
@@ -582,25 +744,25 @@ def build_tidas_flow_property_dataset(
                     "common:dataSetVersion": version,
                 },
             },
-            "flowPropertyInformation": {
+            "flowPropertiesInformation": {
                 "dataSetInformation": {
                     "common:UUID": ref_object_id,
                     "common:generalComment": [
                         {"#text": "Generated by Nebula LCA", "@xml:lang": "en"},
                     ],
                     "name": {
-                        "baseName": [
-                            {"#text": "Flow Property", "@xml:lang": "en"},
-                        ],
-                        "mixAndLocationTypes": [
-                            {"#text": "Flow Property", "@xml:lang": "en"},
-                        ],
-                        "treatmentStandardsRoutes": [
-                            {"#text": "Unspecified", "@xml:lang": "en"},
-                        ],
+                        "baseName": descriptions,
                     },
                 },
-                "flowPropertyVariable": unit_groups_block,
+                "quantitativeReference": {
+                    "referenceToReferenceUnitGroup": {
+                        "@refObjectId": unit_group_uuid,
+                        "@type": "unit group data set",
+                        "@uri": f"../unitgroups/{unit_group_uuid}.xml",
+                        "@version": unit_group_version,
+                        "common:shortDescription": _safe_localized_items(unit_group_name),
+                    }
+                },
             },
         }
     }
