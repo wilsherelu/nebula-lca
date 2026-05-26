@@ -99,6 +99,7 @@ TIDAS_COMPLIANCE_REF = {
     "@refObjectId": "d92a1a12-2545-49e2-a585-55c259997756",
     "@type": "source data set",
     "@uri": "../sources/d92a1a12-2545-49e2-a585-55c259997756.xml",
+    "@version": "03.00.003",
     "common:shortDescription": {"#text": "ILCD Data Network - Entry-level", "@xml:lang": "en"},
 }
 
@@ -826,7 +827,19 @@ def _classification_information(label: Any | None, dataset_type: str | None = No
     if dataset_type is None:
         dataset_type = "flow"
 
+    normalized_type = str(dataset_type or "").strip().lower()
     catalog_entries = lookup_classification_entries(dataset_type, [])
+    if normalized_type in {"process", "lifecyclemodel"} and len(catalog_entries) < 4:
+        catalog_entries = [
+            {"classId": "C", "level": 0, "name": "Manufacturing"},
+            {"classId": "20", "level": 1, "name": "Manufacture of chemicals and chemical products"},
+            {
+                "classId": "201",
+                "level": 2,
+                "name": "Manufacture of basic chemicals, fertilizers and nitrogen compounds, plastics and synthetic rubber in primary forms",
+            },
+            {"classId": "2011", "level": 3, "name": "Manufacture of basic chemicals"},
+        ]
 
     classes = []
     if catalog_entries:
@@ -897,6 +910,8 @@ def _common_admin_information(dataset_version: str = TIDAS_DEFAULT_DATASET_VERSI
         "publicationAndOwnership": {
             "common:dataSetVersion": dataset_version,
             "common:referenceToOwnershipOfDataSet": dict(TIDAS_OWNERSHIP_REF),
+            "common:copyright": "false",
+            "common:licenseType": "Free of charge for all users and uses",
         },
     }
     if permanent_uri:
@@ -1033,33 +1048,31 @@ def _common_modelling_and_validation(type_of_dataset: str) -> dict:
         },
     }
 
-    # Try catalog skeleton first
-    validation_skel = get_catalog_skeleton("validation")
-    if isinstance(validation_skel, dict):
-        result["complianceDeclarations"] = validation_skel.get("complianceDeclarations", {})
-    else:
-        result["complianceDeclarations"] = {
-            "compliance": {
-                "common:approvalOfOverallCompliance": "Fully compliant",
-                "common:referenceToComplianceSystem": dict(TIDAS_COMPLIANCE_REF),
-            }
-        }
+    result["complianceDeclarations"] = _catalog_compliance_declarations()
 
     return result
 
 
 def _catalog_validation_block() -> dict[str, Any]:
-    validation_skel = get_catalog_skeleton("validation")
-    if isinstance(validation_skel, dict):
-        return validation_skel
     return {
-        "complianceDeclarations": {
-            "compliance": {
-                "common:approvalOfOverallCompliance": "Fully compliant",
-                "common:referenceToComplianceSystem": dict(TIDAS_COMPLIANCE_REF),
-            }
+        "review": {
+            "common:referenceToNameOfReviewerAndInstitution": dict(TIDAS_OWNERSHIP_REF),
+            "common:otherReviewDetails": _localized_items("Not reviewed.", "Not reviewed."),
         }
     }
+
+
+def _catalog_compliance_declarations() -> dict[str, Any]:
+    compliance = {
+        "common:referenceToComplianceSystem": dict(TIDAS_COMPLIANCE_REF),
+        "common:approvalOfOverallCompliance": "Fully compliant",
+        "common:nomenclatureCompliance": "Fully compliant",
+        "common:methodologicalCompliance": "Fully compliant",
+        "common:reviewCompliance": "Not defined",
+        "common:documentationCompliance": "Fully compliant",
+        "common:qualityCompliance": "Fully compliant",
+    }
+    return {"compliance": compliance}
 
 
 def _process_modelling_and_validation() -> dict:
@@ -1074,6 +1087,7 @@ def _process_modelling_and_validation() -> dict:
             "dataCutOffAndCompletenessPrinciples": _localized_items(TIDAS_GENERATED_COMMENT, TIDAS_GENERATED_COMMENT),
         },
         "validation": _catalog_validation_block(),
+        "complianceDeclarations": _catalog_compliance_declarations(),
     }
 
 
@@ -1583,6 +1597,7 @@ def _build_model_data(
                 "dataCutOffAndCompletenessPrinciples": _localized_items(TIDAS_GENERATED_COMMENT, TIDAS_GENERATED_COMMENT),
             },
             "validation": _catalog_validation_block(),
+            "complianceDeclarations": _catalog_compliance_declarations(),
         },
     }
 

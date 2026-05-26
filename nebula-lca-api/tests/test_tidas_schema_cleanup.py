@@ -169,7 +169,7 @@ def test_process_validation_uses_catalog_skeleton():
     validation = mv["validation"]
 
     assert "review" in validation
-    assert "complianceDeclarations" in validation
+    assert "complianceDeclarations" in mv
 
 
 # ── _classification_information ──────────────────────────────────────────
