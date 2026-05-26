@@ -1528,12 +1528,14 @@ def _build_model_data(
     connections_by_instance = _build_lifecycle_process_connections(graph_json, process_instances)
     for instance in process_instances:
         process_uuid = instance["process_uuid"]
-        process_instance_items.append({
+        item = {
             "@dataSetInternalID": instance["internal_id"],
             "@multiplicationFactor": "1",
-            "connections": connections_by_instance.get(instance["internal_id"], {"connection": []}),
             "referenceToProcess": _reference_to_process(process_uuid, process_uuid),
-        })
+        }
+        if instance["internal_id"] in connections_by_instance:
+            item["connections"] = connections_by_instance[instance["internal_id"]]
+        process_instance_items.append(item)
 
     model_dataset = {
         **_model_root_attrs(),
@@ -1674,7 +1676,8 @@ def _build_manifest(
     ref_entries: list[dict] = []
     for ref_file in reference_files or []:
         ref_table = ref_file.split("/")[0]
-        ref_id = Path(ref_file).stem
+        ref_stem = Path(ref_file).stem
+        ref_id = ref_stem.rsplit("_", 1)[0]
         ref_entries.append({
             "table": ref_table,
             "id": ref_id,
@@ -1683,6 +1686,19 @@ def _build_manifest(
             "rule_verification": True,
         })
     entries.extend(ref_entries)
+    counts = {
+        "contacts": 0,
+        "sources": 0,
+        "unitgroups": 0,
+        "flowproperties": 0,
+        "flows": len(flow_uuids),
+        "processes": len(process_uuids),
+        "lifecyclemodels": 1,
+    }
+    for entry in ref_entries:
+        table = entry["table"]
+        if table in counts:
+            counts[table] += 1
 
     return {
         "format": "tiangong-tidas-package",
@@ -1697,12 +1713,7 @@ def _build_manifest(
             }
         ],
         "entries": entries,
-        "counts": {
-            "lifecyclemodels": 1,
-            "flows": len(flow_uuids),
-            "processes": len(process_uuids),
-            "references": len(ref_entries),
-        },
+        "counts": counts,
         "total_count": len(entries),
     }
 
@@ -1731,48 +1742,42 @@ def _build_lifecycle_process_connections(
         if process_uuid:
             process_to_internal[str(process_uuid)] = internal_id
 
-    connections_by_source: dict[str, list[dict]] = {}
-    for idx, edge in enumerate(graph_json.get("exchanges", []) or []):
+    grouped: dict[str, dict[str, list[dict]]] = {}
+    for edge in graph_json.get("exchanges", []) or []:
         if not isinstance(edge, dict):
             continue
         from_ref = _edge_endpoint(edge, "fromNode", "sourceNodeId", "sourceNode", "from")
         to_ref = _edge_endpoint(edge, "toNode", "targetNodeId", "targetNode", "to")
+        flow_uuid = str(edge.get("flowUuid") or "").strip()
         if not from_ref or not to_ref:
             continue
 
         from_internal = node_to_internal.get(from_ref) or process_to_internal.get(from_ref)
         to_internal = node_to_internal.get(to_ref) or process_to_internal.get(to_ref)
-        if from_internal is None or to_internal is None or from_internal == to_internal:
+        if from_internal is None or to_internal is None or from_internal == to_internal or not flow_uuid:
             continue
 
-        connection = {
-            "@dataSetInternalID": str(idx),
-            "referenceToProcessInstance": to_internal,
-            "referenceToExchange": str(
-                edge.get("sourcePortId")
-                or edge.get("targetPortId")
-                or edge.get("flowUuid")
-                or edge.get("id")
-                or idx
-            ),
-            "json_tg": {
-                "edge_id": edge.get("id"),
-                "fromNode": from_ref,
-                "toNode": to_ref,
-                "flowUuid": edge.get("flowUuid"),
-                "sourcePortId": edge.get("sourcePortId"),
-                "targetPortId": edge.get("targetPortId"),
-            },
+        downstream = {
+            "@id": to_internal,
+            "@flowUUID": str(edge.get("targetFlowUuid") or edge.get("targetFlowUUID") or flow_uuid),
         }
-        flow_uuid = edge.get("flowUuid")
-        if flow_uuid:
-            connection["referenceToFlowDataSet"] = _reference_to_flow(str(flow_uuid), str(flow_uuid))
-        connections_by_source.setdefault(from_internal, []).append(connection)
+        target_location = edge.get("targetLocation") or edge.get("location")
+        if target_location:
+            downstream["@location"] = str(target_location)
+        grouped.setdefault(from_internal, {}).setdefault(flow_uuid, []).append(downstream)
 
-    return {
-        internal_id: {"connection": items}
-        for internal_id, items in connections_by_source.items()
-    }
+    connections_by_source: dict[str, dict] = {}
+    for internal_id, flows in grouped.items():
+        output_exchanges: list[dict] = []
+        for flow_uuid, downstreams in sorted(flows.items()):
+            output_exchanges.append({
+                "@flowUUID": flow_uuid,
+                "downstreamProcess": downstreams[0] if len(downstreams) == 1 else downstreams,
+            })
+        connections_by_source[internal_id] = {
+            "outputExchange": output_exchanges[0] if len(output_exchanges) == 1 else output_exchanges
+        }
+    return connections_by_source
 
 
 def build_tidas_readiness(
@@ -2294,7 +2299,7 @@ def export_bundle(
             for ref_uuid in sorted(ref_uuids):
                 desc_key = (ref_type, ref_uuid)
                 desc_en, desc_zh = _BUNDLED_REFERENCE_DESCRIPTIONS[desc_key]
-                file_path = f"{ref_type}s/{ref_uuid}.json"
+                file_path = f"{ref_type}s/{ref_uuid}_{dataset_version}.json"
                 reference_files.append(file_path)
 
                 if ref_type == "source":
@@ -2308,7 +2313,7 @@ def export_bundle(
                 )
 
         for unit_group_uuid, unit_group in sorted(bundled_unit_groups.items()):
-            file_path = f"unitgroups/{unit_group_uuid}.json"
+            file_path = f"unitgroups/{unit_group_uuid}_{dataset_version}.json"
             reference_files.append(file_path)
             zf.writestr(
                 file_path,
@@ -2318,7 +2323,7 @@ def export_bundle(
         for flow_property_uuid, bundle_info in sorted(bundled_flow_properties.items()):
             reference = bundle_info.get("reference") or {}
             unit_group = bundle_info.get("unit_group") or {}
-            file_path = f"flowproperties/{flow_property_uuid}.json"
+            file_path = f"flowproperties/{flow_property_uuid}_{dataset_version}.json"
             reference_files.append(file_path)
             zf.writestr(
                 file_path,
