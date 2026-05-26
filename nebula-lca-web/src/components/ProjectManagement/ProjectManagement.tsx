@@ -240,10 +240,19 @@ const getLocationParentCode = (code: string, options: LocationCodeOption[]): str
   const parent = code.split("-")[0];
   return codes.has(parent) ? parent : code;
 };
-const getLocationChildOptions = (parentCode: string, options: LocationCodeOption[]): LocationCodeOption[] => {
+const getLocationSegmentCount = (code: string): number => code.split("-").filter(Boolean).length;
+const getLocationLevelOptions = (parentCode: string, options: LocationCodeOption[]): LocationCodeOption[] => {
   if (!parentCode) return [];
   const prefix = `${parentCode}-`;
-  return options.filter((item) => item.code.startsWith(prefix));
+  const expectedSegments = getLocationSegmentCount(parentCode) + 1;
+  return options.filter((item) => item.code.startsWith(prefix) && getLocationSegmentCount(item.code) === expectedSegments);
+};
+const getSelectedLocationAtLevel = (code: string, level: number, options: LocationCodeOption[]): string => {
+  if (!code) return "";
+  const parts = code.split("-");
+  if (parts.length < level) return "";
+  const candidate = parts.slice(0, level).join("-");
+  return options.some((item) => item.code === candidate) ? candidate : "";
 };
 const normalizeSourcePolicy = (value: unknown): SourcePolicy => {
   if (value === "tidas_compliant" || value === "ecoinvent_strict" || value === "explicit_mapped_mixed") {
@@ -596,8 +605,10 @@ function CreateProjectModal(props: {
   const normalizedLocation = normalizeProjectGeographyInput(form.geography, locationOptions);
   const selectedParentLocation = getLocationParentCode(normalizedLocation, locationOptions);
   const parentLocationOptions = getParentLocationOptions(locationOptions);
-  const childLocationOptions = getLocationChildOptions(selectedParentLocation, locationOptions);
-  const selectedChildLocation = normalizedLocation !== selectedParentLocation ? normalizedLocation : "";
+  const level2LocationOptions = getLocationLevelOptions(selectedParentLocation, locationOptions);
+  const selectedLevel2Location = getSelectedLocationAtLevel(normalizedLocation, 2, locationOptions);
+  const level3LocationOptions = getLocationLevelOptions(selectedLevel2Location, locationOptions);
+  const selectedLevel3Location = getSelectedLocationAtLevel(normalizedLocation, 3, locationOptions);
 
   const submit = async () => {
     if (!form.projectName.trim()) {
@@ -692,13 +703,26 @@ function CreateProjectModal(props: {
                   </option>
                 ))}
               </select>
-              {childLocationOptions.length > 0 && (
+              {level2LocationOptions.length > 0 && (
                 <select
-                  value={selectedChildLocation}
+                  value={selectedLevel2Location}
                   onChange={(event) => setField("geography", event.target.value || selectedParentLocation)}
                 >
                   <option value="">{zh ? "全部 / 不细分" : "All / no subdivision"}</option>
-                  {childLocationOptions.map((item) => (
+                  {level2LocationOptions.map((item) => (
+                    <option key={item.code} value={item.code}>
+                      {formatLocationOptionLabel(item, uiLanguage)}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {level3LocationOptions.length > 0 && (
+                <select
+                  value={selectedLevel3Location}
+                  onChange={(event) => setField("geography", event.target.value || selectedLevel2Location)}
+                >
+                  <option value="">{zh ? "全部 / 不细分到城市" : "All / no city subdivision"}</option>
+                  {level3LocationOptions.map((item) => (
                     <option key={item.code} value={item.code}>
                       {formatLocationOptionLabel(item, uiLanguage)}
                     </option>
