@@ -10,6 +10,15 @@ export type ProjectListItem = {
   latest_version: number | null;
   latest_version_created_at: string | null;
   source_policy?: SourcePolicy | null;
+  reference_product?: string | null;
+  functional_unit?: string | null;
+  system_boundary?: string | null;
+  time_representativeness?: string | null;
+  geography?: string | null;
+  description?: string | null;
+  process_count?: number | null;
+  flow_count?: number | null;
+  status?: string | null;
 };
 export type SourcePolicy = "open_mixed" | "tidas_compliant" | "ecoinvent_strict" | "explicit_mapped_mixed";
 type ProjectApiItem = {
@@ -192,6 +201,29 @@ const sourcePolicyOptions: Array<{ value: SourcePolicy; zh: string; en: string }
   { value: "tidas_compliant", zh: "天工/TIDAS 合规模式", en: "TIDAS Compliant" },
   { value: "ecoinvent_strict", zh: "ecoinvent 严格模式", en: "ecoinvent Strict" },
 ];
+const locationCodeOptions = ["GLO", "CN", "CN-SH", "CN-BJ", "RoW"];
+const normalizeProjectGeographyInput = (value: string): string => {
+  const raw = value.trim();
+  const key = raw.toLowerCase();
+  const aliases: Record<string, string> = {
+    "中国": "CN",
+    "全国": "CN",
+    "china": "CN",
+    "中华人民共和国": "CN",
+    "上海": "CN-SH",
+    "上海市": "CN-SH",
+    "shanghai": "CN-SH",
+    "北京": "CN-BJ",
+    "北京市": "CN-BJ",
+    "beijing": "CN-BJ",
+    "全球": "GLO",
+    "global": "GLO",
+    "world": "GLO",
+    "row": "RoW",
+    "rest of world": "RoW",
+  };
+  return aliases[raw] ?? aliases[key] ?? raw;
+};
 const normalizeSourcePolicy = (value: unknown): SourcePolicy => {
   if (value === "tidas_compliant" || value === "ecoinvent_strict" || value === "explicit_mapped_mixed") {
     return value;
@@ -457,20 +489,20 @@ const mapFlowTypeLabel = (businessType: FlowBusinessType, zh: boolean): string =
   return "Product Flow";
 };
 const toProjectRows = (projects: ProjectListItem[]): ProjectRow[] =>
-  projects.map((item, index) => ({
+  projects.map((item) => ({
     projectId: item.project_id,
     projectName: item.name,
     sourcePolicy: normalizeSourcePolicy(item.source_policy),
-    referenceProduct: ["柴油", "电力", "蒸汽", "乙烯"][index % 4],
-    functionalUnit: "",
-    systemBoundary: ["从摇篮到工厂", "从工厂到工厂"][index % 2],
-    timeRepresentativeness: ["2025", "2024", "2023"][index % 3],
-    geography: ["中国", "全球", "亚太"][index % 3],
-    description: "",
-    processCount: 12 + (index % 9) * 7,
-    flowCount: 28 + (index % 11) * 9,
+    referenceProduct: String(item.reference_product ?? ""),
+    functionalUnit: String(item.functional_unit ?? ""),
+    systemBoundary: String(item.system_boundary ?? ""),
+    timeRepresentativeness: String(item.time_representativeness ?? ""),
+    geography: String(item.geography ?? ""),
+    description: String(item.description ?? ""),
+    processCount: Number(item.process_count ?? 0),
+    flowCount: Number(item.flow_count ?? 0),
     lastModified: formatTime(item.latest_version_created_at ?? item.created_at),
-    status: item.latest_version ? "启用" : "草稿",
+    status: String(item.status ?? (item.latest_version ? "启用" : "草稿")),
     latestVersion: item.latest_version,
   }));
 
@@ -509,7 +541,10 @@ function CreateProjectModal(props: {
       return;
     }
     setErrorText("");
-    await onSubmit(form);
+    await onSubmit({
+      ...form,
+      geography: normalizeProjectGeographyInput(form.geography),
+    });
     setForm(defaultForm);
     onClose();
   };
@@ -540,23 +575,49 @@ function CreateProjectModal(props: {
           </label>
           <label>
             <span>{zh ? "参考产品" : "Reference Product"}</span>
-            <input value={form.referenceProduct} onChange={(e) => setField("referenceProduct", e.target.value)} />
+            <input
+              value={form.referenceProduct}
+              placeholder={zh ? "可留空，导出时优先从目标产品推导" : "Optional; inferred from target product first"}
+              onChange={(e) => setField("referenceProduct", e.target.value)}
+            />
           </label>
           <label>
             <span>{zh ? "功能单位" : "Functional Unit"}</span>
-            <input value={form.functionalUnit} onChange={(e) => setField("functionalUnit", e.target.value)} />
+            <input
+              value={form.functionalUnit}
+              placeholder={zh ? "可留空，优先从 reference flow 推导" : "Optional; inferred from reference flow first"}
+              onChange={(e) => setField("functionalUnit", e.target.value)}
+            />
           </label>
           <label>
             <span>{zh ? "系统边界" : "System Boundary"}</span>
-            <input value={form.systemBoundary} onChange={(e) => setField("systemBoundary", e.target.value)} />
+            <input
+              value={form.systemBoundary}
+              placeholder={zh ? "文档字段，例如 cradle-to-gate" : "Documentation field, e.g. cradle-to-gate"}
+              onChange={(e) => setField("systemBoundary", e.target.value)}
+            />
           </label>
           <label>
             <span>{zh ? "时间代表性" : "Time Representativeness"}</span>
-            <input value={form.timeRepresentativeness} onChange={(e) => setField("timeRepresentativeness", e.target.value)} />
+            <input
+              value={form.timeRepresentativeness}
+              placeholder={zh ? "文档字段，例如 2024 或 2022-2024" : "Documentation field, e.g. 2024 or 2022-2024"}
+              onChange={(e) => setField("timeRepresentativeness", e.target.value)}
+            />
           </label>
           <label>
             <span>{zh ? "地理代表性" : "Geography"}</span>
-            <input value={form.geography} onChange={(e) => setField("geography", e.target.value)} />
+            <input
+              list="pm-tidas-location-codes"
+              value={form.geography}
+              placeholder="CN / CN-SH / GLO"
+              onChange={(e) => setField("geography", e.target.value)}
+            />
+            <datalist id="pm-tidas-location-codes">
+              {locationCodeOptions.map((code) => (
+                <option key={code} value={code} />
+              ))}
+            </datalist>
           </label>
           <label className="span-2">
             <span>{zh ? "说明" : "Description"}</span>
@@ -1557,7 +1618,7 @@ export function ProjectManagement(props: Props) {
           functional_unit: form.functionalUnit.trim() || null,
           system_boundary: form.systemBoundary.trim() || null,
           time_representativeness: form.timeRepresentativeness.trim() || null,
-          geography: form.geography.trim() || null,
+          geography: normalizeProjectGeographyInput(form.geography) || null,
           description: form.description.trim() || null,
         }),
       });

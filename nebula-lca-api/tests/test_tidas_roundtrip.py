@@ -56,6 +56,8 @@ def client():
 
 CO2_FOSSIL_UUID = "08a91e70-3ddc-11dd-923d-0050c2490048"
 CHEMICAL_A_UUID = "11111111-2222-4333-8444-555555555555"
+CUSTOM_FLOW_UUID = "22222222-3333-4444-8555-666666666666"
+TIANGONG_PROCESS_UUID = "33333333-4444-4555-8666-777777777777"
 
 
 def _seed_basic_catalog(db) -> None:
@@ -417,7 +419,7 @@ class TestTidasExport:
             db.close()
 
     def test_export_platform_light_default_excludes_reference_datasets(self, client):
-        """Default platform-light ZIP only contains processes, lifecycle model, manifest, and report."""
+        """Default hybrid ZIP carries local processes and references platform flows."""
         db = _db.SessionLocal()
         try:
             _seed_basic_catalog(db)
@@ -476,9 +478,195 @@ class TestTidasExport:
                 assert not any(name.startswith("contacts/") for name in namelist)
                 manifest = json.loads(zf.read("manifest.json"))
                 assert manifest["counts"]["flows"] == 0
+                assert manifest["counts"]["processes"] == 1
                 report = json.loads(zf.read("export_report.json"))
-                assert report["bundle_mode"] == "tiangong_platform_light"
+                assert report["bundle_mode"] == "tiangong_reference_hybrid"
                 assert report["referenced_flow_count"] == 1
+                assert report["included_process_count"] == 1
+        finally:
+            db.close()
+
+    def test_hybrid_references_tidas_process_and_flow(self, client):
+        """TIDAS-origin process and flow are only referenced by the lifecycle model."""
+        db = _db.SessionLocal()
+        try:
+            _seed_basic_catalog(db)
+            db.merge(FlowRecord(
+                flow_uuid=CHEMICAL_A_UUID,
+                flow_name="chemical A",
+                flow_type="Product flow",
+                default_unit="kg",
+                unit_group="Units of mass",
+                source="tiangong",
+            ))
+            db.merge(ReferenceProcess(
+                process_uuid=TIANGONG_PROCESS_UUID,
+                process_name="Tiangong chemical A production",
+                process_type="unit_process",
+                reference_flow_uuid=CHEMICAL_A_UUID,
+                source_file="tiangong official package",
+            ))
+            db.commit()
+            graph = {
+                "functionalUnit": "1 kg chemical A",
+                "nodes": [
+                    {
+                        "id": "np-platform",
+                        "node_kind": "unit_process",
+                        "mode": "normalized",
+                        "process_uuid": TIANGONG_PROCESS_UUID,
+                        "name": "Tiangong chemical A production",
+                        "location": "GLO",
+                        "reference_product": "chemical A",
+                        "inputs": [],
+                        "outputs": [
+                            {
+                                "id": "out-product",
+                                "flowUuid": CHEMICAL_A_UUID,
+                                "name": "chemical A",
+                                "unit": "kg",
+                                "amount": 1.0,
+                                "type": "technosphere",
+                                "direction": "output",
+                                "isProduct": True,
+                            }
+                        ],
+                    }
+                ],
+                "exchanges": [],
+            }
+            project_id = _create_project_with_graph(client, db, graph)
+
+            resp = client.post("/api/export/tidas/bundle", json={"project_id": project_id})
+            assert resp.status_code == 200, resp.text
+            with zipfile.ZipFile(io.BytesIO(resp.content), "r") as zf:
+                namelist = set(zf.namelist())
+                assert not any(name.startswith("processes/") for name in namelist)
+                assert not any(name.startswith("flows/") for name in namelist)
+                assert any(name.startswith("lifecyclemodels/") for name in namelist)
+                report = json.loads(zf.read("export_report.json"))
+                assert report["referenced_process_count"] == 1
+                assert report["included_process_count"] == 0
+                assert report["referenced_flow_count"] == 1
+                assert report["included_flow_count"] == 0
+        finally:
+            db.close()
+
+    def test_hybrid_includes_custom_tidas_compatible_flow(self, client):
+        """Self-built TIDAS-compatible flows are carried with local processes."""
+        db = _db.SessionLocal()
+        try:
+            _seed_basic_catalog(db)
+            db.merge(FlowRecord(
+                flow_uuid=CUSTOM_FLOW_UUID,
+                flow_name="custom product",
+                flow_type="Product flow",
+                default_unit="kg",
+                unit_group="Units of mass",
+                source="user_custom",
+                is_custom=True,
+                tidas_compatible=True,
+                tidas_unit_group="Units of mass",
+            ))
+            db.commit()
+            graph = {
+                "functionalUnit": "1 kg custom product",
+                "nodes": [
+                    {
+                        "id": "np-custom",
+                        "node_kind": "unit_process",
+                        "mode": "normalized",
+                        "process_uuid": "proc-custom",
+                        "name": "Custom process",
+                        "location": "GLO",
+                        "reference_product": "custom product",
+                        "inputs": [],
+                        "outputs": [
+                            {
+                                "id": "out-custom",
+                                "flowUuid": CUSTOM_FLOW_UUID,
+                                "name": "custom product",
+                                "unit": "kg",
+                                "amount": 1.0,
+                                "type": "technosphere",
+                                "direction": "output",
+                                "isProduct": True,
+                            }
+                        ],
+                    }
+                ],
+                "exchanges": [],
+            }
+            project_id = _create_project_with_graph(client, db, graph)
+
+            resp = client.post("/api/export/tidas/bundle", json={"project_id": project_id})
+            assert resp.status_code == 200, resp.text
+            with zipfile.ZipFile(io.BytesIO(resp.content), "r") as zf:
+                namelist = set(zf.namelist())
+                assert any(name.startswith("processes/") for name in namelist)
+                assert any(name.startswith(f"flows/{CUSTOM_FLOW_UUID}_") for name in namelist)
+                assert not any(name.startswith("flowproperties/") for name in namelist)
+                assert not any(name.startswith("unitgroups/") for name in namelist)
+                manifest = json.loads(zf.read("manifest.json"))
+                assert manifest["counts"]["flows"] == 1
+                assert manifest["counts"]["processes"] == 1
+                report = json.loads(zf.read("export_report.json"))
+                assert report["included_flow_count"] == 1
+                assert report["included_process_count"] == 1
+        finally:
+            db.close()
+
+    def test_hybrid_blocks_custom_flow_without_tidas_compatibility(self, client):
+        """Custom flows must be explicitly marked TIDAS-compatible before hybrid export."""
+        db = _db.SessionLocal()
+        try:
+            _seed_basic_catalog(db)
+            db.merge(FlowRecord(
+                flow_uuid=CUSTOM_FLOW_UUID,
+                flow_name="custom product",
+                flow_type="Product flow",
+                default_unit="kg",
+                unit_group="Units of mass",
+                source="user_custom",
+                is_custom=True,
+                tidas_compatible=False,
+            ))
+            db.commit()
+            graph = {
+                "functionalUnit": "1 kg custom product",
+                "nodes": [
+                    {
+                        "id": "np-custom",
+                        "node_kind": "unit_process",
+                        "mode": "normalized",
+                        "process_uuid": "proc-custom",
+                        "name": "Custom process",
+                        "location": "GLO",
+                        "reference_product": "custom product",
+                        "inputs": [],
+                        "outputs": [
+                            {
+                                "id": "out-custom",
+                                "flowUuid": CUSTOM_FLOW_UUID,
+                                "name": "custom product",
+                                "unit": "kg",
+                                "amount": 1.0,
+                                "type": "technosphere",
+                                "direction": "output",
+                                "isProduct": True,
+                            }
+                        ],
+                    }
+                ],
+                "exchanges": [],
+            }
+            project_id = _create_project_with_graph(client, db, graph)
+
+            resp = client.post("/api/export/tidas/bundle/preview", json={"project_id": project_id})
+            assert resp.status_code == 200, resp.text
+            payload = resp.json()
+            assert payload["can_export"] is False
+            assert any("TIDAS-compatible" in error for error in payload["errors"])
         finally:
             db.close()
 
