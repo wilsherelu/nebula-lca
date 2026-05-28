@@ -34,6 +34,12 @@ interface JobListResponse {
   total: number;
 }
 
+interface LciaMethodStatus {
+  ecoinvent_lcia_runtime_available?: boolean;
+  ecoinvent_elementary_flow_count?: number;
+  ecoinvent_lci_vector_count?: number;
+}
+
 const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
 const API_BASE = RAW_API_BASE.endsWith("/api") ? RAW_API_BASE : `${RAW_API_BASE}/api`;
 const RAW_IMPORT_API_BASE = ((import.meta.env.VITE_IMPORT_API_BASE_URL as string | undefined) ?? "").replace(/\/$/, "");
@@ -65,16 +71,16 @@ const zhText = {
   packagePlaceholder: "\u8bf7\u9009\u62e9 .7z \u6216 .xlsx \u6587\u4ef6",
   guide: "\u6570\u636e\u8d2d\u4e70\u4e0e\u4e0b\u8f7d\u6307\u5357",
   guideTitle: "ecoinvent \u6570\u636e\u5e93\u8d2d\u4e70\u4e0e\u4e0b\u8f7d",
-  guideIntro: "\u5148\u8d2d\u4e70 ecoinvent \u6388\u6743\uff0c\u518d\u4ece\u5b98\u65b9\u6216\u5408\u4f5c\u5e73\u53f0\u4e0b\u8f7d LCI \u4e0e LCIA \u4e24\u4e2a\u538b\u7f29\u5305\u3002",
+  guideIntro: "先购买 ecoinvent 授权。中文用户可从 CarbonX/HIQLCD 价格页了解购买方式，英文用户可从 ecoinvent 官网查看许可证与 ecoQuery 入口。",
   guideChinese: "\u4e2d\u6587\u8d2d\u4e70\u9875\u9762",
   guideEnglish: "\u82f1\u6587\u5b98\u65b9\u9875\u9762",
   guidePackages: "\u9700\u8981\u4e0b\u8f7d\u7684\u4e24\u4e2a\u538b\u7f29\u5305",
-  guideNote: "\u5bfc\u5165 LCI \u65f6\u9009 cutoff_lci_ecoSpold02.7z\uff1b\u5bfc\u5165 LCIA Runtime \u65f6\u9009 LCIA_implementation.7z\u3002\u8bf7\u4fdd\u7559\u539f\u59cb\u538b\u7f29\u5305\u6587\u4ef6\u540d\uff0c\u4e0d\u8981\u5148\u89e3\u538b\u518d\u4e0a\u4f20\u3002",
+  guideNote: "购买后进入下载区，通常会看到不同版本号与不同产品系统模型的压缩包。LCA 实务中一般推荐使用 cutoff 模型；实际文件名前面可能带有版本前缀，例如 ecoinvent 3.x。只要文件名结尾分别匹配 cutoff_lci_ecoSpold02.7z 与 LCIA_implementation.7z 即可。导入时先上传 LCI 包，LCIA 包用于生成 LCIA Runtime；请保留原始压缩包，不要先解压再上传。",
   advanced: "\u9ad8\u7ea7\u8bbe\u7f6e",
   hideAdvanced: "\u6536\u8d77\u9ad8\u7ea7\u8bbe\u7f6e",
   workers: "\u89e3\u6790\u5e76\u53d1\u6570",
   limit: "\u5bfc\u5165\u524d N \u4e2a\u6570\u636e\u96c6\uff08\u7559\u7a7a = \u5168\u91cf\uff09",
-  fullImportHint: "\u9ed8\u8ba4\u5168\u91cf\u5bfc\u5165\uff0c8 \u5e76\u53d1\u89e3\u6790\uff1b\u5e38\u89c1 Docker/\u5f00\u53d1\u673a\u9884\u4f30\u7ea6 1 \u5c0f\u65f6\uff0c\u5177\u4f53\u53d6\u51b3\u4e8e CPU\u3001\u78c1\u76d8\u548c\u6570\u636e\u5305\u7248\u672c\u3002",
+  fullImportHint: "完整使用需分别导入两个压缩包：先导入 LCI 包（cutoff_lci_ecoSpold02.7z）建立过程/清单数据库，再导入 LCIA 包（LCIA_implementation.7z）生成 LCIA Runtime。默认全量导入，8 并发解析；常见 Docker/开发机预估约 1 小时。可在高级设置中做分批导入、覆盖导入；上传与导入任务支持断点续传/续跑。",
   full: "\u5168\u91cf",
   fileSize: "\u6587\u4ef6\u5927\u5c0f",
   dataType: "\u6570\u636e\u7c7b\u578b",
@@ -91,6 +97,8 @@ const zhText = {
   retrying: "\u91cd\u8bd5\u4e2d...",
   close: "\u5173\u95ed",
   generateRuntime: "\u751f\u6210 LCIA Runtime",
+  lciaMissingWarningTitle: "已导入 ecoinvent LCI/基本流，但 LCIA Runtime 不可用",
+  lciaMissingWarningBody: "请继续上传 LCIA_implementation.7z 并完成导入。否则 ecoinvent LCI 或 ecoinvent 基本流无法进行 LCIA 计算。",
   importComplete: "\u5bfc\u5165\u5b8c\u6210",
   selectFile: "\u8bf7\u9009\u62e9\u6587\u4ef6",
   processed: "\u5df2\u5904\u7406",
@@ -101,6 +109,10 @@ const zhText = {
   updated: "\u66f4\u65b0",
   skipped: "\u8df3\u8fc7",
   vectors: "\u5411\u91cf",
+  indicators: "LCIA \u6307\u6807",
+  factors: "LCIA \u56e0\u5b50",
+  matched: "CF \u5339\u914d",
+  unmatched: "CF \u672a\u5339\u914d",
   reused: "\u590d\u7528",
   emptyVectors: "\u7a7a\u5411\u91cf",
   nnz: "\u975e\u96f6\u9879",
@@ -121,16 +133,16 @@ const enText = {
   packagePlaceholder: "Choose .7z or .xlsx file",
   guide: "Purchase and download guide",
   guideTitle: "ecoinvent purchase and download",
-  guideIntro: "Purchase an ecoinvent license first, then download the LCI and LCIA archives from the official or partner platform.",
+  guideIntro: "Purchase an ecoinvent license first. Chinese users can check the CarbonX/HIQLCD pricing page; English users can use the ecoinvent website for license and ecoQuery access.",
   guideChinese: "Chinese purchase page",
   guideEnglish: "English official page",
   guidePackages: "Required archive files",
-  guideNote: "Use cutoff_lci_ecoSpold02.7z for LCI import and LCIA_implementation.7z for LCIA Runtime import. Keep the original archive names and upload the archives directly.",
+  guideNote: "After purchase, the download area may contain archives for multiple versions and product system models. In LCA practice, the cutoff model is generally recommended. The actual archive names may include a version prefix such as ecoinvent 3.x; what matters is that the names end with cutoff_lci_ecoSpold02.7z and LCIA_implementation.7z. Upload the LCI archive first; the LCIA archive is used to generate the LCIA Runtime. Keep the original archives and do not unzip before upload.",
   advanced: "Advanced",
   hideAdvanced: "Hide advanced",
   workers: "Parser Workers",
   limit: "Import first N datasets (empty = full)",
-  fullImportHint: "Default is full import with 8 parser workers. On a typical Docker or development machine, expect about 1 hour; actual time depends on CPU, disk, and package version.",
+  fullImportHint: "Full functionality requires importing two archives: import the LCI archive (cutoff_lci_ecoSpold02.7z) first to build the process/inventory database, then import the LCIA archive (LCIA_implementation.7z) to generate the LCIA Runtime. Default is full import with 8 parser workers; expect about 1 hour on a typical Docker or development machine. Advanced settings support batched import and overwrite import; upload and import jobs are resumable.",
   full: "full",
   fileSize: "File size",
   dataType: "Data type",
@@ -147,6 +159,8 @@ const enText = {
   retrying: "Retrying...",
   close: "Close",
   generateRuntime: "Generate LCIA Runtime",
+  lciaMissingWarningTitle: "Ecoinvent LCI/elementary flows are imported, but the LCIA Runtime is unavailable",
+  lciaMissingWarningBody: "Upload and import LCIA_implementation.7z next. Otherwise ecoinvent LCI datasets or ecoinvent elementary flows cannot be characterized.",
   importComplete: "Import complete",
   selectFile: "Please select a file",
   processed: "Processed",
@@ -157,6 +171,10 @@ const enText = {
   updated: "updated",
   skipped: "skipped",
   vectors: "Vectors",
+  indicators: "LCIA indicators",
+  factors: "LCIA factors",
+  matched: "CF matched",
+  unmatched: "CF unmatched",
   reused: "reused",
   emptyVectors: "empty vectors",
   nnz: "nnz",
@@ -231,6 +249,7 @@ export default function Ef31ImportJobPanel(props: {
   const [uploadSession, setUploadSession] = useState<UploadSession | null>(null);
   const [job, setJob] = useState<JobStatus | null>(null);
   const [errorText, setErrorText] = useState("");
+  const [lciaStatus, setLciaStatus] = useState<LciaMethodStatus | null>(null);
   const pollingRef = useRef<number | null>(null);
   const startTimeRef = useRef<number | null>(null);
 
@@ -257,8 +276,19 @@ export default function Ef31ImportJobPanel(props: {
     setUploadSession(null);
     setJob(null);
     setErrorText("");
+    setLciaStatus(null);
     startTimeRef.current = null;
   }, [stopPolling]);
+
+  const refreshLciaStatus = useCallback(async () => {
+    try {
+      const status = await requestJson<LciaMethodStatus>(`${API_BASE}/reference/lcia-methods`);
+      setLciaStatus(status);
+      return status;
+    } catch {
+      return null;
+    }
+  }, []);
 
   const closePanel = useCallback(() => {
     if (phase === "done" || (job && ["completed", "failed", "cancelled"].includes(job.status))) {
@@ -275,7 +305,10 @@ export default function Ef31ImportJobPanel(props: {
         setJob(next);
         if (["completed", "failed", "cancelled"].includes(next.status)) {
           stopPolling();
-          if (next.status === "completed") setPhase("done");
+          if (next.status === "completed") {
+            setPhase("done");
+            void refreshLciaStatus();
+          }
         }
       } catch {
         // Keep polling; transient network errors should not lose the job state.
@@ -283,9 +316,14 @@ export default function Ef31ImportJobPanel(props: {
     };
     void pollOnce();
     pollingRef.current = window.setInterval(pollOnce, STATUS_POLL_INTERVAL_MS);
-  }, [stopPolling]);
+  }, [refreshLciaStatus, stopPolling]);
 
   useEffect(() => stopPolling, [stopPolling]);
+
+  useEffect(() => {
+    if (!open) return;
+    void refreshLciaStatus();
+  }, [open, refreshLciaStatus]);
 
   useEffect(() => {
     if (!open || job || uploadBusy || jobBusy) return;
@@ -451,16 +489,6 @@ export default function Ef31ImportJobPanel(props: {
     }
   }, [job, startPolling]);
 
-  const generateRuntime = useCallback(async () => {
-    if (!job) return;
-    setErrorText("");
-    try {
-      await requestJson(`${IMPORT_API_BASE}/import/ef31/jobs/${encodeURIComponent(job.job_id)}/lcia-runtime`, { method: "POST" });
-    } catch (err) {
-      setErrorText(err instanceof Error ? err.message : String(err));
-    }
-  }, [job]);
-
   if (!open) return null;
 
   const elapsedSeconds = startTimeRef.current ? (Date.now() - startTimeRef.current) / 1000 : 0;
@@ -476,6 +504,9 @@ export default function Ef31ImportJobPanel(props: {
   );
   const phaseItems = [t.upload, t.createJob, t.done];
   const phaseIndex = ["upload", "job", "done"].indexOf(phase);
+  const hasImportedEcoContent = Number(lciaStatus?.ecoinvent_elementary_flow_count ?? 0) > 0
+    || Number(lciaStatus?.ecoinvent_lci_vector_count ?? 0) > 0;
+  const shouldPromptLciaRuntime = hasImportedEcoContent && !Boolean(lciaStatus?.ecoinvent_lcia_runtime_available);
 
   return (
     <div className="pm-modal-mask" onClick={(event) => event.stopPropagation()}>
@@ -503,6 +534,13 @@ export default function Ef31ImportJobPanel(props: {
             </span>
           ))}
         </div>
+
+        {shouldPromptLciaRuntime && (
+          <div className="ef31-import-full-hint" style={{ margin: "12px 14px 0", borderColor: "#f1c27d", background: "#fff8ea", color: "#8a5a00" }}>
+            <strong>{t.lciaMissingWarningTitle}</strong>
+            <div style={{ marginTop: 4 }}>{t.lciaMissingWarningBody}</div>
+          </div>
+        )}
 
         <div className="pm-modal-grid">
           {phase === "upload" && (
@@ -606,11 +644,22 @@ export default function Ef31ImportJobPanel(props: {
               <div style={{ color: "#27ae60", fontWeight: 600, fontSize: 14 }}>{t.importComplete}</div>
               <div style={{ display: "grid", gap: 4, fontSize: 12, color: "#496675", marginTop: 8 }}>
                 <div>{t.status}: <b>{job.status}</b></div>
-                <div>{t.processes}: <b>{Number(stats.processes_inserted ?? 0)}</b> {t.new} / <b>{Number(stats.processes_updated ?? 0)}</b> {t.updated}</div>
-                <div>{t.skippedGlobal}: <b>{job.skipped_global ?? 0}</b></div>
-                <div>{t.vectors}: <b>{Number(stats.vectors_written ?? 0)}</b> {t.new} / <b>{Number(stats.vectors_reused ?? 0)}</b> {t.reused} / <b>{Number(stats.empty_vectors ?? 0)}</b> {t.emptyVectors}</div>
-                <div>{t.nnz}: <b>{Number(stats.vector_nnz_total ?? 0)}</b></div>
-                <div>{t.duration}: <b>{Number(stats.duration_seconds ?? 0).toFixed(1)}s</b></div>
+                {job.file_type === "lcia" ? (
+                  <>
+                    <div>{t.indicators}: <b>{Number(stats.indicators_count ?? 0)}</b></div>
+                    <div>{t.factors}: <b>{Number(stats.factors_count ?? 0)}</b></div>
+                    <div>{t.matched}: <b>{Number(stats.cf_matched ?? 0)}</b></div>
+                    <div>{t.unmatched}: <b>{Number(stats.cf_unmatched ?? 0)}</b></div>
+                  </>
+                ) : (
+                  <>
+                    <div>{t.processes}: <b>{Number(stats.processes_inserted ?? 0)}</b> {t.new} / <b>{Number(stats.processes_updated ?? 0)}</b> {t.updated}</div>
+                    <div>{t.skippedGlobal}: <b>{job.skipped_global ?? 0}</b></div>
+                    <div>{t.vectors}: <b>{Number(stats.vectors_written ?? 0)}</b> {t.new} / <b>{Number(stats.vectors_reused ?? 0)}</b> {t.reused} / <b>{Number(stats.empty_vectors ?? 0)}</b> {t.emptyVectors}</div>
+                    <div>{t.nnz}: <b>{Number(stats.vector_nnz_total ?? 0)}</b></div>
+                    <div>{t.duration}: <b>{Number(stats.duration_seconds ?? 0).toFixed(1)}s</b></div>
+                  </>
+                )}
                 {job.failed_datasets?.length > 0 && <div style={{ color: "#e67e22" }}>{t.failed}: {job.failed_datasets.length}</div>}
               </div>
             </label>
@@ -627,7 +676,7 @@ export default function Ef31ImportJobPanel(props: {
               <div className="ef31-guide-body">
                 <p>{t.guideIntro}</p>
                 <div className="ef31-guide-links">
-                  <a href="https://www.hiqlcd.com/lab/search?source=Ecoinvent" target="_blank" rel="noreferrer">{t.guideChinese}</a>
+                  <a href="https://carbonx.hiqlcd.com/price" target="_blank" rel="noreferrer">{t.guideChinese}</a>
                   <a href="https://ecoinvent.org/" target="_blank" rel="noreferrer">{t.guideEnglish}</a>
                 </div>
                 <div className="ef31-guide-packages">
@@ -657,9 +706,6 @@ export default function Ef31ImportJobPanel(props: {
               {(job.status === "running" || job.status === "paused") && <button type="button" className="pm-ghost-btn" onClick={cancel} style={{ color: "#c0392b" }}>{t.cancel}</button>}
               {job.status === "failed" && <button type="button" className="pm-primary-btn" onClick={retryFailed} disabled={jobBusy}>{jobBusy ? t.retrying : t.retry}</button>}
             </>
-          )}
-          {phase === "done" && job?.file_type === "lcia" && (
-            <button type="button" className="pm-ghost-btn" onClick={generateRuntime}>{t.generateRuntime}</button>
           )}
         </div>
       </div>

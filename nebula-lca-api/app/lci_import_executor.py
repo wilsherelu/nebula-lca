@@ -50,6 +50,54 @@ def _default_effective_worker_limit() -> int:
     """Return a conservative parser worker cap for the current runtime."""
     return max(1, min(8, os.cpu_count() or 8))
 
+
+def _reference_product_exchange_json(ds: object) -> dict | None:
+    """Build the one visible product flow for an imported LCI dataset."""
+    reference_product_id = str(getattr(ds, "reference_product_id", "") or "").strip()
+    if not reference_product_id:
+        return None
+    return {
+        "exchange_id": reference_product_id,
+        "exchange_internal_id": reference_product_id,
+        "flow_uuid": reference_product_id,
+        "flow_name": str(getattr(ds, "reference_product_name", "") or ""),
+        "name": str(getattr(ds, "reference_product_name", "") or ""),
+        "unit": str(getattr(ds, "reference_product_unit", "") or ""),
+        "amount": float(getattr(ds, "reference_product_amount", 0.0) or 1.0),
+        "direction": "output",
+        "flow_type": "Product flow",
+        "is_allocated_product": True,
+        "is_reference_flow": True,
+        "isProduct": True,
+    }
+
+
+def _lci_process_json(
+    *,
+    process_uuid: str,
+    ds: object,
+    exchange_count: int,
+    source: str = "ecoinvent_3.11",
+) -> dict:
+    reference_product_id = str(getattr(ds, "reference_product_id", "") or "").strip()
+    process_json = {
+        "process_uuid": process_uuid,
+        "activity_id": getattr(ds, "activity_id", ""),
+        "process_name": getattr(ds, "activity_name", ""),
+        "location": getattr(ds, "location", ""),
+        "reference_flow_uuid": reference_product_id or None,
+        "reference_flow_internal_id": reference_product_id or None,
+        "reference_product": getattr(ds, "reference_product_name", ""),
+        "reference_product_id": reference_product_id,
+        "reference_product_unit": getattr(ds, "reference_product_unit", ""),
+        "reference_product_amount": getattr(ds, "reference_product_amount", 0.0),
+        "exchange_count": exchange_count,
+        "source": source,
+    }
+    reference_exchange = _reference_product_exchange_json(ds)
+    process_json["exchanges"] = [reference_exchange] if reference_exchange else []
+    return process_json
+
 # ── Event types passed through the parsing queue ────────────────────────────
 
 @dataclass
@@ -949,8 +997,12 @@ class LciImportJobExecutor:
         ds = stream.dataset
         procs = _generate_lci_process_uuid(ds)
         dataset_uuid = self._dataset_uuid_for(ds)
-        process_json = dict(stream.process_json or {})
-        process_json["process_uuid"] = procs
+        process_json = _lci_process_json(
+            process_uuid=procs,
+            ds=ds,
+            exchange_count=int((stream.process_json or {}).get("exchange_count") or 0),
+            source=str((stream.process_json or {}).get("source") or "ecoinvent_3.11"),
+        )
 
         write_plan = LciWritePlan(
             spold_path=str(spold_path),
@@ -996,18 +1048,11 @@ class LciImportJobExecutor:
         """
         t0 = time.perf_counter()
         spold_str = str(spold_path)
-        process_json = {
-            "process_uuid": procs,
-            "activity_id": ds.activity_id,
-            "process_name": ds.activity_name,
-            "location": ds.location,
-            "reference_product": ds.reference_product_name,
-            "reference_product_id": ds.reference_product_id,
-            "reference_product_unit": ds.reference_product_unit,
-            "reference_product_amount": ds.reference_product_amount,
-            "exchange_count": len(exchanges),
-            "source": "ecoinvent_3.11",
-        }
+        process_json = _lci_process_json(
+            process_uuid=procs,
+            ds=ds,
+            exchange_count=len(exchanges),
+        )
 
         # ── Exchange extraction + unit canonicalize + aggregation ─────
         flow_key_aggs: dict[tuple[str, str, str, str, str], float] = {}
@@ -2097,7 +2142,7 @@ class LciImportJobExecutor:
                 "process_name": ds.activity_name or pr.process_uuid,
                 "process_name_en": ds.activity_name,
                 "process_type": "lci_dataset",
-                "reference_flow_uuid": None,
+                "reference_flow_uuid": ds.reference_product_id or None,
                 "process_json": process_json,
                 "source_file": pr.spold_path,
                 "import_mode": "ecoinvent_ef31_lci",
@@ -2415,18 +2460,11 @@ class LciImportJobExecutor:
         # the original parsed count, not pr.exchanges which is kept for compat)
         wp = getattr(pr, 'write_plan', None)
         exchange_count = wp.process_json.get("exchange_count", len(pr.exchanges)) if wp else len(pr.exchanges)
-        return {
-            "process_uuid": pr.process_uuid,
-            "activity_id": ds.activity_id,
-            "process_name": ds.activity_name,
-            "location": ds.location,
-            "reference_product": ds.reference_product_name,
-            "reference_product_id": ds.reference_product_id,
-            "reference_product_unit": ds.reference_product_unit,
-            "reference_product_amount": ds.reference_product_amount,
-            "exchange_count": exchange_count,
-            "source": "ecoinvent_3.11",
-        }
+        return _lci_process_json(
+            process_uuid=pr.process_uuid,
+            ds=ds,
+            exchange_count=exchange_count,
+        )
 
     def _pack_vector_exchanges(self, process_uuid: str, exchanges: list[_VectorExchange]) -> _PackedVector:
         from .ingest_ecoinvent import (
@@ -2609,18 +2647,11 @@ class LciImportJobExecutor:
                 )
 
         # Build process_json
-        process_json = {
-            "process_uuid": procs,
-            "activity_id": ds.activity_id,
-            "process_name": ds.activity_name,
-            "location": ds.location,
-            "reference_product": ds.reference_product_name,
-            "reference_product_id": ds.reference_product_id,
-            "reference_product_unit": ds.reference_product_unit,
-            "reference_product_amount": ds.reference_product_amount,
-            "exchange_count": len(exs),
-            "source": "ecoinvent_3.11",
-        }
+        process_json = _lci_process_json(
+            process_uuid=procs,
+            ds=ds,
+            exchange_count=len(exs),
+        )
 
         # Upsert ReferenceProcess
         from .models import ReferenceProcess
@@ -2634,7 +2665,7 @@ class LciImportJobExecutor:
                     process_name=ds.activity_name or procs,
                     process_name_en=ds.activity_name,
                     process_type="lci_dataset",
-                    reference_flow_uuid=None,  # TODO: resolve
+                    reference_flow_uuid=ds.reference_product_id or None,
                     process_json=process_json,
                     source_file=pr.spold_path,
                     import_mode="ecoinvent_ef31_lci",
@@ -2647,6 +2678,7 @@ class LciImportJobExecutor:
             existing.process_name = ds.activity_name or procs
             existing.process_name_en = ds.activity_name
             existing.process_type = "lci_dataset"
+            existing.reference_flow_uuid = ds.reference_product_id or None
             existing.process_json = process_json
             existing.source_file = pr.spold_path
             with self._lock:

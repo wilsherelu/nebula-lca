@@ -4,5 +4,16 @@ __pycache__
 *.pyo
 *.pyd
 .git
+.pytest_cache
+.qwen
 lca_demo.db
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
 data
+runtime
+import-cache
+tmp
+app/tmp
+archive

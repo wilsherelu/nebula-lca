@@ -1745,7 +1745,7 @@ const getLciaGroupLabel = (method: string): string => {
  * Uses a cached lookup to avoid repeated API calls.
  */
 const _flowSourceCache: Record<string, string> = {};
-async function _checkGraphHasNonEcoElementaryFlows(graph: any): Promise<boolean> {
+async function _collectGraphBiosphereSources(graph: any): Promise<string[]> {
   const nodes = graph?.nodes || [];
   const biosphereUuids = new Set<string>();
   for (const node of nodes) {
@@ -1760,14 +1760,8 @@ async function _checkGraphHasNonEcoElementaryFlows(graph: any): Promise<boolean>
       }
     }
   }
-  if (biosphereUuids.size === 0) return false;
-  // Check cached first
-  for (const uuid of biosphereUuids) {
-    if (_flowSourceCache[uuid]?.startsWith("ecoinvent")) continue;
-    if (_flowSourceCache[uuid] !== undefined) return true; // cached non-eco
-  }
-  // Fetch any uncached sources
-  const uncached = Array.from(biosphereUuids).filter((u) => _flowSourceCache[u] === undefined);
+  if (biosphereUuids.size === 0) return [];
+  const uncached = Array.from(biosphereUuids).filter((uuid) => _flowSourceCache[uuid] === undefined);
   try {
     const promises = uncached.map((uuid) =>
       fetch(`${API_BASE}/reference/flows/${encodeURIComponent(uuid)}`, { cache: "no-store" })
@@ -1783,12 +1777,24 @@ async function _checkGraphHasNonEcoElementaryFlows(graph: any): Promise<boolean>
   } catch {
     // ignore
   }
-  // Check if any is non-ecoinvent
-  for (const uuid of biosphereUuids) {
-    const source = _flowSourceCache[uuid] || "unknown";
-    if (!source.startsWith("ecoinvent")) return true;
-  }
-  return false;
+  return Array.from(biosphereUuids).map((uuid) => _flowSourceCache[uuid] || "unknown");
+}
+
+async function _checkGraphHasNonEcoElementaryFlows(graph: any): Promise<boolean> {
+  const sources = await _collectGraphBiosphereSources(graph);
+  return sources.some((source) => !source.startsWith("ecoinvent"));
+}
+
+async function _checkGraphHasEcoLciaContent(graph: any): Promise<boolean> {
+  const nodes = graph?.nodes || [];
+  const hasImportedLciDataset = nodes.some((node: any) =>
+    node?.node_kind === "lci_dataset"
+    && String(node?.process_uuid || "").trim()
+    && !String(node?.process_uuid || "").trim().startsWith("lci_"),
+  );
+  if (hasImportedLciDataset) return true;
+  const sources = await _collectGraphBiosphereSources(graph);
+  return sources.some((source) => source.startsWith("ecoinvent"));
 }
 
 const formatApiError = (raw: unknown): string => {
@@ -2045,11 +2051,56 @@ export default function App() {
   const [draftLciaMethodSelection, setDraftLciaMethodSelection] = useState("EF v3.1");
   const [showRunConfigDialog, setShowRunConfigDialog] = useState(false);
   const [hasNonEcoElementaryFlows, setHasNonEcoElementaryFlows] = useState(false);
+  const [hasEcoLciaContent, setHasEcoLciaContent] = useState(false);
+  const [ecoinventLciaRuntimeAvailable, setEcoinventLciaRuntimeAvailable] = useState(false);
   const [repairInspectorTab, setRepairInspectorTab] = useState<"external_in" | "external_out" | undefined>(undefined);
   const [repairProcessInfoNodeId, setRepairProcessInfoNodeId] = useState<string | undefined>(undefined);
   const [productDetailViewKey, setProductDetailViewKey] = useState("");
   const [lciaMethodOptions, setLciaMethodOptions] = useState<string[]>(["EF v3.1"]);
   const [lciaMethodIndicatorCounts, setLciaMethodIndicatorCounts] = useState<Record<string, number>>({});
+  const refreshLciaMethodStatus = useCallback(async (): Promise<boolean | null> => {
+    const response = await fetch(`${API_BASE}/reference/lcia-methods`, { cache: "no-store" });
+    if (!response.ok) {
+      return null;
+    }
+    const payload = (await response.json()) as {
+      methods?: unknown[];
+      default_method?: unknown;
+      method_indicator_counts?: Record<string, unknown>;
+      ecoinvent_lcia_runtime_available?: unknown;
+    };
+    const methods = (payload.methods ?? [])
+      .map((item) => String(item ?? "").trim())
+      .filter(Boolean);
+    if (methods.length > 0) {
+      setLciaMethodOptions(methods);
+    }
+    const counts: Record<string, number> = {};
+    Object.entries(payload.method_indicator_counts ?? {}).forEach(([method, count]) => {
+      const key = String(method).trim();
+      const value = Number(count ?? 0);
+      if (key && Number.isFinite(value)) {
+        counts[key] = value;
+      }
+    });
+    setLciaMethodIndicatorCounts(counts);
+    const runtimeAvailable = Boolean(payload.ecoinvent_lcia_runtime_available);
+    setEcoinventLciaRuntimeAvailable(runtimeAvailable);
+    const defaultMethod = String(payload.default_method ?? "EF v3.1").trim();
+    if (defaultMethod) {
+      setLciaMethodSelection((current) =>
+        current && (current === "all" || methods.length === 0 || methods.includes(current))
+          ? current
+          : defaultMethod,
+      );
+      setDraftLciaMethodSelection((current) =>
+        current && (current === "all" || methods.length === 0 || methods.includes(current))
+          ? current
+          : defaultMethod,
+      );
+    }
+    return runtimeAvailable;
+  }, []);
   const lciaMethodRestrictsToEf31 = currentSourcePolicy === "tidas_compliant"
     || (currentSourcePolicy !== "ecoinvent_strict" && hasNonEcoElementaryFlows);
   const availableLciaMethodOptions = useMemo(() => {
@@ -2061,6 +2112,7 @@ export default function App() {
   const lciaRunBlockedByStrictSource = currentSourcePolicy === "ecoinvent_strict"
     && hasNonEcoElementaryFlows
     && draftLciaMethodSelection !== "EF v3.1";
+  const lciaRunBlockedByMissingEcoRuntime = hasEcoLciaContent && !ecoinventLciaRuntimeAvailable;
   useEffect(() => {
     if (!lciaMethodRestrictsToEf31) {
       return;
@@ -3071,52 +3123,31 @@ export default function App() {
   useEffect(() => {
     void (async () => {
       try {
-        const response = await fetch(`${API_BASE}/reference/lcia-methods`);
-        if (!response.ok) {
-          return;
-        }
-        const payload = (await response.json()) as {
-          methods?: unknown[];
-          default_method?: unknown;
-          method_indicator_counts?: Record<string, unknown>;
-        };
-        const methods = (payload.methods ?? [])
-          .map((item) => String(item ?? "").trim())
-          .filter(Boolean);
-        if (methods.length > 0) {
-          setLciaMethodOptions(methods);
-        }
-        const counts: Record<string, number> = {};
-        Object.entries(payload.method_indicator_counts ?? {}).forEach(([method, count]) => {
-          const key = String(method).trim();
-          const value = Number(count ?? 0);
-          if (key && Number.isFinite(value)) {
-            counts[key] = value;
-          }
-        });
-        setLciaMethodIndicatorCounts(counts);
-        const defaultMethod = String(payload.default_method ?? "EF v3.1").trim();
-        if (defaultMethod) {
-          setLciaMethodSelection(defaultMethod);
-        }
+        await refreshLciaMethodStatus();
       } catch {
         // Keep built-in EF v3.1 defaults when the method index is unavailable.
       }
     })();
-  }, []);
+  }, [refreshLciaMethodStatus]);
 
   // Scan elementary flow sources whenever the run config dialog opens.
   useEffect(() => {
     if (!showRunConfigDialog) return;
     void (async () => {
       try {
-        const hasNonEco = await _checkGraphHasNonEcoElementaryFlows(exportGraph());
+        await refreshLciaMethodStatus();
+        const graph = exportGraph();
+        const [hasNonEco, hasEcoLcia] = await Promise.all([
+          _checkGraphHasNonEcoElementaryFlows(graph),
+          _checkGraphHasEcoLciaContent(graph),
+        ]);
         setHasNonEcoElementaryFlows(hasNonEco);
+        setHasEcoLciaContent(hasEcoLcia);
       } catch {
         // ignore
       }
     })();
-  }, [showRunConfigDialog]);
+  }, [exportGraph, refreshLciaMethodStatus, showRunConfigDialog]);
 
   const repairProjectIntegrity = useCallback(async () => {
     if (!projectId) {
@@ -3623,6 +3654,17 @@ export default function App() {
       setStatusText(`运行已阻止：LCI 校验失败 ${lciIssues.length} 项。示例：${lciIssues[0]}`);
       return;
     }
+    const runtimeAvailable = (await refreshLciaMethodStatus().catch(() => null)) ?? ecoinventLciaRuntimeAvailable;
+    const hasEcoLcia = await _checkGraphHasEcoLciaContent(graph);
+    setHasEcoLciaContent(hasEcoLcia);
+    if (hasEcoLcia && !runtimeAvailable) {
+      setStatusText(
+        uiLanguage === "zh"
+          ? "运行已阻止：模型使用 ecoinvent 基本流或 ecoinvent LCI 数据集，但尚未导入 ecoinvent LCIA method。请先导入 LCIA_implementation.7z 并生成 LCIA Runtime。"
+          : "Run blocked: this model uses ecoinvent elementary flows or ecoinvent LCI datasets, but the ecoinvent LCIA method runtime has not been imported. Import LCIA_implementation.7z and generate the LCIA Runtime first.",
+      );
+      return;
+    }
     const balancedWarnings = getBalancedWarnings();
     if (balancedWarnings.length > 0) {
       const first = balancedWarnings[0];
@@ -3685,7 +3727,7 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-  }, [exportGraph, getBalancedWarnings, getMarketWarnings, lciaMethodSelection, projectId, repairRootEdgeHandles, selectedProductKey, targetProductQuantity, targetProductQuantityMode, version]);
+  }, [ecoinventLciaRuntimeAvailable, exportGraph, getBalancedWarnings, getMarketWarnings, lciaMethodSelection, projectId, refreshLciaMethodStatus, repairRootEdgeHandles, selectedProductKey, targetProductQuantity, targetProductQuantityMode, uiLanguage, version]);
 
   const compileCurrentPts = useCallback(async (mode: "save_compile" | "publish") => {
     if (activeCanvasKind !== "pts_internal") {
@@ -4158,7 +4200,11 @@ export default function App() {
       return;
     }
     const target = projects.find((p) => p.project_id === targetProjectId);
-    const ok = window.confirm(`删除项目 "${target?.name ?? targetProjectId}"？此操作不可恢复。`);
+    const name = target?.name ?? targetProjectId;
+    const msg = uiLanguage === "zh"
+      ? `删除项目 "${name}"？此操作不可恢复。`
+      : `Delete project "${name}"? This action cannot be undone.`;
+    const ok = window.confirm(msg);
     if (!ok) {
       return;
     }
@@ -4994,14 +5040,21 @@ export default function App() {
     () => (resultProductViewMode === "target_total" ? targetProductQuantityValue : 1),
     [resultProductViewMode, targetProductQuantityValue],
   );
+  const runUsesEf31CfpView = lciaMethodSelection === "EF v3.1";
 
   const indicatorRows = useMemo(() => {
     if (!lastRun) {
       return [] as IndicatorDisplayRow[];
     }
     const index = lastRun.lci_result?.indicator_index;
-    const valuesRaw = lastRun.lci_result?.product_values;
-    const values = Array.isArray(valuesRaw) ? valuesRaw : [];
+    const productValuesRaw = lastRun.lci_result?.product_values;
+    const fallbackValuesRaw = lastRun.lci_result?.values;
+    const usingProductValues = Array.isArray(productValuesRaw) && productValuesRaw.length > 0;
+    const values = usingProductValues
+      ? productValuesRaw
+      : Array.isArray(fallbackValuesRaw)
+        ? fallbackValuesRaw
+        : [];
     const indicators = Array.isArray(index) ? index : [];
     const denominatorUnit = viewedProduct
       ? `${viewedProductQuantityValue} ${viewedProduct.unit || "unit"}`
@@ -5028,7 +5081,11 @@ export default function App() {
         ? valueRaw.map((v) => (typeof v === "number" ? v : Number(v ?? 0)))
         : null;
       const scalar = typeof valueRaw === "number" ? valueRaw : Number(valueRaw ?? 0);
-      const selectedValue = vector && viewedProductIndex >= 0 && viewedProductIndex < vector.length ? vector[viewedProductIndex] : scalar;
+      const selectedValue = vector
+        ? usingProductValues && viewedProductIndex >= 0 && viewedProductIndex < vector.length
+          ? vector[viewedProductIndex]
+          : vector.reduce((sum, value) => sum + (Number.isFinite(value) ? value : 0), 0)
+        : scalar;
       const normalizedValue = Number.isFinite(selectedValue) ? selectedValue : 0;
       const displayValue = viewedProduct
         ? toDisplayResultValueByUnit(
@@ -5580,12 +5637,16 @@ export default function App() {
                 onClick={focusTargetProductTotalView}
               >
                 <span className="run-analysis-summary-label">
-                  {uiLanguage === "zh" ? "目标产品 / 目标产量" : "Target Product / Target Quantity"}
+                  {runUsesEf31CfpView
+                    ? uiLanguage === "zh" ? "目标产品 / 目标产量" : "Target Product / Target Quantity"
+                    : uiLanguage === "zh" ? "指标数 / 查看产品" : "Indicators / Viewed Product"}
                 </span>
                 <strong className="run-analysis-summary-value">
-                  {selectedProductClimateTotal !== null
+                  {runUsesEf31CfpView && selectedProductClimateTotal !== null
                     ? `${selectedProductClimateTotal.toExponential(3)} ${targetProductClimateUnitLabel || ""}`.trim()
-                    : "-"}
+                    : runUsesEf31CfpView
+                      ? "-"
+                      : indicatorRows.length}
                 </strong>
                 <span
                   className="run-analysis-summary-meta"
@@ -5596,7 +5657,8 @@ export default function App() {
               </button>
             </div>
             <div className="run-analysis-grid">
-              <div className="run-analysis-card run-analysis-card--wide">
+              {runUsesEf31CfpView && (
+                <div className="run-analysis-card run-analysis-card--wide">
                 <div className="run-analysis-title run-analysis-title-flex">
                   <span>
                     {uiLanguage === "zh"
@@ -5740,10 +5802,13 @@ export default function App() {
                     </tbody>
                   </table>
                 </div>
-              </div>
-              <div className="run-analysis-card run-analysis-indicators">
+                </div>
+              )}
+              <div className={`run-analysis-card run-analysis-indicators${runUsesEf31CfpView ? "" : " run-analysis-card--wide"}`}>
                 <div className="run-analysis-title">
-                  {`${uiLanguage === "zh" ? "指标结果" : "Indicator Results"} (${indicatorRows.length})${viewedProduct
+                  {`${runUsesEf31CfpView
+                    ? uiLanguage === "zh" ? "指标结果" : "Indicator Results"
+                    : uiLanguage === "zh" ? "LCIA 指标结果" : "LCIA Indicator Results"} (${indicatorRows.length})${viewedProduct
                     ? resultProductViewMode === "target_total"
                       ? ` · ${uiLanguage === "zh" ? "目标产品总量全指标" : "Target-total full indicators"}：${viewedProduct.productName}`
                       : ` · ${uiLanguage === "zh" ? "单位产品全指标" : "Unit-product full indicators"}：${viewedProduct.productName}`
@@ -5794,7 +5859,7 @@ export default function App() {
                       {indicatorRows.length === 0 && (
                         <tr>
                           <td colSpan={5}>
-                            {!hasProductResultView
+                            {!hasProductResultView && runUsesEf31CfpView
                               ? "后端尚未返回产品结果视图，暂不展示产品指标。"
                               : "无指标数值"}
                           </td>
@@ -5892,12 +5957,16 @@ export default function App() {
                   ))}
                 </select>
               </label>
-              <div className="target-product-preview span-2">
+              <div className={`target-product-preview span-2${lciaRunBlockedByMissingEcoRuntime ? " warning" : ""}`}>
                 <span className="target-product-preview-label">
                   {uiLanguage === "zh" ? "基本流兼容性" : "Elementary flow compatibility"}
                 </span>
                 <strong>
-                  {hasNonEcoElementaryFlows
+                  {lciaRunBlockedByMissingEcoRuntime
+                    ? uiLanguage === "zh"
+                      ? "已使用 ecoinvent 基本流，但尚未导入 ecoinvent LCIA method"
+                      : "Ecoinvent flows are used, but the ecoinvent LCIA method runtime is not imported"
+                    : hasNonEcoElementaryFlows
                     ? currentSourcePolicy === "ecoinvent_strict"
                       ? uiLanguage === "zh"
                         ? "ecoinvent strict 下存在非 ecoinvent 基本流，非 EF v3.1 会被阻断"
@@ -5910,7 +5979,11 @@ export default function App() {
                       : "Ecoinvent elementary flows can use ecoinvent LCIA method sets"}
                 </strong>
                 <span>
-                  {hasNonEcoElementaryFlows
+                  {lciaRunBlockedByMissingEcoRuntime
+                    ? uiLanguage === "zh"
+                      ? "请先在 LCI/LCIA 导入中上传 LCIA_implementation.7z 并生成 LCIA Runtime；内置 EF v3.1 只用于 TIDAS/ILCD/EF 基本流。"
+                      : "Import LCIA_implementation.7z and generate the LCIA Runtime first. The built-in EF v3.1 fallback is only for TIDAS/ILCD/EF elementary flows."
+                    : hasNonEcoElementaryFlows
                     ? currentSourcePolicy === "ecoinvent_strict"
                       ? uiLanguage === "zh"
                         ? "请先替换为 ecoinvent 基本流，或改用 EF v3.1。"
@@ -5935,9 +6008,11 @@ export default function App() {
                   setShowRunConfigDialog(false);
                   void runModel(draftLciaMethodSelection);
                 }}
-                disabled={busy || lciaRunBlockedByStrictSource}
+                disabled={busy || lciaRunBlockedByStrictSource || lciaRunBlockedByMissingEcoRuntime}
               >
-                {i18n.run}
+                {lciaRunBlockedByMissingEcoRuntime
+                  ? uiLanguage === "zh" ? "需先导入 LCIA" : "Import LCIA first"
+                  : i18n.run}
               </button>
             </div>
           </section>
@@ -6209,6 +6284,7 @@ export default function App() {
                 compileItems={ptsCompileHistory}
                 publishedItems={ptsPublishedHistory}
                 activePublishedVersion={ptsHistoryActivePublishedVersion}
+                uiLanguage={uiLanguage}
                 onClose={() => setPtsHistoryOpen(false)}
               />
             </>

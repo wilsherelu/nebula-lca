@@ -217,7 +217,12 @@ def _is_direct_sparse_candidate(graph: HybridGraph, lcia_methods: list[str] | No
         return False
     if graph.exchanges:
         return False
-    return all(node.node_kind == "lci_dataset" for node in graph.nodes)
+    return all(
+        node.node_kind == "lci_dataset"
+        and str(node.process_uuid or "").strip()
+        and not str(node.process_uuid or "").strip().startswith("lci_")
+        for node in graph.nodes
+    )
 
 
 def _filter_runtime_by_methods(runtime: Ef31SparseRuntime, lcia_methods: list[str] | None) -> Ef31SparseRuntime:

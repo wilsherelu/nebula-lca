@@ -1059,6 +1059,16 @@ body,
   color: #7a919b;
 }
 
+.target-product-preview.warning {
+  border-color: #f1c27d;
+  background: #fff8ea;
+  color: #8a5a00;
+}
+
+.target-product-preview.warning .target-product-preview-label {
+  color: #a66b00;
+}
+
 @media (max-width: 900px) {
   .run-analysis-overlay {
     padding: 10px;
@@ -4383,6 +4393,13 @@ body,
   color: #fff;
   padding: 0 12px;
   cursor: pointer;
+}
+
+.pm-modal-actions button:disabled {
+  border-color: #cbd5dc;
+  background: #e8eef2;
+  color: #8a9ba6;
+  cursor: not-allowed;
 }
 
 .pm-modal-actions .pm-ghost-btn {

@@ -5,8 +5,13 @@ services:
     build:
       context: ./nebula-lca-solver
       dockerfile: Dockerfile
+    environment:
+      NEBULA_LCA_EF31_DIR: /app/runtime/ef31
+      NEBULA_LCA_LEGACY_EF31_DIR: /app/data/EF3.1
     expose:
       - "8000"
+    volumes:
+      - nebula-lca-api-runtime:/app/runtime
     healthcheck:
       test:
         [
@@ -34,16 +39,21 @@ services:
       DATABASE_URL: sqlite:////app/data/runtime/lca_demo.db
       NEBULA_LCA_SOLVER_API_URL: http://nebula-lca-solver:8000
       NEBULA_LCA_EF31_DIR: /app/data/EF3.1
+      NEBULA_LCA_RUNTIME_ROOT: /app/runtime
       DEBUG: ${DEBUG:-false}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-change_me}
       AUTO_BOOTSTRAP_REFERENCE_DATA_ON_STARTUP: ${AUTO_BOOTSTRAP_REFERENCE_DATA_ON_STARTUP:-true}
       KEEP_LATEST_VERSIONS_PER_PROJECT: ${KEEP_LATEST_VERSIONS_PER_PROJECT:-1000}
       AUTO_PRUNE_ON_STARTUP: ${AUTO_PRUNE_ON_STARTUP:-true}
       AUTO_VACUUM_AFTER_PRUNE_ON_STARTUP: ${AUTO_VACUUM_AFTER_PRUNE_ON_STARTUP:-false}
+      IMPORT_CACHE_RETENTION_HOURS: ${IMPORT_CACHE_RETENTION_HOURS:-24}
+      IMPORT_CACHE_CLEANUP_ON_TERMINAL: ${IMPORT_CACHE_CLEANUP_ON_TERMINAL:-true}
     expose:
       - "18080"
     volumes:
       - nebula-lca-api-data:/app/data/runtime
+      - nebula-lca-api-import-cache:/app/import-cache
+      - nebula-lca-api-runtime:/app/runtime
       - ./nebula-lca-api/data/Tiangong:/app/data/Tiangong:ro
       - ./nebula-lca-api/data/EF3.1:/app/data/EF3.1:ro
     healthcheck:
@@ -87,3 +97,5 @@ networks:
 
 volumes:
   nebula-lca-api-data:
+  nebula-lca-api-import-cache:
+  nebula-lca-api-runtime:

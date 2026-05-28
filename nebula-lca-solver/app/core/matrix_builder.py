@@ -36,11 +36,20 @@ def build_matrices_from_snapshot(
     process_by_uuid = {p.get("process_uuid", ""): p for p in processes if p.get("process_uuid")}
 
     exchanges_by_process: Dict[str, List[dict]] = {}
+    product_conversion_factor_by_exchange_id: Dict[str, float] = {}
+    allocation_scale_by_exchange_id: Dict[str, float] = {}
     for ex in exchanges:
         proc_uuid = ex.get("process_uuid", "")
         if not proc_uuid:
             continue
         exchanges_by_process.setdefault(proc_uuid, []).append(ex)
+        exchange_id = str(ex.get("exchange_id", "")).strip()
+        conversion_factor = _to_float(ex.get("product_conversion_factor"))
+        if exchange_id and conversion_factor is not None:
+            product_conversion_factor_by_exchange_id[exchange_id] = conversion_factor
+        scale = _to_float(ex.get("allocation_scale"))
+        if exchange_id and scale is not None:
+            allocation_scale_by_exchange_id[exchange_id] = scale
 
     issues: List[str] = []
     ref_exchange_by_process: Dict[str, dict] = {}
@@ -147,11 +156,34 @@ def build_matrices_from_snapshot(
                 f"missing input exchange for link consumer {consumer} flow {flow_uuid}"
             )
             continue
+        provider_exchange_id = str(link.get("provider_product_exchange_id") or "").strip()
+        provider_conversion_factor = _to_float(link.get("provider_product_conversion_factor"))
+        if provider_conversion_factor is None and provider_exchange_id:
+            provider_conversion_factor = product_conversion_factor_by_exchange_id.get(provider_exchange_id)
+        provider_scale = None
+        if provider_conversion_factor is not None:
+            if provider_conversion_factor <= 0:
+                issues.append(
+                    f"link {provider} -> {consumer} has non-positive provider product conversion factor"
+                )
+                continue
+            provider_scale = 1.0 / provider_conversion_factor
+        if provider_scale is None:
+            provider_scale = _to_float(link.get("provider_allocation_scale"))
+        if provider_scale is None and provider_exchange_id:
+            provider_scale = allocation_scale_by_exchange_id.get(provider_exchange_id)
+        if provider_scale is None:
+            provider_scale = 1.0
+        if provider_scale < 0:
+            issues.append(
+                f"link {provider} -> {consumer} has negative provider allocation scale"
+            )
+            continue
         denom = allocation_total_by_process.get(consumer, 0.0)
         if denom == 0:
             issues.append(f"process {consumer} allocation total is zero")
             continue
-        coeff = -input_amount / denom
+        coeff = -(input_amount * provider_scale) / denom
         a_entries[(provider, consumer)] = a_entries.get((provider, consumer), 0.0) + coeff
 
     b_matrix = build_b_matrix_from_snapshot(

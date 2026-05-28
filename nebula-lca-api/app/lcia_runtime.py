@@ -44,6 +44,7 @@ def generate_lcia_runtime_artifact(
     elementary_flows: list[dict],
     output_root: Optional[Path] = None,
     activate: bool = False,
+    force_activate: bool = False,
 ) -> dict:
     """Generate LCIA runtime artifacts from a raw LCIA Excel file.
 
@@ -208,7 +209,7 @@ def generate_lcia_runtime_artifact(
         "generated_at": str(uuid.uuid1()),
     }
 
-    should_activate = bool(activate) and should_update_active_manifest(output_dir.parent, manifest)
+    should_activate = bool(activate) and (force_activate or should_update_active_manifest(output_dir.parent, manifest))
     manifest["active"] = should_activate
     manifest_text = json.dumps(manifest, ensure_ascii=False, default=str)
     (output_dir / "manifest.json").write_text(manifest_text, encoding="utf-8")

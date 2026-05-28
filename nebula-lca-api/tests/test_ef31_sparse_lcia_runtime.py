@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -190,6 +191,27 @@ def test_direct_sparse_lcia_scales_lci_vector_by_demand(tmp_path: Path) -> None:
         engine.dispose()
 
 
+def test_direct_sparse_lcia_skips_manual_lci_nodes(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    _write_runtime(runtime_root)
+    db, engine = _db_session()
+    try:
+        graph = _graph()
+        graph.nodes[0].process_uuid = "lci_manual_001"
+
+        result = try_run_direct_sparse_lcia(
+            db=db,
+            graph=graph,
+            lcia_methods=["EF v3.1"],
+            runtime_root=runtime_root,
+        )
+
+        assert result is None
+    finally:
+        db.close()
+        engine.dispose()
+
+
 def test_direct_sparse_lcia_reports_missing_cf_flows(tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime-missing"
     _write_runtime(runtime_root, include_ch4=False)
@@ -344,8 +366,24 @@ def test_lcia_runtime_fallback_uses_only_ecoinvent_lci_flow_space(tmp_path: Path
                     source="ecoinvent_3.11",
                     compartment="water",
                 ),
+                FlowRecord(
+                    flow_uuid="shared-builtin-flow",
+                    flow_name="Shared builtin flow",
+                    flow_type="Elementary flow",
+                    default_unit="kg",
+                    unit_group="mass",
+                    source="ef3.1",
+                    compartment="air",
+                ),
                 LciBiosphereFlowKey(
                     flow_uuid="eco-flow",
+                    compartment="air",
+                    subcompartment="",
+                    direction="output",
+                    canonical_unit="kg",
+                ),
+                LciBiosphereFlowKey(
+                    flow_uuid="shared-builtin-flow",
                     compartment="air",
                     subcompartment="",
                     direction="output",
@@ -357,7 +395,99 @@ def test_lcia_runtime_fallback_uses_only_ecoinvent_lci_flow_space(tmp_path: Path
 
         flows = _ecoinvent_elementary_flows_for_lcia(db)
 
-        assert [item["flow_uuid"] for item in flows] == ["eco-flow"]
+        assert {item["flow_uuid"] for item in flows} == {"eco-flow", "shared-builtin-flow"}
     finally:
         db.close()
         engine.dispose()
+
+
+def test_lcia_runtime_fallback_preserves_lci_flow_key_subcompartment(tmp_path: Path, monkeypatch) -> None:
+    from app.api.ef31_chunked_import import _ecoinvent_elementary_flows_for_lcia
+    import app.config as config
+
+    monkeypatch.setattr(config, "PROJECT_ROOT", tmp_path)
+    (tmp_path / "import-cache" / "job_extract").mkdir(parents=True)
+    db, engine = _db_session()
+    try:
+        db.add_all(
+            [
+                FlowRecord(
+                    flow_uuid="eco-flow",
+                    flow_name="Eco flow",
+                    flow_type="Elementary flow",
+                    default_unit="kg",
+                    unit_group="mass",
+                    source="ecoinvent_3.11",
+                    compartment="air",
+                ),
+                LciBiosphereFlowKey(
+                    flow_uuid="eco-flow",
+                    compartment="air",
+                    subcompartment="urban air close to ground",
+                    direction="output",
+                    canonical_unit="kg",
+                ),
+            ]
+        )
+        db.commit()
+
+        flows = _ecoinvent_elementary_flows_for_lcia(db)
+
+        assert flows == [
+            {
+                "flow_uuid": "eco-flow",
+                "flow_name": "Eco flow",
+                "compartment": "air",
+                "subcompartment": "urban air close to ground",
+            }
+        ]
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_lcia_runtime_force_activate_replaces_broader_existing_runtime(tmp_path: Path) -> None:
+    from app.lcia_runtime import generate_lcia_runtime_artifact
+    from app.services.ef31_runtime_csv import ACTIVE_MANIFEST_NAME
+
+    runtime_root = tmp_path / "runtime" / "ef31"
+    old_dir = runtime_root / "old"
+    old_dir.mkdir(parents=True)
+    (old_dir / "flow_index.csv").write_text("flow_index;FlowUUID;FlowName\n0;old-flow;Old\n", encoding="utf-8")
+    (old_dir / "indicator_index.csv").write_text(
+        "indicator_index;method_en;method_zh;indicator_en;indicator_zh;ecoinvent_category\n"
+        + "\n".join(f"{idx};EF v3.1;EF v3.1;old {idx};;old" for idx in range(25)),
+        encoding="utf-8",
+    )
+    (old_dir / "lcia_factors.csv").write_text(
+        "row;column;coefficient\n" + "\n".join(f"{idx};0;1" for idx in range(25)),
+        encoding="utf-8",
+    )
+    (runtime_root / ACTIVE_MANIFEST_NAME).write_text(
+        f'{{"artifact_dir": "{old_dir.as_posix()}", "flows_count": 9999, "indicators_count": 25, "factors_count": 9999}}',
+        encoding="utf-8",
+    )
+
+    workbook = Workbook()
+    ws = workbook.active
+    ws.title = "CFs"
+    ws.append(["Method", "Category", "Indicator", "Name", "Compartment", "Subcompartment", "CF"])
+    ws.append(["EF v3.1", "Climate change", "GWP 100a", "Carbon dioxide", "air", "", 1.0])
+    ind_sheet = workbook.create_sheet("Indicators")
+    ind_sheet.append(["Method", "Category", "Indicator", "Indicator Unit"])
+    ind_sheet.append(["EF v3.1", "Climate change", "GWP 100a", "kg CO2 eq"])
+    xlsx_path = tmp_path / "LCIA Implementation 3.11.xlsx"
+    workbook.save(xlsx_path)
+
+    new_dir = runtime_root / "new"
+    manifest = generate_lcia_runtime_artifact(
+        xlsx_path,
+        [{"flow_uuid": "flow-co2", "flow_name": "Carbon dioxide", "compartment": "air", "subcompartment": ""}],
+        output_root=new_dir,
+        activate=True,
+        force_activate=True,
+    )
+
+    active = json.loads((runtime_root / ACTIVE_MANIFEST_NAME).read_text(encoding="utf-8"))
+    assert manifest["factors_count"] == 1
+    assert active["artifact_dir"] == str(new_dir)

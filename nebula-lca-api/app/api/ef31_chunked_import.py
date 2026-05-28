@@ -103,6 +103,32 @@ def _ecoinvent_elementary_flows_for_lcia(db: Session) -> list[dict]:
         FlowRecord.source.in_(["ecoinvent", "ecoinvent_3.11"]),
     )
     if lci_flow_uuids:
+        key_rows = db.query(LciBiosphereFlowKey).filter(LciBiosphereFlowKey.flow_uuid.in_(lci_flow_uuids)).all()
+        flow_rows = {
+            row.flow_uuid: row
+            for row in db.query(FlowRecord).filter(FlowRecord.flow_uuid.in_(lci_flow_uuids)).all()
+        }
+        if key_rows:
+            seen: set[tuple[str, str, str]] = set()
+            flows: list[dict] = []
+            for key in key_rows:
+                flow = flow_rows.get(key.flow_uuid)
+                if flow is None:
+                    continue
+                identity = (key.flow_uuid, key.compartment or "", key.subcompartment or "")
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                flows.append(
+                    {
+                        "flow_uuid": key.flow_uuid,
+                        "flow_name": flow.flow_name,
+                        "compartment": key.compartment or flow.compartment or "",
+                        "subcompartment": key.subcompartment or "",
+                    }
+                )
+            if flows:
+                return flows
         query = query.filter(FlowRecord.flow_uuid.in_(lci_flow_uuids))
     rows = query.all()
     return [
@@ -121,7 +147,7 @@ def _finish_lcia_job(db: Session, job: ImportJob, lcia_excel: Path) -> None:
 
     _set_job_phase(db, job.job_id, "runtime", {"message": "generating_lcia_runtime"})
     elementary_flows = _ecoinvent_elementary_flows_for_lcia(db)
-    manifest = generate_lcia_runtime_artifact(lcia_excel, elementary_flows)
+    manifest = generate_lcia_runtime_artifact(lcia_excel, elementary_flows, activate=True, force_activate=True)
     job = db.query(ImportJob).filter(ImportJob.job_id == job.job_id).first()
     if job is None:
         return
@@ -140,6 +166,18 @@ def _finish_lcia_job(db: Session, job: ImportJob, lcia_excel: Path) -> None:
         "cf_unmatched": manifest.get("cf_unmatched", 0),
         "cf_ambiguous": manifest.get("cf_ambiguous", 0),
     }
+    job.updated_at = datetime.utcnow()
+    db.commit()
+
+
+def _record_terminal_cleanup(db: Session, job_id: str, file_path: str | None) -> None:
+    from ..import_cache_cleanup import cleanup_terminal_import_artifacts
+
+    cleanup_stats = cleanup_terminal_import_artifacts(job_id, file_path)
+    job = db.query(ImportJob).filter(ImportJob.job_id == job_id).first()
+    if job is None:
+        return
+    job.stats_json = {**(job.stats_json or {}), "import_cache_cleanup": cleanup_stats}
     job.updated_at = datetime.utcnow()
     db.commit()
 
@@ -170,12 +208,14 @@ def _run_job_background(job_id: str, resume_from_failed: bool) -> None:
             lcia_excel = extract_result.get("lcia_excel")
             if lcia_excel and (job.file_type == "lcia" or not extract_result.get("datasets_dir")):
                 _finish_lcia_job(db, job, Path(lcia_excel))
+                _record_terminal_cleanup(db, job_id, job.file_path)
                 return
         else:
             spold_dir = str(file_path)
             master_data_dir = ""
             if job.file_type == "lcia" or file_path.suffix.lower() == ".xlsx":
                 _finish_lcia_job(db, job, file_path)
+                _record_terminal_cleanup(db, job_id, job.file_path)
                 return
 
         _set_job_phase(db, job_id, "masterdata", {"message": "loading_masterdata"})
@@ -221,6 +261,8 @@ def _run_job_background(job_id: str, resume_from_failed: bool) -> None:
         }
         job.updated_at = datetime.utcnow()
         db.commit()
+        if job.status in {"completed", "cancelled"}:
+            _record_terminal_cleanup(db, job_id, job.file_path)
     except Exception as exc:
         logger.exception("Import job %s failed", job_id)
         job = db.query(ImportJob).filter(ImportJob.job_id == job_id).first()
@@ -562,6 +604,8 @@ def generate_lcia_runtime_for_job(
             },
         )
     stats = job.stats_json or {}
+    if stats.get("runtime_manifest"):
+        return stats["runtime_manifest"]
     lcia_excel = stats.get("lcia_excel")
     if lcia_excel:
         try:

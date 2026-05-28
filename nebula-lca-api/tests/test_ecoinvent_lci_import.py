@@ -410,6 +410,38 @@ class TestElementaryFlowImport:
         assert flow.tidas_compatible is False
         assert flow.allocation_properties is None
 
+    def test_ecoinvent_elementary_flow_preserves_existing_builtin_elementary_source(self, db_session, sample_units_xml, sample_elementary_xml):
+        db_session.add(
+            FlowRecord(
+                flow_uuid="flow-co2-air-001",
+                flow_name="CO2 builtin",
+                flow_name_en="CO2 builtin",
+                flow_type="Elementary flow",
+                default_unit="kg",
+                unit_group="Units of mass",
+                compartment="air",
+                source="ef3.1",
+                is_custom=False,
+                tidas_compatible=True,
+                tidas_reference_source="tiangong",
+            )
+        )
+        db_session.commit()
+
+        result = import_ecoinvent_elementary_flows(
+            db_session,
+            data_dir=str(sample_units_xml.parent),
+            source="ecoinvent_3.11",
+        )
+
+        flow = db_session.get(FlowRecord, "flow-co2-air-001")
+        assert result["conflicts_overwritten"] == 1
+        assert flow.flow_name == "CO2"
+        assert flow.flow_type == "Elementary flow"
+        assert flow.source == "ef3.1"
+        assert flow.tidas_compatible is True
+        assert flow.tidas_reference_source == "tiangong"
+
 
 # ======================================================================
 # Tests: Intermediate flow import
@@ -663,6 +695,60 @@ class TestSPOLDProcessImport:
         assert {port.flowUuid for port in biosphere_ports} == {"flow-co2-air-001", "flow-ch4-air-002"}
         co2 = next(port for port in biosphere_ports if port.flowUuid == "flow-co2-air-001")
         assert abs(co2.amount - 1.6) < 1e-12
+
+    def test_manual_lci_node_does_not_require_vector(self, db_session):
+        graph = HybridGraph.model_validate(
+            {
+                "functionalUnit": "1 kg product",
+                "nodes": [
+                    {
+                        "id": "node-manual-lci",
+                        "node_kind": "lci_dataset",
+                        "mode": "normalized",
+                        "process_uuid": "lci_manual_001",
+                        "name": "Manual LCI",
+                        "location": "GLO",
+                        "reference_product": "product",
+                        "inputs": [
+                            {
+                                "id": "in-co2",
+                                "flowUuid": "flow-co2-air-001",
+                                "name": "Carbon dioxide",
+                                "unit": "kg",
+                                "unitGroup": "Units of mass",
+                                "amount": 1.0,
+                                "type": "biosphere",
+                                "direction": "input",
+                                "showOnNode": True,
+                            }
+                        ],
+                        "outputs": [
+                            {
+                                "id": "out-product",
+                                "flowUuid": "flow-product",
+                                "name": "product",
+                                "unit": "kg",
+                                "unitGroup": "Units of mass",
+                                "amount": 1.0,
+                                "type": "technosphere",
+                                "direction": "output",
+                                "isProduct": True,
+                            }
+                        ],
+                        "emissions": [],
+                    }
+                ],
+                "exchanges": [],
+                "metadata": {},
+            }
+        )
+
+        expanded = expand_lci_vectors_into_graph(db_session, graph)
+
+        assert expanded.expanded_process_count == 0
+        assert expanded.expanded_port_count == 0
+        assert expanded.missing_vectors == []
+        assert expanded.graph.nodes[0].inputs[0].flowUuid == "flow-co2-air-001"
 
 
 class TestLciVectorCodec:

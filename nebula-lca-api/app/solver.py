@@ -7,6 +7,7 @@ from .schemas import (
     is_waste_flow_semantic,
     normalize_flow_semantic,
 )
+from .allocation import calculate_product_allocation
 
 
 def _solver_runtime_flow_type(value: object) -> str:
@@ -44,6 +45,8 @@ def to_tiangong_like(
     input_port_flow_uuid_by_node_and_port: dict[tuple[str, str], str] = {}
     input_port_is_product_by_node_and_port: dict[tuple[str, str], bool] = {}
     output_port_is_product_by_node_and_port: dict[tuple[str, str], bool] = {}
+    exchange_id_by_node_and_port: dict[tuple[str, str], str] = {}
+    product_meta_by_node_and_port: dict[tuple[str, str], dict[str, float]] = {}
     for node in graph.nodes:
         for port in node.inputs:
             input_port_amount_by_node_and_port[(node.id, port.id)] = float(port.amount or 0.0)
@@ -76,6 +79,9 @@ def to_tiangong_like(
 
     for node in graph.nodes:
         allocation_fraction_by_port_id: dict[str, float] = {}
+        product_conversion_factor_by_port_id: dict[str, float] = {}
+        product_result_scale_by_port_id: dict[str, float] = {}
+        baseline_fraction_by_port_id: dict[str, float] = {}
         explicit_product_outputs = [
             port
             for port in node.outputs
@@ -84,24 +90,26 @@ def to_tiangong_like(
         product_outputs = explicit_product_outputs
 
         if product_outputs:
-            # v1: unit-group physical allocation.
-            unit_groups = {port.unitGroup for port in product_outputs if port.unitGroup}
-            if len(unit_groups) <= 1:
-                custom_factors = [port.allocationFactor for port in product_outputs]
-                if any(f is not None for f in custom_factors):
-                    positive_factor_sum = sum(float(f or 0.0) for f in custom_factors if float(f or 0.0) > 0)
-                    if positive_factor_sum > 0:
-                        for port in product_outputs:
-                            factor = float(port.allocationFactor or 0.0)
-                            if factor > 0:
-                                allocation_fraction_by_port_id[port.id] = factor / positive_factor_sum
-                else:
-                    total_amount = sum(float(port.amount or 0.0) for port in product_outputs if float(port.amount or 0.0) > 0)
-                    if total_amount > 0:
-                        for port in product_outputs:
-                            amount = float(port.amount or 0.0)
-                            if amount > 0:
-                                allocation_fraction_by_port_id[port.id] = amount / total_amount
+            total_amount = sum(float(port.amount or 0.0) for port in product_outputs if float(port.amount or 0.0) > 0)
+            if total_amount > 0:
+                for port in product_outputs:
+                    amount = float(port.amount or 0.0)
+                    if amount > 0:
+                        baseline_fraction_by_port_id[port.id] = amount / total_amount
+
+            allocation = calculate_product_allocation(
+                product_outputs,
+                process_uuid=str(node.process_uuid or node.id or ""),
+            )
+            if allocation.factors:
+                allocation_fraction_by_port_id.update(allocation.factors)
+            for port in product_outputs:
+                baseline = baseline_fraction_by_port_id.get(port.id)
+                fraction = allocation_fraction_by_port_id.get(port.id)
+                if baseline is not None and baseline > 0 and fraction is not None:
+                    if fraction > 0:
+                        product_conversion_factor_by_port_id[port.id] = baseline / fraction
+                        product_result_scale_by_port_id[port.id] = fraction / baseline
 
         # Internal reference exchange selection for matrix builder compatibility.
         # Prefer explicit output product, then normal output, and finally a product-marked
@@ -177,9 +185,30 @@ def to_tiangong_like(
                     "allocation_fraction": allocation_fraction_by_port_id.get(port.id)
                     if port.direction == "output"
                     else None,
+                    "product_output_amount": float(port.amount or 0.0)
+                    if port.direction == "output" and bool(port.isProduct)
+                    else None,
+                    "baseline_quantity_fraction": baseline_fraction_by_port_id.get(port.id)
+                    if port.direction == "output"
+                    else None,
+                    "product_conversion_factor": product_conversion_factor_by_port_id.get(port.id)
+                    if port.direction == "output"
+                    else None,
+                    "allocation_scale": product_result_scale_by_port_id.get(port.id)
+                    if port.direction == "output"
+                    else None,
                 }
             )
             node_exchange_ids[port.id] = exchange_id
+            exchange_id_by_node_and_port[(node.id, port.id)] = exchange_id
+            if port.direction == "output" and port.id in product_conversion_factor_by_port_id:
+                product_meta_by_node_and_port[(node.id, port.id)] = {
+                    "allocation_fraction": allocation_fraction_by_port_id.get(port.id, 1.0),
+                    "baseline_quantity_fraction": baseline_fraction_by_port_id.get(port.id, 1.0),
+                    "product_conversion_factor": product_conversion_factor_by_port_id.get(port.id, 1.0),
+                    "allocation_scale": product_result_scale_by_port_id.get(port.id, 1.0),
+                    "product_output_amount": float(port.amount or 0.0),
+                }
 
         reference_exchange_id = node_exchange_ids.get(reference_port.id, "") if reference_port else ""
 
@@ -262,15 +291,42 @@ def to_tiangong_like(
         )
         provider_process_uuid = _node_process_uuid(graph, edge.fromNode)
         consumer_process_uuid = _node_process_uuid(graph, edge.toNode)
+        provider_product_exchange_id = (
+            exchange_id_by_node_and_port.get((edge.fromNode, source_port_id))
+            if source_port_id
+            else None
+        )
+        provider_product_meta = (
+            product_meta_by_node_and_port.get((edge.fromNode, source_port_id), {})
+            if source_port_id
+            else {}
+        )
         if is_waste_flow and not source_port_is_product and not target_port_is_product and edge.quantityMode != "single":
             # Waste output means the upstream generator demands downstream treatment.
             provider_process_uuid = _node_process_uuid(graph, edge.toNode)
             consumer_process_uuid = _node_process_uuid(graph, edge.fromNode)
+            provider_product_exchange_id = (
+                exchange_id_by_node_and_port.get((edge.toNode, target_port_id))
+                if target_port_id
+                else None
+            )
+            provider_product_meta = (
+                product_meta_by_node_and_port.get((edge.toNode, target_port_id), {})
+                if target_port_id
+                else {}
+            )
 
         links.append(
             {
                 "consumer_process_uuid": consumer_process_uuid,
                 "provider_process_uuid": provider_process_uuid,
+                "provider_product_port_id": source_port_id,
+                "provider_product_exchange_id": provider_product_exchange_id,
+                "provider_allocation_fraction": provider_product_meta.get("allocation_fraction"),
+                "provider_baseline_quantity_fraction": provider_product_meta.get("baseline_quantity_fraction"),
+                "provider_product_conversion_factor": provider_product_meta.get("product_conversion_factor"),
+                "provider_allocation_scale": provider_product_meta.get("allocation_scale"),
+                "provider_product_output_amount": provider_product_meta.get("product_output_amount"),
                 "flow_uuid": edge_flow_uuid or edge.flowUuid,
                 "flow_type": _solver_runtime_flow_type(edge_flow_type) if edge_flow_type else None,
                 "is_waste_flow": is_waste_flow,
