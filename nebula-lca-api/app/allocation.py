@@ -77,6 +77,14 @@ def _amount(port: Any) -> float:
         return 0.0
 
 
+def _allocation_weight(port: Any) -> float | None:
+    try:
+        parsed = float(_port_get(port, "allocationWeight", None))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
 def _unit_group(port: Any) -> str:
     return str(_port_get(port, "unitGroup", None) or _port_get(port, "unit_group", "") or "").strip()
 
@@ -258,7 +266,11 @@ def _normalize_factors(weights: dict[str, float]) -> dict[str, float] | None:
     return {port_id: value / total for port_id, value in weights.items() if value > 0}
 
 
-def _manual_factor_allocation(product_outputs: list[Any], process_uuid: str) -> AllocationResult | None:
+def _manual_factor_allocation(
+    product_outputs: list[Any],
+    process_uuid: str,
+    unit_factor_by_group_and_name: dict[tuple[str, str], float] | None,
+) -> AllocationResult | None:
     user_allocation: dict[str, float] = {}
     for port in product_outputs:
         factor = _port_get(port, "allocationFactor", None)
@@ -282,7 +294,15 @@ def _manual_factor_allocation(product_outputs: list[Any], process_uuid: str) -> 
 
     user_sum = sum(user_allocation.values())
     if abs(user_sum - 1.0) < ALLOCATION_TOLERANCE:
-        return AllocationResult(factors=user_allocation, method="manual_factor", weights=user_allocation)
+        quantity_weights = {
+            _port_id(port): weight
+            for port in product_outputs
+            if (weight := _allocation_weight(port)) is not None
+        }
+        if len(quantity_weights) != len(product_outputs):
+            quantity_result = _same_unit_group_allocation(product_outputs, process_uuid, unit_factor_by_group_and_name)
+            quantity_weights = quantity_result.weights if quantity_result and quantity_result.weights else {}
+        return AllocationResult(factors=user_allocation, method="manual_factor", weights=quantity_weights)
 
     return _manual_result(
         process_uuid,
@@ -461,7 +481,7 @@ def calculate_product_allocation(
     if len(product_outputs) == 1:
         return AllocationResult(factors={_port_id(product_outputs[0]): 1.0}, method="single_product")
 
-    manual = _manual_factor_allocation(product_outputs, process_uuid)
+    manual = _manual_factor_allocation(product_outputs, process_uuid, unit_factor_by_group_and_name)
     if manual is not None:
         return manual
 

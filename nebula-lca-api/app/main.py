@@ -636,27 +636,32 @@ def _build_product_result_view_from_graph(
         product_outputs = [port for port in node.outputs if port.type != "biosphere" and bool(port.isProduct)]
         product_conversion_factor_by_port_id: dict[str, float] = {}
         if product_outputs:
-            baseline_amount_by_port_id: dict[str, float] = {}
-            for port in product_outputs:
-                sem = resolve_flow_port_unit_semantics(
-                    db,
-                    port,
-                    unit_factor_by_group_and_name=unit_factor_by_group_and_name,
-                    reference_unit_by_group=reference_unit_by_group,
-                )
-                if sem.ok and sem.amount_in_flow_default_unit is not None and sem.amount_in_flow_default_unit > 0:
-                    baseline_amount_by_port_id[str(port.id or "")] = float(sem.amount_in_flow_default_unit)
+            allocation = calculate_product_allocation(
+                product_outputs,
+                process_uuid=process_uuid,
+                unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+            )
+            baseline_amount_by_port_id = {
+                str(port_id): float(amount)
+                for port_id, amount in (allocation.weights or {}).items()
+                if float(amount) > 0
+            }
+            if not baseline_amount_by_port_id:
+                for port in product_outputs:
+                    sem = resolve_flow_port_unit_semantics(
+                        db,
+                        port,
+                        unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+                        reference_unit_by_group=reference_unit_by_group,
+                    )
+                    if sem.ok and sem.amount_in_flow_default_unit is not None and sem.amount_in_flow_default_unit > 0:
+                        baseline_amount_by_port_id[str(port.id or "")] = float(sem.amount_in_flow_default_unit)
             amount_total = sum(value for value in baseline_amount_by_port_id.values() if value > 0)
             baseline_fraction_by_port_id = {
                 port_id: amount / amount_total
                 for port_id, amount in baseline_amount_by_port_id.items()
                 if amount_total > 0 and amount > 0
             }
-            allocation = calculate_product_allocation(
-                product_outputs,
-                process_uuid=process_uuid,
-                unit_factor_by_group_and_name=unit_factor_by_group_and_name,
-            )
             for port_id, fraction in (allocation.factors or {}).items():
                 baseline = baseline_fraction_by_port_id.get(str(port_id))
                 if baseline is not None and baseline > 0 and float(fraction) > 0:
@@ -801,6 +806,9 @@ def _graph_with_solver_unit_defaults(
                 if port_id in allocation.factors:
                     port["allocationFactor"] = float(allocation.factors[port_id])
                     port["allocationBasis"] = {"method": "solver_precomputed"}
+                    if port_id in allocation.weights:
+                        port["allocationWeight"] = float(allocation.weights[port_id])
+                        port["allocationWeightUnitGroup"] = str(port.get("unitGroup") or "")
 
     normalized_amount_by_node_and_port: dict[tuple[str, str], float] = {}
     for node in graph_dict.get("nodes", []) or []:

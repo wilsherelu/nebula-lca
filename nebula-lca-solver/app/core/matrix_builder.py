@@ -84,6 +84,7 @@ def build_matrices_from_snapshot(
         allocation_active = False
         allocation_total = 0.0
         allocation_unit_groups = set()
+        allocation_weight_active = False
         for ex in exchanges_by_process.get(proc_uuid, []):
             if str(ex.get("direction", "")).lower() != "output":
                 continue
@@ -99,14 +100,20 @@ def build_matrices_from_snapshot(
                 issues.append(
                     f"process {proc_uuid} allocation output {flow_uuid} is elementary flow"
                 )
-            unit_group_uuid = flow.get("unit_group_uuid")
+            allocation_weight = _to_float(ex.get("allocation_weight"))
+            if allocation_weight is not None:
+                allocation_weight_active = True
+            unit_group_uuid = ex.get("allocation_weight_unit_group") if allocation_weight is not None else flow.get("unit_group_uuid")
             if unit_group_uuid:
+                unit_group_uuid = str(unit_group_uuid)
+                if unit_group_uuid.startswith("unit_group::"):
+                    unit_group_uuid = unit_group_uuid.removeprefix("unit_group::")
                 allocation_unit_groups.add(unit_group_uuid)
             else:
                 issues.append(
                     f"process {proc_uuid} allocation output {flow_uuid} missing unit group"
                 )
-            amount = _to_float(ex.get("amount"))
+            amount = allocation_weight if allocation_weight is not None else _to_float(ex.get("amount"))
             if amount is not None:
                 allocation_total += amount
 
@@ -123,7 +130,7 @@ def build_matrices_from_snapshot(
             if allocation_total <= 0:
                 issues.append(f"process {proc_uuid} allocation total is zero")
                 allocation_total = 1.0
-            if len(allocation_unit_groups) > 1:
+            if len(allocation_unit_groups) > 1 and not allocation_weight_active:
                 issues.append(
                     f"process {proc_uuid} allocation outputs have inconsistent unit groups"
                 )
