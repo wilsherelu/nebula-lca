@@ -233,3 +233,102 @@ def test_solver_unit_defaults_convert_switched_flow_to_default_unit_group():
     assert port.amount == pytest.approx(1.0)
     assert port.unit == "m3"
     assert port.unitGroup == "Units of volume"
+
+
+def test_allocation_weight_survives_flow_default_unit_standardization():
+    Base.metadata.create_all(bind=_db_module.engine)
+    db = _db_module.SessionLocal()
+    try:
+        db.query(UnitDefinition).delete()
+        db.merge(UnitGroup(name="Units of mass", reference_unit="kg"))
+        db.merge(UnitGroup(name="Units of volume", reference_unit="m3"))
+        db.add(UnitDefinition(unit_group="Units of mass", unit_name="kg", factor_to_reference=1.0, is_reference=True))
+        db.add(UnitDefinition(unit_group="Units of volume", unit_name="m3", factor_to_reference=1.0, is_reference=True))
+        db.merge(
+            FlowRecord(
+                flow_uuid="flow-solvent",
+                flow_name="solvent",
+                flow_type="Product flow",
+                default_unit="kg",
+                unit_group="Units of mass",
+                source="test",
+                is_custom=False,
+            )
+        )
+        db.merge(
+            FlowRecord(
+                flow_uuid="flow-gas",
+                flow_name="natural gas",
+                flow_type="Product flow",
+                default_unit="m3",
+                unit_group="Units of volume",
+                source="test",
+                is_custom=False,
+            )
+        )
+        db.commit()
+
+        graph = HybridGraph.model_validate({
+            "functionalUnit": "1 kg solvent",
+            "nodes": [
+                {
+                    "id": "node-1",
+                    "node_kind": "unit_process",
+                    "mode": "normalized",
+                    "process_uuid": "proc-1",
+                    "name": "process",
+                    "location": "GLO",
+                    "reference_product": "solvent",
+                    "inputs": [],
+                    "outputs": [
+                        _product("out-solvent", "flow-solvent", 5.0),
+                        {
+                            **_product("out-gas", "flow-gas", 3.0),
+                            "unitGroupSwitch": {
+                                "sourceFlowUuid": "flow-gas",
+                                "sourceUnitGroup": "Units of volume",
+                                "sourceUnit": "m3",
+                                "sourceReferenceUnit": "m3",
+                                "targetUnitGroup": "Units of mass",
+                                "targetUnit": "kg",
+                                "targetReferenceUnit": "kg",
+                                "factor": 3,
+                            },
+                        },
+                        {
+                            "id": "em-co2",
+                            "flowUuid": "flow-co2",
+                            "name": "CO2",
+                            "unit": "kg",
+                            "unitGroup": "Units of mass",
+                            "amount": 2.0,
+                            "type": "biosphere",
+                            "direction": "output",
+                        },
+                    ],
+                    "emissions": [],
+                }
+            ],
+            "exchanges": [],
+            "metadata": {},
+        })
+
+        normalized = _graph_with_solver_unit_defaults(
+            db=db,
+            graph=graph,
+            unit_factor_by_group_and_name={
+                ("Units of mass", "kg"): 1.0,
+                ("Units of volume", "m3"): 1.0,
+            },
+            reference_unit_by_group={"Units of mass": "kg", "Units of volume": "m3"},
+        )
+    finally:
+        db.close()
+
+    snapshot = to_tiangong_like(normalized)
+    exchange_by_id = {item["exchange_id"]: item for item in snapshot["exchanges"]}
+
+    assert exchange_by_id["node-1::out-solvent"]["allocation_weight"] == pytest.approx(5.0)
+    assert exchange_by_id["node-1::out-gas"]["allocation_weight"] == pytest.approx(3.0)
+    assert exchange_by_id["node-1::out-solvent"]["product_conversion_factor"] == pytest.approx(1.0)
+    assert exchange_by_id["node-1::out-gas"]["product_conversion_factor"] == pytest.approx(1.0)

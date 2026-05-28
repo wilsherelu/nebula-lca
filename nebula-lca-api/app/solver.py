@@ -19,6 +19,18 @@ def _solver_runtime_flow_type(value: object) -> str:
     return "Product flow"
 
 
+def _port_float_attr(port: object, name: str) -> float | None:
+    try:
+        value = getattr(port, name)
+    except AttributeError:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
 def to_tiangong_like(
     graph: HybridGraph,
     *,
@@ -82,6 +94,7 @@ def to_tiangong_like(
         product_conversion_factor_by_port_id: dict[str, float] = {}
         product_result_scale_by_port_id: dict[str, float] = {}
         baseline_fraction_by_port_id: dict[str, float] = {}
+        allocation_weight_by_port_id: dict[str, float] = {}
         explicit_product_outputs = [
             port
             for port in node.outputs
@@ -90,19 +103,32 @@ def to_tiangong_like(
         product_outputs = explicit_product_outputs
 
         if product_outputs:
-            total_amount = sum(float(port.amount or 0.0) for port in product_outputs if float(port.amount or 0.0) > 0)
-            if total_amount > 0:
-                for port in product_outputs:
-                    amount = float(port.amount or 0.0)
-                    if amount > 0:
-                        baseline_fraction_by_port_id[port.id] = amount / total_amount
-
             allocation = calculate_product_allocation(
                 product_outputs,
                 process_uuid=str(node.process_uuid or node.id or ""),
             )
             if allocation.factors:
                 allocation_fraction_by_port_id.update(allocation.factors)
+            baseline_weights = allocation.weights or {}
+            if not baseline_weights:
+                baseline_weights = {
+                    port.id: weight
+                    for port in product_outputs
+                    if (weight := _port_float_attr(port, "allocationWeight")) is not None
+                }
+            allocation_weight_by_port_id.update(baseline_weights)
+            if not baseline_weights:
+                baseline_weights = {
+                    port.id: float(port.amount or 0.0)
+                    for port in product_outputs
+                    if float(port.amount or 0.0) > 0
+                }
+            total_weight = sum(value for value in baseline_weights.values() if value > 0)
+            if total_weight > 0:
+                for port in product_outputs:
+                    amount = baseline_weights.get(port.id)
+                    if amount is not None and amount > 0:
+                        baseline_fraction_by_port_id[port.id] = amount / total_weight
             for port in product_outputs:
                 baseline = baseline_fraction_by_port_id.get(port.id)
                 fraction = allocation_fraction_by_port_id.get(port.id)
@@ -185,6 +211,12 @@ def to_tiangong_like(
                     "allocation_fraction": allocation_fraction_by_port_id.get(port.id)
                     if port.direction == "output"
                     else None,
+                    "allocation_weight": allocation_weight_by_port_id.get(port.id)
+                    if port.direction == "output"
+                    else None,
+                    "allocation_weight_unit_group": getattr(port, "allocationWeightUnitGroup", None) or port.unitGroup
+                    if port.direction == "output" and allocation_weight_by_port_id.get(port.id) is not None
+                    else None,
                     "product_output_amount": float(port.amount or 0.0)
                     if port.direction == "output" and bool(port.isProduct)
                     else None,
@@ -205,6 +237,7 @@ def to_tiangong_like(
                 product_meta_by_node_and_port[(node.id, port.id)] = {
                     "allocation_fraction": allocation_fraction_by_port_id.get(port.id, 1.0),
                     "baseline_quantity_fraction": baseline_fraction_by_port_id.get(port.id, 1.0),
+                    "allocation_weight": allocation_weight_by_port_id.get(port.id),
                     "product_conversion_factor": product_conversion_factor_by_port_id.get(port.id, 1.0),
                     "allocation_scale": product_result_scale_by_port_id.get(port.id, 1.0),
                     "product_output_amount": float(port.amount or 0.0),

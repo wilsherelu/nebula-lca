@@ -5369,10 +5369,12 @@ export default function App() {
   const hasProductResultView = productColumns.length > 0 && Array.isArray(lastRun?.lci_result?.product_values);
   const selectedProductClimateRow = useMemo(
     () =>
+      productCfpRows.find((row) => selectedProduct?.viewKey && row.viewKey === selectedProduct.viewKey) ??
+      productCfpRows.find((row) => selectedProduct?.productKey && row.productKey === selectedProduct.productKey) ??
       productCfpRows.find(
         (row) => buildProjectTargetMatchKey(row.processUuid, row.productFlowUuid) === configuredTargetProductKey,
       ) ?? productCfpRows[0] ?? null,
-    [configuredTargetProductKey, productCfpRows],
+    [configuredTargetProductKey, productCfpRows, selectedProduct?.productKey, selectedProduct?.viewKey],
   );
   const selectedProductClimateTotal = useMemo(
     () => (selectedProductClimateRow ? selectedProductClimateRow.value * targetProductQuantityValue : null),

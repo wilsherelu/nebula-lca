@@ -88,6 +88,8 @@ class FlowPort(BaseModel):
     isProduct: bool | None = False
     allocationFactor: float | None = None
     allocationBasis: dict | None = None
+    allocationWeight: float | None = None
+    allocationWeightUnitGroup: str | None = None
     unitGroupSwitch: dict | None = None
     product_key: str | None = None
     port_key: str | None = None
