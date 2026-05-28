@@ -641,21 +641,16 @@ def _build_product_result_view_from_graph(
                 process_uuid=process_uuid,
                 unit_factor_by_group_and_name=unit_factor_by_group_and_name,
             )
-            baseline_amount_by_port_id = {
-                str(port_id): float(amount)
-                for port_id, amount in (allocation.weights or {}).items()
-                if float(amount) > 0
-            }
-            if not baseline_amount_by_port_id:
-                for port in product_outputs:
-                    sem = resolve_flow_port_unit_semantics(
-                        db,
-                        port,
-                        unit_factor_by_group_and_name=unit_factor_by_group_and_name,
-                        reference_unit_by_group=reference_unit_by_group,
-                    )
-                    if sem.ok and sem.amount_in_flow_default_unit is not None and sem.amount_in_flow_default_unit > 0:
-                        baseline_amount_by_port_id[str(port.id or "")] = float(sem.amount_in_flow_default_unit)
+            baseline_amount_by_port_id: dict[str, float] = {}
+            for port in product_outputs:
+                sem = resolve_flow_port_unit_semantics(
+                    db,
+                    port,
+                    unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+                    reference_unit_by_group=reference_unit_by_group,
+                )
+                if sem.ok and sem.amount_in_flow_default_unit is not None and sem.amount_in_flow_default_unit > 0:
+                    baseline_amount_by_port_id[str(port.id or "")] = float(sem.amount_in_flow_default_unit)
             amount_total = sum(value for value in baseline_amount_by_port_id.values() if value > 0)
             baseline_fraction_by_port_id = {
                 port_id: amount / amount_total
@@ -727,9 +722,10 @@ def _build_product_result_view_from_graph(
             unit_semantics = item.get("unit_semantics") or {}
             product_unit_map[item["product_key"]] = {
                 "unit": item["unit"],
-                "unit_group": item["unit_group"],
+                "unit_group": unit_semantics.get("current_unit_group") or item["unit_group"],
                 "current_unit": unit_semantics.get("current_unit") or item["unit"],
                 "current_unit_group": unit_semantics.get("current_unit_group") or item["unit_group"],
+                "current_amount": unit_semantics.get("current_amount"),
                 "flow_default_unit": unit_semantics.get("flow_default_unit") or item["unit"],
                 "flow_default_unit_group": unit_semantics.get("flow_default_unit_group") or item["unit_group"],
                 "result_factor_to_flow_default_unit": unit_semantics.get("result_factor_to_flow_default_unit"),
@@ -4085,9 +4081,17 @@ def run_solver_and_persist(
     flow_type_by_uuid = _solver_flow_type_by_uuid_cached(db)
     flow_source_by_uuid = _solver_flow_source_by_uuid_cached(db)
 
+    solver_graph = expand_lci_vectors_into_graph(db, payload.graph).graph
+    normalized_graph = _graph_with_solver_unit_defaults(
+        db=db,
+        graph=solver_graph,
+        unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+        reference_unit_by_group=reference_unit_by_group,
+    )
+
     direct_result = try_run_direct_sparse_lcia(
         db=db,
-        graph=payload.graph,
+        graph=normalized_graph,
         lcia_methods=payload.lcia_methods,
     )
     if direct_result is not None:
@@ -4134,14 +4138,6 @@ def run_solver_and_persist(
         return "completed", run_job.id, solved, direct_result.tiangong_like_input
 
     lci_expansion = expand_lci_vectors_into_graph(db, payload.graph)
-    solver_graph = lci_expansion.graph
-
-    normalized_graph = _graph_with_solver_unit_defaults(
-        db=db,
-        graph=solver_graph,
-        unit_factor_by_group_and_name=unit_factor_by_group_and_name,
-        reference_unit_by_group=reference_unit_by_group,
-    )
 
     try:
         tiangong_like = to_tiangong_like(
@@ -4252,7 +4248,12 @@ def run_solver_and_persist(
 @app.post("/api/model/run", response_model=RunResponse)
 @app.post("/model/run", response_model=RunResponse)
 def run_model(payload: RunRequest, db: Session = Depends(get_db)) -> RunResponse:
-    validate_graph_contract(payload.graph, require_non_empty=False, allow_pts_nodes=True)
+    validate_graph_contract(
+        payload.graph,
+        require_non_empty=False,
+        allow_pts_nodes=True,
+        require_balanced_conservation=True,
+    )
     validate_graph_flow_type_contract(payload.graph, db=db, stage="run_model")
     validate_graph_port_names_against_flow_catalog(payload.graph, db=db, stage="run_model")
     flow_default_unit_violations = collect_flow_default_unit_conversion_violations(payload.graph, db)
@@ -4354,6 +4355,12 @@ def run_model(payload: RunRequest, db: Session = Depends(get_db)) -> RunResponse
                 project_id=project_id,
                 force_recompile=False,
                 lcia_methods=["EF v3.1"],
+            )
+            validate_graph_contract(
+                effective_payload.graph,
+                require_non_empty=False,
+                allow_pts_nodes=True,
+                require_balanced_conservation=True,
             )
 
         flow_default_unit_violations = collect_flow_default_unit_conversion_violations(effective_payload.graph, db)

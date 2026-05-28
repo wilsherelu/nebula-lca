@@ -4,7 +4,7 @@ import app.database as _db_module
 from app.main import _build_product_result_view_from_graph, _graph_with_solver_unit_defaults
 from app.models import FlowRecord, UnitDefinition, UnitGroup
 from app.database import Base
-from app.allocation import collect_multi_product_unit_group_violations
+from app.allocation import calculate_product_allocation, collect_multi_product_unit_group_violations
 from app.schemas import HybridGraph
 from app.solver import to_tiangong_like
 
@@ -124,6 +124,141 @@ def test_manual_factors_allow_different_product_unit_groups():
     graph["nodes"][0]["outputs"][1]["unitGroup"] = "Units of volume"
 
     assert collect_multi_product_unit_group_violations(graph) == []
+
+
+def test_quantity_allocation_ignores_cached_factors_and_converts_units():
+    ports = [
+        {
+            "id": "gas",
+            "flowUuid": "gas-flow",
+            "unit": "MJ",
+            "unitGroup": "Units of energy",
+            "amount": 1000,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": True,
+            "allocationFactor": 0.999201,
+            "allocationBasis": {"method": "quantity"},
+        },
+        {
+            "id": "transport",
+            "flowUuid": "transport-flow",
+            "unit": "GJ",
+            "unitGroup": "Units of energy",
+            "amount": 0.8,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": True,
+            "allocationFactor": 0.000799,
+            "allocationBasis": {"method": "quantity"},
+        },
+    ]
+
+    result = calculate_product_allocation(
+        ports,
+        process_uuid="energy-process",
+        unit_factor_by_group_and_name={
+            ("Units of energy", "MJ"): 1.0,
+            ("Units of energy", "GJ"): 1000.0,
+        },
+    )
+
+    assert result.method == "quantity"
+    assert result.weights == {"gas": pytest.approx(1000), "transport": pytest.approx(800)}
+    assert result.factors == {"gas": pytest.approx(1000 / 1800), "transport": pytest.approx(800 / 1800)}
+
+
+def test_quantity_allocation_ignores_legacy_cached_factors_without_basis():
+    ports = [
+        {
+            "id": "gas",
+            "flowUuid": "gas-flow",
+            "unit": "MJ",
+            "unitGroup": "Units of energy",
+            "amount": 1000,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": True,
+            "allocationFactor": 0.999201,
+        },
+        {
+            "id": "transport",
+            "flowUuid": "transport-flow",
+            "unit": "GJ",
+            "unitGroup": "Units of energy",
+            "amount": 0.8,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": True,
+            "allocationFactor": 0.000799,
+        },
+    ]
+
+    result = calculate_product_allocation(
+        ports,
+        process_uuid="energy-process",
+        unit_factor_by_group_and_name={
+            ("Units of energy", "MJ"): 1.0,
+            ("Units of energy", "GJ"): 1000.0,
+        },
+    )
+
+    assert result.method == "quantity"
+    assert result.factors == {"gas": pytest.approx(1000 / 1800), "transport": pytest.approx(800 / 1800)}
+
+
+def test_quantity_allocation_prefers_actual_unit_over_stale_switch_target_unit():
+    ports = [
+        {
+            "id": "gas",
+            "flowUuid": "gas-flow",
+            "unit": "MJ",
+            "unitGroup": None,
+            "amount": 1000,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": True,
+            "unitGroupSwitch": {
+                "sourceUnitGroup": "Units of mass",
+                "sourceUnit": "kg",
+                "sourceReferenceUnit": "kg",
+                "targetUnitGroup": "Units of energy",
+                "targetUnit": "MJ",
+                "factor": 1000,
+            },
+        },
+        {
+            "id": "transport",
+            "flowUuid": "transport-flow",
+            "unit": "GJ",
+            "unitGroup": None,
+            "amount": 0.8,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": True,
+            "unitGroupSwitch": {
+                "sourceUnitGroup": "Units of mass",
+                "sourceUnit": "kg",
+                "sourceReferenceUnit": "kg",
+                "targetUnitGroup": "Units of energy",
+                "targetUnit": "MJ",
+                "factor": 600,
+            },
+        },
+    ]
+
+    result = calculate_product_allocation(
+        ports,
+        process_uuid="energy-process",
+        unit_factor_by_group_and_name={
+            ("Units of energy", "MJ"): 1.0,
+            ("Units of energy", "GJ"): 1000.0,
+        },
+    )
+
+    assert result.method == "quantity"
+    assert result.weights == {"gas": pytest.approx(1000), "transport": pytest.approx(800)}
+    assert result.factors == {"gas": pytest.approx(1000 / 1800), "transport": pytest.approx(800 / 1800)}
 
 
 def test_product_result_view_applies_allocation_scale():
@@ -330,5 +465,5 @@ def test_allocation_weight_survives_flow_default_unit_standardization():
 
     assert exchange_by_id["node-1::out-solvent"]["allocation_weight"] == pytest.approx(5.0)
     assert exchange_by_id["node-1::out-gas"]["allocation_weight"] == pytest.approx(3.0)
-    assert exchange_by_id["node-1::out-solvent"]["product_conversion_factor"] == pytest.approx(1.0)
-    assert exchange_by_id["node-1::out-gas"]["product_conversion_factor"] == pytest.approx(1.0)
+    assert exchange_by_id["node-1::out-solvent"]["product_conversion_factor"] == pytest.approx(4 / 3)
+    assert exchange_by_id["node-1::out-gas"]["product_conversion_factor"] == pytest.approx(4 / 9)

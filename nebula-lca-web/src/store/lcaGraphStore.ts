@@ -344,6 +344,7 @@ type LcaGraphState = {
     inputTotal: number;
     externalSaleTotal: number;
     processNames: string[];
+    reason?: string;
   }>;
   getBalancedWarnings: () => Array<{
     flowUuid: string;
@@ -352,6 +353,7 @@ type LcaGraphState = {
     inputTotal: number;
     externalSaleTotal: number;
     processNames: string[];
+    reason?: string;
   }>;
   getMarketWarnings: () => MarketWarning[];
   getMarketWarningsForCanvas: (canvasId: string) => MarketWarning[];
@@ -690,6 +692,38 @@ const resolveEdgeBoundaryPort = (
   return flowUuid ? ports.find((port) => port.flowUuid === flowUuid) : undefined;
 };
 
+const portAmountInFlowBasis = (port: FlowPort | undefined): number => {
+  if (!port) {
+    return 0;
+  }
+  const currentAmount = Number(port.amount ?? 0) || 0;
+  const sourceAmount = Number(port.unitGroupSwitch?.sourceAmount);
+  if (Number.isFinite(sourceAmount)) {
+    return sourceAmount;
+  }
+  const factor = Number(port.unitGroupSwitch?.factor);
+  if (Number.isFinite(factor) && factor > 0) {
+    return currentAmount / factor;
+  }
+  return currentAmount;
+};
+
+const portExternalSaleAmountInFlowBasis = (port: FlowPort | undefined): number => {
+  if (!port) {
+    return 0;
+  }
+  const currentAmount = Number(port.externalSaleAmount ?? 0) || 0;
+  const sourceAmount = Number(port.unitGroupSwitch?.sourceExternalSaleAmount);
+  if (Number.isFinite(sourceAmount)) {
+    return sourceAmount;
+  }
+  const factor = Number(port.unitGroupSwitch?.factor);
+  if (Number.isFinite(factor) && factor > 0) {
+    return currentAmount / factor;
+  }
+  return currentAmount;
+};
+
 const buildNodeFromTemplate = (template: LcaProcessTemplate, position: XYPosition): Node<LcaNodeData> =>
   sanitizeMarketNode({
     id: `node_${uid()}`,
@@ -839,6 +873,7 @@ const collectBalancedWarningsForCanvas = (
   inputTotal: number;
   externalSaleTotal: number;
   processNames: string[];
+  reason?: string;
 }> => {
   const nodeById = new Map(canvas.nodes.map((node) => [node.id, node]));
   const agg = new Map<
@@ -876,8 +911,8 @@ const collectBalancedWarningsForCanvas = (
       externalSaleKeys: new Set<string>(),
       processNames: new Set<string>(),
     };
-    const inAmount = edge.data?.consumerAmount ?? edge.data?.amount ?? 0;
-    row.inputs += inAmount;
+    const targetPort = resolveEdgeBoundaryPort(nodeById, edge, "target");
+    row.inputs += portAmountInFlowBasis(targetPort) || edge.data?.consumerAmount || edge.data?.amount || 0;
     const sourcePortId = parseHandlePortId(edge.sourceHandle ?? undefined, "out:");
     const sourcePort =
       sourceNode.data.outputs.find((p) => p.id === sourcePortId) ??
@@ -886,11 +921,11 @@ const collectBalancedWarningsForCanvas = (
       const sourceKey = `${sourceNode.id}::${sourcePort.id}`;
       if (!row.outputKeys.has(sourceKey)) {
         row.outputKeys.add(sourceKey);
-        row.outputs += sourcePort.amount ?? 0;
+        row.outputs += portAmountInFlowBasis(sourcePort);
       }
       if (!row.externalSaleKeys.has(sourceKey)) {
         row.externalSaleKeys.add(sourceKey);
-        row.externalSales += sourcePort.externalSaleAmount ?? 0;
+        row.externalSales += portExternalSaleAmountInFlowBasis(sourcePort);
       }
     }
     row.processNames.add(sourceNode.data.name);
@@ -905,6 +940,7 @@ const collectBalancedWarningsForCanvas = (
     inputTotal: number;
     externalSaleTotal: number;
     processNames: string[];
+    reason?: string;
   }> = [];
   for (const [flowUuid, row] of agg.entries()) {
     const balancedOutput = row.outputs - row.externalSales;
@@ -3333,14 +3369,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
           if (preserveInputs) {
             return node;
           }
-          const incoming = group.filter((e) => e.target === node.id);
-          if (incoming.length === 0) {
-            return node;
-          }
-          const first = incoming[0];
-          const amount = nextAmountById.get(first.id) ?? first.data?.amount ?? 0;
-          const targetPortId = parseHandlePortId(first.targetHandle ?? undefined, "in:");
-          return updateNodePortAmountByFlow(node, "input", flowUuid, amount, targetPortId);
+          return node;
         });
         return {
           ...canvas,
@@ -3383,7 +3412,6 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
           0,
         );
         const sourcePortId = parseHandlePortId(changedEdge.sourceHandle ?? undefined, "out:");
-        const targetPortId = parseHandlePortId(changedEdge.targetHandle ?? undefined, "in:");
         const sourceNode = canvas.nodes.find((node) => node.id === changedEdge.source);
         const sourcePort =
           sourceNode?.data.outputs.find((p) => p.id === sourcePortId) ??
@@ -3398,9 +3426,6 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
               nextTotal + externalSaleAmount,
               sourcePortId,
             );
-          }
-          if (node.id === changedEdge.target) {
-            return updateNodePortAmountByFlow(node, "input", changedEdge.data?.flowUuid ?? "", nextAmount, targetPortId);
           }
           return node;
         });
@@ -3434,12 +3459,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
             const sourcePortId = parseHandlePortId(group[0].sourceHandle ?? undefined, "out:");
             return updateNodePortUnitByFlow(node, "output", flowUuid, nextUnit, sourcePortId);
           }
-          const incoming = group.find((e) => e.target === node.id);
-          if (!incoming) {
-            return node;
-          }
-          const targetPortId = parseHandlePortId(incoming.targetHandle ?? undefined, "in:");
-          return updateNodePortUnitByFlow(node, "input", flowUuid, nextUnit, targetPortId);
+          return node;
         });
         return {
           ...canvas,
@@ -3694,9 +3714,6 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         }
 
         const edgeAmountPatch = new Map<string, number>();
-        const targetInputPatch = new Map<string, Array<{ flowUuid: string; amount: number; preferredPortId?: string }>>();
-        const sourceOutputPatch = new Map<string, Array<{ flowUuid: string; amount: number; preferredPortId?: string }>>();
-
         for (const [portId, nextPort] of updatedOutputById.entries()) {
           const prev = currentOutputById.get(portId);
           if (!prev || Math.abs(prev.amount - nextPort.amount) < 1e-12) {
@@ -3714,10 +3731,6 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
             continue;
           }
           edgeAmountPatch.set(e.id, nextPort.amount);
-          const targetPortId = parseHandlePortId(e.targetHandle ?? undefined, "in:");
-          const patches = targetInputPatch.get(e.target) ?? [];
-          patches.push({ flowUuid: nextPort.flowUuid, amount: nextPort.amount, preferredPortId: targetPortId });
-          targetInputPatch.set(e.target, patches);
         }
 
         for (const [portId, nextPort] of updatedInputById.entries()) {
@@ -3737,10 +3750,6 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
             continue;
           }
           edgeAmountPatch.set(targetEdge.id, nextPort.amount);
-          const sourcePortId = parseHandlePortId(targetEdge.sourceHandle ?? undefined, "out:");
-          const patches = sourceOutputPatch.get(targetEdge.source) ?? [];
-          patches.push({ flowUuid: nextPort.flowUuid, amount: nextPort.amount, preferredPortId: sourcePortId });
-          sourceOutputPatch.set(targetEdge.source, patches);
         }
 
         if (edgeAmountPatch.size > 0) {
@@ -3767,20 +3776,6 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
           });
         }
 
-        if (targetInputPatch.size > 0 || sourceOutputPatch.size > 0) {
-          nextNodes = nextNodes.map((node) => {
-            const inputPatches = targetInputPatch.get(node.id) ?? [];
-            const outputPatches = sourceOutputPatch.get(node.id) ?? [];
-            let nextNode = node;
-            for (const patch of inputPatches) {
-              nextNode = updateNodePortAmountByFlow(nextNode, "input", patch.flowUuid, patch.amount, patch.preferredPortId);
-            }
-            for (const patch of outputPatches) {
-              nextNode = updateNodePortAmountByFlow(nextNode, "output", patch.flowUuid, patch.amount, patch.preferredPortId);
-            }
-            return nextNode;
-          });
-        }
       }
 
       const nodeByIdAfterUpdate = new Map(nextNodes.map((node) => [node.id, node]));
@@ -4227,7 +4222,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         const targetNode = canvas.nodes.find((n) => n.id === changedEdge.target);
         const balancedPair = isBalancedUnitNode(sourceNode) && isBalancedUnitNode(targetNode);
 
-        if (balancedPair) {
+        if (balancedPair && changedEdge.data.quantityMode !== "dual") {
           const amount = changedEdge.data.amount ?? changedEdge.data.consumerAmount ?? changedEdge.data.providerAmount ?? 0;
           normalizedEdges = nextEdges.map((edge) =>
             edge.id === edgeId
@@ -4245,47 +4240,8 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
           );
         }
 
-        const syncedEdge = normalizedEdges.find((edge) => edge.id === edgeId);
-        if (!syncedEdge || !syncedEdge.data) {
-          return { ...canvas, edges: normalizedEdges };
-        }
-
-        let nextNodes = canvas.nodes;
-        if (balancedPair) {
-          const amount = syncedEdge.data.amount ?? 0;
-          const sourceFlowEdges = normalizedEdges.filter(
-            (edge) => edge.source === syncedEdge.source && edge.data?.flowUuid === syncedEdge.data?.flowUuid,
-          );
-          const targetFlowEdges = normalizedEdges.filter(
-            (edge) => edge.target === syncedEdge.target && edge.data?.flowUuid === syncedEdge.data?.flowUuid,
-          );
-
-          if (sourceFlowEdges.length === 1 && targetFlowEdges.length === 1) {
-            const sourcePortId = parseHandlePortId(syncedEdge.sourceHandle ?? undefined, "out:");
-            const targetPortId = parseHandlePortId(syncedEdge.targetHandle ?? undefined, "in:");
-            nextNodes = nextNodes.map((node) => {
-              if (node.id === syncedEdge.source) {
-                return updateNodePortAmountByFlow(node, "output", syncedEdge.data?.flowUuid ?? "", amount, sourcePortId);
-              }
-              if (node.id === syncedEdge.target) {
-                return updateNodePortAmountByFlow(node, "input", syncedEdge.data?.flowUuid ?? "", amount, targetPortId);
-              }
-              return node;
-            });
-          } else if (sourceFlowEdges.length > 1) {
-            const sum = sourceFlowEdges.reduce((acc, edge) => acc + (edge.data?.amount ?? 0), 0);
-            const sourcePortId = parseHandlePortId(syncedEdge.sourceHandle ?? undefined, "out:");
-            nextNodes = nextNodes.map((node) =>
-              node.id === syncedEdge.source
-                ? updateNodePortAmountByFlow(node, "output", syncedEdge.data?.flowUuid ?? "", sum, sourcePortId)
-                : node,
-            );
-          }
-        }
-
         return {
           ...canvas,
-          nodes: nextNodes,
           edges: normalizedEdges,
         };
       }),

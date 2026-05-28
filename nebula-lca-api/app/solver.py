@@ -117,16 +117,15 @@ def to_tiangong_like(
                     if (weight := _port_float_attr(port, "allocationWeight")) is not None
                 }
             allocation_weight_by_port_id.update(baseline_weights)
-            if not baseline_weights:
-                baseline_weights = {
-                    port.id: float(port.amount or 0.0)
-                    for port in product_outputs
-                    if float(port.amount or 0.0) > 0
-                }
-            total_weight = sum(value for value in baseline_weights.values() if value > 0)
+            default_amounts = {
+                port.id: float(port.amount or 0.0)
+                for port in product_outputs
+                if float(port.amount or 0.0) > 0
+            }
+            total_weight = sum(value for value in default_amounts.values() if value > 0)
             if total_weight > 0:
                 for port in product_outputs:
-                    amount = baseline_weights.get(port.id)
+                    amount = default_amounts.get(port.id)
                     if amount is not None and amount > 0:
                         baseline_fraction_by_port_id[port.id] = amount / total_weight
             for port in product_outputs:

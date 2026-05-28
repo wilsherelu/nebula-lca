@@ -94,6 +94,9 @@ def _unit(port: Any) -> str:
 
 
 def _current_unit(port: Any) -> str:
+    explicit_unit = _unit(port)
+    if explicit_unit:
+        return explicit_unit
     switch = _port_get(port, "unitGroupSwitch", None)
     if switch is None:
         switch = _port_get(port, "unit_group_switch", None)
@@ -275,6 +278,11 @@ def _manual_factor_allocation(
     for port in product_outputs:
         factor = _port_get(port, "allocationFactor", None)
         if factor is None:
+            continue
+        method = _basis_method(port)
+        if method not in {"manual_factor", "solver_precomputed"} and (
+            method or unit_factor_by_group_and_name is not None
+        ):
             continue
         try:
             parsed = float(factor)

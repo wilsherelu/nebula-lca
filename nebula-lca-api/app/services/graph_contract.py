@@ -574,6 +574,134 @@ def validate_non_product_input_constraints(graph: HybridGraph) -> None:
         )
 
 
+def _port_amount_in_flow_basis(port: FlowPort | None) -> float:
+    if port is None:
+        return 0.0
+    switch = port.unitGroupSwitch if isinstance(port.unitGroupSwitch, dict) else {}
+    source_amount = switch.get("sourceAmount")
+    if source_amount is not None:
+        try:
+            return float(source_amount)
+        except (TypeError, ValueError):
+            pass
+    try:
+        amount = float(port.amount or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    try:
+        factor = float(switch.get("factor") or 0)
+    except (TypeError, ValueError):
+        factor = 0.0
+    if factor > 0:
+        return amount / factor
+    return amount
+
+
+def _port_external_sale_amount_in_flow_basis(port: FlowPort | None) -> float:
+    if port is None:
+        return 0.0
+    switch = port.unitGroupSwitch if isinstance(port.unitGroupSwitch, dict) else {}
+    source_amount = switch.get("sourceExternalSaleAmount")
+    if source_amount is not None:
+        try:
+            return float(source_amount)
+        except (TypeError, ValueError):
+            pass
+    try:
+        amount = float(port.externalSaleAmount or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    try:
+        factor = float(switch.get("factor") or 0)
+    except (TypeError, ValueError):
+        factor = 0.0
+    if factor > 0:
+        return amount / factor
+    return amount
+
+
+def validate_balanced_single_edge_conservation(graph: HybridGraph, *, tol: float = 1e-9) -> None:
+    """Balanced single-quantity edges must conserve after port unit switches are reversed."""
+    node_by_id = {node.id: node for node in graph.nodes}
+    source_port_index: dict[tuple[str, str], FlowPort] = {}
+    target_port_index: dict[tuple[str, str], FlowPort] = {}
+
+    for node in graph.nodes:
+        for port in node.outputs:
+            if port.id:
+                source_port_index[(node.id, port.id)] = port
+        for port in node.inputs:
+            if port.id:
+                target_port_index[(node.id, port.id)] = port
+
+    rows: dict[str, dict] = {}
+    for edge in graph.exchanges:
+        if str(edge.quantityMode or "") != "single":
+            continue
+        source_node = node_by_id.get(edge.fromNode)
+        target_node = node_by_id.get(edge.toNode)
+        if source_node is None or target_node is None:
+            continue
+        if str(source_node.mode or "") != "balanced" or str(target_node.mode or "") != "balanced":
+            continue
+
+        source_port_id = _resolve_edge_port_id(edge.source_port_id or edge.sourceHandle, "out")
+        target_port_id = _resolve_edge_port_id(edge.target_port_id or edge.targetHandle, "in")
+        source_port = source_port_index.get((edge.fromNode, source_port_id))
+        target_port = target_port_index.get((edge.toNode, target_port_id))
+        if source_port is None or target_port is None:
+            continue
+
+        row = rows.setdefault(str(edge.flowUuid or ""), {
+            "flow_uuid": str(edge.flowUuid or ""),
+            "flow_name": str(edge.flowName or edge.flowUuid or ""),
+            "outputs": 0.0,
+            "inputs": 0.0,
+            "external_sales": 0.0,
+            "output_keys": set(),
+            "external_sale_keys": set(),
+            "edge_ids": [],
+            "process_names": set(),
+        })
+        row["inputs"] += _port_amount_in_flow_basis(target_port)
+        row["edge_ids"].append(edge.id)
+        source_key = (edge.fromNode, source_port_id)
+        if source_key not in row["output_keys"]:
+            row["output_keys"].add(source_key)
+            row["outputs"] += _port_amount_in_flow_basis(source_port)
+        if source_key not in row["external_sale_keys"]:
+            row["external_sale_keys"].add(source_key)
+            row["external_sales"] += _port_external_sale_amount_in_flow_basis(source_port)
+        row["process_names"].add(str(source_node.name or ""))
+        row["process_names"].add(str(target_node.name or ""))
+
+    violations: list[dict] = []
+    for row in rows.values():
+        balanced_output = float(row["outputs"]) - float(row["external_sales"])
+        diff = balanced_output - float(row["inputs"])
+        if abs(diff) <= tol:
+            continue
+        violations.append({
+            "flow_uuid": row["flow_uuid"],
+            "flow_name": row["flow_name"],
+            "output_total_in_flow_basis": row["outputs"],
+            "external_sale_total_in_flow_basis": row["external_sales"],
+            "input_total_in_flow_basis": row["inputs"],
+            "difference_in_flow_basis": diff,
+            "edge_ids": row["edge_ids"],
+            "process_names": sorted(name for name in row["process_names"] if name),
+        })
+    if violations:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "BALANCED_FLOW_CONSERVATION_MISMATCH",
+                "message": "Balanced process flows must conserve after converting endpoint ports back to each flow basis unit.",
+                "evidence": violations[:200],
+            },
+        )
+
+
 # ── DB-dependent validators ─────────────────────────────────────────────
 
 
@@ -764,6 +892,7 @@ def validate_graph_contract(
     *,
     require_non_empty: bool = False,
     allow_pts_nodes: bool = True,
+    require_balanced_conservation: bool = False,
 ) -> None:
     """Run all non-DB graph contract checks in one call."""
     normalize_graph_product_flags(graph)
@@ -774,6 +903,8 @@ def validate_graph_contract(
     validate_edge_product_role_alignment(graph)
     validate_market_input_constraints(graph)
     validate_non_product_input_constraints(graph)
+    if require_balanced_conservation:
+        validate_balanced_single_edge_conservation(graph)
 
     if require_non_empty and not is_graph_non_empty(graph.model_dump()):
         raise HTTPException(status_code=400, detail="Empty graph is not allowed")

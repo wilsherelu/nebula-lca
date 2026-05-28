@@ -32,6 +32,7 @@ type ModelVersionResponse = {
   graph: LcaGraphPayload;
   created_at: string;
   name?: string | null;
+  project_name?: string | null;
   source_policy?: SourcePolicy | null;
   allowed_lcia_scope?: string | null;
   flow_name_sync_needed?: boolean;
@@ -1449,25 +1450,30 @@ const getUnitProcessProductUnitGroupIssues = (graph: LcaGraphPayload): string[] 
     if (node.node_kind !== "unit_process" && node.node_kind !== "market_process") {
       continue;
     }
-    const allocatedProductOutputs = (node.outputs ?? []).filter(
+    const productOutputs = (node.outputs ?? []).filter(
       (port) =>
         port.type !== "biosphere" &&
-        Boolean(port.isProduct) &&
-        port.allocationFactor !== null &&
-        port.allocationFactor !== undefined,
+        Boolean(port.isProduct),
     );
-    if (allocatedProductOutputs.length <= 1) {
+    if (productOutputs.length <= 1) {
+      continue;
+    }
+    const manualFactors = productOutputs.map((port) => Number(port.allocationFactor));
+    const hasCompleteManualFactors =
+      manualFactors.every((value) => Number.isFinite(value) && value >= 0) &&
+      Math.abs(manualFactors.reduce((sum, value) => sum + value, 0) - 1) <= 0.01;
+    if (hasCompleteManualFactors) {
       continue;
     }
     const groups = Array.from(
       new Set(
-        allocatedProductOutputs
+        productOutputs
           .map((port) => resolvePortUnitGroup(port))
           .filter((group) => group.length > 0),
       ),
     );
     if (groups.length > 1) {
-      issues.push(`${node.name}: 多产品分配仅支持同一单位组，当前包含 ${groups.join(" / ")}。`);
+      issues.push(`${node.name}: 未完整手填分配系数时，多产品分配仅支持同一单位组，当前包含 ${groups.join(" / ")}。`);
     }
   }
   return issues;
@@ -2805,7 +2811,10 @@ export default function App() {
         }
         if (latestResult.kind === "fresh" || latestResult.kind === "not_modified") {
           const latest = latestResult.payload;
-          const resolvedProjectName = String(targetProjectName ?? latest.name ?? latest.project_id).trim() || latest.project_id;
+          const resolvedProjectName =
+            String(targetProjectName ?? latest.name ?? latest.project_name ?? "").trim() ||
+            projects.find((item) => item.project_id === latest.project_id)?.name ||
+            latest.project_id;
           debugPts("loadProjectGraph:latest:raw", {
             projectId: latest.project_id,
             version: latest.version,
@@ -2921,11 +2930,12 @@ export default function App() {
           setTargetProductQuantityMode("custom");
           setTargetProductQuantity("1");
           setProjectId(targetProjectId);
-          setProjectName(targetProjectName ?? targetProjectId);
+          const resolvedDraftProjectName = String(targetProjectName ?? "").trim() || projects.find((item) => item.project_id === targetProjectId)?.name || targetProjectId;
+          setProjectName(resolvedDraftProjectName);
           setCurrentSourcePolicy(normalizeSourcePolicy(projects.find((item) => item.project_id === targetProjectId)?.source_policy));
           setVersion("0");
           setVersionTraveling(false);
-          setStatusText(`已恢复草稿: ${targetProjectName ?? targetProjectId}`);
+          setStatusText(`已恢复草稿: ${resolvedDraftProjectName}`);
           scheduleAfterNextPaint(() => {
             closeFirstPaintReadySpan();
           });
@@ -2958,11 +2968,12 @@ export default function App() {
         setTargetProductQuantityMode("custom");
         setTargetProductQuantity("1");
         setProjectId(targetProjectId);
-        setProjectName(targetProjectName ?? targetProjectId);
+        const resolvedEmptyProjectName = String(targetProjectName ?? "").trim() || projects.find((item) => item.project_id === targetProjectId)?.name || targetProjectId;
+        setProjectName(resolvedEmptyProjectName);
         setCurrentSourcePolicy(normalizeSourcePolicy(projects.find((item) => item.project_id === targetProjectId)?.source_policy));
         setVersion("0");
         setVersionTraveling(false);
-        setStatusText(`项目为空: ${targetProjectName ?? targetProjectId}`);
+        setStatusText(`项目为空: ${resolvedEmptyProjectName}`);
         const endPostLoadUiSpan = startLoadPerformanceSpan("project-load:post-load-ui");
         scheduleAfterNextPaint(() => {
           closeFirstPaintReadySpan();
@@ -3055,6 +3066,11 @@ export default function App() {
             setTargetProductQuantity(String(targetProductConfig?.quantity ?? 1));
           }
           setProjectId(payload.project_id);
+          const resolvedProjectName =
+            String(targetProjectName ?? payload.name ?? payload.project_name ?? "").trim() ||
+            projects.find((item) => item.project_id === payload.project_id)?.name ||
+            projectName;
+          setProjectName(resolvedProjectName);
           setCurrentSourcePolicy(normalizeSourcePolicy(payload.source_policy));
           setVersion(String(payload.version));
           localStorage.setItem(CURRENT_PROJECT_KEY, payload.project_id);
@@ -3063,7 +3079,7 @@ export default function App() {
             JSON.stringify({ project_id: payload.project_id, version: payload.version }),
           );
           setVersionTraveling(true);
-          setStatusText(`已恢复项目: ${targetProjectName ?? payload.project_id} (version=${payload.version})`);
+          setStatusText(`已恢复项目: ${resolvedProjectName || payload.project_id} (version=${payload.version})`);
           return;
         }
         if (resp.status === 404) {
@@ -3083,7 +3099,7 @@ export default function App() {
         }
       }
     },
-    [importGraphWithLoadKey],
+    [applyHandleValidationIssues, importGraphWithLoadKey, projectName, projects],
   );
   const navigateVersion = useCallback(
     (step: -1 | 1) => {
@@ -3236,7 +3252,9 @@ export default function App() {
         if (ptsWarnings.length > 0) {
           const first = ptsWarnings[0];
           setStatusText(
-            `未保存：PTS 内存在 ${ptsWarnings.length} 条未配平守恒关系。示例：${first.flowName}（输出=${first.outputTotal.toFixed(
+            first.reason
+              ? `未保存：PTS 内存在 ${ptsWarnings.length} 条未配平守恒关系。示例：${first.flowName}（${first.reason}）。`
+              : `未保存：PTS 内存在 ${ptsWarnings.length} 条未配平守恒关系。示例：${first.flowName}（输出=${first.outputTotal.toFixed(
               6,
             )}，外售=${first.externalSaleTotal.toFixed(6)}，输入=${first.inputTotal.toFixed(6)}）。`,
           );
@@ -3255,7 +3273,9 @@ export default function App() {
         if (balancedWarnings.length > 0) {
           const first = balancedWarnings[0];
           nonBlockingWarnings.push(
-            `存在 ${balancedWarnings.length} 条未匹配流。示例：${first.flowName}（输出=${first.outputTotal.toFixed(6)}，输入=${first.inputTotal.toFixed(6)}，外售=${first.externalSaleTotal.toFixed(6)}，差值=${(first.outputTotal - first.externalSaleTotal - first.inputTotal).toFixed(6)}）。`,
+            first.reason
+              ? `存在 ${balancedWarnings.length} 条未匹配流。示例：${first.flowName}（${first.reason}）。`
+              : `存在 ${balancedWarnings.length} 条未匹配流。示例：${first.flowName}（输出=${first.outputTotal.toFixed(6)}，输入=${first.inputTotal.toFixed(6)}，外售=${first.externalSaleTotal.toFixed(6)}，差值=${(first.outputTotal - first.externalSaleTotal - first.inputTotal).toFixed(6)}）。`,
           );
         }
       }
@@ -3669,7 +3689,9 @@ export default function App() {
     if (balancedWarnings.length > 0) {
       const first = balancedWarnings[0];
       setStatusText(
-        `运行已阻止：存在 ${balancedWarnings.length} 条未配平守恒关系。示例：${first.flowName}（输出=${first.outputTotal.toFixed(
+        first.reason
+          ? `运行已阻止：存在 ${balancedWarnings.length} 条未配平守恒关系。示例：${first.flowName}（${first.reason}）。`
+          : `运行已阻止：存在 ${balancedWarnings.length} 条未配平守恒关系。示例：${first.flowName}（输出=${first.outputTotal.toFixed(
           6,
         )}，外售=${first.externalSaleTotal.toFixed(6)}，输入=${first.inputTotal.toFixed(6)}）。`,
       );
@@ -4285,16 +4307,37 @@ export default function App() {
       rawValue: number,
       unit: string,
       unitGroup?: string,
-      flowDefault?: { unit?: string; factor?: number },
+      flowDefault?: { unit?: string; unitGroup?: string; factor?: number },
     ): { value: number; unitLabel: string } => {
       if (!unit) {
         return { value: rawValue, unitLabel: "kg CO2-eq / reference unit" };
       }
+      const flowDefaultUnit = String(flowDefault?.unit ?? "").trim();
+      const flowDefaultUnitGroup = String(flowDefault?.unitGroup ?? "").trim();
+      const flowDefaultFactor = Number(flowDefault?.factor);
+      const crossesUnitGroup =
+        Boolean(unitGroup && flowDefaultUnitGroup) &&
+        String(unitGroup).trim().toLowerCase() !== flowDefaultUnitGroup.toLowerCase();
+      if (
+        crossesUnitGroup &&
+        flowDefaultUnit &&
+        Number.isFinite(flowDefaultFactor) &&
+        flowDefaultFactor > 0
+      ) {
+        if (resultUnitMode === "defined") {
+          return {
+            value: rawValue / flowDefaultFactor,
+            unitLabel: `kg CO2-eq / ${unit}`,
+          };
+        }
+        return {
+          value: rawValue,
+          unitLabel: `kg CO2-eq / ${flowDefaultUnit}`,
+        };
+      }
       if (resultUnitMode === "defined") {
         return { value: rawValue, unitLabel: `kg CO2-eq / ${unit}` };
       }
-      const flowDefaultUnit = String(flowDefault?.unit ?? "").trim();
-      const flowDefaultFactor = Number(flowDefault?.factor);
       if (flowDefaultUnit && Number.isFinite(flowDefaultFactor) && flowDefaultFactor > 0) {
         return {
           value: rawValue * flowDefaultFactor,
@@ -5094,6 +5137,7 @@ export default function App() {
           viewedProduct.unitGroup,
           {
             unit: viewedProduct.flowDefaultUnit,
+            unitGroup: viewedProduct.flowDefaultUnitGroup,
             factor: viewedProduct.resultFactorToFlowDefaultUnit,
           },
         ).value
@@ -5168,6 +5212,7 @@ export default function App() {
       const normalized = Number.isFinite(value) ? value : 0;
       const display = toDisplayResultValueByUnit(normalized, product.unit, product.unitGroup, {
         unit: product.flowDefaultUnit,
+        unitGroup: product.flowDefaultUnitGroup,
         factor: product.resultFactorToFlowDefaultUnit,
       });
       return {

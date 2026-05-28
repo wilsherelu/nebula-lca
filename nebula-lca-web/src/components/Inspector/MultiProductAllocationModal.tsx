@@ -81,9 +81,9 @@ export function MultiProductAllocationModal({
       return preview.message;
     }
     if (hasUnitGroupMismatch) {
-      return t("单位组不一致，仅按当前数值预览分配；计算和导出前仍需统一单位组或手填系数。", "Unit groups differ; preview uses current numeric amounts. Calculation and export still require one unit group or manual factors.");
+      return t("单位组不一致，仅按单位换算后的数值预览分配；计算和导出前仍需统一单位组或手填系数。", "Unit groups differ; preview uses unit-converted amounts. Calculation and export still require one unit group or manual factors.");
     }
-    return t("已按当前数值预览分配。", "Previewing allocation by current numeric amounts.");
+    return t("已按单位组默认单位预览分配。", "Previewing allocation by unit-group reference amounts.");
   };
 
   return (

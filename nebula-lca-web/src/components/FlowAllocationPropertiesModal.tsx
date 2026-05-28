@@ -21,6 +21,7 @@ type Props = {
   tidasAllowedUnitGroups?: Set<string>;
   onClose: () => void;
   onSaved?: (properties: FlowAllocationProperty[]) => void;
+  onResetToDefault?: () => void;
   onStatus?: (text: string) => void;
 };
 
@@ -34,6 +35,12 @@ function normalizeUnitGroup(value: string | null | undefined): string {
     .replace(/\*/g, "_")
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
+}
+
+function canonicalUnitGroupKey(value: string | null | undefined): string {
+  return normalizeUnitGroup(value)
+    .replace(/^units?_of_/, "")
+    .replace(/^unit_of_/, "");
 }
 
 const TIDAS_UNIT_GROUP_ZH: Record<string, string> = {
@@ -120,6 +127,7 @@ export function FlowAllocationPropertiesModal({
   tidasAllowedUnitGroups,
   onClose,
   onSaved,
+  onResetToDefault,
   onStatus,
 }: Props) {
   const zh = uiLanguage === "zh";
@@ -144,16 +152,16 @@ export function FlowAllocationPropertiesModal({
   }, [unitRows]);
 
   const selectableUnitGroups = useMemo(() => {
-    const sourceGroupKey = normalizeUnitGroup(sourceUnitGroup);
+    const sourceGroupKey = canonicalUnitGroupKey(sourceUnitGroup);
     const strictTidas = sourcePolicy === "tidas_compliant" || Boolean(tidasAllowedUnitGroups && tidasAllowedUnitGroups.size > 0);
     const baseRows = strictTidas ? TIDAS_UNIT_GROUP_OPTIONS : unitGroups;
     return baseRows.filter((row) => {
-      const key = normalizeUnitGroup(row.unitGroup);
+      const key = canonicalUnitGroupKey(row.unitGroup);
       if (key === sourceGroupKey) {
         return false;
       }
       if (sourcePolicy === "tidas_compliant" && tidasAllowedUnitGroups && tidasAllowedUnitGroups.size > 0) {
-        return tidasAllowedUnitGroups.has(key);
+        return tidasAllowedUnitGroups.has(normalizeUnitGroup(row.unitGroup));
       }
       return true;
     });
@@ -230,8 +238,16 @@ export function FlowAllocationPropertiesModal({
   }, [open]);
 
   const validProperties = useMemo(
-    () => properties.filter((item) => item.propertyType && Number(item.value) > 0 && item.targetUnitGroup.trim()),
-    [properties],
+    () => {
+      const sourceGroupKey = canonicalUnitGroupKey(sourceUnitGroup);
+      return properties.filter((item) => (
+        item.propertyType &&
+        Number(item.value) > 0 &&
+        item.targetUnitGroup.trim() &&
+        canonicalUnitGroupKey(item.targetUnitGroup) !== sourceGroupKey
+      ));
+    },
+    [properties, sourceUnitGroup],
   );
 
   if (!open || !flowUuid) {
@@ -345,6 +361,11 @@ export function FlowAllocationPropertiesModal({
         </div>
         {errorText && <div className="pm-form-error">{errorText}</div>}
         <div className="pm-modal-actions">
+          <button type="button" className="ghost-btn" onClick={onResetToDefault} disabled={busy || !onResetToDefault}>
+            {onResetToDefault
+              ? (zh ? "恢复默认单位组" : "Use default unit group")
+              : (zh ? "已是默认单位组" : "Already default")}
+          </button>
           <button type="button" className="ghost-btn" onClick={onClose}>{zh ? "取消" : "Cancel"}</button>
           <button type="button" onClick={() => void save()} disabled={busy || validProperties.length === 0}>{zh ? "保存" : "Save"}</button>
         </div>

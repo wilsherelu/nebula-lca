@@ -549,6 +549,7 @@ class ModelVersionCreateRequest(BaseModel):
 
 class ModelVersionOut(BaseModel):
     project_id: str
+    name: str | None = None
     version: int
     created_at: datetime
     graph: HybridGraph

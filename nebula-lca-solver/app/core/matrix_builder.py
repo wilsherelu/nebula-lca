@@ -83,6 +83,9 @@ def build_matrices_from_snapshot(
 
         allocation_active = False
         allocation_total = 0.0
+        allocation_fraction_total = 0.0
+        allocation_fraction_count = 0
+        allocation_output_count = 0
         allocation_unit_groups = set()
         allocation_weight_active = False
         for ex in exchanges_by_process.get(proc_uuid, []):
@@ -91,6 +94,11 @@ def build_matrices_from_snapshot(
             if ex.get("allocation_fraction") is None:
                 continue
             allocation_active = True
+            allocation_output_count += 1
+            allocation_fraction = _to_float(ex.get("allocation_fraction"))
+            if allocation_fraction is not None:
+                allocation_fraction_count += 1
+                allocation_fraction_total += allocation_fraction
             flow_uuid = ex.get("flow_uuid", "")
             flow = flow_by_uuid.get(flow_uuid)
             if not flow:
@@ -113,7 +121,9 @@ def build_matrices_from_snapshot(
                 issues.append(
                     f"process {proc_uuid} allocation output {flow_uuid} missing unit group"
                 )
-            amount = allocation_weight if allocation_weight is not None else _to_float(ex.get("amount"))
+            amount = _to_float(ex.get("amount"))
+            if amount is None:
+                amount = allocation_weight
             if amount is not None:
                 allocation_total += amount
 
@@ -131,9 +141,15 @@ def build_matrices_from_snapshot(
                 issues.append(f"process {proc_uuid} allocation total is zero")
                 allocation_total = 1.0
             if len(allocation_unit_groups) > 1 and not allocation_weight_active:
-                issues.append(
-                    f"process {proc_uuid} allocation outputs have inconsistent unit groups"
+                complete_manual_fractions = (
+                    allocation_output_count > 1
+                    and allocation_fraction_count == allocation_output_count
+                    and abs(allocation_fraction_total - 1.0) <= 1e-6
                 )
+                if not complete_manual_fractions:
+                    issues.append(
+                        f"process {proc_uuid} allocation outputs have inconsistent unit groups"
+                    )
         allocation_total_by_process[proc_uuid] = allocation_total
 
     a_entries: Dict[Tuple[str, str], float] = {}
