@@ -1,7 +1,7 @@
 """Tests for Graph Storage Slim v1 (canvas + node_positions slim).
 
 Verifies:
-- Slim storage drops only pure display fields (flow_name_en, display_name_en, unitGroup).
+- Slim storage drops only pure display fields (flow_name_en, display_name_en).
 - Root canvas: drops full nodes/edges snapshot, keeps only shell (id/name/kind).
 - PTS internal canvas: preserves internal nodes/edges (with port slimming).
 - Node positions: drops metadata.node_positions when all nodes have inline position.
@@ -207,7 +207,7 @@ class TestSlimUnit:
     """Unit tests for slim/hydrate logic."""
 
     def test_slim_drops_display_fields_only(self):
-        """Slim should keep modeling fields but drop flow_name_en, display_name_en, unitGroup."""
+        """Slim should keep modeling fields but drop flow_name_en/display_name_en."""
         graph = HybridGraph(
             functionalUnit="test",
             nodes=[_make_full_graph_node("proc-1", "Test Process")],
@@ -223,12 +223,12 @@ class TestSlimUnit:
         port = slim["nodes"][0]["inputs"][0]
         assert "flow_name_en" not in port
         assert "display_name_en" not in port
-        assert "unitGroup" not in port
 
         # Port: modeling fields preserved
         assert port["flowUuid"] == "flow-carbon-dioxide"
         assert port["name"] == "二氧化碳"
         assert port["unit"] == "kg"
+        assert port["unitGroup"] == "mass"
         assert port["amount"] == 1.0
         assert port["dbMapping"] == "EF31-matched"
         assert port["source_process_name"] == "Source Proc"
@@ -372,10 +372,10 @@ class TestSlimUnit:
         port = pts_canvases[0]["nodes"][0]["inputs"][0]
         assert "flow_name_en" not in port
         assert "display_name_en" not in port
-        assert "unitGroup" not in port
         # Core port fields preserved
         assert port["flowUuid"] == "flow-internal-1"
         assert port["name"] == "Internal Flow"
+        assert port["unitGroup"] == "mass"
         # Edges preserved
         assert len(pts_canvases[0]["edges"]) == 1
 
@@ -399,6 +399,41 @@ class TestSlimUnit:
         }
         slim = slim_graph_for_storage(graph_dict)
         assert slim["metadata"]["node_positions"] is None
+
+    def test_hydrate_restores_switched_current_unit_group_from_switch(self):
+        graph_dict = {
+            "functionalUnit": "test",
+            "nodes": [
+                {
+                    **_make_simple_graph_node("proc-1", "A"),
+                    "outputs": [
+                        {
+                            "id": "out-1",
+                            "flowUuid": "flow-gas",
+                            "name": "gas",
+                            "unit": "GJ",
+                            "amount": 0.8,
+                            "type": "technosphere",
+                            "direction": "output",
+                            "isProduct": True,
+                            "unitGroupSwitch": {
+                                "sourceUnitGroup": "Units of mass",
+                                "sourceUnit": "kg",
+                                "targetUnitGroup": "Units of energy",
+                                "targetUnit": "MJ",
+                                "factor": 600,
+                            },
+                        }
+                    ],
+                }
+            ],
+            "exchanges": [],
+            "metadata": {"storage_schema_version": "graph_slim_v1"},
+        }
+
+        hydrated = hydrate_graph_for_api(graph_dict, db=None)
+
+        assert hydrated["nodes"][0]["outputs"][0]["unitGroup"] == "Units of energy"
 
     def test_slim_node_positions_preserved_when_some_missing_position(self):
         """If any node lacks inline position, node_positions is kept as-is."""

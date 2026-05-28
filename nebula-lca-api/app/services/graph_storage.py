@@ -41,7 +41,6 @@ _FLOWPORT_DERIVED_KEYS: set[str] = {
     # Pure display fields - recomputed from flow_catalog at read time.
     "flow_name_en",
     "display_name_en",
-    "unitGroup",
 }
 
 # Keys whose presence in a dict signals a PTS module node.
@@ -93,7 +92,7 @@ def slim_pts_node_for_storage(node: dict) -> dict:
 def slim_graph_for_storage(graph_json: dict) -> dict:
     """Return a slim copy of the graph ready for persistent storage.
 
-    - FlowPort: drops pure display fields (flow_name_en, display_name_en, unitGroup).
+    - FlowPort: drops pure display fields (flow_name_en, display_name_en).
     - PTS nodes: keep only shell fields; no compile artifacts.
     - Root canvas: drops full nodes/edges snapshot (top-level nodes/exchanges are
       the source of truth; frontend rebuilds root from them on import).
@@ -264,6 +263,14 @@ def hydrate_graph_for_api(graph_json: dict, db: Any) -> dict:
             if not isinstance(port, dict):
                 return port
             result = dict(port)
+            switch = result.get("unitGroupSwitch") if isinstance(result.get("unitGroupSwitch"), dict) else {}
+            switch_target_group = str(
+                switch.get("targetUnitGroup")
+                or switch.get("target_unit_group")
+                or ""
+            ).strip()
+            if switch_target_group and not result.get("unitGroup"):
+                result["unitGroup"] = switch_target_group
             fu = str(port.get("flowUuid", "") or "").strip()
             if fu and fu in flow_meta:
                 fn_en, ug = flow_meta[fu]

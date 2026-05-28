@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from app.flow_unit_semantics import (
     build_unit_reference_maps,
     build_unit_group_identity_map,
@@ -363,3 +365,107 @@ def test_product_result_unit_map_exposes_flow_default_unit_factor():
     assert row["flow_default_unit"] == "m3"
     assert row["result_factor_to_flow_default_unit"] == 800
     assert product_values == [[0.001]]
+
+
+def test_product_result_view_uses_current_unit_group_for_allocation_display():
+    db = _FakeDb()
+    db.flow_by_uuid.update({
+        "gas-flow": SimpleNamespace(
+            flow_uuid="gas-flow",
+            default_unit="kg",
+            unit_group="Units of mass",
+            allocation_properties=[],
+        ),
+        "transport-flow": SimpleNamespace(
+            flow_uuid="transport-flow",
+            default_unit="kg",
+            unit_group="Units of mass",
+            allocation_properties=[],
+        ),
+    })
+    db.unit_defs.extend([
+        SimpleNamespace(unit_group="Units of energy", unit_name="MJ", factor_to_reference=1.0, is_reference=True),
+        SimpleNamespace(unit_group="Units of energy", unit_name="GJ", factor_to_reference=1000.0, is_reference=False),
+    ])
+    db.unit_groups.append(SimpleNamespace(name="Units of energy", reference_unit="MJ"))
+    graph = HybridGraph.model_validate({
+        "functionalUnit": "1 kg product",
+        "nodes": [
+            {
+                "id": "node-gas",
+                "node_kind": "unit_process",
+                "mode": "normalized",
+                "process_uuid": "process-gas",
+                "name": "gas process",
+                "location": "CN",
+                "reference_product": "gas-flow",
+                "inputs": [],
+                "outputs": [
+                    {
+                        "id": "out_gas",
+                        "flowUuid": "gas-flow",
+                        "name": "gas",
+                        "type": "technosphere",
+                        "direction": "output",
+                        "isProduct": True,
+                        "amount": 1000,
+                        "unit": "MJ",
+                        "unitGroupSwitch": {
+                            "sourceFlowUuid": "gas-flow",
+                            "sourceUnitGroup": "Units of mass",
+                            "sourceUnit": "kg",
+                            "sourceReferenceUnit": "kg",
+                            "sourceAmount": 1,
+                            "targetUnitGroup": "Units of energy",
+                            "targetUnit": "MJ",
+                            "targetReferenceUnit": "MJ",
+                            "factor": 1000,
+                        },
+                    },
+                    {
+                        "id": "out_transport",
+                        "flowUuid": "transport-flow",
+                        "name": "transport",
+                        "type": "technosphere",
+                        "direction": "output",
+                        "isProduct": True,
+                        "amount": 0.8,
+                        "unit": "GJ",
+                        "unitGroupSwitch": {
+                            "sourceFlowUuid": "transport-flow",
+                            "sourceUnitGroup": "Units of mass",
+                            "sourceUnit": "kg",
+                            "sourceReferenceUnit": "kg",
+                            "sourceAmount": 0,
+                            "targetUnitGroup": "Units of energy",
+                            "targetUnit": "MJ",
+                            "targetReferenceUnit": "MJ",
+                            "factor": 600,
+                        },
+                    },
+                ],
+                "emissions": [],
+            }
+        ],
+        "exchanges": [],
+    })
+    unit_factor_by_group_and_name, reference_unit_by_group = build_unit_reference_maps(db)
+
+    product_index, product_unit_map, product_values = _build_product_result_view_from_graph(
+        db=db,
+        graph=graph,
+        process_index=["process-gas"],
+        values=[[42.85714285714286]],
+        unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+        reference_unit_by_group=reference_unit_by_group,
+    )
+
+    conversion_by_port = {row["product_port_id"]: row["product_conversion_factor"] for row in product_index}
+    assert conversion_by_port["out_gas"] == pytest.approx(0.7714285714285715)
+    assert conversion_by_port["out_transport"] == pytest.approx(1.285714285714286)
+    assert product_values[0][0] == pytest.approx(55.55555555555556)
+    assert product_values[0][1] == pytest.approx(33.33333333333333)
+    transport_units = product_unit_map["process-gas::out_transport"]
+    assert transport_units["unit_group"] == "Units of energy"
+    assert transport_units["current_unit"] == "GJ"
+    assert transport_units["result_factor_to_flow_default_unit"] == pytest.approx(0.6)

@@ -488,6 +488,7 @@ def get_project_version(
     )
     return ModelVersionOut(
         project_id=model.id,
+        name=model.name,
         version=record.version,
         created_at=record.created_at,
         graph=graph_json,
@@ -559,6 +560,7 @@ def get_project_latest_by_id(
     )
     payload = ModelVersionOut(
         project_id=model.id,
+        name=model.name,
         version=latest_row.version,
         created_at=latest_row.created_at,
         graph=graph_json,

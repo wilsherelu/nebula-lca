@@ -683,7 +683,13 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     }
 
     const groups = Array.from(new Set(ports.map((port) => resolvePortUnitGroupKey(port) ?? port.unitGroup ?? "").filter(Boolean)));
-    const weights = Object.fromEntries(ports.map((port) => [port.id, Math.abs(Number(port.amount) || 0)]));
+    const weights = Object.fromEntries(
+      ports.map((port) => {
+        const unitGroup = resolvePortUnitGroupKey(port) ?? port.unitGroup ?? "";
+        const unitFactor = unitFactorByGroupAndName.get(`${unitGroup}||${port.unit}`) ?? 1;
+        return [port.id, Math.abs(Number(port.amount) || 0) * unitFactor];
+      }),
+    );
     const factors = normalizeAllocationWeights(weights);
     return {
       factors,
@@ -691,8 +697,8 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
       method: "quantity",
       message: factors
         ? groups.length > 1
-          ? t("单位组不一致，仅按当前数值预览分配；计算和导出前仍需切换到同一单位组或手填系数。", "Unit groups differ; preview is based on current numeric amounts. Calculation and export still require one unit group or manual factors.")
-          : t("已按当前数值预览分配", "Previewing allocation by current numeric amounts.")
+          ? t("单位组不一致，仅按单位换算后的数值预览分配；计算和导出前仍需切换到同一单位组或手填系数。", "Unit groups differ; preview is based on unit-converted amounts. Calculation and export still require one unit group or manual factors.")
+          : t("已按单位组默认单位预览分配", "Previewing allocation by unit-group reference amounts.")
         : t("产品总量必须大于 0", "Total product amount must be greater than 0"),
       ok: Boolean(factors),
     };
@@ -964,29 +970,95 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
       const sourcePortId = parseHandlePortId(edge.sourceHandle, "out:");
       const targetPortId = parseHandlePortId(edge.targetHandle, "in:");
       if (edge.source === node.id && sourcePortId === sourcePort.id) {
-        const patch =
-          edge.data?.quantityMode === "dual"
-            ? { unit: switchedSourcePort.unit, providerAmount: switchedSourcePort.amount }
-            : {
-              unit: switchedSourcePort.unit,
-              amount: switchedSourcePort.amount,
-              providerAmount: switchedSourcePort.amount,
-              consumerAmount: switchedSourcePort.amount,
-            };
-        updateEdgeData(edge.id, patch);
+        if (edge.data?.quantityMode === "dual") {
+          updateEdgeData(edge.id, { unit: switchedSourcePort.unit, providerAmount: switchedSourcePort.amount });
+        }
       } else if (edge.target === node.id && targetPortId === sourcePort.id) {
-        const patch =
-          edge.data?.quantityMode === "dual"
-            ? { unit: switchedSourcePort.unit, consumerAmount: switchedSourcePort.amount }
-            : {
-              unit: switchedSourcePort.unit,
-              amount: switchedSourcePort.amount,
-              providerAmount: switchedSourcePort.amount,
-              consumerAmount: switchedSourcePort.amount,
-            };
-        updateEdgeData(edge.id, patch);
+        if (edge.data?.quantityMode === "dual") {
+          updateEdgeData(edge.id, { unit: switchedSourcePort.unit, consumerAmount: switchedSourcePort.amount });
+        }
       }
     }
+  };
+
+  const resetFlowUnitGroupSwitch = (sourcePort: FlowPort) => {
+    const existingSwitch = sourcePort.unitGroupSwitch;
+    const sourceUnitGroup = flowUnitGroupByUuid[sourcePort.flowUuid] ?? existingSwitch?.sourceUnitGroup ?? sourcePort.unitGroup ?? "";
+    const sourceUnit = flowDefaultUnitByUuid[sourcePort.flowUuid] ?? existingSwitch?.sourceUnit ?? existingSwitch?.sourceReferenceUnit ?? sourcePort.unit;
+    const sourceReferenceUnit = referenceUnitByGroup.get(sourceUnitGroup) ?? existingSwitch?.sourceReferenceUnit ?? sourceUnit;
+    const sourceReferenceFactor = unitFactorByGroupAndName.get(`${sourceUnitGroup}||${sourceReferenceUnit}`) ?? 1;
+    const sourceUnitFactor = unitFactorByGroupAndName.get(`${sourceUnitGroup}||${sourceUnit}`) ?? sourceReferenceFactor;
+    const targetUnitGroup = sourcePort.unitGroup || existingSwitch?.targetUnitGroup || "";
+    const targetUnit = sourcePort.unit || existingSwitch?.targetUnit || "";
+    const targetUnitFactor = unitFactorByGroupAndName.get(`${targetUnitGroup}||${targetUnit}`) ?? 1;
+    const switchFactor = Number(existingSwitch?.factor);
+
+    const toSourceUnitAmount = (rawAmount: number | undefined, storedSourceAmount?: number): number | undefined => {
+      if (rawAmount === undefined) {
+        return undefined;
+      }
+      let sourceReferenceAmount = Number(storedSourceAmount);
+      if (!Number.isFinite(sourceReferenceAmount)) {
+        const amount = Number(rawAmount) || 0;
+        sourceReferenceAmount =
+          Number.isFinite(switchFactor) && switchFactor > 0 && sourceReferenceFactor > 0
+            ? (amount * targetUnitFactor) / (sourceReferenceFactor * switchFactor)
+            : amount;
+      }
+      return sourceUnitFactor > 0 ? (sourceReferenceAmount * sourceReferenceFactor) / sourceUnitFactor : sourceReferenceAmount;
+    };
+
+    const nextAmount = toSourceUnitAmount(Number(sourcePort.amount), existingSwitch?.sourceAmount) ?? Number(sourcePort.amount || 0);
+    const nextExternalSaleAmount = toSourceUnitAmount(sourcePort.externalSaleAmount, existingSwitch?.sourceExternalSaleAmount);
+
+    const restoredPort: FlowPort = {
+      ...sourcePort,
+      unit: sourceUnit,
+      unitGroup: sourceUnitGroup,
+      amount: nextAmount,
+      externalSaleAmount: nextExternalSaleAmount,
+      unitGroupSwitch: undefined,
+    };
+
+    updateNode(node.id, (current) => {
+      const applyToPort = (port: FlowPort): FlowPort => {
+        if (port.id !== sourcePort.id) {
+          return port;
+        }
+        return {
+          ...port,
+          unit: restoredPort.unit,
+          unitGroup: restoredPort.unitGroup,
+          amount: restoredPort.amount,
+          externalSaleAmount: restoredPort.externalSaleAmount,
+          unitGroupSwitch: undefined,
+        };
+      };
+      return {
+        ...current,
+        data: {
+          ...current.data,
+          inputs: current.data.inputs.map(applyToPort),
+          outputs: current.data.outputs.map(applyToPort),
+        },
+      };
+    });
+
+    for (const edge of edges) {
+      const sourcePortId = parseHandlePortId(edge.sourceHandle, "out:");
+      const targetPortId = parseHandlePortId(edge.targetHandle, "in:");
+      if (edge.source === node.id && sourcePortId === sourcePort.id) {
+        if (edge.data?.quantityMode === "dual") {
+          updateEdgeData(edge.id, { unit: restoredPort.unit, providerAmount: restoredPort.amount });
+        }
+      } else if (edge.target === node.id && targetPortId === sourcePort.id) {
+        if (edge.data?.quantityMode === "dual") {
+          updateEdgeData(edge.id, { unit: restoredPort.unit, consumerAmount: restoredPort.amount });
+        }
+      }
+    }
+    setAllocationPropertyPort(null);
+    onStatus?.(t("已恢复为 flow 默认单位组。", "Restored the flow default unit group."));
   };
 
 
@@ -2905,6 +2977,11 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
             applyFlowUnitGroupSwitch(allocationPropertyPort, properties);
           }
         }}
+        onResetToDefault={
+          allocationPropertyPort?.unitGroupSwitch
+            ? () => resetFlowUnitGroupSwitch(allocationPropertyPort)
+            : undefined
+        }
         onStatus={onStatus}
       />
 
