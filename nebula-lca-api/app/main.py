@@ -17,10 +17,11 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import case, func, inspect, text
 from sqlalchemy.orm import Session
 from .config import settings
-from .allocation import raise_for_multi_product_unit_group_violations
+from .allocation import calculate_product_allocation, raise_for_multi_product_unit_group_violations
 from .database import Base, SessionLocal, engine, get_db
 from .flow_unit_semantics import (
     build_unit_reference_maps,
+    build_unit_group_identity_map,
     collect_flow_default_unit_conversion_violations,
     normalize_graph_flow_unit_switches,
     resolve_flow_port_unit_semantics,
@@ -29,6 +30,7 @@ from .models import (
     DebugDiagnostic,
     FlowRecord,
     LciBiosphereFlowKey,
+    LciProcessVector,
     Model,
     ModelVersion,
     PtsCompileArtifact,
@@ -155,6 +157,7 @@ from .services import graph_storage as _gs
 from .services import catalog_cache as _cc
 from .services import pts_resources as _pr
 from .services.ef31_sparse_lcia_runtime import try_run_direct_sparse_lcia
+from .services.ef31_runtime_csv import ACTIVE_MANIFEST_NAME, DEFAULT_EF31_RUNTIME_ROOT
 from .services.lci_runtime import expand_lci_vectors_into_graph
 from .api.projects import _base_router, _api_router as _api_projects_router
 from .api.paginated_projects import _router as _paginated_projects_router
@@ -302,6 +305,11 @@ app.include_router(_reference_data_base_router)
 app.include_router(_reference_data_api_router)
 app.include_router(_pts_base_router)
 app.include_router(_pts_api_router)
+
+
+@app.get("/health")
+def healthcheck() -> dict:
+    return {"status": "ok"}
 
 
 def get_model_or_404(db: Session, model_id: str) -> Model:
@@ -570,10 +578,13 @@ def _build_process_unit_map_from_snapshot(snapshot: dict) -> dict[str, dict]:
         ref_exchange = exchange_by_id.get(ref_exchange_id, {})
         flow_uuid = str(ref_exchange.get("flow_uuid") or "")
         flow_row = flow_by_uuid.get(flow_uuid, {})
+        unit_group = str(flow_row.get("unit_group_uuid") or "")
+        if unit_group.startswith("unit_group::"):
+            unit_group = unit_group.removeprefix("unit_group::")
         process_unit_map[process_uuid] = {
             "reference_flow_uuid": flow_uuid,
             "reference_unit": str(flow_row.get("default_unit_uuid") or ""),
-            "reference_unit_group": str(flow_row.get("unit_group_uuid") or ""),
+            "reference_unit_group": unit_group,
         }
     return process_unit_map
 
@@ -622,6 +633,34 @@ def _build_product_result_view_from_graph(
         if not process_uuid:
             continue
         reference_port = next((port for port in node.outputs if port.type != "biosphere" and bool(port.isProduct)), None)
+        product_outputs = [port for port in node.outputs if port.type != "biosphere" and bool(port.isProduct)]
+        product_conversion_factor_by_port_id: dict[str, float] = {}
+        if product_outputs:
+            baseline_amount_by_port_id: dict[str, float] = {}
+            for port in product_outputs:
+                sem = resolve_flow_port_unit_semantics(
+                    db,
+                    port,
+                    unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+                    reference_unit_by_group=reference_unit_by_group,
+                )
+                if sem.ok and sem.amount_in_flow_default_unit is not None and sem.amount_in_flow_default_unit > 0:
+                    baseline_amount_by_port_id[str(port.id or "")] = float(sem.amount_in_flow_default_unit)
+            amount_total = sum(value for value in baseline_amount_by_port_id.values() if value > 0)
+            baseline_fraction_by_port_id = {
+                port_id: amount / amount_total
+                for port_id, amount in baseline_amount_by_port_id.items()
+                if amount_total > 0 and amount > 0
+            }
+            allocation = calculate_product_allocation(
+                product_outputs,
+                process_uuid=process_uuid,
+                unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+            )
+            for port_id, fraction in (allocation.factors or {}).items():
+                baseline = baseline_fraction_by_port_id.get(str(port_id))
+                if baseline is not None and baseline > 0 and float(fraction) > 0:
+                    product_conversion_factor_by_port_id[str(port_id)] = baseline / float(fraction)
         for port in node.outputs:
             if port.type == "biosphere" or not bool(port.isProduct):
                 continue
@@ -652,6 +691,7 @@ def _build_product_result_view_from_graph(
                     "unit_group_switch": dict(port.unitGroupSwitch or {}),
                     "unit_semantics": unit_semantics,
                     "flow_uuid": product_flow_uuid,
+                    "product_conversion_factor": product_conversion_factor_by_port_id.get(product_port_id, 1.0),
                 }
             )
 
@@ -675,6 +715,8 @@ def _build_product_result_view_from_graph(
                     "product_flow_uuid": item["product_flow_uuid"],
                     "product_name": item["product_name"],
                     "is_reference_product": bool(item["is_reference_product"]),
+                    "product_conversion_factor": item.get("product_conversion_factor", 1.0),
+                    "allocation_scale": 1.0 / float(item.get("product_conversion_factor") or 1.0),
                 }
             )
             unit_semantics = item.get("unit_semantics") or {}
@@ -705,19 +747,103 @@ def _build_product_result_view_from_graph(
                 expanded_row: list[object] = []
                 for idx, positions in enumerate(process_positions):
                     source_value = row[idx] if idx < len(row) else None
-                    for _ in positions:
-                        expanded_row.append(source_value)
+                    for pos in positions:
+                        conversion_factor = float(product_result_index[pos].get("product_conversion_factor") or 1.0)
+                        scale = 1.0 / conversion_factor if conversion_factor > 0 else 1.0
+                        try:
+                            expanded_row.append(float(source_value) * scale)
+                        except (TypeError, ValueError):
+                            expanded_row.append(source_value)
                 expanded_rows.append(expanded_row)
             product_values = expanded_rows
         elif len(values) == len(process_index):
             expanded_values: list[object] = []
             for idx, positions in enumerate(process_positions):
                 source_value = values[idx] if idx < len(values) else None
-                for _ in positions:
-                    expanded_values.append(source_value)
+                for pos in positions:
+                    conversion_factor = float(product_result_index[pos].get("product_conversion_factor") or 1.0)
+                    scale = 1.0 / conversion_factor if conversion_factor > 0 else 1.0
+                    try:
+                        expanded_values.append(float(source_value) * scale)
+                    except (TypeError, ValueError):
+                        expanded_values.append(source_value)
             product_values = expanded_values
 
     return product_result_index, product_unit_map, product_values
+
+
+def _graph_with_solver_unit_defaults(
+    *,
+    db: Session,
+    graph: HybridGraph,
+    unit_factor_by_group_and_name: dict[tuple[str, str], float],
+    reference_unit_by_group: dict[str, str],
+) -> HybridGraph:
+    graph_dict = graph.model_dump(mode="python")
+    unit_group_identity_by_name = build_unit_group_identity_map(db)
+
+    for node in graph_dict.get("nodes", []) or []:
+        product_outputs = [
+            port
+            for port in (node.get("outputs", []) or [])
+            if port.get("type") != "biosphere" and bool(port.get("isProduct"))
+        ]
+        if not product_outputs:
+            continue
+        allocation = calculate_product_allocation(
+            product_outputs,
+            process_uuid=str(node.get("process_uuid") or node.get("id") or ""),
+            unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+        )
+        if allocation.factors:
+            for port in product_outputs:
+                port_id = str(port.get("id") or "")
+                if port_id in allocation.factors:
+                    port["allocationFactor"] = float(allocation.factors[port_id])
+                    port["allocationBasis"] = {"method": "solver_precomputed"}
+
+    normalized_amount_by_node_and_port: dict[tuple[str, str], float] = {}
+    for node in graph_dict.get("nodes", []) or []:
+        node_id = str(node.get("id") or "")
+        for bucket in ("inputs", "outputs", "emissions"):
+            for port in node.get(bucket, []) or []:
+                sem = resolve_flow_port_unit_semantics(
+                    db,
+                    port,
+                    unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+                    reference_unit_by_group=reference_unit_by_group,
+                    unit_group_identity_by_name=unit_group_identity_by_name,
+                )
+                if not sem.ok or sem.amount_in_flow_default_unit is None:
+                    continue
+                current_amount = float(port.get("amount") or 0.0)
+                default_amount = float(sem.amount_in_flow_default_unit)
+                ratio = default_amount / current_amount if current_amount else 1.0
+                port["amount"] = default_amount
+                if bucket == "outputs" and port.get("externalSaleAmount") is not None:
+                    try:
+                        port["externalSaleAmount"] = float(port.get("externalSaleAmount") or 0.0) * ratio
+                    except (TypeError, ValueError):
+                        port["externalSaleAmount"] = 0.0
+                port["unit"] = sem.flow_default_unit
+                port["unitGroup"] = sem.flow_default_unit_group
+                normalized_amount_by_node_and_port[(node_id, str(port.get("id") or ""))] = default_amount
+
+    for edge in graph_dict.get("exchanges", []) or []:
+        target_port_id = _resolve_edge_port_id(edge.get("targetHandle") or edge.get("target_port_id") or edge.get("targetPortId"), "in")
+        source_port_id = _resolve_edge_port_id(edge.get("sourceHandle") or edge.get("source_port_id") or edge.get("sourcePortId"), "out")
+        target_amount = normalized_amount_by_node_and_port.get((str(edge.get("toNode") or ""), str(target_port_id or "")))
+        source_amount = normalized_amount_by_node_and_port.get((str(edge.get("fromNode") or ""), str(source_port_id or "")))
+        if target_amount is not None:
+            edge["amount"] = float(target_amount)
+            edge["consumerAmount"] = float(target_amount)
+            if str(edge.get("quantityMode") or "") == "single":
+                edge["providerAmount"] = float(target_amount)
+        if source_amount is not None and str(edge.get("quantityMode") or "") == "dual":
+            edge["providerAmount"] = float(source_amount)
+
+    return HybridGraph.model_validate(graph_dict)
+
 
 def _rescale_lci_values_to_inventory_units(
     *,
@@ -736,8 +862,14 @@ def _rescale_lci_values_to_inventory_units(
         meta = process_unit_map.get(str(pid), {}) if isinstance(process_unit_map, dict) else {}
         unit_group = str(meta.get("reference_unit_group") or "")
         unit_name = str(meta.get("reference_unit") or "")
-        factor = unit_factor_by_group_and_name.get((unit_group, unit_name))
-        scale_by_position.append(float(factor) if factor is not None else 1.0)
+        solver_unit_group = str(meta.get("solver_reference_unit_group") or unit_group)
+        solver_unit_name = str(meta.get("solver_reference_unit") or unit_name)
+        display_factor = unit_factor_by_group_and_name.get((unit_group, unit_name))
+        solver_factor = unit_factor_by_group_and_name.get((solver_unit_group, solver_unit_name))
+        if display_factor is None or solver_factor is None or float(solver_factor) <= 0:
+            scale_by_position.append(1.0)
+        else:
+            scale_by_position.append(float(display_factor) / float(solver_factor))
 
     if all(isinstance(row, list) for row in values):
         scaled_rows: list[list] = []
@@ -1256,14 +1388,45 @@ def _ensure_unit_group_source_columns() -> dict:
     return ensure_unit_group_source_columns(engine)
 
 
+def _repair_builtin_elementary_flow_sources(*, db: Session) -> dict:
+    data_root = Path(__file__).resolve().parents[1] / "data" / "Tiangong"
+    elementary_flows_path = data_root / "elementary_flows_sample.csv"
+    if not elementary_flows_path.exists():
+        return {"updated": 0, "reason": "source_file_missing"}
+
+    updated = 0
+    with elementary_flows_path.open("r", encoding="utf-8-sig", newline="") as handle:
+        for row in csv.DictReader(handle):
+            flow_uuid = str(row.get("flow_uuid") or "").strip()
+            if not flow_uuid:
+                continue
+            item = db.get(FlowRecord, flow_uuid)
+            if item is None:
+                continue
+            source = str(item.source or "").strip().lower()
+            if source not in {"ecoinvent", "ecoinvent_3.11"}:
+                continue
+            item.source = BUILTIN_ELEMENTARY_FLOW_SOURCE
+            updated += 1
+
+    if updated:
+        db.commit()
+    return {"updated": updated}
+
+
 @app.on_event("startup")
 def _ensure_source_compliance_schema_on_startup() -> None:
+    Base.metadata.create_all(bind=engine)
     _ensure_custom_flow_columns()
     _ensure_unit_group_source_columns()
     ensure_lci_exchange_matrix_table(engine)
     ensure_import_tables(engine)
     db = SessionLocal()
     try:
+        _bootstrap_reference_data_if_needed(db=db)
+        repair_result = _repair_builtin_elementary_flow_sources(db=db)
+        if repair_result.get("updated"):
+            print(f"[startup-bootstrap] repaired builtin elementary flow sources: updated={repair_result.get('updated')}")
         backfill_tidas_unit_group_sources(db)
         backfill_ecoinvent_unit_group_sources(db)
     finally:
@@ -1735,6 +1898,64 @@ def _has_non_ecoinvent_elementary_flows(graph: HybridGraph, db: Session) -> bool
         if not source.startswith("ecoinvent"):
             return True
     return False
+
+
+def _has_ecoinvent_lcia_content(graph: HybridGraph, db: Session) -> bool:
+    biosphere_uuids: set[str] = set()
+    process_uuids: set[str] = set()
+    for node in (graph.nodes or []):
+        if node.node_kind == "lci_dataset":
+            process_uuid = str(node.process_uuid or "").strip()
+            if process_uuid and not process_uuid.startswith("lci_"):
+                process_uuids.add(process_uuid)
+        for port in chain(getattr(node, "inputs", []) or [], getattr(node, "outputs", []) or []):
+            if getattr(port, "type", None) != "biosphere":
+                continue
+            flow_uuid = str(getattr(port, "flowUuid", getattr(port, "flow_uuid", "") or "")).strip()
+            if flow_uuid:
+                biosphere_uuids.add(flow_uuid.lower())
+
+    if biosphere_uuids:
+        rows = [
+            db.query(FlowRecord.source).filter(func.lower(FlowRecord.flow_uuid) == flow_uuid).first()
+            for flow_uuid in biosphere_uuids
+        ]
+        if any(str(row.source if row else "").strip().lower().startswith("ecoinvent") for row in rows):
+            return True
+
+    if process_uuids:
+        rows = db.query(ReferenceProcess.process_json, ReferenceProcess.source_file).filter(
+            ReferenceProcess.process_uuid.in_(process_uuids)
+        ).all()
+        if any(
+            str((process_json or {}).get("source_database") or source_file or "").strip().lower().startswith("ecoinvent")
+            for process_json, source_file in rows
+        ):
+            return True
+        if db.query(LciProcessVector.process_uuid).filter(LciProcessVector.process_uuid.in_(process_uuids)).first():
+            return True
+
+    return False
+
+
+def _has_active_ecoinvent_lcia_runtime() -> bool:
+    manifest_path = DEFAULT_EF31_RUNTIME_ROOT / ACTIVE_MANIFEST_NAME
+    if not manifest_path.exists():
+        return False
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    artifact_dir = Path(str(manifest.get("artifact_dir") or manifest.get("output_dir") or ""))
+    if not artifact_dir.is_absolute():
+        artifact_dir = DEFAULT_EF31_RUNTIME_ROOT / artifact_dir
+    if not (artifact_dir / "flow_index.csv").exists():
+        return False
+    if not (artifact_dir / "indicator_index.csv").exists():
+        return False
+    if not (artifact_dir / "lcia_factors.csv").exists():
+        return False
+    return int(manifest.get("flows_count") or 0) > 0 and int(manifest.get("factors_count") or 0) > 0
 
 
 def _solver_flow_type_by_uuid_cached(db: Session) -> dict[str, str]:
@@ -3907,8 +4128,9 @@ def run_solver_and_persist(
     lci_expansion = expand_lci_vectors_into_graph(db, payload.graph)
     solver_graph = lci_expansion.graph
 
-    normalized_graph = normalize_graph_units_to_reference(
-        solver_graph,
+    normalized_graph = _graph_with_solver_unit_defaults(
+        db=db,
+        graph=solver_graph,
         unit_factor_by_group_and_name=unit_factor_by_group_and_name,
         reference_unit_by_group=reference_unit_by_group,
     )
@@ -3960,6 +4182,8 @@ def run_solver_and_persist(
             "reference_flow_uuid": str(meta.get("reference_flow_uuid") or prev.get("reference_flow_uuid") or ""),
             "reference_unit": str(meta.get("reference_unit") or prev.get("reference_unit") or ""),
             "reference_unit_group": str(meta.get("reference_unit_group") or prev.get("reference_unit_group") or ""),
+            "solver_reference_unit": str(prev.get("reference_unit") or ""),
+            "solver_reference_unit_group": str(prev.get("reference_unit_group") or ""),
         }
 
     scaled_values = _rescale_lci_values_to_inventory_units(
@@ -4073,6 +4297,18 @@ def run_model(payload: RunRequest, db: Session = Depends(get_db)) -> RunResponse
                     },
                 },
             )
+    if _has_ecoinvent_lcia_content(payload.graph, db) and not _has_active_ecoinvent_lcia_runtime():
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "ECOINVENT_LCIA_RUNTIME_NOT_IMPORTED",
+                "message": "模型使用 ecoinvent 基本流或 ecoinvent LCI 数据集，但尚未导入 ecoinvent LCIA method。请先导入 LCIA_implementation.7z 并生成 LCIA Runtime 后再计算。",
+                "evidence": {
+                    "requested_methods": lcia_methods,
+                    "required_archive": "LCIA_implementation.7z",
+                },
+            },
+        )
 
     try:
         pts_nodes = [node for node in payload.graph.nodes if node.node_kind == "pts_module"]

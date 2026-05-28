@@ -113,6 +113,7 @@ def get_tidas_policy_reference() -> dict:
     from ..tidas_reference import load_tidas_reference_seed
 
     seed = load_tidas_reference_seed()
+
     return {
         "source_package_version": str(seed.get("source_package_version") or ""),
         "allowed_unit_groups": get_tidas_allowed_unit_groups(),
@@ -121,7 +122,9 @@ def get_tidas_policy_reference() -> dict:
 
 @_api_router.get("/api/reference/lcia-methods")
 @_base_router.get("/reference/lcia-methods")
-def list_lcia_methods() -> dict:
+def list_lcia_methods(db: Session = Depends(get_db)) -> dict:
+    from ..models import FlowRecord, LciProcessVector
+
     EF31_CANONICAL_METHODS = {"EF v3.1"}
     EF31_RUNTIME_METHODS = {"EF v3.1", "EF v3.1 no LT"}
     LEGACY_INDICATORS_AS_METHODS = {"Acidification", "Climate change"}
@@ -152,6 +155,25 @@ def list_lcia_methods() -> dict:
                     if method:
                         rows[method] = rows.get(method, 0) + 1
         return rows
+
+    def _active_runtime_available() -> bool:
+        active_path = DEFAULT_EF31_RUNTIME_ROOT / ACTIVE_MANIFEST_NAME
+        if not active_path.exists():
+            return False
+        try:
+            active = json.loads(active_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        artifact_dir = Path(str(active.get("artifact_dir") or active.get("output_dir") or ""))
+        if not artifact_dir.is_absolute():
+            artifact_dir = DEFAULT_EF31_RUNTIME_ROOT / artifact_dir
+        return (
+            (artifact_dir / "flow_index.csv").exists()
+            and (artifact_dir / "indicator_index.csv").exists()
+            and (artifact_dir / "lcia_factors.csv").exists()
+            and int(active.get("flows_count") or 0) > 0
+            and int(active.get("factors_count") or 0) > 0
+        )
 
     def _is_legacy_ef31_indicator_set(methods: set[str]) -> bool:
         """Detect if method names look like legacy EF3.1 indicator names rather than real method names.
@@ -228,6 +250,13 @@ def list_lcia_methods() -> dict:
         methods = set(EF31_CANONICAL_METHODS)
         method_counts = {"EF v3.1": 0}
 
+    if hasattr(db, "query"):
+        ecoinvent_elementary_flow_count = db.query(FlowRecord).filter(FlowRecord.source.like("ecoinvent%")).count()
+        ecoinvent_lci_vector_count = db.query(LciProcessVector).count()
+    else:
+        ecoinvent_elementary_flow_count = 0
+        ecoinvent_lci_vector_count = 0
+
     return {
         "default_method": "EF v3.1",
         "methods": sorted(methods),
@@ -235,6 +264,9 @@ def list_lcia_methods() -> dict:
         "total_indicators": int(sum(method_counts.get(method, 0) for method in methods)),
         "source": str(csv_path) if csv_path.exists() else "",
         "source_label": source_label,
+        "ecoinvent_lcia_runtime_available": _active_runtime_available(),
+        "ecoinvent_elementary_flow_count": ecoinvent_elementary_flow_count,
+        "ecoinvent_lci_vector_count": ecoinvent_lci_vector_count,
     }
 
 

@@ -150,6 +150,12 @@ def import_ecoinvent_elementary_flows(
             if item is None:
                 skipped += 1
                 continue
+            item_source = str(item.source or "").strip().lower()
+            protected_existing_elementary = (
+                item.flow_type == "Elementary flow"
+                and item_source
+                and not item_source.startswith("ecoinvent")
+            )
             if item.flow_type != "Elementary flow" or item.source != source:
                 conflicts_overwritten += 1
             item.flow_name = flow.flow_name or item.flow_name or flow.flow_uuid
@@ -158,13 +164,14 @@ def import_ecoinvent_elementary_flows(
             item.default_unit = flow.default_unit or item.default_unit or "kg"
             item.unit_group = unit_group
             item.compartment = flow.compartment
-            item.source = source
-            item.is_custom = False
-            item.tidas_compatible = False
-            item.tidas_unit_group = None
-            item.tidas_flow_property_uuid = None
-            item.tidas_reference_source = None
-            item.allocation_properties = None
+            if not protected_existing_elementary:
+                item.source = source
+                item.is_custom = False
+                item.tidas_compatible = False
+                item.tidas_unit_group = None
+                item.tidas_flow_property_uuid = None
+                item.tidas_reference_source = None
+                item.allocation_properties = None
             updated += 1
         else:
             db.add(

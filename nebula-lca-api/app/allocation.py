@@ -85,6 +85,17 @@ def _unit(port: Any) -> str:
     return str(_port_get(port, "unit", "") or "").strip()
 
 
+def _current_unit(port: Any) -> str:
+    switch = _port_get(port, "unitGroupSwitch", None)
+    if switch is None:
+        switch = _port_get(port, "unit_group_switch", None)
+    if isinstance(switch, dict):
+        target = switch.get("targetUnit") or switch.get("target_unit")
+        if str(target or "").strip():
+            return str(target).strip()
+    return _unit(port)
+
+
 _PREFERRED_UNIT_GROUP_BY_UNIT = {
     "pg": "Units of mass",
     "ng": "Units of mass",
@@ -120,10 +131,10 @@ def _current_unit_group(port: Any) -> str:
         target = switch.get("targetUnitGroup") or switch.get("target_unit_group")
         if str(target or "").strip():
             return str(target).strip()
-    unit_group = _PREFERRED_UNIT_GROUP_BY_UNIT.get(_unit(port).lower())
-    if unit_group:
-        return unit_group
-    return _unit_group(port)
+    explicit_unit_group = _unit_group(port)
+    if explicit_unit_group:
+        return explicit_unit_group
+    return _PREFERRED_UNIT_GROUP_BY_UNIT.get(_unit(port).lower(), "")
 
 
 def collect_multi_product_unit_group_violations(graph: Any) -> list[dict[str, Any]]:
@@ -147,6 +158,24 @@ def collect_multi_product_unit_group_violations(graph: Any) -> list[dict[str, An
             continue
         groups = [_current_unit_group(port) or "unknown" for port in product_outputs]
         if len(set(groups)) <= 1:
+            continue
+        user_factors: list[float] = []
+        user_factors_valid = True
+        for port in product_outputs:
+            raw_factor = _port_get(port, "allocationFactor", None)
+            if raw_factor is None:
+                user_factors_valid = False
+                break
+            try:
+                parsed_factor = float(raw_factor)
+            except (TypeError, ValueError):
+                user_factors_valid = False
+                break
+            if parsed_factor < 0:
+                user_factors_valid = False
+                break
+            user_factors.append(parsed_factor)
+        if user_factors_valid and abs(sum(user_factors) - 1.0) < ALLOCATION_TOLERANCE:
             continue
         base = product_outputs[0]
         base_group = groups[0]
@@ -208,7 +237,7 @@ def _converted_amount(
     port: Any,
     unit_factor_by_group_and_name: dict[tuple[str, str], float] | None,
 ) -> float | None:
-    factor = _conversion_factor(unit_factor_by_group_and_name, _unit_group(port), _unit(port))
+    factor = _conversion_factor(unit_factor_by_group_and_name, _current_unit_group(port), _current_unit(port))
     if factor is None:
         return None
     return _amount(port) * factor
@@ -267,7 +296,7 @@ def _same_unit_group_allocation(
     process_uuid: str,
     unit_factor_by_group_and_name: dict[tuple[str, str], float] | None,
 ) -> AllocationResult | None:
-    unit_groups = {_unit_group(port) for port in product_outputs if _unit_group(port)}
+    unit_groups = {_current_unit_group(port) for port in product_outputs if _current_unit_group(port)}
     if len(unit_groups) != 1:
         return None
 
@@ -322,7 +351,7 @@ def _basis_weight(
 ) -> tuple[float | None, str | None, str | None]:
     basis = _allocation_basis(port)
     method = _basis_method(port) or preferred_method or ""
-    unit_group = _unit_group(port)
+    unit_group = _current_unit_group(port)
     converted = _converted_amount(port, unit_factor_by_group_and_name)
     if converted is None:
         return None, method, None
@@ -401,8 +430,8 @@ def _basis_allocation(
                 {
                     "port_id": _port_id(port),
                     "method": method or preferred_method,
-                    "unit_group": _unit_group(port),
-                    "unit": _unit(port),
+                    "unit_group": _current_unit_group(port),
+                    "unit": _current_unit(port),
                 },
             )
         weights[_port_id(port)] = weight

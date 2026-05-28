@@ -1217,6 +1217,10 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
   const mode = processModeForNode(node);
   const marketProcess = isMarketProcess(node);
   const lciNode = isLciDatasetNode(node);
+  const lciVectorProcessUuid =
+    lciNode && node.data.processUuid && !node.data.processUuid.startsWith("lci_")
+      ? node.data.processUuid
+      : "";
   const ptsNode = node.data.nodeKind === "pts_module";
   const importedLocked = node.data.importMode === "locked";
   const marketAllowMixedFlows = Boolean(node.data.marketAllowMixedFlows);
@@ -1255,7 +1259,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
   const canAutoNormalizeMarketInputs = marketProcess && externalInIntermediate.length > 0 && marketInputShareTotal > 0;
 
   useEffect(() => {
-    if (!lciNode || !node.data.processUuid) {
+    if (!lciVectorProcessUuid) {
       setLciTopExchanges({ input: [], output: [] });
       setLciTopExchangeNnz({ input: 0, output: 0 });
       setLciTopExchangeError("");
@@ -1263,7 +1267,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     }
     let cancelled = false;
     setLciTopExchangeError("");
-    const encodedProcessUuid = encodeURIComponent(node.data.processUuid);
+    const encodedProcessUuid = encodeURIComponent(lciVectorProcessUuid);
     const loadDirection = async (direction: "input" | "output") => {
       const resp = await fetch(`${API_BASE}/reference/processes/${encodedProcessUuid}/lci-vector/top-exchanges?page=1&page_size=10&direction=${direction}`);
       if (!resp.ok) {
@@ -1296,17 +1300,17 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     return () => {
       cancelled = true;
     };
-  }, [lciNode, node.data.processUuid]);
+  }, [lciVectorProcessUuid]);
 
   useEffect(() => {
-    if (!lciViewer.open || !lciNode || !node.data.processUuid) {
+    if (!lciViewer.open || !lciVectorProcessUuid) {
       setLciViewerItems([]);
       setLciViewerTotal(0);
       setLciViewerError("");
       return;
     }
     let cancelled = false;
-    const encodedProcessUuid = encodeURIComponent(node.data.processUuid);
+    const encodedProcessUuid = encodeURIComponent(lciVectorProcessUuid);
     const params = new URLSearchParams({
       page: String(lciViewer.page),
       page_size: "20",
@@ -1347,7 +1351,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     return () => {
       cancelled = true;
     };
-  }, [lciNode, lciViewer.direction, lciViewer.open, lciViewer.page, lciViewer.query, node.data.processUuid]);
+  }, [lciNode, lciViewer.direction, lciViewer.open, lciViewer.page, lciViewer.query, lciVectorProcessUuid]);
 
   useEffect(() => {
     if (!marketProcess) {

@@ -41,6 +41,13 @@ def create_upload_session(
     Returns:
         (upload_id, response_dict)
     """
+    try:
+        from .import_cache_cleanup import cleanup_stale_import_cache
+
+        cleanup_stale_import_cache()
+    except Exception:
+        pass
+
     existing = find_upload_session(file_name=file_name, file_type=file_type, expected_size=expected_size)
     if existing is not None:
         return existing["upload_id"], {

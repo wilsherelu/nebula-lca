@@ -1,5 +1,8 @@
 ﻿FROM python:3.10-slim
 
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONUTF8=1
+
 WORKDIR /app
 
 COPY requirements.txt ./
@@ -8,7 +11,7 @@ RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ \
  && pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data/runtime /app/import-cache /app/runtime
 
 EXPOSE 18080
 

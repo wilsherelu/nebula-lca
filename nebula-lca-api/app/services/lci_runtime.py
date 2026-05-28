@@ -31,8 +31,13 @@ class ExpandedLciGraph:
 def expand_graph_lci_inventory(db: Session, graph: Any) -> ExpandedLciInventory:
     """Expand lci_dataset graph nodes into a sparse flow_key_id inventory."""
     nodes = _get_graph_nodes(graph)
-    lci_nodes = [node for node in nodes if _get_value(node, "node_kind", "nodeKind") == "lci_dataset"]
-    process_uuids = sorted({_get_value(node, "process_uuid", "processUuid") for node in lci_nodes if _get_value(node, "process_uuid", "processUuid")})
+    lci_nodes = [
+        node
+        for node in nodes
+        if _get_value(node, "node_kind", "nodeKind") == "lci_dataset"
+        and _is_vector_backed_process_uuid(_get_value(node, "process_uuid", "processUuid"))
+    ]
+    process_uuids = sorted({_get_value(node, "process_uuid", "processUuid") for node in lci_nodes})
     vectors = load_process_vectors(db, process_uuids)
     processes = {
         row.process_uuid: row
@@ -82,7 +87,7 @@ def expand_lci_vectors_into_graph(db: Session, graph: HybridGraph) -> ExpandedLc
         {
             node.process_uuid
             for node in expanded_graph.nodes
-            if node.node_kind == "lci_dataset" and node.process_uuid
+            if node.node_kind == "lci_dataset" and _is_vector_backed_process_uuid(node.process_uuid)
         }
     )
     vectors = load_process_vectors(db, process_uuids)
@@ -108,9 +113,12 @@ def expand_lci_vectors_into_graph(db: Session, graph: HybridGraph) -> ExpandedLc
     provenance: list[dict[str, Any]] = []
 
     for node in expanded_graph.nodes:
-        if node.node_kind != "lci_dataset":
+        if node.node_kind != "lci_dataset" or not _is_vector_backed_process_uuid(node.process_uuid):
             continue
-        has_existing_biosphere = any(str(port.type or "") == "biosphere" for port in node.outputs)
+        has_existing_biosphere = any(
+            str(port.type or "") == "biosphere"
+            for port in [*(node.inputs or []), *(node.outputs or [])]
+        )
         vector = vectors.get(node.process_uuid)
         if vector is None:
             if not has_existing_biosphere:
@@ -355,6 +363,11 @@ def _get_graph_nodes(graph: Any) -> list[Any]:
     if isinstance(graph, dict):
         return list(graph.get("nodes") or [])
     return list(getattr(graph, "nodes", []) or [])
+
+
+def _is_vector_backed_process_uuid(process_uuid: Any) -> bool:
+    value = str(process_uuid or "").strip()
+    return bool(value) and not value.startswith("lci_")
 
 
 def _get_value(obj: Any, *keys: str) -> Any:

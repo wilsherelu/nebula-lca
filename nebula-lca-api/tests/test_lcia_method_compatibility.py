@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 import app.api.reference_data as reference_data
 import app.database as _db_module
+import app.main as main_module
 from app.database import Base
 from app.main import app
 from app.models import FlowRecord, Model, ModelVersion, ReferenceProcess, RunJob, UnitDefinition, UnitGroup
@@ -295,6 +296,62 @@ def test_run_model_blocks_non_ef31_for_non_ecoinvent_elementary_flow(client):
     detail = response.json()["detail"]
     assert detail["code"] == "LCIA_METHOD_INCOMPATIBLE_WITH_ELEMENTARY_FLOWS"
     assert detail["evidence"]["allowed_methods"] == ["EF v3.1"]
+
+
+def test_run_model_blocks_ecoinvent_flow_without_lcia_runtime(client, tmp_path, monkeypatch):
+    _seed_unit_and_flow(source="ecoinvent_3.11")
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    monkeypatch.setattr(main_module, "DEFAULT_EF31_RUNTIME_ROOT", runtime_root)
+
+    graph = {
+        "functionalUnit": "1 kg product",
+        "nodes": [
+            {
+                "id": "node-1",
+                "node_kind": "unit_process",
+                "mode": "normalized",
+                "process_uuid": "proc-1",
+                "name": "process",
+                "location": "GLO",
+                "reference_product": "product",
+                "inputs": [],
+                "outputs": [
+                    {
+                        "id": "out-product",
+                        "flowUuid": "flow-product",
+                        "name": "product",
+                        "unit": "kg",
+                        "unitGroup": "Units of mass",
+                        "amount": 1.0,
+                        "type": "technosphere",
+                        "direction": "output",
+                        "isProduct": True,
+                    },
+                    {
+                        "id": "out-co2",
+                        "flowUuid": "flow-co2-legacy",
+                        "name": "carbon dioxide legacy",
+                        "unit": "kg",
+                        "unitGroup": "Units of mass",
+                        "amount": 1.0,
+                        "type": "biosphere",
+                        "direction": "output",
+                    },
+                ],
+                "emissions": [],
+            }
+        ],
+        "exchanges": [],
+        "metadata": {},
+    }
+
+    response = client.post("/api/model/run", json={"graph": graph, "lcia_methods": ["EF v3.1"]})
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert detail["code"] == "ECOINVENT_LCIA_RUNTIME_NOT_IMPORTED"
+    assert detail["evidence"]["required_archive"] == "LCIA_implementation.7z"
 
 
 def test_save_version_allows_multi_product_unit_group_mismatch(client):

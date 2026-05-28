@@ -745,6 +745,9 @@ def test_streaming_write_plan_matches_single_pass_fixture():
     )
 
     assert streaming_plan.flow_key_aggs == legacy_plan.flow_key_aggs
+    assert streaming_plan.process_json["reference_flow_uuid"] == single.dataset.reference_product_id
+    assert streaming_plan.process_json["exchanges"][0]["flow_uuid"] == single.dataset.reference_product_id
+    assert streaming_plan.process_json["exchanges"][0]["isProduct"] is True
     assert executor._perf_stats["streaming_parser_enabled"] is True
 
 
@@ -1305,6 +1308,10 @@ def test_bulk_writer_flushes_empty_dataset_without_flush_single(tmp_path):
     assert checkpoint.vector_status == "empty"
     assert checkpoint.vector_nnz == 0
     assert process is not None
+    assert process.reference_flow_uuid == "rp-empty"
+    assert process.process_json["reference_flow_uuid"] == "rp-empty"
+    assert process.process_json["exchanges"][0]["flow_uuid"] == "rp-empty"
+    assert process.process_json["exchanges"][0]["is_reference_flow"] is True
     assert global_row.status == "imported"
     assert global_row.vector_nnz == 0
     assert executor._stats["datasets_processed"] == 1
