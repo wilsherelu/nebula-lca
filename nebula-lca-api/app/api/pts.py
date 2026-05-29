@@ -136,7 +136,7 @@ def compile_pts_endpoint(payload: PtsCompileRequest, db: Session = Depends(get_d
     resolved_pts_node_id = matched_pts_nodes[0].id
     ports_policy = _get_pts_resource_ports_policy(db=db, project_id=payload.project_id, pts_uuid=pts_uuid) if pts_uuid else None
     try:
-        compile_result = compile_pts(compile_graph, resolved_pts_node_id, ports_policy=ports_policy)
+        compile_result = compile_pts(compile_graph, resolved_pts_node_id, ports_policy=ports_policy, db=db)
     except ValueError as exc:
         _raise_pts_compile_value_error_http(exc, resolved_pts_node_id)
     definition = extract_pts_definition(

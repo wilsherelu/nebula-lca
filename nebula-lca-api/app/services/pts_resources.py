@@ -1350,7 +1350,7 @@ def upsert_pts_compile_artifact(
         pts_node = next((node for node in graph.nodes if node.id == pts_node_id and node.node_kind == "pts_module"), None)
         pts_uuid = str(pts_node.pts_uuid or pts_node.process_uuid or pts_node.id).strip() if pts_node is not None else ""
         ports_policy = _get_pts_resource_ports_policy(db=db, project_id=project_id, pts_uuid=pts_uuid) if pts_uuid else None
-        compile_result = compile_pts(graph, pts_node_id, ports_policy=ports_policy)
+        compile_result = compile_pts(graph, pts_node_id, ports_policy=ports_policy, db=db)
     graph_hash = compile_result["graph_hash"]
     cached = (
         db.query(PtsCompileArtifact)
@@ -2369,6 +2369,8 @@ def build_pts_external_payload(*, project_id: str, pts_uuid: str, definition: di
                 "source_node_id": str(vp_obj.get("source_node_id") or vp_obj.get("sourceNodeId") or ""),
                 "source_port_id": str(vp_obj.get("source_port_id") or vp_obj.get("sourcePortId") or ""),
                 "source_port_name": str(vp_obj.get("source_port_name") or vp_obj.get("sourcePortName") or ""),
+                "allocation_fraction": vp_obj.get("allocation_fraction"),
+                "normalization_reference_amount": vp_obj.get("normalization_reference_amount"),
                 "reference_product": {
                     "flowUuid": flow_uuid,
                     "name": str(ref_obj.get("name") or ""),

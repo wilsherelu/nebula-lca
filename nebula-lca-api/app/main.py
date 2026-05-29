@@ -948,7 +948,7 @@ def _compile_and_persist_pts_for_node(
             compile_row = cached_row
         else:
             try:
-                compile_result = compile_pts(graph, node_id, ports_policy=ports_policy)
+                compile_result = compile_pts(graph, node_id, ports_policy=ports_policy, db=db)
             except ValueError as exc:
                 _raise_pts_compile_value_error_http(exc, node_id)
             compile_row, _ = upsert_pts_compile_artifact(
@@ -960,7 +960,7 @@ def _compile_and_persist_pts_for_node(
             )
     else:
         try:
-            compile_result = compile_pts(graph, node_id, ports_policy=ports_policy)
+            compile_result = compile_pts(graph, node_id, ports_policy=ports_policy, db=db)
         except ValueError as exc:
             _raise_pts_compile_value_error_http(exc, node_id)
         compile_row, _ = upsert_pts_compile_artifact(
@@ -2563,7 +2563,7 @@ def debug_inspect_run_pts(
         pts_uuid = str(node.pts_uuid or node.process_uuid or node.id).strip()
         ports_policy = _get_pts_resource_ports_policy(db=db, project_id=payload.project_id or "", pts_uuid=pts_uuid) if pts_uuid and payload.project_id else None
         try:
-            compile_result = compile_pts(normalized_graph, node.id, ports_policy=ports_policy)
+            compile_result = compile_pts(normalized_graph, node.id, ports_policy=ports_policy, db=db)
         except ValueError as exc:
             _raise_pts_compile_value_error_http(exc, node.id)
         row = PtsCompileArtifact(
@@ -2654,7 +2654,7 @@ def debug_pts_compile_preview(
     pts_node_id = matched_pts_nodes[0].id
     ports_policy = _get_pts_resource_ports_policy(db=db, project_id=payload.project_id, pts_uuid=pts_uuid) if pts_uuid else None
     try:
-        compile_result = compile_pts(payload.graph, pts_node_id, ports_policy=ports_policy)
+        compile_result = compile_pts(payload.graph, pts_node_id, ports_policy=ports_policy, db=db)
     except ValueError as exc:
         _raise_pts_compile_value_error_http(exc, pts_node_id)
     validation = compile_result["validation"]
