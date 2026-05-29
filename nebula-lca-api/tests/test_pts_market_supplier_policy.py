@@ -1,8 +1,9 @@
 from fastapi import HTTPException
 
-from app.models import PtsCompileArtifact
+from app.models import PtsCompileArtifact, PtsExternalArtifact
 from app.schemas import HybridGraph
 from app.services.pts_resources import (
+    _load_published_compile_rows_for_graph,
     _validate_pts_market_supplier_coverage,
     build_flattened_graph_for_run_pts,
 )
@@ -353,3 +354,41 @@ def test_pts_packed_market_result_matches_unpacked_baseline_for_same_flow_provid
     }
     assert packed_links == unpacked_links
     assert _weighted_market_score(packed_links, provider_scores) == _weighted_market_score(unpacked_links, provider_scores)
+
+
+def test_published_pts_load_uses_current_shell_node_id_for_flatten(monkeypatch):
+    graph_payload = _pts_shell_graph("out:ptsout-b").model_dump(mode="python", by_alias=True)
+    for node in graph_payload["nodes"]:
+        if node["id"] == "pts-node":
+            node["id"] = "packed-pts-node"
+            node["node_kind"] = "unit_process"
+    for edge in graph_payload["exchanges"]:
+        if edge["fromNode"] == "pts-node":
+            edge["fromNode"] = "packed-pts-node"
+    graph = HybridGraph.model_validate(graph_payload)
+
+    external = PtsExternalArtifact(
+        project_id="project-1",
+        pts_uuid="pts-1",
+        pts_node_id="source-pts-node",
+        graph_hash="hash-1",
+        published_version=1,
+        artifact_json={
+            "pts_node_id": "source-pts-node",
+            "graph_hash": "hash-1",
+            "ok": True,
+            "virtual_processes": _compile_row_with_two_same_flow_vps().artifact_json["virtual_processes"],
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.pts_resources._load_pts_active_external_artifact",
+        lambda **kwargs: external,
+    )
+
+    rows = _load_published_compile_rows_for_graph(db=None, project_id="project-1", graph=graph)
+    assert rows[0].pts_node_id == "packed-pts-node"
+
+    flattened = build_flattened_graph_for_run_pts(graph=graph, compile_rows=rows)
+    assert all(node.id != "packed-pts-node" for node in flattened.nodes)
+    source_node = next(node for node in flattened.nodes if node.id == flattened.exchanges[0].fromNode)
+    assert source_node.process_uuid == "pts-1::product::proc-b::ptsout-b::flow-diesel"

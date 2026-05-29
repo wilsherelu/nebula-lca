@@ -228,6 +228,7 @@ _collect_connected_port_ids_for_pts_node = _pr._collect_connected_port_ids_for_p
 _overlay_pts_port_visibility = _pr._overlay_pts_port_visibility
 _load_published_compile_rows_for_graph = _pr._load_published_compile_rows_for_graph
 build_flattened_graph_for_run_pts = _pr.build_flattened_graph_for_run_pts
+is_pts_runtime_shell_node = _pr.is_pts_runtime_shell_node
 _build_compile_graph_from_pts_resource = _pr._build_compile_graph_from_pts_resource
 extract_pts_definition = _pr.extract_pts_definition
 upsert_pts_definition = _pr.upsert_pts_definition
@@ -1502,7 +1503,24 @@ def _bootstrap_reference_data_if_needed(*, db: Session) -> None:
     intermediate_flows_path = data_root / "intermediate_flows_sample.csv"
     processes_path = data_root / "tiangong_processes.zip"
 
-    if not unit_groups_path.exists():
+    existing_unit_count = db.query(func.count(UnitDefinition.id)).scalar() or 0
+    existing_elementary_count = (
+        db.query(func.count(FlowRecord.flow_uuid))
+        .filter(FlowRecord.source == BUILTIN_ELEMENTARY_FLOW_SOURCE)
+        .scalar()
+        or 0
+    )
+    existing_intermediate_count = (
+        db.query(func.count(FlowRecord.flow_uuid))
+        .filter(FlowRecord.source == BUILTIN_INTERMEDIATE_FLOW_SOURCE)
+        .scalar()
+        or 0
+    )
+    existing_reference_process_count = db.query(func.count(ReferenceProcess.process_uuid)).scalar() or 0
+
+    if existing_unit_count:
+        print(f"[startup-bootstrap] skipped unit groups: existing_units={existing_unit_count}")
+    elif not unit_groups_path.exists():
         print(f"[startup-bootstrap] unit group source not found: {unit_groups_path}")
     else:
         result = import_unit_groups_from_excel(
@@ -1516,7 +1534,9 @@ def _bootstrap_reference_data_if_needed(*, db: Session) -> None:
             f"units_inserted={result.get('units_inserted', 0)}"
         )
 
-    if not elementary_flows_path.exists():
+    if existing_elementary_count:
+        print(f"[startup-bootstrap] skipped elementary flows: existing={existing_elementary_count}")
+    elif not elementary_flows_path.exists():
         print(f"[startup-bootstrap] elementary flow source not found: {elementary_flows_path}")
     else:
         result = import_flows_from_file(
@@ -1534,7 +1554,9 @@ def _bootstrap_reference_data_if_needed(*, db: Session) -> None:
             f"inserted={result.get('inserted', 0)} updated={result.get('updated', 0)}"
         )
 
-    if not intermediate_flows_path.exists():
+    if existing_intermediate_count:
+        print(f"[startup-bootstrap] skipped intermediate flows: existing={existing_intermediate_count}")
+    elif not intermediate_flows_path.exists():
         print(f"[startup-bootstrap] intermediate flow source not found: {intermediate_flows_path}")
     else:
         result = import_flows_from_file(
@@ -1542,7 +1564,7 @@ def _bootstrap_reference_data_if_needed(*, db: Session) -> None:
             file_path=str(intermediate_flows_path),
             sheet_name=None,
             mapping=None,
-            replace_existing=True,
+            replace_existing=False,
             default_flow_type="Product flow",
             ef31_flow_index_path=None,
             default_source=BUILTIN_INTERMEDIATE_FLOW_SOURCE,
@@ -1552,7 +1574,9 @@ def _bootstrap_reference_data_if_needed(*, db: Session) -> None:
             f"inserted={result.get('inserted', 0)} updated={result.get('updated', 0)}"
         )
 
-    if not processes_path.exists():
+    if existing_reference_process_count:
+        print(f"[startup-bootstrap] skipped reference processes: existing={existing_reference_process_count}")
+    elif not processes_path.exists():
         print(f"[startup-bootstrap] process source not found: {processes_path}")
     else:
         result = import_processes_from_json(
@@ -2556,7 +2580,7 @@ def debug_inspect_run_pts(
         reference_unit_by_group=reference_unit_by_group,
     )
 
-    pts_nodes = [node for node in normalized_graph.nodes if node.node_kind == "pts_module"]
+    pts_nodes = [node for node in normalized_graph.nodes if is_pts_runtime_shell_node(node)]
     compile_rows: list[PtsCompileArtifact] = []
     compile_summaries: list[dict] = []
     for node in pts_nodes:
@@ -4320,7 +4344,7 @@ def run_model(payload: RunRequest, db: Session = Depends(get_db)) -> RunResponse
         )
 
     try:
-        pts_nodes = [node for node in payload.graph.nodes if node.node_kind == "pts_module"]
+        pts_nodes = [node for node in payload.graph.nodes if is_pts_runtime_shell_node(node)]
         effective_payload = payload
         if pts_nodes:
             project_id = resolve_project_id_for_run(payload, db)

@@ -943,7 +943,7 @@ def _resolve_compile_row_for_publish(*, db: Session, pts_uuid: str, payload: Pts
 
 def _bind_pts_published_versions_for_graph(*, db: Session, project_id: str, graph: HybridGraph) -> None:
     for node in graph.nodes:
-        if node.node_kind != "pts_module":
+        if not is_pts_runtime_shell_node(node):
             continue
         pts_uuid = str(node.pts_uuid or node.process_uuid or node.id).strip()
         if not pts_uuid:
@@ -970,6 +970,14 @@ def _is_unpublished_empty_pts_draft(*, graph: HybridGraph, pts_node: HybridNode)
     return len(internal_nodes) == 0 and len(internal_edges) == 0
 
 
+def is_pts_runtime_shell_node(node: HybridNode) -> bool:
+    return (
+        node.node_kind == "pts_module"
+        or bool(str(node.pts_uuid or "").strip())
+        or bool(str(node.pts_published_artifact_id or "").strip())
+    )
+
+
 def _load_published_compile_rows_for_graph(
     *,
     db: Session,
@@ -979,10 +987,13 @@ def _load_published_compile_rows_for_graph(
 ) -> list[PtsCompileArtifact]:
     rows: list[PtsCompileArtifact] = []
     for node in graph.nodes:
-        if node.node_kind != "pts_module":
+        if not is_pts_runtime_shell_node(node):
             continue
         pts_uuid = str(node.pts_uuid or node.process_uuid or node.id)
-        expected_pts_graph_hash = compute_pts_graph_hash(graph, node.id)
+        try:
+            expected_pts_graph_hash = compute_pts_graph_hash(graph, node.id)
+        except ValueError:
+            expected_pts_graph_hash = None
         if graph_hash and graph_hash != expected_pts_graph_hash:
             raise HTTPException(
                 status_code=409,
@@ -1064,7 +1075,7 @@ def _load_published_compile_rows_for_graph(
         rows.append(
             PtsCompileArtifact(
                 project_id=project_id,
-                pts_node_id=str(payload.get("pts_node_id") or node.id),
+                pts_node_id=str(node.id),
                 pts_uuid=pts_uuid,
                 graph_hash=str(payload.get("graph_hash") or external.graph_hash),
                 compile_version=(
