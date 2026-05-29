@@ -5,7 +5,14 @@ import json
 from types import SimpleNamespace
 from typing import Any
 
+from sqlalchemy.orm import Session
+
 from .allocation import calculate_product_allocation
+from .flow_unit_semantics import (
+    build_unit_group_identity_map,
+    build_unit_reference_maps,
+    resolve_flow_port_unit_semantics,
+)
 from .pts_validate import PtsValidationResult, validate_pts_compile
 from .schemas import (
     HybridGraph,
@@ -15,7 +22,7 @@ from .schemas import (
 )
 from .solver_adapter import run_tiangong_pts_compile
 
-PTS_COMPILE_SCHEMA_VERSION = "pts-compile-v6"
+PTS_COMPILE_SCHEMA_VERSION = "pts-compile-v7"
 
 
 def _is_exposed(port: object) -> bool:
@@ -352,7 +359,122 @@ def _aggregate_exchange_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
     return list(grouped.values())
 
 
-def _allocation_fraction_by_port_id(node: HybridNode) -> dict[str, float]:
+def _resolve_edge_port_id(handle_id: str | None, prefix: str) -> str:
+    if not handle_id:
+        return ""
+    token = f"{prefix}:"
+    if handle_id.startswith(token):
+        return handle_id[len(token) :]
+    if ":" in handle_id:
+        return handle_id.split(":", 1)[1]
+    return handle_id
+
+
+def _standardize_internal_graph_for_pts_compile(
+    *,
+    db: Session | None,
+    internal_graph: HybridGraph,
+) -> tuple[HybridGraph, dict[tuple[str, str], float] | None]:
+    if db is None:
+        return internal_graph, None
+
+    unit_factor_by_group_and_name, reference_unit_by_group = build_unit_reference_maps(db)
+    unit_group_identity_by_name = build_unit_group_identity_map(db)
+    graph_dict = internal_graph.model_dump(mode="python")
+
+    for node in graph_dict.get("nodes", []) or []:
+        product_outputs = [
+            port
+            for port in (node.get("outputs", []) or [])
+            if port.get("type") != "biosphere" and bool(port.get("isProduct"))
+        ]
+        if not product_outputs:
+            continue
+        allocation = calculate_product_allocation(
+            product_outputs,
+            process_uuid=str(node.get("process_uuid") or node.get("id") or ""),
+            unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+        )
+        if allocation.factors:
+            for port in product_outputs:
+                port_id = str(port.get("id") or "")
+                if port_id not in allocation.factors:
+                    continue
+                port["allocationFactor"] = float(allocation.factors[port_id])
+                port["allocationBasis"] = {"method": "solver_precomputed"}
+                if port_id in allocation.weights:
+                    port["allocationWeight"] = float(allocation.weights[port_id])
+                    port["allocationWeightUnitGroup"] = str(port.get("unitGroup") or "")
+
+    normalized_amount_by_node_and_port: dict[tuple[str, str], float] = {}
+    for node in graph_dict.get("nodes", []) or []:
+        node_id = str(node.get("id") or "")
+        for bucket in ("inputs", "outputs", "emissions"):
+            for port in node.get(bucket, []) or []:
+                sem = resolve_flow_port_unit_semantics(
+                    db,
+                    port,
+                    unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+                    reference_unit_by_group=reference_unit_by_group,
+                    unit_group_identity_by_name=unit_group_identity_by_name,
+                )
+                if not sem.ok or sem.amount_in_flow_default_unit is None:
+                    raise ValueError(
+                        "PTS_FLOW_DEFAULT_UNIT_CONVERSION_REQUIRED|"
+                        "PTS internal port must be convertible to the flow default unit before compile|"
+                        + json.dumps(
+                            {
+                                "node_id": node_id,
+                                "port_id": str(port.get("id") or ""),
+                                "flow_uuid": sem.flow_uuid,
+                                "current_unit": sem.current_unit,
+                                "current_unit_group": sem.current_unit_group,
+                                "flow_default_unit": sem.flow_default_unit,
+                                "flow_default_unit_group": sem.flow_default_unit_group,
+                                "reason": sem.reason,
+                            },
+                            ensure_ascii=False,
+                        )
+                    )
+                current_amount = float(port.get("amount") or 0.0)
+                default_amount = float(sem.amount_in_flow_default_unit)
+                ratio = default_amount / current_amount if current_amount else 1.0
+                port["amount"] = default_amount
+                if bucket == "outputs" and port.get("externalSaleAmount") is not None:
+                    try:
+                        port["externalSaleAmount"] = float(port.get("externalSaleAmount") or 0.0) * ratio
+                    except (TypeError, ValueError):
+                        port["externalSaleAmount"] = 0.0
+                port["unit"] = sem.flow_default_unit
+                port["unitGroup"] = sem.flow_default_unit_group
+                normalized_amount_by_node_and_port[(node_id, str(port.get("id") or ""))] = default_amount
+
+    for edge in graph_dict.get("exchanges", []) or []:
+        target_port_id = _resolve_edge_port_id(
+            edge.get("targetHandle") or edge.get("target_port_id") or edge.get("targetPortId"),
+            "in",
+        )
+        source_port_id = _resolve_edge_port_id(
+            edge.get("sourceHandle") or edge.get("source_port_id") or edge.get("sourcePortId"),
+            "out",
+        )
+        target_amount = normalized_amount_by_node_and_port.get((str(edge.get("toNode") or ""), str(target_port_id or "")))
+        source_amount = normalized_amount_by_node_and_port.get((str(edge.get("fromNode") or ""), str(source_port_id or "")))
+        if target_amount is not None:
+            edge["amount"] = float(target_amount)
+            edge["consumerAmount"] = float(target_amount)
+            if str(edge.get("quantityMode") or "") == "single":
+                edge["providerAmount"] = float(target_amount)
+        if source_amount is not None and str(edge.get("quantityMode") or "") == "dual":
+            edge["providerAmount"] = float(source_amount)
+
+    return HybridGraph.model_validate(graph_dict), unit_factor_by_group_and_name
+
+
+def _allocation_fraction_by_port_id(
+    node: HybridNode,
+    unit_factor_by_group_and_name: dict[tuple[str, str], float] | None = None,
+) -> dict[str, float]:
     explicit_product_outputs = [
         port
         for port in node.outputs
@@ -364,6 +486,7 @@ def _allocation_fraction_by_port_id(node: HybridNode) -> dict[str, float]:
     result = calculate_product_allocation(
         explicit_product_outputs,
         process_uuid=str(node.process_uuid or node.id or ""),
+        unit_factor_by_group_and_name=unit_factor_by_group_and_name,
     )
     return result.factors or {}
 
@@ -374,6 +497,7 @@ def _build_virtual_processes_from_internal_graph(
     solver_outputs: list[dict[str, Any]],
     internal_graph: HybridGraph,
     process_name_by_uuid: dict[str, str],
+    unit_factor_by_group_and_name: dict[tuple[str, str], float] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     node_by_id = {str(node.id or ""): node for node in internal_graph.nodes}
     virtual_processes: list[dict[str, Any]] = []
@@ -423,9 +547,19 @@ def _build_virtual_processes_from_internal_graph(
             )
 
         reference_port_id = str(reference_port.id or "") if reference_port is not None else ""
-        allocation_fraction_by_port_id = _allocation_fraction_by_port_id(source_node)
+        allocation_fraction_by_port_id = _allocation_fraction_by_port_id(
+            source_node,
+            unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+        )
         allocation_fraction = allocation_fraction_by_port_id.get(reference_port_id, 1.0)
-        scale = allocation_fraction / ref_amount if ref_amount > 0 else 0.0
+        product_outputs = [
+            port
+            for port in source_node.outputs
+            if not is_elementary_flow_semantic(graph_exchange_type_to_flow_semantic(port.type)) and bool(port.isProduct)
+        ]
+        total_product_amount = sum(max(_to_float(getattr(port, "amount", 0.0)), 0.0) for port in product_outputs)
+        baseline_fraction = ref_amount / total_product_amount if total_product_amount > 0 and ref_amount > 0 else 0.0
+        scale = allocation_fraction / baseline_fraction if baseline_fraction > 0 and allocation_fraction > 0 else 1.0
 
         technosphere_inputs: list[dict[str, Any]] = []
         for port in source_node.inputs:
@@ -632,6 +766,53 @@ def _reordered_internal_solver_nodes_for_target(
     if target:
         rows.sort(key=lambda item: 0 if str(item.get("process_uuid") or "") == target else 1)
     return rows
+
+
+def _scale_exchange_rows(rows: object, scale: float) -> list[dict[str, Any]]:
+    if not isinstance(rows, list):
+        return []
+    scaled: list[dict[str, Any]] = []
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        row = dict(item)
+        try:
+            row["amount"] = float(row.get("amount") or 0.0) * scale
+        except (TypeError, ValueError):
+            row["amount"] = 0.0
+        scaled.append(row)
+    return scaled
+
+
+def _provider_port_scale(
+    *,
+    source_node: HybridNode | None,
+    reference_port: object | None,
+    unit_factor_by_group_and_name: dict[tuple[str, str], float] | None,
+) -> tuple[float, float, float]:
+    if source_node is None or reference_port is None:
+        return 1.0, 1.0, 1.0
+    product_outputs = [
+        port
+        for port in source_node.outputs
+        if not is_elementary_flow_semantic(graph_exchange_type_to_flow_semantic(port.type)) and bool(port.isProduct)
+    ]
+    total = sum(max(_to_float(getattr(port, "amount", 0.0)), 0.0) for port in product_outputs)
+    try:
+        reference_amount = float(getattr(reference_port, "amount", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        reference_amount = 0.0
+    if total <= 0 or reference_amount <= 0:
+        return 1.0, 1.0, reference_amount
+    allocation_fraction_by_port_id = _allocation_fraction_by_port_id(
+        source_node,
+        unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+    )
+    reference_port_id = str(getattr(reference_port, "id", "") or "")
+    allocation_fraction = float(allocation_fraction_by_port_id.get(reference_port_id, reference_amount / total) or 0.0)
+    baseline_fraction = reference_amount / total
+    scale = allocation_fraction / baseline_fraction if baseline_fraction > 0 and allocation_fraction > 0 else 1.0
+    return scale, allocation_fraction, reference_amount
 
 
 def _solver_internal_node_payload(node: HybridNode) -> dict[str, Any]:
@@ -937,7 +1118,13 @@ def _validate_pts_internal_node_kinds(internal_graph: HybridGraph) -> None:
         )
 
 
-def compile_pts(graph: HybridGraph, pts_node_id: str, ports_policy: dict | None = None) -> dict[str, Any]:
+def compile_pts(
+    graph: HybridGraph,
+    pts_node_id: str,
+    ports_policy: dict | None = None,
+    *,
+    db: Session | None = None,
+) -> dict[str, Any]:
     pts_node = next((node for node in graph.nodes if node.id == pts_node_id and node.node_kind == "pts_module"), None)
     if pts_node is None:
         raise ValueError(f"PTS node not found: {pts_node_id}")
@@ -961,6 +1148,11 @@ def compile_pts(graph: HybridGraph, pts_node_id: str, ports_policy: dict | None 
     )
     process_name_by_uuid = {str(node.process_uuid or "").strip(): str(node.name or "").strip() for node in internal_graph.nodes}
     _validate_pts_internal_node_kinds(internal_graph)
+    _normalize_and_validate_internal_edge_amounts(internal_graph)
+    internal_graph, unit_factor_by_group_and_name = _standardize_internal_graph_for_pts_compile(
+        db=db,
+        internal_graph=internal_graph,
+    )
     _normalize_and_validate_internal_edge_amounts(internal_graph)
 
     product_node_ids = _extract_product_node_ids(internal_graph)
@@ -1085,6 +1277,13 @@ def compile_pts(graph: HybridGraph, pts_node_id: str, ports_policy: dict | None 
                     out=out,
                     flow_uuid=flow_uuid,
                 )
+                provider_scale, allocation_fraction, normalization_reference_amount = _provider_port_scale(
+                    source_node=source_node,
+                    reference_port=reference_port,
+                    unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+                )
+                enriched["technosphere_inputs"] = _scale_exchange_rows(enriched.get("technosphere_inputs"), provider_scale)
+                enriched["elementary_flows"] = _scale_exchange_rows(enriched.get("elementary_flows"), provider_scale)
                 reference_unit = str(
                     enriched.get("reference_unit")
                     or ((enriched.get("reference_product") or {}).get("unit") if isinstance(enriched.get("reference_product"), dict) else "")
@@ -1132,6 +1331,8 @@ def compile_pts(graph: HybridGraph, pts_node_id: str, ports_policy: dict | None 
                 enriched["reference_product"] = reference_product
                 enriched["reference_unit"] = reference_unit
                 enriched["reference_unit_group"] = reference_unit_group
+                enriched["allocation_fraction"] = allocation_fraction
+                enriched["normalization_reference_amount"] = normalization_reference_amount
                 if not isinstance(enriched.get("outputs"), list) or not enriched.get("outputs"):
                     output_row: dict[str, Any] = {
                         "id": source_port_id or f"out_{local_idx}",

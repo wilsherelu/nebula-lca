@@ -279,7 +279,7 @@ def _compile_and_persist_pts_for_node(
             compile_row = cached_row
         else:
             try:
-                compile_result = compile_pts(graph, node_id, ports_policy=ports_policy)
+                compile_result = compile_pts(graph, node_id, ports_policy=ports_policy, db=db)
             except ValueError as exc:
                 _raise_pts_compile_value_error_http(exc, node_id)
             compile_row, _ = upsert_pts_compile_artifact(
@@ -291,7 +291,7 @@ def _compile_and_persist_pts_for_node(
             )
     else:
         try:
-            compile_result = compile_pts(graph, node_id, ports_policy=ports_policy)
+            compile_result = compile_pts(graph, node_id, ports_policy=ports_policy, db=db)
         except ValueError as exc:
             _raise_pts_compile_value_error_http(exc, node_id)
         compile_row, _ = upsert_pts_compile_artifact(
