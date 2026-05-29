@@ -22,7 +22,7 @@ from .schemas import (
 )
 from .solver_adapter import run_tiangong_pts_compile
 
-PTS_COMPILE_SCHEMA_VERSION = "pts-compile-v7"
+PTS_COMPILE_SCHEMA_VERSION = "pts-compile-v8"
 
 
 def _is_exposed(port: object) -> bool:

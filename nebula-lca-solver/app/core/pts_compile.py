@@ -40,6 +40,48 @@ def _port_amount_map(node: dict[str, Any], direction: str) -> dict[str, float]:
     return result
 
 
+def _port_id_from_handle(handle_id: str | None, prefix: str) -> str:
+    if not handle_id:
+        return ""
+    token = f"{prefix}:"
+    if handle_id.startswith(token):
+        return handle_id[len(token) :]
+    if ":" in handle_id:
+        return handle_id.split(":", 1)[1]
+    return handle_id
+
+
+def _provider_allocation_scale(node: dict[str, Any], source_port_id: str) -> float:
+    if not source_port_id:
+        return 1.0
+    outputs = node.get("outputs", []) or []
+    product_outputs = [
+        port
+        for port in outputs
+        if port.get("type") != "biosphere" and bool(port.get("isProduct"))
+    ]
+    if not product_outputs:
+        return 1.0
+    total = sum(max(_to_float(port.get("amount")), 0.0) for port in product_outputs)
+    if total <= 0:
+        return 1.0
+    source_port = next((port for port in product_outputs if str(port.get("id") or "") == source_port_id), None)
+    if source_port is None:
+        return 1.0
+    amount = max(_to_float(source_port.get("amount")), 0.0)
+    baseline_fraction = amount / total if amount > 0 else 0.0
+    if baseline_fraction <= 0:
+        return 1.0
+    allocation_fraction = _to_float(
+        source_port.get("allocationFactor")
+        if source_port.get("allocationFactor") is not None
+        else source_port.get("allocation_factor")
+    )
+    if allocation_fraction <= 0:
+        return 1.0
+    return allocation_fraction / baseline_fraction
+
+
 def _build_internal_matrix(
     internal_nodes: list[dict[str, Any]],
     internal_edges: list[dict[str, Any]],
@@ -62,8 +104,13 @@ def _build_internal_matrix(
         j = node_idx[to_node]
         quantity_mode = str(edge.get("quantityMode") or "single")
         consumer_amount = _to_float(edge.get("consumerAmount") if quantity_mode == "dual" else edge.get("amount"))
+        source_port_id = _port_id_from_handle(
+            str(edge.get("sourceHandle") or edge.get("source_port_id") or edge.get("sourcePortId") or ""),
+            "out",
+        )
+        provider_scale = _provider_allocation_scale(by_id[from_node], source_port_id)
         denom = denom_by_node.get(to_node, 1.0) or 1.0
-        a_pts[i, j] += consumer_amount / denom
+        a_pts[i, j] += (consumer_amount * provider_scale) / denom
 
     return a_pts, node_ids, node_idx, denom_by_node
 
