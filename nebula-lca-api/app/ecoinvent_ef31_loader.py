@@ -1677,14 +1677,15 @@ def cmd_preview_lci(args):
 # =============================================================================
 
 def selective_extract_7z(archive_path: Path, dest_dir: Path,
-                          spold_limit: Optional[int] = None) -> dict:
+                          spold_limit: Optional[int] = None,
+                          masterdata_only: bool = False) -> dict:
     """Selectively extract files from .7z archive.
 
     Only extracts:
     - MasterData/*.xml
     - FilenameToActivityLookup.csv (if present)
-    - LCIA Implementation 3.11.xlsx
-    - First N datasets/*.spold files (controlled by spold_limit)
+    - LCIA Implementation 3.11.xlsx (unless masterdata_only=True)
+    - First N datasets/*.spold files (controlled by spold_limit, skipped when masterdata_only=True)
 
     Returns dict of extracted paths.
     """
@@ -1733,8 +1734,12 @@ def selective_extract_7z(archive_path: Path, dest_dir: Path,
         # Record total before applying limit
         result['spold_count_total'] = len(spold_files)
 
+        if masterdata_only:
+            spold_files = []
+            lcia_excel_path = None
+            filename_lookup_path = None
         # Limit spold files
-        if spold_limit and spold_limit > 0:
+        elif spold_limit and spold_limit > 0:
             spold_files = spold_files[:spold_limit]
 
         # Build extraction list

@@ -1455,7 +1455,7 @@ class UploadChunkCompleteResponse(BaseModel):
     file_path: str = Field(..., description="Merged file path on disk")
     file_name: str = Field(..., description="Original file name")
     file_size: int = Field(..., description="Total file size in bytes")
-    file_type: str = Field(..., description="File type: lci or lcia")
+    file_type: str = Field(..., description="File type: lci, lcia, or masterdata")
 
 
 # ======================================================================
@@ -1465,7 +1465,7 @@ class UploadChunkCompleteResponse(BaseModel):
 class ImportJobCreateRequest(BaseModel):
     """Request to create an import job from an uploaded file or local path."""
     file_path: str = Field(..., description="Path to the uploaded file (or local path)")
-    file_type: Literal["lci", "lcia"] = Field(default="lci", description="Type of data being imported")
+    file_type: Literal["lci", "lcia", "masterdata"] = Field(default="lci", description="Type of data being imported")
     workers: int = Field(default=8, ge=1, le=8, description="Number of parallel parser workers")
     limit: int | None = Field(default=None, description="Max datasets to import (None = full)")
     overwrite_existing: bool = Field(default=False, description="If true, re-import datasets that are already imported globally")
@@ -1480,7 +1480,7 @@ class ImportJobStatusResponse(BaseModel):
     """Detailed status of an import job."""
     job_id: str = Field(..., description="Job ID")
     file_path: str = Field(..., description="Source file path")
-    file_type: str = Field(..., description="lci or lcia")
+    file_type: str = Field(..., description="lci, lcia, or masterdata")
     phase: str = Field(..., description="current phase: created/parsing/importing/done/cancelled/failed")
     progress_pct: float = Field(..., description="Overall progress 0-100")
     workers: int = Field(..., description="Number of parser workers")
