@@ -20,7 +20,8 @@ from fastapi.testclient import TestClient
 import app.database as _db_module
 from app.main import app
 from app.database import Base
-from app.models import DebugDiagnostic, FlowRecord, ReferenceProcess
+from app.lci_vector_codec import pack_lci_vector
+from app.models import DebugDiagnostic, FlowRecord, LciBiosphereFlowKey, LciProcessVector, ReferenceProcess
 from app.services.catalog_cache import invalidate_management_caches
 
 
@@ -38,7 +39,10 @@ def setup_db():
     # Cleanup using Session
     db = _db_module.SessionLocal()
     try:
+        db.execute(LciProcessVector.__table__.delete())
+        db.execute(LciBiosphereFlowKey.__table__.delete())
         db.execute(ReferenceProcess.__table__.delete())
+        db.execute(FlowRecord.__table__.delete())
         db.execute(DebugDiagnostic.__table__.delete())
         db.commit()
     finally:
@@ -49,6 +53,161 @@ def setup_db():
 @pytest.fixture()
 def client():
     return TestClient(app)
+
+
+def _insert_exchange_summary_process(*, with_vector: bool = True) -> str:
+    process_uuid = f"summary-process-{uuid.uuid4()}"
+    db = _db_module.SessionLocal()
+    try:
+        db.add_all(
+            [
+                FlowRecord(
+                    flow_uuid="summary-product-out",
+                    flow_name="summary product",
+                    flow_type="Product flow",
+                    default_unit="kg",
+                    unit_group="Units of mass",
+                ),
+                FlowRecord(
+                    flow_uuid="summary-input-flow",
+                    flow_name="summary input",
+                    flow_type="Product flow",
+                    default_unit="kg",
+                    unit_group="Units of mass",
+                ),
+                FlowRecord(
+                    flow_uuid="summary-co2",
+                    flow_name="carbon dioxide",
+                    flow_type="Elementary flow",
+                    default_unit="kg",
+                    unit_group="Units of mass",
+                    source="ecoinvent",
+                ),
+                FlowRecord(
+                    flow_uuid="summary-ch4",
+                    flow_name="methane",
+                    flow_type="Elementary flow",
+                    default_unit="kg",
+                    unit_group="Units of mass",
+                    source="ecoinvent",
+                ),
+            ]
+        )
+        db.add(
+            ReferenceProcess(
+                process_uuid=process_uuid,
+                process_name="Summary process",
+                process_type="lci_dataset",
+                reference_flow_uuid="summary-product-out",
+                source_file="datasets/summary.spold",
+                source_process_uuid="source-summary",
+                import_mode="locked",
+                process_json={
+                    "exchanges": [
+                        {
+                            "flow_uuid": "summary-input-flow",
+                            "flow_name": "summary input",
+                            "direction": "input",
+                            "amount": 2,
+                            "unit": "kg",
+                            "flow_type": "Product flow",
+                        },
+                        {
+                            "flow_uuid": "summary-product-out",
+                            "flow_name": "summary product",
+                            "direction": "output",
+                            "amount": 1,
+                            "unit": "kg",
+                            "flow_type": "Product flow",
+                            "isProduct": True,
+                        },
+                    ]
+                },
+                import_report_json={"warnings": ["kept for diagnostics"], "filtered_exchange_count": 0},
+            )
+        )
+        if with_vector:
+            db.add_all(
+                [
+                    LciBiosphereFlowKey(
+                        flow_key_id=1001,
+                        flow_uuid="summary-co2",
+                        compartment="air",
+                        subcompartment="urban air",
+                        direction="output",
+                        canonical_unit="kg",
+                        source="ecoinvent",
+                    ),
+                    LciBiosphereFlowKey(
+                        flow_key_id=1002,
+                        flow_uuid="summary-ch4",
+                        compartment="air",
+                        subcompartment="low population density",
+                        direction="input",
+                        canonical_unit="kg",
+                        source="ecoinvent",
+                    ),
+                ]
+            )
+            packed = pack_lci_vector([1001, 1002], [3.5, 0.25])
+            db.add(
+                LciProcessVector(
+                    process_uuid=process_uuid,
+                    nnz=packed.nnz,
+                    flow_key_ids_blob=packed.flow_key_ids_blob,
+                    amounts_blob=packed.amounts_blob,
+                    index_dtype=packed.index_dtype,
+                    amount_dtype=packed.amount_dtype,
+                    compression=packed.compression,
+                    checksum=packed.checksum,
+                    source="ecoinvent",
+                    source_package_version="3.11",
+                )
+            )
+        db.commit()
+        return process_uuid
+    finally:
+        db.close()
+
+
+def test_reference_process_exchange_summary_groups_process_and_vector(client):
+    process_uuid = _insert_exchange_summary_process(with_vector=True)
+
+    response = client.get(f"/api/reference/processes/{process_uuid}/exchange-summary?page=1&page_size=10")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["process_uuid"] == process_uuid
+    assert data["source_file"] == "datasets/summary.spold"
+    assert data["vector"]["available"] is True
+    assert data["vector"]["nnz"] == 2
+    assert data["groups"]["in_intermediate"]["total"] == 1
+    assert data["groups"]["out_intermediate"]["items"][0]["is_product"] is True
+    assert data["groups"]["in_elementary"]["total"] == 1
+    assert data["groups"]["out_elementary"]["items"][0]["flow_uuid"] == "summary-co2"
+
+    filtered = client.get(f"/api/reference/processes/{process_uuid}/exchange-summary?group=out_elementary&q=carbon&page=1&page_size=10")
+    assert filtered.status_code == 200
+    assert filtered.json()["groups"]["out_elementary"]["total"] == 1
+
+
+def test_reference_process_exchange_summary_allows_missing_vector(client):
+    process_uuid = _insert_exchange_summary_process(with_vector=False)
+
+    response = client.get(f"/api/reference/processes/{process_uuid}/exchange-summary")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["vector"]["available"] is False
+    assert data["groups"]["in_intermediate"]["total"] == 1
+    assert data["groups"]["out_elementary"]["total"] == 0
+
+
+def test_reference_process_exchange_summary_missing_process_404(client):
+    response = client.get("/api/reference/processes/not-a-process/exchange-summary")
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "PROCESS_NOT_FOUND"
 
 
 def test_reference_process_import_accepts_lci_dataset_target(client):
