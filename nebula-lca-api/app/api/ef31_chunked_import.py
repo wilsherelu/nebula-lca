@@ -201,6 +201,7 @@ def _finish_masterdata_job(db: Session, job: ImportJob, master_data_dir: Path) -
         import_ecoinvent_intermediate_flows,
         import_ecoinvent_units,
     )
+    from ..services.catalog_cache import cache_revision, invalidate_management_caches
 
     if not master_data_dir.exists():
         raise FileNotFoundError(f"MasterData directory not found: {master_data_dir}")
@@ -216,6 +217,11 @@ def _finish_masterdata_job(db: Session, job: ImportJob, master_data_dir: Path) -
     units = import_ecoinvent_units(db, data_dir=str(master_data_dir), package_version="ecoinvent_3.11")
     elementary = import_ecoinvent_elementary_flows(db, data_dir=str(master_data_dir), source="ecoinvent_3.11")
     intermediate = import_ecoinvent_intermediate_flows(db, data_dir=str(master_data_dir), source="ecoinvent_3.11")
+    flow_cache_revision_before = cache_revision("flows")
+    stats_cache_revision_before = cache_revision("stats")
+    invalidate_management_caches(flows=True, stats=True)
+    flow_cache_revision_after = cache_revision("flows")
+    stats_cache_revision_after = cache_revision("stats")
 
     refreshed = db.query(ImportJob).filter(ImportJob.job_id == job.job_id).first()
     if refreshed is None:
@@ -232,6 +238,13 @@ def _finish_masterdata_job(db: Session, job: ImportJob, master_data_dir: Path) -
         "started_at": started.isoformat(),
         "duration_seconds": round(datetime.utcnow().timestamp() - wall_start, 3),
         "import_pragmas": pragma_report,
+        "cache_invalidated": True,
+        "cache_revisions": {
+            "flows_before": flow_cache_revision_before,
+            "flows_after": flow_cache_revision_after,
+            "stats_before": stats_cache_revision_before,
+            "stats_after": stats_cache_revision_after,
+        },
         "units": units,
         "elementary_flows": elementary,
         "intermediate_flows": intermediate,
