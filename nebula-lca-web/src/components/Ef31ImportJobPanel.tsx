@@ -94,6 +94,11 @@ const zhText = {
   masterdataRequiredBody: "\u5f53\u524d\u672a\u68c0\u6d4b\u5230 ecoinvent MasterData \u76ee\u5f55\uff0c\u8bf7\u5148\u7528\u540c\u4e00\u4e2a LCI .7z \u5305\u6267\u884c MasterData \u5237\u65b0\u3002\u5b8c\u6210\u540e\u53ef\u518d\u5bfc\u5165 LCI/LCIA\uff0c\u540e\u7eed LCI \u4efb\u52a1\u4f1a\u590d\u7528\u5df2\u6709 MasterData\u3002",
   masterdataAvailable: "\u5df2\u68c0\u6d4b\u5230 MasterData\uff0cLCI \u5bfc\u5165\u53ef\u76f4\u63a5\u8df3\u8fc7\u76ee\u5f55\u5237\u65b0\u3002",
   masterdataStats: "MasterData \u7edf\u8ba1",
+  masterdataReady: "MasterData 已刷新，可继续导入 LCI/LCIA 数据包。",
+  units: "单位",
+  unitGroups: "单位组",
+  cacheInvalidated: "缓存已刷新",
+  sqlitePragmas: "SQLite 写入参数",
   elementaryFlows: "\u57fa\u672c\u6d41",
   intermediateFlows: "\u4e2d\u95f4\u6d41",
   importTiming: "\u5bfc\u5165\u6027\u80fd",
@@ -169,6 +174,11 @@ const enText = {
   masterdataRequiredBody: "No ecoinvent MasterData catalog is available. Run MasterData refresh first using the same LCI .7z package. After it completes, LCI/LCIA import can proceed and reuse the existing MasterData.",
   masterdataAvailable: "MasterData is available. LCI imports can skip catalog refresh.",
   masterdataStats: "MasterData stats",
+  masterdataReady: "MasterData refreshed. LCI/LCIA imports are now available.",
+  units: "Units",
+  unitGroups: "Unit groups",
+  cacheInvalidated: "Cache refreshed",
+  sqlitePragmas: "SQLite write settings",
   elementaryFlows: "Elementary flows",
   intermediateFlows: "Intermediate flows",
   importTiming: "Import performance",
@@ -343,8 +353,8 @@ export default function Ef31ImportJobPanel(props: {
         setJob(next);
         if (["completed", "failed", "cancelled"].includes(next.status)) {
           stopPolling();
+          setPhase("done");
           if (next.status === "completed") {
-            setPhase("done");
             void refreshLciaStatus();
           }
         }
@@ -559,6 +569,17 @@ export default function Ef31ImportJobPanel(props: {
     [t.avgBatchSize, stats.avg_batch_size],
     [t.globalFastSkip, stats.global_skip_fast_count],
   ].filter(([, value]) => value !== undefined && value !== null);
+  const importPragmas = stats.import_pragmas && typeof stats.import_pragmas === "object" && !Array.isArray(stats.import_pragmas)
+    ? Object.entries(stats.import_pragmas as Record<string, unknown>)
+    : [];
+  const masterDataStatsItems = [
+    [t.unitGroups, `${formatStatValue(stats.groups_inserted)} ${t.new}`],
+    [t.units, `${formatStatValue(stats.units_inserted)} ${t.new}`],
+    [t.elementaryFlows, `${formatStatValue(stats.elementary_inserted)} ${t.new} / ${formatStatValue(stats.elementary_updated)} ${t.updated} / ${formatStatValue(stats.elementary_skipped)} ${t.skipped}`],
+    [t.intermediateFlows, `${formatStatValue(stats.intermediate_inserted)} ${t.new} / ${formatStatValue(stats.intermediate_updated)} ${t.updated} / ${formatStatValue(stats.intermediate_skipped)} ${t.skipped}`],
+    [t.duration, `${formatStatValue(stats.duration_seconds)}s`],
+    [t.cacheInvalidated, formatStatValue(stats.cache_invalidated)],
+  ].filter(([, value]) => value !== undefined && value !== null);
   const processedCount = Number(
     stats.datasets_processed
       ?? (
@@ -728,11 +749,19 @@ export default function Ef31ImportJobPanel(props: {
                 )}
                 {(job.status === "running" || job.status === "paused") && <span>ETA {estimateTimeRemaining(job.progress_pct, elapsedSeconds)}</span>}
               </div>
-              {!isMasterDataMode && timingItems.length > 0 && (
+              {timingItems.length > 0 && (
                 <div style={{ display: "flex", gap: 12, marginTop: 8, fontSize: 11, flexWrap: "wrap", color: "#607d8b" }}>
                   <strong>{t.importTiming}</strong>
                   {timingItems.map(([label, value]) => (
                     <span key={String(label)}>{String(label)}: <b>{formatStatValue(value)}</b></span>
+                  ))}
+                </div>
+              )}
+              {importPragmas.length > 0 && (
+                <div style={{ display: "flex", gap: 12, marginTop: 8, fontSize: 11, flexWrap: "wrap", color: "#607d8b" }}>
+                  <strong>{t.sqlitePragmas}</strong>
+                  {importPragmas.map(([label, value]) => (
+                    <span key={label}>{label}: <b>{formatStatValue(value)}</b></span>
                   ))}
                 </div>
               )}
@@ -747,16 +776,21 @@ export default function Ef31ImportJobPanel(props: {
 
           {phase === "done" && job && (
             <label className="span-2" style={{ cursor: "default" }}>
-              <div style={{ color: "#27ae60", fontWeight: 600, fontSize: 14 }}>{t.importComplete}</div>
+              <div style={{ color: job.status === "completed" ? "#27ae60" : "#c0392b", fontWeight: 600, fontSize: 14 }}>
+                {job.status === "completed" ? t.importComplete : job.status}
+              </div>
               <div style={{ display: "grid", gap: 4, fontSize: 12, color: "#496675", marginTop: 8 }}>
                 <div>{t.status}: <b>{job.status}</b></div>
                 {isMasterDataMode ? (
                   <>
-                    <div>{t.masterdataStats}</div>
-                    <div>{t.elementaryFlows}: <b>{Number(stats.elementary_inserted ?? 0)}</b> {t.new} / <b>{Number(stats.elementary_updated ?? 0)}</b> {t.updated} / <b>{Number(stats.elementary_skipped ?? 0)}</b> {t.skipped}</div>
-                    <div>{t.intermediateFlows}: <b>{Number(stats.intermediate_inserted ?? 0)}</b> {t.new} / <b>{Number(stats.intermediate_updated ?? 0)}</b> {t.updated} / <b>{Number(stats.intermediate_skipped ?? 0)}</b> {t.skipped}</div>
-                    <div>{t.workers}: <b>-</b></div>
-                    <div>{t.duration}: <b>{Number(stats.duration_seconds ?? 0).toFixed(1)}s</b></div>
+                    {job.status === "completed" && <div style={{ color: "#216b3a" }}>{t.masterdataReady}</div>}
+                    <div style={{ fontWeight: 600 }}>{t.masterdataStats}</div>
+                    {masterDataStatsItems.map(([label, value]) => (
+                      <div key={String(label)}>{String(label)}: <b>{String(value)}</b></div>
+                    ))}
+                    {importPragmas.length > 0 && (
+                      <div>{t.sqlitePragmas}: {importPragmas.map(([label, value]) => `${label}=${formatStatValue(value)}`).join(", ")}</div>
+                    )}
                   </>
                 ) : job.file_type === "lcia" ? (
                   <>
@@ -773,6 +807,7 @@ export default function Ef31ImportJobPanel(props: {
                     <div>{t.nnz}: <b>{Number(stats.vector_nnz_total ?? 0)}</b></div>
                     <div>{t.duration}: <b>{Number(stats.duration_seconds ?? 0).toFixed(1)}s</b></div>
                     {timingItems.length > 0 && <div>{t.importTiming}: {timingItems.map(([label, value]) => `${String(label)}=${formatStatValue(value)}`).join(", ")}</div>}
+                    {importPragmas.length > 0 && <div>{t.sqlitePragmas}: {importPragmas.map(([label, value]) => `${label}=${formatStatValue(value)}`).join(", ")}</div>}
                   </>
                 )}
                 {job.failed_datasets?.length > 0 && <div style={{ color: "#e67e22" }}>{t.failed}: {job.failed_datasets.length}</div>}

@@ -92,6 +92,7 @@ def test_masterdata_job_refreshes_catalog_without_lci_vectors(tmp_path):
     from app.api.ef31_chunked_import import _finish_masterdata_job
     from app.database import Base
     from app.models import DatasetCheckpoint, FlowRecord, ImportJob, LciProcessVector, ReferenceProcess
+    from app.services.catalog_cache import cache_revision
 
     db_path = tmp_path / "masterdata-job.db"
     engine = create_engine(f"sqlite:///{db_path}", future=True)
@@ -103,6 +104,8 @@ def test_masterdata_job_refreshes_catalog_without_lci_vectors(tmp_path):
     job = ImportJob(job_id="masterdata-job", file_path=str(master_dir), file_type="masterdata", status="running", phase="created")
     db.add(job)
     db.commit()
+    flows_revision_before = cache_revision("flows")
+    stats_revision_before = cache_revision("stats")
 
     _finish_masterdata_job(db, job, master_dir)
 
@@ -111,6 +114,11 @@ def test_masterdata_job_refreshes_catalog_without_lci_vectors(tmp_path):
     assert refreshed.phase == "done"
     assert refreshed.progress_pct == 100.0
     assert refreshed.stats_json["masterdata_only"] is True
+    assert refreshed.stats_json["cache_invalidated"] is True
+    assert cache_revision("flows") > flows_revision_before
+    assert cache_revision("stats") > stats_revision_before
+    assert refreshed.stats_json["cache_revisions"]["flows_after"] > refreshed.stats_json["cache_revisions"]["flows_before"]
+    assert refreshed.stats_json["cache_revisions"]["stats_after"] > refreshed.stats_json["cache_revisions"]["stats_before"]
     assert refreshed.stats_json["elementary_inserted"] == 1
     assert refreshed.stats_json["intermediate_inserted"] == 1
     assert db.query(FlowRecord).filter(FlowRecord.flow_uuid == "flow-co2-masterdata").count() == 1
