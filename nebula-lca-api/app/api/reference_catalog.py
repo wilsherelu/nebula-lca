@@ -20,12 +20,16 @@ from sqlalchemy import func as func_raw
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import FlowRecord, ReferenceProcess
+from ..models import FlowRecord, LciProcessVector, ReferenceProcess
 from ..schemas import (
     FilteredExchangeEvidence,
     ImportedProcessDetail,
     ImportReferenceProcessesRequest,
     ImportReferenceProcessesResponse,
+    ProcessExchangeSummaryGroup,
+    ProcessExchangeSummaryItem,
+    ProcessExchangeSummaryResponse,
+    ProcessVectorDiagnosticInfo,
     LciVectorTopExchangesResponse,
     MissingFlowSummaryResponse,
     ProcessFilteredExchangesResponse,
@@ -488,6 +492,221 @@ def get_reference_process_filtered_exchanges(
         process_uuid=process_uuid,
         filtered_exchange_count=len(filtered),
         filtered_exchanges=filtered,
+    )
+
+
+_EXCHANGE_GROUP_KEYS = ("in_intermediate", "out_intermediate", "in_elementary", "out_elementary")
+
+
+def _exchange_direction(value: Any) -> str:
+    return "output" if _rc._is_output_direction(value) else "input"
+
+
+def _is_elementary_exchange(item: dict[str, Any]) -> bool:
+    raw = " ".join(
+        str(item.get(key) or "").lower()
+        for key in ("flow_type", "type", "exchange_type", "flowType")
+    )
+    return "elementary" in raw or "basic" in raw or "biosphere" in raw
+
+
+def _exchange_group_key(item: dict[str, Any]) -> str:
+    prefix = "out" if _exchange_direction(item.get("direction")) == "output" else "in"
+    suffix = "elementary" if _is_elementary_exchange(item) else "intermediate"
+    return f"{prefix}_{suffix}"
+
+
+def _as_float(value: Any) -> float:
+    try:
+        parsed = float(value)
+    except Exception:  # noqa: BLE001
+        return 0.0
+    return parsed if parsed == parsed and parsed not in {float("inf"), float("-inf")} else 0.0
+
+
+def _matches_exchange_query(item: ProcessExchangeSummaryItem, query: str) -> bool:
+    if not query:
+        return True
+    haystack = " ".join(
+        str(part or "").lower()
+        for part in (
+            item.flow_uuid,
+            item.flow_name,
+            item.flow_name_en,
+            item.flow_type,
+            item.unit,
+            item.unit_group,
+            item.source,
+            item.category,
+        )
+    )
+    return query.lower() in haystack
+
+
+def _paginate_exchange_items(
+    *,
+    key: str,
+    items: list[ProcessExchangeSummaryItem],
+    page: int,
+    page_size: int,
+    q: str | None,
+) -> ProcessExchangeSummaryGroup:
+    query = str(q or "").strip()
+    filtered = [item for item in items if _matches_exchange_query(item, query)]
+    offset = (page - 1) * page_size
+    return ProcessExchangeSummaryGroup(
+        key=key,  # type: ignore[arg-type]
+        total=len(filtered),
+        page=page,
+        page_size=page_size,
+        items=filtered[offset: offset + page_size],
+    )
+
+
+def _process_json_exchange_items(row: ReferenceProcess, db: Session) -> dict[str, list[ProcessExchangeSummaryItem]]:
+    process_json = row.process_json if isinstance(row.process_json, dict) else {}
+    exchanges_raw = process_json.get("exchanges")
+    if not isinstance(exchanges_raw, list):
+        exchanges_raw = []
+    flow_uuids = sorted(
+        {
+            str(item.get("flow_uuid") or item.get("flowUuid") or "").strip()
+            for item in exchanges_raw
+            if isinstance(item, dict) and str(item.get("flow_uuid") or item.get("flowUuid") or "").strip()
+        }
+    )
+    flow_rows = {
+        item.flow_uuid: item
+        for item in db.query(FlowRecord).filter(FlowRecord.flow_uuid.in_(flow_uuids)).all()
+    } if flow_uuids else {}
+
+    groups: dict[str, list[ProcessExchangeSummaryItem]] = {key: [] for key in _EXCHANGE_GROUP_KEYS}
+    for raw in exchanges_raw:
+        if not isinstance(raw, dict):
+            continue
+        flow_uuid = str(raw.get("flow_uuid") or raw.get("flowUuid") or "").strip()
+        flow = flow_rows.get(flow_uuid)
+        flow_type = str(raw.get("flow_type") or raw.get("type") or raw.get("flowType") or getattr(flow, "flow_type", "") or "").strip()
+        group_key = _exchange_group_key({**raw, "flow_type": flow_type})
+        if group_key not in groups:
+            continue
+        groups[group_key].append(
+            ProcessExchangeSummaryItem(
+                flow_uuid=flow_uuid or None,
+                flow_name=str(raw.get("flow_name") or raw.get("flowName") or getattr(flow, "flow_name", "") or "").strip() or None,
+                flow_name_en=str(raw.get("flow_name_en") or raw.get("flowNameEn") or getattr(flow, "flow_name_en", "") or "").strip() or None,
+                flow_type=flow_type or None,
+                direction=_exchange_direction(raw.get("direction")),
+                unit=str(raw.get("unit") or getattr(flow, "default_unit", "") or "").strip() or None,
+                unit_group=str(raw.get("unit_group") or raw.get("unitGroup") or getattr(flow, "unit_group", "") or "").strip() or None,
+                amount=_as_float(raw.get("amount")),
+                is_product=bool(raw.get("isProduct") or raw.get("is_product") or raw.get("is_reference_flow")),
+                source=str(raw.get("source") or getattr(flow, "source", "") or "").strip() or None,
+            )
+        )
+    return groups
+
+
+def _vector_diagnostic_info(vector: LciProcessVector | None) -> ProcessVectorDiagnosticInfo:
+    if vector is None:
+        return ProcessVectorDiagnosticInfo(available=False)
+    return ProcessVectorDiagnosticInfo(
+        available=True,
+        nnz=int(vector.nnz or 0),
+        axis_id=vector.axis_id,
+        checksum=vector.checksum,
+        canonicalized=bool(vector.canonicalized),
+        compression=vector.compression,
+        index_dtype=vector.index_dtype,
+        amount_dtype=vector.amount_dtype,
+        source=vector.source,
+        source_package_version=vector.source_package_version,
+    )
+
+
+@_api_router.get("/api/reference/processes/{process_uuid}/exchange-summary", response_model=ProcessExchangeSummaryResponse)
+@_base_router.get("/reference/processes/{process_uuid}/exchange-summary", response_model=ProcessExchangeSummaryResponse)
+def get_reference_process_exchange_summary(
+    process_uuid: str,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+    group: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> ProcessExchangeSummaryResponse:
+    row = db.get(ReferenceProcess, process_uuid)
+    if row is None:
+        raise HTTPException(status_code=404, detail={"code": "PROCESS_NOT_FOUND", "message": f"Process not found: {process_uuid}"})
+    if group is not None and group not in _EXCHANGE_GROUP_KEYS:
+        raise HTTPException(status_code=422, detail={"code": "INVALID_GROUP", "message": f"group must be one of: {', '.join(_EXCHANGE_GROUP_KEYS)}"})
+
+    grouped_items = _process_json_exchange_items(row, db)
+    vector = db.get(LciProcessVector, process_uuid)
+
+    if group in {None, "in_elementary", "out_elementary"}:
+        from ..services.lci_runtime import top_process_vector_exchanges
+
+        for key, direction in (("in_elementary", "input"), ("out_elementary", "output")):
+            if group is not None and group != key:
+                continue
+            total, vector_items = top_process_vector_exchanges(
+                db,
+                process_uuid,
+                page=page,
+                page_size=page_size,
+                direction=direction,
+                q=q,
+            )
+            grouped_items[key] = [
+                ProcessExchangeSummaryItem(
+                    flow_key_id=item.get("flow_key_id"),
+                    flow_uuid=item.get("flow_uuid"),
+                    flow_name=item.get("flow_name"),
+                    direction=direction,
+                    unit=item.get("unit"),
+                    amount=_as_float(item.get("amount")),
+                    flow_type="Elementary flow",
+                    category=" / ".join(part for part in [item.get("compartment"), item.get("subcompartment")] if part) or None,
+                    source="ecoinvent",
+                )
+                for item in vector_items
+            ]
+            grouped_items[f"{key}__total"] = [ProcessExchangeSummaryItem(direction=direction, amount=float(total))]
+
+    groups: dict[str, ProcessExchangeSummaryGroup] = {}
+    for key in _EXCHANGE_GROUP_KEYS:
+        if group is not None and key != group:
+            continue
+        if key in {"in_elementary", "out_elementary"} and f"{key}__total" in grouped_items:
+            total_marker = grouped_items.pop(f"{key}__total")[0]
+            groups[key] = ProcessExchangeSummaryGroup(
+                key=key,  # type: ignore[arg-type]
+                total=int(total_marker.amount),
+                page=page,
+                page_size=page_size,
+                items=grouped_items.get(key, []),
+            )
+        else:
+            groups[key] = _paginate_exchange_items(
+                key=key,
+                items=grouped_items.get(key, []),
+                page=page,
+                page_size=page_size,
+                q=q,
+            )
+
+    report_json = row.import_report_json if isinstance(row.import_report_json, dict) else {}
+    return ProcessExchangeSummaryResponse(
+        process_uuid=process_uuid,
+        process_name=row.process_name,
+        process_type=row.process_type,
+        reference_flow_uuid=row.reference_flow_uuid,
+        source_file=row.source_file,
+        source_process_uuid=row.source_process_uuid,
+        import_mode=row.import_mode,
+        vector=_vector_diagnostic_info(vector),
+        import_report=report_json,
+        groups=groups,
     )
 
 

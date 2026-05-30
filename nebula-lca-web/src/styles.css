@@ -2326,9 +2326,33 @@ body,
   height: min(76vh, 720px);
 }
 
-.lci-viewer-filters {
-  grid-template-columns: minmax(260px, 1fr) auto;
+.inventory-section-count {
+  color: #6c8390;
+  font-weight: 600;
+}
+
+.inventory-section-controls {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  gap: 8px;
   align-items: center;
+  padding: 0 0 8px;
+}
+
+.inventory-section-controls input {
+  height: 32px;
+  border: 1px solid #cbd8de;
+  border-radius: 6px;
+  padding: 0 8px;
+  min-width: 0;
+}
+
+.inventory-section-pagination {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #5b7682;
+  font-size: 12px;
 }
 
 .overlay-head {

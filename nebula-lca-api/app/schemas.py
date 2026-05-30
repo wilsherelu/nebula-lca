@@ -824,6 +824,55 @@ class LciVectorTopExchangesResponse(BaseModel):
     items: list[LciVectorExchangeItem] = Field(default_factory=list)
 
 
+class ProcessExchangeSummaryItem(BaseModel):
+    flow_uuid: str | None = None
+    flow_name: str | None = None
+    flow_name_en: str | None = None
+    flow_type: str | None = None
+    direction: str
+    unit: str | None = None
+    unit_group: str | None = None
+    amount: float = 0.0
+    is_product: bool = False
+    source: str | None = None
+    category: str | None = None
+    flow_key_id: int | None = None
+
+
+class ProcessExchangeSummaryGroup(BaseModel):
+    key: Literal["in_intermediate", "out_intermediate", "in_elementary", "out_elementary"]
+    total: int = 0
+    page: int = 1
+    page_size: int = 10
+    items: list[ProcessExchangeSummaryItem] = Field(default_factory=list)
+
+
+class ProcessVectorDiagnosticInfo(BaseModel):
+    available: bool = False
+    nnz: int = 0
+    axis_id: int | None = None
+    checksum: str | None = None
+    canonicalized: bool | None = None
+    compression: str | None = None
+    index_dtype: str | None = None
+    amount_dtype: str | None = None
+    source: str | None = None
+    source_package_version: str | None = None
+
+
+class ProcessExchangeSummaryResponse(BaseModel):
+    process_uuid: str
+    process_name: str | None = None
+    process_type: str | None = None
+    reference_flow_uuid: str | None = None
+    source_file: str | None = None
+    source_process_uuid: str | None = None
+    import_mode: str | None = None
+    vector: ProcessVectorDiagnosticInfo = Field(default_factory=ProcessVectorDiagnosticInfo)
+    import_report: dict = Field(default_factory=dict)
+    groups: dict[str, ProcessExchangeSummaryGroup] = Field(default_factory=dict)
+
+
 class MissingFlowSummaryResponse(BaseModel):
     items: list[TidasMissingFlowSummaryItem] = Field(default_factory=list)
 

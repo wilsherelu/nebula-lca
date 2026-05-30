@@ -69,22 +69,15 @@ type ProcessInfoDraft = {
   referenceProductText: string;
 };
 
-type LciTopExchange = {
-  flow_key_id: number;
-  flow_uuid: string;
-  flow_name?: string | null;
-  direction: string;
-  unit: string;
-  amount: number;
-  compartment?: string | null;
-  subcompartment?: string | null;
-};
+type RemoteInventoryGroupKey = "in_intermediate" | "out_intermediate" | "in_elementary" | "out_elementary";
 
-type LciExchangeViewerState = {
-  open: boolean;
-  direction: "input" | "output";
+type RemoteInventoryGroupState = {
+  items: FlowPort[];
+  total: number;
   page: number;
   query: string;
+  loading: boolean;
+  error: string;
 };
 
 const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
@@ -271,6 +264,13 @@ type FlowSectionProps = {
   onChange: (next: FlowPort[]) => void;
   onAdd?: () => void;
   headerAction?: ReactNode;
+  remoteTotal?: number;
+  remotePage?: number;
+  remoteQuery?: string;
+  remoteLoading?: boolean;
+  remoteError?: string;
+  onRemotePageChange?: (page: number) => void;
+  onRemoteQueryChange?: (query: string) => void;
   onDelete?: (id: string) => void;
   extraHeader?: string;
   renderExtraCell?: (port: FlowPort, idx: number) => ReactNode;
@@ -295,6 +295,13 @@ function FlowSection({
   onChange,
   onAdd,
   headerAction,
+  remoteTotal,
+  remotePage,
+  remoteQuery,
+  remoteLoading = false,
+  remoteError = "",
+  onRemotePageChange,
+  onRemoteQueryChange,
   onDelete,
   extraHeader,
   renderExtraCell,
@@ -305,14 +312,46 @@ function FlowSection({
   onLink,
 }: FlowSectionProps) {
   const t = (zh: string, en: string) => (uiLanguage === "zh" ? zh : en);
+  const pageSize = 10;
+  const [page, setPage] = useState(1);
+  const [query, setQuery] = useState("");
+  const remoteMode = Boolean(onRemotePageChange || onRemoteQueryChange);
+  const activeQuery = remoteMode ? remoteQuery ?? "" : query;
   const showOnNodeLocked = readOnly || (lockFields && !allowShowOnNodeToggle);
   const hasExtra = Boolean(extraHeader && renderExtraCell);
   const hasExtra2 = Boolean(extraHeader2 && renderExtraCell2);
   const locked = readOnly || lockFields || plainReadOnly;
+  const filteredPorts = useMemo(() => {
+    if (remoteMode) {
+      return ports;
+    }
+    const needle = query.trim().toLowerCase();
+    if (!needle) {
+      return ports;
+    }
+    return ports.filter((port) => {
+      const label = getDisplayName ? getDisplayName(port) : port.name;
+      return [
+        label,
+        port.name,
+        port.flowNameEn,
+        port.flowUuid,
+        port.unit,
+        port.unitGroup,
+        port.type,
+        port.direction,
+        port.sourceSystem,
+      ].some((value) => String(value ?? "").toLowerCase().includes(needle));
+    });
+  }, [getDisplayName, ports, query, remoteMode]);
+  const totalItems = remoteMode ? Number(remoteTotal ?? filteredPorts.length) || 0 : filteredPorts.length;
+  const pageCount = Math.max(1, Math.ceil(totalItems / pageSize));
+  const currentPage = remoteMode ? Math.min(remotePage ?? 1, pageCount) : Math.min(page, pageCount);
+  const visiblePorts = remoteMode ? filteredPorts : filteredPorts.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   return (
     <section className="inventory-section">
       <div className="inventory-section-head">
-        <h4>{title}</h4>
+        <h4>{title} <span className="inventory-section-count">({totalItems})</span></h4>
         {headerAction}
         {onAdd && !plainReadOnly && (
           <button type="button" className="text-btn" disabled={locked} onClick={onAdd}>
@@ -320,6 +359,55 @@ function FlowSection({
           </button>
         )}
       </div>
+      <div className="inventory-section-controls">
+        <input
+          value={activeQuery}
+          placeholder={t("搜索流名称或 UUID", "Search flow name or UUID")}
+          onChange={(event) => {
+            if (remoteMode) {
+              onRemoteQueryChange?.(event.target.value);
+            } else {
+              setQuery(event.target.value);
+              setPage(1);
+            }
+          }}
+        />
+        {totalItems > pageSize && (
+          <div className="inventory-section-pagination">
+            <button
+              type="button"
+              className="ghost-btn"
+              disabled={currentPage <= 1 || remoteLoading}
+              onClick={() => {
+                if (remoteMode) {
+                  onRemotePageChange?.(Math.max(1, currentPage - 1));
+                } else {
+                  setPage((value) => Math.max(1, value - 1));
+                }
+              }}
+            >
+              {t("上一页", "Previous")}
+            </button>
+            <span>{currentPage} / {pageCount}</span>
+            <button
+              type="button"
+              className="ghost-btn"
+              disabled={currentPage >= pageCount || remoteLoading}
+              onClick={() => {
+                if (remoteMode) {
+                  onRemotePageChange?.(Math.min(pageCount, currentPage + 1));
+                } else {
+                  setPage((value) => Math.min(pageCount, value + 1));
+                }
+              }}
+            >
+              {t("下一页", "Next")}
+            </button>
+          </div>
+        )}
+      </div>
+      {remoteLoading && <div className="table-empty">{t("加载中", "Loading")}</div>}
+      {!remoteLoading && remoteError && <div className="table-empty">{remoteError}</div>}
       <div className="inventory-grid-header">
         <div>{t("序号", "No.")}</div>
         <div>{t("流名称", "Flow Name")}</div>
@@ -330,9 +418,9 @@ function FlowSection({
         {showNodeColumn ? <div>{t("显示", "Show")}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
         {showActionColumn ? <div>{t("操作", "Action")}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
       </div>
-      {ports.map((port, idx) => (
+      {!remoteLoading && !remoteError && visiblePorts.map((port, idx) => (
         <div key={port.id} className="inventory-grid-row">
-          <div>{idx + 1}</div>
+          <div>{(currentPage - 1) * pageSize + idx + 1}</div>
           <div className="flow-name-readonly" title={getDisplayName ? getDisplayName(port) : port.name}>
             {getDisplayName ? getDisplayName(port) : port.name}
           </div>
@@ -410,7 +498,7 @@ function FlowSection({
           ) : <div className="inventory-grid-spacer" aria-hidden="true" />}
         </div>
       ))}
-      {ports.length === 0 && <div className="table-empty">{t("暂无数据", "No data")}</div>}
+      {!remoteLoading && !remoteError && filteredPorts.length === 0 && <div className="table-empty">{t("暂无数据", "No data")}</div>}
     </section>
   );
 }
@@ -461,14 +549,20 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
   const [pendingMarketOutputSelection, setPendingMarketOutputSelection] = useState(false);
   const [productRuleHint, setProductRuleHint] = useState("");
   const [selectedNodeId, setSelectedNodeId] = useState("");
-  const [lciTopExchanges, setLciTopExchanges] = useState<{ input: LciTopExchange[]; output: LciTopExchange[] }>({ input: [], output: [] });
-  const [lciTopExchangeNnz, setLciTopExchangeNnz] = useState<{ input: number; output: number }>({ input: 0, output: 0 });
-  const [lciTopExchangeError, setLciTopExchangeError] = useState("");
-  const [lciViewer, setLciViewer] = useState<LciExchangeViewerState>({ open: false, direction: "output", page: 1, query: "" });
-  const [lciViewerItems, setLciViewerItems] = useState<LciTopExchange[]>([]);
-  const [lciViewerTotal, setLciViewerTotal] = useState(0);
-  const [lciViewerLoading, setLciViewerLoading] = useState(false);
-  const [lciViewerError, setLciViewerError] = useState("");
+  const createEmptyRemoteGroup = (): RemoteInventoryGroupState => ({
+    items: [],
+    total: 0,
+    page: 1,
+    query: "",
+    loading: false,
+    error: "",
+  });
+  const [lciInventoryGroups, setLciInventoryGroups] = useState<Record<RemoteInventoryGroupKey, RemoteInventoryGroupState>>({
+    in_intermediate: createEmptyRemoteGroup(),
+    out_intermediate: createEmptyRemoteGroup(),
+    in_elementary: createEmptyRemoteGroup(),
+    out_elementary: createEmptyRemoteGroup(),
+  });
 
   const uiLanguage = useLcaGraphStore((state) => state.uiLanguage);
   const updateNode = useLcaGraphStore((state) => state.updateNode);
@@ -1066,74 +1160,13 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
   const externalInElementary = node.data.inputs.filter((p) => p.type === "biosphere");
   const externalOutIntermediate = node.data.outputs.filter((p) => p.type !== "biosphere");
   const externalOutElementary = node.data.outputs.filter((p) => p.type === "biosphere");
-  const lciTopElementaryPorts = useMemo(() => {
-    const toPort = (item: LciTopExchange, direction: "input" | "output"): FlowPort => ({
-      id: `lci-vector-preview::${direction}::${item.flow_key_id}`,
-      flowUuid: item.flow_uuid,
-      name: item.flow_name || item.flow_uuid,
-      unit: item.unit || "",
-      amount: Number.isFinite(item.amount) ? item.amount : 0,
-      type: "biosphere",
-      direction,
-      showOnNode: false,
-      isProduct: false,
-      sourceSystem: "ecoinvent",
-    });
-    return {
-      input: lciTopExchanges.input.map((item) => toPort(item, "input")),
-      output: lciTopExchanges.output.map((item) => toPort(item, "output")),
-    };
-  }, [lciTopExchanges]);
-  const formatInventoryAmount = (value: number) => {
-    if (!Number.isFinite(value)) {
-      return "0";
-    }
-    const absValue = Math.abs(value);
-    if (absValue !== 0 && (absValue >= 100000 || absValue < 0.0001)) {
-      return value.toExponential(6);
-    }
-    return Number(value.toPrecision(8)).toString();
-  };
-  const formatLciDirection = (direction: string | null | undefined) => {
-    const normalized = (direction || "").toLowerCase();
-    if (normalized === "input") {
-      return t("输入", "Input");
-    }
-    if (normalized === "output") {
-      return t("输出", "Output");
-    }
-    return direction || "-";
-  };
-  const formatLciCategory = (item: Pick<LciTopExchange, "compartment" | "subcompartment">) => {
-    const translateCategory = (value: string) => {
-      const normalized = value.trim().toLowerCase();
-      const categoryMap: Record<string, string> = {
-        air: t("空气", "Air"),
-        water: t("水体", "Water"),
-        soil: t("土壤", "Soil"),
-        "natural resource": t("自然资源", "Natural resource"),
-        "natural resources": t("自然资源", "Natural resources"),
-        resource: t("资源", "Resource"),
-        resources: t("资源", "Resources"),
-        "inventory indicator": t("清单指标", "Inventory indicator"),
-      };
-      return categoryMap[normalized] ?? value;
-    };
-    const parts = [item.compartment, item.subcompartment]
-      .filter((value): value is string => Boolean(value && value.trim()))
-      .map(translateCategory);
-    return parts.join(" / ") || "-";
-  };
-  const openLciExchangeViewer = (direction: "input" | "output") => {
-    setLciViewer({ open: true, direction, page: 1, query: "" });
-  };
-  const renderLciViewMore = (direction: "input" | "output", total: number) =>
-    total > 10 ? (
-      <button type="button" className="text-btn" onClick={() => openLciExchangeViewer(direction)}>
-        {t("查看更多", "View More")}
-      </button>
-    ) : null;
   const productOutputs = externalOutIntermediate.filter((port) => Boolean(port.isProduct));
+  const updateLciInventoryGroup = (groupKey: RemoteInventoryGroupKey, patch: Partial<RemoteInventoryGroupState>) => {
+    setLciInventoryGroups((prev) => ({
+      ...prev,
+      [groupKey]: { ...prev[groupKey], ...patch },
+    }));
+  };
   const openProcessInfoModal = () => {
     const selectedProduct =
       productOutputs.find((port) => port.flowUuid === node.data.referenceProductFlowUuid) ??
@@ -1330,100 +1363,109 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
   const settingCandidates = nodes.filter((candidate) => candidate.id !== node.id);
   const canAutoNormalizeMarketInputs = marketProcess && externalInIntermediate.length > 0 && marketInputShareTotal > 0;
 
-  useEffect(() => {
-    if (!lciVectorProcessUuid) {
-      setLciTopExchanges({ input: [], output: [] });
-      setLciTopExchangeNnz({ input: 0, output: 0 });
-      setLciTopExchangeError("");
-      return;
-    }
-    let cancelled = false;
-    setLciTopExchangeError("");
-    const encodedProcessUuid = encodeURIComponent(lciVectorProcessUuid);
-    const loadDirection = async (direction: "input" | "output") => {
-      const resp = await fetch(`${API_BASE}/reference/processes/${encodedProcessUuid}/lci-vector/top-exchanges?page=1&page_size=10&direction=${direction}`);
-      if (!resp.ok) {
-        throw new Error(`HTTP ${resp.status}`);
-      }
-      return resp.json();
+  const toRemotePort = (item: Record<string, unknown>, groupKey: RemoteInventoryGroupKey): FlowPort => {
+    const direction: "input" | "output" = groupKey.startsWith("out_") ? "output" : "input";
+    const elementary = groupKey.endsWith("_elementary");
+    const flowUuid = String(item.flow_uuid ?? "");
+    const flowKeyId = String(item.flow_key_id ?? "").trim();
+    return {
+      id: `exchange-summary::${groupKey}::${flowKeyId || flowUuid || Math.random().toString(36).slice(2, 8)}`,
+      flowUuid,
+      name: String(item.flow_name ?? flowUuid),
+      flowNameEn: String(item.flow_name_en ?? "").trim() || undefined,
+      unit: String(item.unit ?? ""),
+      unitGroup: String(item.unit_group ?? "").trim() || undefined,
+      amount: Number.isFinite(Number(item.amount)) ? Number(item.amount) : 0,
+      type: elementary ? "biosphere" : "technosphere",
+      direction,
+      showOnNode: false,
+      isProduct: Boolean(item.is_product),
+      sourceSystem: String(item.source ?? "").trim() || undefined,
     };
-    Promise.all([loadDirection("input"), loadDirection("output")])
-      .then(([inputPayload, outputPayload]) => {
-        if (cancelled) {
-          return;
-        }
-        setLciTopExchanges({
-          input: Array.isArray(inputPayload.items) ? inputPayload.items : [],
-          output: Array.isArray(outputPayload.items) ? outputPayload.items : [],
-        });
-        setLciTopExchangeNnz({
-          input: Number(inputPayload.nnz ?? 0) || 0,
-          output: Number(outputPayload.nnz ?? 0) || 0,
-        });
-      })
-      .catch((error: unknown) => {
-        if (cancelled) {
-          return;
-        }
-        setLciTopExchanges({ input: [], output: [] });
-        setLciTopExchangeNnz({ input: 0, output: 0 });
-        setLciTopExchangeError(error instanceof Error ? error.message : String(error));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [lciVectorProcessUuid]);
+  };
 
   useEffect(() => {
-    if (!lciViewer.open || !lciVectorProcessUuid) {
-      setLciViewerItems([]);
-      setLciViewerTotal(0);
-      setLciViewerError("");
+    if (!lciNode || !lciVectorProcessUuid) {
+      setLciInventoryGroups({
+        in_intermediate: createEmptyRemoteGroup(),
+        out_intermediate: createEmptyRemoteGroup(),
+        in_elementary: createEmptyRemoteGroup(),
+        out_elementary: createEmptyRemoteGroup(),
+      });
       return;
     }
-    let cancelled = false;
-    const encodedProcessUuid = encodeURIComponent(lciVectorProcessUuid);
-    const params = new URLSearchParams({
-      page: String(lciViewer.page),
-      page_size: "20",
-      direction: lciViewer.direction,
-    });
-    if (lciViewer.query.trim()) {
-      params.set("q", lciViewer.query.trim());
-    }
-    setLciViewerLoading(true);
-    setLciViewerError("");
-    fetch(`${API_BASE}/reference/processes/${encodedProcessUuid}/lci-vector/top-exchanges?${params.toString()}`)
-      .then((resp) => {
-        if (!resp.ok) {
-          throw new Error(`HTTP ${resp.status}`);
-        }
-        return resp.json();
-      })
-      .then((payload) => {
-        if (cancelled) {
-          return;
-        }
-        setLciViewerItems(Array.isArray(payload.items) ? payload.items : []);
-        setLciViewerTotal(Number(payload.nnz ?? 0) || 0);
-      })
-      .catch((error: unknown) => {
-        if (cancelled) {
-          return;
-        }
-        setLciViewerItems([]);
-        setLciViewerTotal(0);
-        setLciViewerError(error instanceof Error ? error.message : String(error));
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLciViewerLoading(false);
-        }
+    const groupKeys: RemoteInventoryGroupKey[] = ["in_intermediate", "out_intermediate", "in_elementary", "out_elementary"];
+    const controllers = new Map<RemoteInventoryGroupKey, AbortController>();
+    groupKeys.forEach((groupKey) => {
+      const current = lciInventoryGroups[groupKey];
+      const controller = new AbortController();
+      controllers.set(groupKey, controller);
+      setLciInventoryGroups((prev) => ({
+        ...prev,
+        [groupKey]: { ...prev[groupKey], loading: true, error: "" },
+      }));
+      const params = new URLSearchParams({
+        group: groupKey,
+        page: String(current.page),
+        page_size: "10",
       });
+      if (current.query.trim()) {
+        params.set("q", current.query.trim());
+      }
+      fetch(`${API_BASE}/reference/processes/${encodeURIComponent(lciVectorProcessUuid)}/exchange-summary?${params.toString()}`, {
+        signal: controller.signal,
+      })
+        .then((resp) => {
+          if (!resp.ok) {
+            throw new Error(`HTTP ${resp.status}`);
+          }
+          return resp.json();
+        })
+        .then((payload) => {
+          const group = payload?.groups?.[groupKey] ?? {};
+          const items = Array.isArray(group.items) ? group.items : [];
+          setLciInventoryGroups((prev) => ({
+            ...prev,
+            [groupKey]: {
+              ...prev[groupKey],
+              items: items.map((item: Record<string, unknown>) => toRemotePort(item, groupKey)),
+              total: Number(group.total ?? 0) || 0,
+              loading: false,
+              error: "",
+            },
+          }));
+        })
+        .catch((error: unknown) => {
+          if (controller.signal.aborted) {
+            return;
+          }
+          setLciInventoryGroups((prev) => ({
+            ...prev,
+            [groupKey]: {
+              ...prev[groupKey],
+              items: [],
+              total: 0,
+              loading: false,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          }));
+        });
+    });
     return () => {
-      cancelled = true;
+      controllers.forEach((controller) => controller.abort());
     };
-  }, [lciNode, lciViewer.direction, lciViewer.open, lciViewer.page, lciViewer.query, lciVectorProcessUuid]);
+  }, [
+    lciNode,
+    lciVectorProcessUuid,
+    lciInventoryGroups.in_intermediate.page,
+    lciInventoryGroups.in_intermediate.query,
+    lciInventoryGroups.out_intermediate.page,
+    lciInventoryGroups.out_intermediate.query,
+    lciInventoryGroups.in_elementary.page,
+    lciInventoryGroups.in_elementary.query,
+    lciInventoryGroups.out_elementary.page,
+    lciInventoryGroups.out_elementary.query,
+  ]);
 
   useEffect(() => {
     if (!marketProcess) {
@@ -2140,9 +2182,6 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
             : t("PTS 节点固定为归一化。", "PTS nodes are fixed to normalized mode.")}
         </div>
       )}
-      {lciNode && lciTopExchangeError && (
-        <div className="mode-lock-hint warning">{t("读取基本流预览失败：", "Failed to load elementary flow preview: ")}{lciTopExchangeError}</div>
-      )}
       {marketProcess && (
         <div className="market-option-block">
           <div className="market-option-row">
@@ -2232,7 +2271,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                 allowShowOnNodeToggle={importedLocked && !lciNode}
                 showNodeColumn={!lciNode}
                 showActionColumn={!lciNode}
-                ports={externalInIntermediate}
+                ports={lciNode ? lciInventoryGroups.in_intermediate.items : externalInIntermediate}
                 getDisplayName={getPortDisplayName}
                 unitOptionsByPort={marketInputUnitOptionsByPort}
                 onUnitChange={(port, nextUnit) => {
@@ -2265,6 +2304,13 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                       </label>
                     )
                 }
+                remoteTotal={lciNode ? lciInventoryGroups.in_intermediate.total : undefined}
+                remotePage={lciNode ? lciInventoryGroups.in_intermediate.page : undefined}
+                remoteQuery={lciNode ? lciInventoryGroups.in_intermediate.query : undefined}
+                remoteLoading={lciNode ? lciInventoryGroups.in_intermediate.loading : undefined}
+                remoteError={lciNode ? lciInventoryGroups.in_intermediate.error : undefined}
+                onRemotePageChange={lciNode ? (page) => updateLciInventoryGroup("in_intermediate", { page }) : undefined}
+                onRemoteQueryChange={lciNode ? (query) => updateLciInventoryGroup("in_intermediate", { query, page: 1 }) : undefined}
                 onChange={(next) =>
                   updateNode(node.id, (current) => {
                     const marketUnit = marketProcess ? current.data.outputs[0]?.unit : undefined;
@@ -2302,9 +2348,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
               {!marketProcess && !ptsNode && (
                 <FlowSection
                   title={
-                    lciNode
-                      ? t(`基本流（输入 Top 10 / 共 ${lciTopExchangeNnz.input} 条）`, `Elementary Flows (input top 10 / ${lciTopExchangeNnz.input} total)`)
-                      : t("基本流", "Elementary Flows")
+                    t("基本流", "Elementary Flows")
                   }
                   uiLanguage={uiLanguage}
                   readOnly={lciNode}
@@ -2312,10 +2356,16 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                   plainReadOnly={lciNode}
                   showNodeColumn={false}
                   showActionColumn={!lciNode}
-                  headerAction={lciNode ? renderLciViewMore("input", lciTopExchangeNnz.input) : undefined}
-                  ports={lciNode ? lciTopElementaryPorts.input : externalInElementary}
+                  ports={lciNode ? lciInventoryGroups.in_elementary.items : externalInElementary}
                   getDisplayName={getPortDisplayName}
                   unitOptionsByPort={unitOptionsByPort}
+                  remoteTotal={lciNode ? lciInventoryGroups.in_elementary.total : undefined}
+                  remotePage={lciNode ? lciInventoryGroups.in_elementary.page : undefined}
+                  remoteQuery={lciNode ? lciInventoryGroups.in_elementary.query : undefined}
+                  remoteLoading={lciNode ? lciInventoryGroups.in_elementary.loading : undefined}
+                  remoteError={lciNode ? lciInventoryGroups.in_elementary.error : undefined}
+                  onRemotePageChange={lciNode ? (page) => updateLciInventoryGroup("in_elementary", { page }) : undefined}
+                  onRemoteQueryChange={lciNode ? (query) => updateLciInventoryGroup("in_elementary", { query, page: 1 }) : undefined}
                   onUnitChange={(port, nextUnit) => {
                     void updatePortUnitWithConversion("inputs", port, nextUnit);
                   }}
@@ -2372,7 +2422,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                 allowShowOnNodeToggle={importedLocked && !lciNode}
                 showNodeColumn={!lciNode}
                 showActionColumn={!lciNode}
-                ports={externalOutIntermediate}
+                ports={lciNode ? lciInventoryGroups.out_intermediate.items : externalOutIntermediate}
                 getDisplayName={getPortDisplayName}
                 unitOptionsByPort={unitOptionsByPort}
                 onUnitChange={(port, nextUnit) => {
@@ -2423,6 +2473,13 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                     </div>
                   );
                 }}
+                remoteTotal={lciNode ? lciInventoryGroups.out_intermediate.total : undefined}
+                remotePage={lciNode ? lciInventoryGroups.out_intermediate.page : undefined}
+                remoteQuery={lciNode ? lciInventoryGroups.out_intermediate.query : undefined}
+                remoteLoading={lciNode ? lciInventoryGroups.out_intermediate.loading : undefined}
+                remoteError={lciNode ? lciInventoryGroups.out_intermediate.error : undefined}
+                onRemotePageChange={lciNode ? (page) => updateLciInventoryGroup("out_intermediate", { page }) : undefined}
+                onRemoteQueryChange={lciNode ? (query) => updateLciInventoryGroup("out_intermediate", { query, page: 1 }) : undefined}
                 onChange={(next) =>
                   updateNode(node.id, (current) => ({
                     ...current,
@@ -2482,9 +2539,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
               {!marketProcess && !ptsNode && (
                 <FlowSection
                   title={
-                    lciNode
-                      ? t(`基本流（输出 Top 10 / 共 ${lciTopExchangeNnz.output} 条）`, `Elementary Flows (output top 10 / ${lciTopExchangeNnz.output} total)`)
-                      : t("基本流", "Elementary Flows")
+                    t("基本流", "Elementary Flows")
                   }
                   uiLanguage={uiLanguage}
                   readOnly={lciNode}
@@ -2492,10 +2547,16 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                   plainReadOnly={lciNode}
                   showNodeColumn={false}
                   showActionColumn={!lciNode}
-                  headerAction={lciNode ? renderLciViewMore("output", lciTopExchangeNnz.output) : undefined}
-                  ports={lciNode ? lciTopElementaryPorts.output : externalOutElementary}
+                  ports={lciNode ? lciInventoryGroups.out_elementary.items : externalOutElementary}
                   getDisplayName={getPortDisplayName}
                   unitOptionsByPort={unitOptionsByPort}
+                  remoteTotal={lciNode ? lciInventoryGroups.out_elementary.total : undefined}
+                  remotePage={lciNode ? lciInventoryGroups.out_elementary.page : undefined}
+                  remoteQuery={lciNode ? lciInventoryGroups.out_elementary.query : undefined}
+                  remoteLoading={lciNode ? lciInventoryGroups.out_elementary.loading : undefined}
+                  remoteError={lciNode ? lciInventoryGroups.out_elementary.error : undefined}
+                  onRemotePageChange={lciNode ? (page) => updateLciInventoryGroup("out_elementary", { page }) : undefined}
+                  onRemoteQueryChange={lciNode ? (query) => updateLciInventoryGroup("out_elementary", { query, page: 1 }) : undefined}
                   onUnitChange={(port, nextUnit) => {
                     void updatePortUnitWithConversion("outputs", port, nextUnit);
                   }}
@@ -2526,95 +2587,6 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
             </>
           )}
         </>
-      )}
-
-      {lciViewer.open && (
-        <div className="overlay-modal" onClick={() => setLciViewer((current) => ({ ...current, open: false }))}>
-          <div className="overlay-panel lci-exchange-viewer" onClick={(event) => event.stopPropagation()}>
-            <div className="overlay-head">
-              <strong>
-                {lciViewer.direction === "input"
-                  ? t("基本流输入清单", "Elementary Input Inventory")
-                  : t("基本流输出清单", "Elementary Output Inventory")}
-              </strong>
-              <button type="button" className="text-btn" onClick={() => setLciViewer((current) => ({ ...current, open: false }))}>
-                {t("关闭", "Close")}
-              </button>
-            </div>
-            <div className="overlay-filters lci-viewer-filters">
-              <input
-                value={lciViewer.query}
-                placeholder={t("按流名称或 UUID 搜索", "Search by flow name or UUID")}
-                onChange={(event) => setLciViewer((current) => ({ ...current, query: event.target.value, page: 1 }))}
-              />
-              <span>
-                {t("共", "Total")} {lciViewerTotal} {t("条", "items")}
-              </span>
-            </div>
-            <div className="overlay-table">
-              <table>
-                <thead>
-                  <tr>
-                    <th>{t("流名称", "Flow")}</th>
-                    <th>{t("方向", "Direction")}</th>
-                    <th>{t("分类", "Category")}</th>
-                    <th>{t("数量", "Amount")}</th>
-                    <th>{t("单位", "Unit")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {lciViewerLoading && (
-                    <tr>
-                      <td colSpan={5} className="table-empty">{t("加载中", "Loading")}</td>
-                    </tr>
-                  )}
-                  {!lciViewerLoading && lciViewerError && (
-                    <tr>
-                      <td colSpan={5} className="table-empty">{lciViewerError}</td>
-                    </tr>
-                  )}
-                  {!lciViewerLoading && !lciViewerError && lciViewerItems.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="table-empty">{t("暂无数据", "No data")}</td>
-                    </tr>
-                  )}
-                  {!lciViewerLoading && !lciViewerError && lciViewerItems.map((item) => (
-                    <tr key={`${item.flow_key_id}_${item.direction}`}>
-                      <td title={item.flow_uuid}>{item.flow_name || item.flow_uuid}</td>
-                      <td>{formatLciDirection(item.direction)}</td>
-                      <td>{formatLciCategory(item)}</td>
-                      <td>{formatInventoryAmount(item.amount)}</td>
-                      <td>{item.unit}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="overlay-pagination">
-              <span>
-                {t("第", "Page")} {lciViewer.page} / {Math.max(1, Math.ceil(lciViewerTotal / 20))}
-              </span>
-              <div className="overlay-pagination-actions">
-                <button
-                  type="button"
-                  className="ghost-btn"
-                  disabled={lciViewer.page <= 1}
-                  onClick={() => setLciViewer((current) => ({ ...current, page: Math.max(1, current.page - 1) }))}
-                >
-                  {t("上一页", "Previous")}
-                </button>
-                <button
-                  type="button"
-                  className="ghost-btn"
-                  disabled={lciViewer.page >= Math.max(1, Math.ceil(lciViewerTotal / 20))}
-                  onClick={() => setLciViewer((current) => ({ ...current, page: current.page + 1 }))}
-                >
-                  {t("下一页", "Next")}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
       )}
 
       {flowPicker.open && (
