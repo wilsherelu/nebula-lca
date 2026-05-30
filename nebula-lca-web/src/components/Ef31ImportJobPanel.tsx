@@ -40,6 +40,8 @@ interface LciaMethodStatus {
   ecoinvent_lci_vector_count?: number;
 }
 
+type ImportFileType = "lci" | "lcia" | "masterdata";
+
 const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
 const API_BASE = RAW_API_BASE.endsWith("/api") ? RAW_API_BASE : `${RAW_API_BASE}/api`;
 const RAW_IMPORT_API_BASE = ((import.meta.env.VITE_IMPORT_API_BASE_URL as string | undefined) ?? "").replace(/\/$/, "");
@@ -86,6 +88,19 @@ const zhText = {
   dataType: "\u6570\u636e\u7c7b\u578b",
   lciType: "LCI \u6570\u636e\u5305",
   lciaType: "LCIA \u56e0\u5b50\u5305",
+  masterdataType: "MasterData \u5237\u65b0",
+  masterdataHint: "\u53ea\u5237\u65b0 units\u3001elementary flows\u3001intermediate flows\uff0c\u4e0d\u5bfc\u5165 LCI \u8fc7\u7a0b\u6216\u5411\u91cf\u3002",
+  masterdataRequiredTitle: "\u9700\u5148\u5bfc\u5165 MasterData",
+  masterdataRequiredBody: "\u5f53\u524d\u672a\u68c0\u6d4b\u5230 ecoinvent MasterData \u76ee\u5f55\uff0c\u8bf7\u5148\u7528\u540c\u4e00\u4e2a LCI .7z \u5305\u6267\u884c MasterData \u5237\u65b0\u3002\u5b8c\u6210\u540e\u53ef\u518d\u5bfc\u5165 LCI/LCIA\uff0c\u540e\u7eed LCI \u4efb\u52a1\u4f1a\u590d\u7528\u5df2\u6709 MasterData\u3002",
+  masterdataAvailable: "\u5df2\u68c0\u6d4b\u5230 MasterData\uff0cLCI \u5bfc\u5165\u53ef\u76f4\u63a5\u8df3\u8fc7\u76ee\u5f55\u5237\u65b0\u3002",
+  masterdataStats: "MasterData \u7edf\u8ba1",
+  elementaryFlows: "\u57fa\u672c\u6d41",
+  intermediateFlows: "\u4e2d\u95f4\u6d41",
+  importTiming: "\u5bfc\u5165\u6027\u80fd",
+  masterdataReused: "MasterData \u590d\u7528",
+  avgBatchSize: "\u5e73\u5747\u6279\u5927\u5c0f",
+  dbUpsert: "DB \u5199\u5165",
+  globalFastSkip: "\u5168\u5c40\u5feb\u901f\u8df3\u8fc7",
   overwriteHint: "\u91cd\u65b0\u5bfc\u5165\u5df2\u5b58\u5728\u7684 dataset\uff0c\u7528\u4e8e\u4fee\u590d\u65e7\u5411\u91cf\u6216\u7248\u672c\u66f4\u65b0\u3002",
   start: "\u5f00\u59cb\u5bfc\u5165",
   uploading: "\u4e0a\u4f20\u4e2d...",
@@ -148,6 +163,19 @@ const enText = {
   dataType: "Data type",
   lciType: "LCI package",
   lciaType: "LCIA factor package",
+  masterdataType: "MasterData refresh",
+  masterdataHint: "Refresh units, elementary flows, and intermediate flows only. Does not import LCI processes or vectors.",
+  masterdataRequiredTitle: "Import MasterData first",
+  masterdataRequiredBody: "No ecoinvent MasterData catalog is available. Run MasterData refresh first using the same LCI .7z package. After it completes, LCI/LCIA import can proceed and reuse the existing MasterData.",
+  masterdataAvailable: "MasterData is available. LCI imports can skip catalog refresh.",
+  masterdataStats: "MasterData stats",
+  elementaryFlows: "Elementary flows",
+  intermediateFlows: "Intermediate flows",
+  importTiming: "Import performance",
+  masterdataReused: "MasterData reused",
+  avgBatchSize: "Average batch size",
+  dbUpsert: "DB upsert",
+  globalFastSkip: "Global fast skip",
   overwriteHint: "Re-import existing datasets. Use this to repair old vectors or refresh a package version.",
   start: "Start Import",
   uploading: "Uploading...",
@@ -227,6 +255,16 @@ function estimateTimeRemaining(progressPct: number, elapsedSeconds: number): str
   return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
 }
 
+function formatStatValue(value: unknown): string {
+  if (value === true) return "yes";
+  if (value === false) return "no";
+  if (typeof value === "number") {
+    return Number.isInteger(value) ? String(value) : value.toFixed(3);
+  }
+  if (value == null || value === "") return "-";
+  return String(value);
+}
+
 export default function Ef31ImportJobPanel(props: {
   open: boolean;
   uiLanguage: "zh" | "en";
@@ -237,7 +275,7 @@ export default function Ef31ImportJobPanel(props: {
 
   const [phase, setPhase] = useState<"upload" | "job" | "done">("upload");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [fileType, setFileType] = useState<"lci" | "lcia">("lci");
+  const [fileType, setFileType] = useState<ImportFileType>("lci");
   const [uploadBusy, setUploadBusy] = useState(false);
   const [jobBusy, setJobBusy] = useState(false);
   const [workers, setWorkers] = useState(DEFAULT_IMPORT_WORKERS);
@@ -326,6 +364,15 @@ export default function Ef31ImportJobPanel(props: {
   }, [open, refreshLciaStatus]);
 
   useEffect(() => {
+    if (!open || !lciaStatus || job) return;
+    const hasMasterData = Number(lciaStatus.ecoinvent_elementary_flow_count ?? 0) > 0;
+    if (!hasMasterData && fileType !== "masterdata") {
+      setFileType("masterdata");
+      setShowAdvanced(false);
+    }
+  }, [fileType, job, lciaStatus, open]);
+
+  useEffect(() => {
     if (!open || job || uploadBusy || jobBusy) return;
     let cancelled = false;
     const statuses = ["running", "pending", "paused"];
@@ -366,6 +413,13 @@ export default function Ef31ImportJobPanel(props: {
   const startUpload = useCallback(async () => {
     if (!selectedFile) {
       setErrorText(t.selectFile);
+      return;
+    }
+    const mustRefreshMasterData = lciaStatus !== null && Number(lciaStatus.ecoinvent_elementary_flow_count ?? 0) <= 0;
+    if (mustRefreshMasterData && fileType !== "masterdata") {
+      setFileType("masterdata");
+      setShowAdvanced(false);
+      setErrorText(t.masterdataRequiredTitle);
       return;
     }
     setErrorText("");
@@ -438,7 +492,7 @@ export default function Ef31ImportJobPanel(props: {
     } finally {
       setUploadBusy(false);
     }
-  }, [fileType, limit, overwriteExisting, selectedFile, startPolling, t.selectFile, uploadSession, workers]);
+  }, [fileType, lciaStatus, limit, overwriteExisting, selectedFile, startPolling, t.masterdataRequiredTitle, t.selectFile, uploadSession, workers]);
 
   const pause = useCallback(async () => {
     if (!job) return;
@@ -493,6 +547,18 @@ export default function Ef31ImportJobPanel(props: {
 
   const elapsedSeconds = startTimeRef.current ? (Date.now() - startTimeRef.current) / 1000 : 0;
   const stats = job?.stats ?? {};
+  const isMasterDataMode = fileType === "masterdata" || job?.file_type === "masterdata" || stats.masterdata_only === true;
+  const timingItems = [
+    [t.duration, stats.duration_seconds],
+    [t.masterdataReused, stats.masterdata_reused],
+    ["parse", stats.avg_parse_ms],
+    ["prefetch", stats.batch_prefetch_wall_seconds],
+    ["pack", stats.batch_pack_wall_seconds],
+    [t.dbUpsert, stats.batch_db_upsert_wall_seconds],
+    ["checkpoint", stats.batch_checkpoint_wall_seconds],
+    [t.avgBatchSize, stats.avg_batch_size],
+    [t.globalFastSkip, stats.global_skip_fast_count],
+  ].filter(([, value]) => value !== undefined && value !== null);
   const processedCount = Number(
     stats.datasets_processed
       ?? (
@@ -506,6 +572,9 @@ export default function Ef31ImportJobPanel(props: {
   const phaseIndex = ["upload", "job", "done"].indexOf(phase);
   const hasImportedEcoContent = Number(lciaStatus?.ecoinvent_elementary_flow_count ?? 0) > 0
     || Number(lciaStatus?.ecoinvent_lci_vector_count ?? 0) > 0;
+  const hasMasterData = Number(lciaStatus?.ecoinvent_elementary_flow_count ?? 0) > 0;
+  const masterDataStatusKnown = lciaStatus !== null;
+  const forceMasterDataRefresh = masterDataStatusKnown && !hasMasterData;
   const shouldPromptLciaRuntime = hasImportedEcoContent && !Boolean(lciaStatus?.ecoinvent_lcia_runtime_available);
 
   return (
@@ -541,6 +610,15 @@ export default function Ef31ImportJobPanel(props: {
             <div style={{ marginTop: 4 }}>{t.lciaMissingWarningBody}</div>
           </div>
         )}
+        {phase === "upload" && (
+          <div
+            className="ef31-import-full-hint"
+            style={{ margin: "12px 14px 0", borderColor: forceMasterDataRefresh ? "#f1c27d" : "#a8d5ba", background: forceMasterDataRefresh ? "#fff8ea" : "#eefaf2", color: forceMasterDataRefresh ? "#8a5a00" : "#216b3a" }}
+          >
+            <strong>{forceMasterDataRefresh ? t.masterdataRequiredTitle : t.masterdataAvailable}</strong>
+            {forceMasterDataRefresh && <div style={{ marginTop: 4 }}>{t.masterdataRequiredBody}</div>}
+          </div>
+        )}
 
         <div className="pm-modal-grid">
           {phase === "upload" && (
@@ -559,7 +637,8 @@ export default function Ef31ImportJobPanel(props: {
                       const file = event.target.files?.[0] ?? null;
                       setSelectedFile(file);
                       const fileName = file?.name.toLowerCase() ?? "";
-                      setFileType(fileName.endsWith(".xlsx") || fileName.includes("lcia") ? "lcia" : "lci");
+                      const detectedType: ImportFileType = fileName.includes("masterdata") ? "masterdata" : fileName.endsWith(".xlsx") || fileName.includes("lcia") ? "lcia" : "lci";
+                      setFileType(forceMasterDataRefresh ? "masterdata" : detectedType);
                       setErrorText("");
                     }}
                   />
@@ -567,16 +646,25 @@ export default function Ef31ImportJobPanel(props: {
               </label>
               <div className="ef31-import-file-meta span-2">
                 <span>{t.fileSize}: <b>{selectedFile ? formatBytes(selectedFile.size) : "-"}</b></span>
-                <span>{t.dataType}: <b>{fileType === "lcia" ? t.lciaType : t.lciType}</b></span>
+                <label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                  <span>{t.dataType}:</span>
+                  <select value={fileType} onChange={(event) => setFileType(event.target.value as ImportFileType)}>
+                    <option value="lci" disabled={forceMasterDataRefresh}>{t.lciType}</option>
+                    <option value="lcia" disabled={forceMasterDataRefresh}>{t.lciaType}</option>
+                    <option value="masterdata">{t.masterdataType}</option>
+                  </select>
+                </label>
                 <button type="button" className="ef31-import-guide-button" onClick={() => setShowGuide(true)}>
                   {t.guide}
                 </button>
-                <button type="button" className="ef31-import-advanced-toggle" onClick={() => setShowAdvanced(!showAdvanced)}>
-                  {showAdvanced ? t.hideAdvanced : t.advanced}
-                </button>
+                {fileType !== "masterdata" && (
+                  <button type="button" className="ef31-import-advanced-toggle" onClick={() => setShowAdvanced(!showAdvanced)}>
+                    {showAdvanced ? t.hideAdvanced : t.advanced}
+                  </button>
+                )}
               </div>
-              <div className="ef31-import-full-hint span-2">{t.fullImportHint}</div>
-              {showAdvanced && (
+              <div className="ef31-import-full-hint span-2">{fileType === "masterdata" ? t.masterdataHint : t.fullImportHint}</div>
+              {showAdvanced && fileType !== "masterdata" && (
                 <div className="ef31-import-advanced span-2">
                   <label>
                     <span style={{ fontSize: 12 }}>{t.workers}</span>
@@ -621,15 +709,33 @@ export default function Ef31ImportJobPanel(props: {
               </div>
               <div style={{ display: "flex", gap: 16, marginTop: 8, fontSize: 12, flexWrap: "wrap" }}>
                 <span>{t.phase}: <b>{String(stats.phase ?? job.phase ?? "-")}</b></span>
-                <span>{t.processed}: <b>{processedCount}</b></span>
-                <span>{t.updated}: <b>{Number(stats.processes_updated ?? 0)}</b></span>
-                <span>{t.skippedGlobal}: <b>{job.skipped_global ?? 0}</b></span>
-                <span>{t.vectors}: <b>{Number(stats.vectors_written ?? 0)}</b></span>
-                <span>{t.reused}: <b>{Number(stats.vectors_reused ?? 0)}</b></span>
-                <span>{t.emptyVectors}: <b>{Number(stats.empty_vectors ?? 0)}</b></span>
-                <span>{t.failed}: <b>{Number(stats.processes_failed ?? 0)}</b></span>
+                {isMasterDataMode ? (
+                  <>
+                    <span>{t.elementaryFlows}: <b>{Number(stats.elementary_inserted ?? 0)}</b> {t.new} / <b>{Number(stats.elementary_updated ?? 0)}</b> {t.updated}</span>
+                    <span>{t.intermediateFlows}: <b>{Number(stats.intermediate_inserted ?? 0)}</b> {t.new} / <b>{Number(stats.intermediate_updated ?? 0)}</b> {t.updated}</span>
+                    <span>{t.duration}: <b>{formatStatValue(stats.duration_seconds)}s</b></span>
+                  </>
+                ) : (
+                  <>
+                    <span>{t.processed}: <b>{processedCount}</b></span>
+                    <span>{t.updated}: <b>{Number(stats.processes_updated ?? 0)}</b></span>
+                    <span>{t.skippedGlobal}: <b>{job.skipped_global ?? 0}</b></span>
+                    <span>{t.vectors}: <b>{Number(stats.vectors_written ?? 0)}</b></span>
+                    <span>{t.reused}: <b>{Number(stats.vectors_reused ?? 0)}</b></span>
+                    <span>{t.emptyVectors}: <b>{Number(stats.empty_vectors ?? 0)}</b></span>
+                    <span>{t.failed}: <b>{Number(stats.processes_failed ?? 0)}</b></span>
+                  </>
+                )}
                 {(job.status === "running" || job.status === "paused") && <span>ETA {estimateTimeRemaining(job.progress_pct, elapsedSeconds)}</span>}
               </div>
+              {!isMasterDataMode && timingItems.length > 0 && (
+                <div style={{ display: "flex", gap: 12, marginTop: 8, fontSize: 11, flexWrap: "wrap", color: "#607d8b" }}>
+                  <strong>{t.importTiming}</strong>
+                  {timingItems.map(([label, value]) => (
+                    <span key={String(label)}>{String(label)}: <b>{formatStatValue(value)}</b></span>
+                  ))}
+                </div>
+              )}
               {job.failed_datasets?.length > 0 && (
                 <div style={{ marginTop: 6, fontSize: 11, color: "#c0392b" }}>
                   {t.failedFiles}: {job.failed_datasets.slice(0, 5).join(", ")}{job.failed_datasets.length > 5 ? " ..." : ""}
@@ -644,7 +750,15 @@ export default function Ef31ImportJobPanel(props: {
               <div style={{ color: "#27ae60", fontWeight: 600, fontSize: 14 }}>{t.importComplete}</div>
               <div style={{ display: "grid", gap: 4, fontSize: 12, color: "#496675", marginTop: 8 }}>
                 <div>{t.status}: <b>{job.status}</b></div>
-                {job.file_type === "lcia" ? (
+                {isMasterDataMode ? (
+                  <>
+                    <div>{t.masterdataStats}</div>
+                    <div>{t.elementaryFlows}: <b>{Number(stats.elementary_inserted ?? 0)}</b> {t.new} / <b>{Number(stats.elementary_updated ?? 0)}</b> {t.updated} / <b>{Number(stats.elementary_skipped ?? 0)}</b> {t.skipped}</div>
+                    <div>{t.intermediateFlows}: <b>{Number(stats.intermediate_inserted ?? 0)}</b> {t.new} / <b>{Number(stats.intermediate_updated ?? 0)}</b> {t.updated} / <b>{Number(stats.intermediate_skipped ?? 0)}</b> {t.skipped}</div>
+                    <div>{t.workers}: <b>-</b></div>
+                    <div>{t.duration}: <b>{Number(stats.duration_seconds ?? 0).toFixed(1)}s</b></div>
+                  </>
+                ) : job.file_type === "lcia" ? (
                   <>
                     <div>{t.indicators}: <b>{Number(stats.indicators_count ?? 0)}</b></div>
                     <div>{t.factors}: <b>{Number(stats.factors_count ?? 0)}</b></div>
@@ -658,6 +772,7 @@ export default function Ef31ImportJobPanel(props: {
                     <div>{t.vectors}: <b>{Number(stats.vectors_written ?? 0)}</b> {t.new} / <b>{Number(stats.vectors_reused ?? 0)}</b> {t.reused} / <b>{Number(stats.empty_vectors ?? 0)}</b> {t.emptyVectors}</div>
                     <div>{t.nnz}: <b>{Number(stats.vector_nnz_total ?? 0)}</b></div>
                     <div>{t.duration}: <b>{Number(stats.duration_seconds ?? 0).toFixed(1)}s</b></div>
+                    {timingItems.length > 0 && <div>{t.importTiming}: {timingItems.map(([label, value]) => `${String(label)}=${formatStatValue(value)}`).join(", ")}</div>}
                   </>
                 )}
                 {job.failed_datasets?.length > 0 && <div style={{ color: "#e67e22" }}>{t.failed}: {job.failed_datasets.length}</div>}

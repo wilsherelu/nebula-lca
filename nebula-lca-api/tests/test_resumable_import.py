@@ -8,6 +8,7 @@ Covers:
 """
 
 import os
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -41,6 +42,106 @@ def test_executor_workers_respect_visible_cpu_limit(monkeypatch):
     executor = LciImportJobExecutor("cpu-cap", db, spold_dir="/fake/spold", workers=8)
 
     assert executor.workers == 4
+
+
+def _write_minimal_masterdata(master_dir: Path) -> None:
+    master_dir.mkdir(parents=True, exist_ok=True)
+    (master_dir / "Units.xml").write_text(
+        textwrap.dedent("""\
+        <?xml version="1.0" encoding="UTF-8"?>
+        <units xmlns="http://www.ecoinvent.org/1.0/spold">
+          <unit id="unit-kg"><name>kg</name></unit>
+          <unit id="unit-mj"><name>MJ</name></unit>
+        </units>
+        """),
+        encoding="utf-8",
+    )
+    (master_dir / "ElementaryExchanges.xml").write_text(
+        textwrap.dedent("""\
+        <?xml version="1.0" encoding="UTF-8"?>
+        <ElementaryExchanges>
+          <ElementaryFlow>
+            <uuid>flow-co2-masterdata</uuid>
+            <nameEN>Carbon dioxide</nameEN>
+            <flowType>Elementary flow</flowType>
+            <unit>kg</unit>
+            <unitGroup>mass</unitGroup>
+            <compartment>air</compartment>
+          </ElementaryFlow>
+        </ElementaryExchanges>
+        """),
+        encoding="utf-8",
+    )
+    (master_dir / "IntermediateExchanges.xml").write_text(
+        textwrap.dedent("""\
+        <?xml version="1.0" encoding="UTF-8"?>
+        <IntermediateExchanges>
+          <intermediateExchange id="flow-gas-masterdata" unitId="unit-mj">
+            <name>Natural gas</name>
+          </intermediateExchange>
+        </IntermediateExchanges>
+        """),
+        encoding="utf-8",
+    )
+
+
+def test_masterdata_job_refreshes_catalog_without_lci_vectors(tmp_path):
+    """MasterData-only job updates catalog rows without creating process/vector rows."""
+    from sqlalchemy.orm import sessionmaker
+
+    from app.api.ef31_chunked_import import _finish_masterdata_job
+    from app.database import Base
+    from app.models import DatasetCheckpoint, FlowRecord, ImportJob, LciProcessVector, ReferenceProcess
+
+    db_path = tmp_path / "masterdata-job.db"
+    engine = create_engine(f"sqlite:///{db_path}", future=True)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    master_dir = tmp_path / "MasterData"
+    _write_minimal_masterdata(master_dir)
+    job = ImportJob(job_id="masterdata-job", file_path=str(master_dir), file_type="masterdata", status="running", phase="created")
+    db.add(job)
+    db.commit()
+
+    _finish_masterdata_job(db, job, master_dir)
+
+    refreshed = db.get(ImportJob, "masterdata-job")
+    assert refreshed.status == "completed"
+    assert refreshed.phase == "done"
+    assert refreshed.progress_pct == 100.0
+    assert refreshed.stats_json["masterdata_only"] is True
+    assert refreshed.stats_json["elementary_inserted"] == 1
+    assert refreshed.stats_json["intermediate_inserted"] == 1
+    assert db.query(FlowRecord).filter(FlowRecord.flow_uuid == "flow-co2-masterdata").count() == 1
+    assert db.query(ReferenceProcess).count() == 0
+    assert db.query(LciProcessVector).count() == 0
+    assert db.query(DatasetCheckpoint).count() == 0
+    db.close()
+
+
+def test_masterdata_job_fails_when_masterdata_xml_missing(tmp_path):
+    from sqlalchemy.orm import sessionmaker
+
+    from app.api.ef31_chunked_import import _finish_masterdata_job
+    from app.database import Base
+    from app.models import ImportJob
+
+    db_path = tmp_path / "masterdata-missing.db"
+    engine = create_engine(f"sqlite:///{db_path}", future=True)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    master_dir = tmp_path / "MasterData"
+    master_dir.mkdir()
+    (master_dir / "Units.xml").write_text("<units />", encoding="utf-8")
+    job = ImportJob(job_id="masterdata-missing", file_path=str(master_dir), file_type="masterdata", status="running", phase="created")
+    db.add(job)
+    db.commit()
+
+    with pytest.raises(FileNotFoundError, match="MasterData is incomplete"):
+        _finish_masterdata_job(db, job, master_dir)
+    db.close()
 
 
 def test_checkpoint_skip_imported(tmp_path):

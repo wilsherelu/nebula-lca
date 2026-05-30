@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from sqlalchemy import text
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -66,6 +67,30 @@ def _set_job_phase(db: Session, job_id: str, phase: str, stats: dict | None = No
     job.stats_json = {**(job.stats_json or {}), **(stats or {}), "phase": phase}
     job.updated_at = datetime.utcnow()
     db.commit()
+
+
+def _apply_import_sqlite_pragmas(db: Session) -> dict:
+    """Apply low-risk SQLite write pragmas for import jobs and report results."""
+    result: dict[str, object] = {}
+    bind = db.get_bind()
+    dialect = getattr(getattr(bind, "dialect", None), "name", "")
+    if dialect != "sqlite":
+        return {"dialect": dialect or "unknown", "applied": False}
+    pragma_pairs = [
+        ("journal_mode", "WAL"),
+        ("synchronous", "NORMAL"),
+        ("temp_store", "MEMORY"),
+    ]
+    for key, value in pragma_pairs:
+        try:
+            db.execute(text(f"PRAGMA {key}={value}"))
+            check = db.execute(text(f"PRAGMA {key}")).fetchone()
+            result[key] = check[0] if check is not None else value
+        except Exception as exc:  # noqa: BLE001
+            result[key] = f"error: {exc}"
+    result["dialect"] = "sqlite"
+    result["applied"] = True
+    return result
 
 
 def _ecoinvent_elementary_flows_for_lcia(db: Session) -> list[dict]:
@@ -170,6 +195,59 @@ def _finish_lcia_job(db: Session, job: ImportJob, lcia_excel: Path) -> None:
     db.commit()
 
 
+def _finish_masterdata_job(db: Session, job: ImportJob, master_data_dir: Path) -> None:
+    from ..ingest_ecoinvent import (
+        import_ecoinvent_elementary_flows,
+        import_ecoinvent_intermediate_flows,
+        import_ecoinvent_units,
+    )
+
+    if not master_data_dir.exists():
+        raise FileNotFoundError(f"MasterData directory not found: {master_data_dir}")
+    required = ["Units.xml", "ElementaryExchanges.xml", "IntermediateExchanges.xml"]
+    missing = [name for name in required if not (master_data_dir / name).exists()]
+    if missing:
+        raise FileNotFoundError(f"MasterData is incomplete; missing: {', '.join(missing)}")
+
+    started = datetime.utcnow()
+    wall_start = datetime.utcnow().timestamp()
+    _set_job_phase(db, job.job_id, "masterdata", {"message": "refreshing_masterdata", "masterdata_only": True})
+    pragma_report = _apply_import_sqlite_pragmas(db)
+    units = import_ecoinvent_units(db, data_dir=str(master_data_dir), package_version="ecoinvent_3.11")
+    elementary = import_ecoinvent_elementary_flows(db, data_dir=str(master_data_dir), source="ecoinvent_3.11")
+    intermediate = import_ecoinvent_intermediate_flows(db, data_dir=str(master_data_dir), source="ecoinvent_3.11")
+
+    refreshed = db.query(ImportJob).filter(ImportJob.job_id == job.job_id).first()
+    if refreshed is None:
+        return
+    refreshed.status = "completed"
+    refreshed.phase = "done"
+    refreshed.progress_pct = 100.0
+    refreshed.error_summary = None
+    refreshed.skipped_global = 0
+    refreshed.stats_json = {
+        "phase": "done",
+        "masterdata_only": True,
+        "masterdata_dir": str(master_data_dir),
+        "started_at": started.isoformat(),
+        "duration_seconds": round(datetime.utcnow().timestamp() - wall_start, 3),
+        "import_pragmas": pragma_report,
+        "units": units,
+        "elementary_flows": elementary,
+        "intermediate_flows": intermediate,
+        "groups_inserted": units.get("groups_inserted", 0),
+        "units_inserted": units.get("units_inserted", 0),
+        "elementary_inserted": elementary.get("inserted", 0),
+        "elementary_updated": elementary.get("updated", 0),
+        "elementary_skipped": elementary.get("skipped", 0),
+        "intermediate_inserted": intermediate.get("inserted", 0),
+        "intermediate_updated": intermediate.get("updated", 0),
+        "intermediate_skipped": intermediate.get("skipped", 0),
+    }
+    refreshed.updated_at = datetime.utcnow()
+    db.commit()
+
+
 def _record_terminal_cleanup(db: Session, job_id: str, file_path: str | None) -> None:
     from ..import_cache_cleanup import cleanup_terminal_import_artifacts
 
@@ -196,16 +274,23 @@ def _run_job_background(job_id: str, resume_from_failed: bool) -> None:
             db.commit()
             return
 
+        import_pragmas: dict | None = None
         if file_path.suffix.lower() == ".7z":
             _set_job_phase(db, job_id, "extracting", {"message": "extracting_archive"})
             extract_dir = Path("import-cache") / "job_extract" / job_id
             extract_dir.mkdir(parents=True, exist_ok=True)
             from ..ecoinvent_ef31_loader import selective_extract_7z
 
-            extract_result = selective_extract_7z(file_path, extract_dir, spold_limit=job.limit or 0)
+            extract_result = selective_extract_7z(file_path, extract_dir, spold_limit=job.limit or 0, masterdata_only=job.file_type == "masterdata")
             spold_dir = str(extract_result.get("datasets_dir", extract_dir))
             master_data_dir = str(extract_result.get("master_dir", ""))
             lcia_excel = extract_result.get("lcia_excel")
+            if job.file_type == "masterdata":
+                if not master_data_dir:
+                    raise FileNotFoundError("MasterData directory not found in archive")
+                _finish_masterdata_job(db, job, Path(master_data_dir))
+                _record_terminal_cleanup(db, job_id, job.file_path)
+                return
             if lcia_excel and (job.file_type == "lcia" or not extract_result.get("datasets_dir")):
                 _finish_lcia_job(db, job, Path(lcia_excel))
                 _record_terminal_cleanup(db, job_id, job.file_path)
@@ -213,12 +298,19 @@ def _run_job_background(job_id: str, resume_from_failed: bool) -> None:
         else:
             spold_dir = str(file_path)
             master_data_dir = ""
+            if job.file_type == "masterdata":
+                master_path = file_path if file_path.name == "MasterData" else file_path / "MasterData"
+                _finish_masterdata_job(db, job, master_path)
+                _record_terminal_cleanup(db, job_id, job.file_path)
+                return
             if job.file_type == "lcia" or file_path.suffix.lower() == ".xlsx":
                 _finish_lcia_job(db, job, file_path)
                 _record_terminal_cleanup(db, job_id, job.file_path)
                 return
 
         _set_job_phase(db, job_id, "masterdata", {"message": "loading_masterdata"})
+        if job.file_type == "lci":
+            import_pragmas = _apply_import_sqlite_pragmas(db)
 
         from ..lci_import_executor import LciImportJobExecutor
 
@@ -257,6 +349,7 @@ def _run_job_background(job_id: str, resume_from_failed: bool) -> None:
             "vector_nnz_total": result.vector_nnz_total,
             "failed_datasets": result.failed_datasets,
             "duration_seconds": result.duration_seconds,
+            "import_pragmas": import_pragmas or {},
             **result.performance_stats,
         }
         job.updated_at = datetime.utcnow()
@@ -281,7 +374,7 @@ def _run_job_background(job_id: str, resume_from_failed: bool) -> None:
 @_router.post("/upload-session", response_model=UploadSessionCreateResponse)
 async def create_upload_session(
     file_name: str = Query(..., description="Original file name"),
-    file_type: str = Query("lci", description="lci or lcia"),
+    file_type: str = Query("lci", description="lci, lcia, or masterdata"),
     expected_size: int | None = Query(None, description="Expected file size in bytes"),
 ):
     """Create a chunked upload session."""
@@ -325,7 +418,7 @@ async def get_upload_session(upload_id: str):
 async def complete_upload_session(
     upload_id: str,
     total_chunks: int = Query(..., ge=1, description="Total number of chunks"),
-    file_type: str = Query("lci", description="lci or lcia"),
+    file_type: str = Query("lci", description="lci, lcia, or masterdata"),
     expected_hash: str | None = Query(None, description="SHA-256 of complete file"),
     expected_size: int | None = Query(None, description="Expected file size in bytes"),
 ):
