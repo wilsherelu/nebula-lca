@@ -15,6 +15,7 @@ from ..schemas import (
     PtsCompileHistoryResponse,
     PtsCompileRequest,
     PtsCompileResponse,
+    PtsArtifactDiagnosticsResponse,
     PtsCompiledExternalResponse,
     PtsCompiledGetResponse,
     PtsPublishRequest,
@@ -67,6 +68,61 @@ upsert_pts_compile_artifact = _pr.upsert_pts_compile_artifact
 upsert_pts_definition = _pr.upsert_pts_definition
 upsert_pts_external_artifact = _pr.upsert_pts_external_artifact
 _raise_pts_compile_value_error_http = _pcs._raise_pts_compile_value_error_http
+
+
+def _slim_pts_artifact_exchange(row: object) -> dict:
+    if not isinstance(row, dict):
+        return {}
+    return {
+        "flow_uuid": row.get("flow_uuid") or row.get("flowUuid"),
+        "name": row.get("name") or row.get("flow_name") or row.get("flowName"),
+        "amount": row.get("amount"),
+        "unit": row.get("unit"),
+        "unit_group": row.get("unit_group") or row.get("unitGroup"),
+        "source_process_uuid": row.get("source_process_uuid") or row.get("sourceProcessUuid"),
+        "source_node_id": row.get("source_node_id") or row.get("sourceNodeId"),
+        "source_port_id": row.get("source_port_id") or row.get("sourcePortId"),
+        "product_key": row.get("product_key") or row.get("productKey"),
+    }
+
+
+def _slim_pts_virtual_process(row: object) -> dict:
+    if not isinstance(row, dict):
+        return {}
+    reference_product = row.get("reference_product") if isinstance(row.get("reference_product"), dict) else {}
+    technosphere = row.get("technosphere_inputs") if isinstance(row.get("technosphere_inputs"), list) else []
+    elementary = row.get("elementary_flows") if isinstance(row.get("elementary_flows"), list) else []
+    return {
+        "process_uuid": row.get("process_uuid"),
+        "process_name": row.get("process_name"),
+        "product_key": row.get("product_key"),
+        "source_process_uuid": row.get("source_process_uuid"),
+        "source_node_id": row.get("source_node_id"),
+        "source_port_id": row.get("source_port_id"),
+        "allocation_fraction": row.get("allocation_fraction"),
+        "normalization_reference_amount": row.get("normalization_reference_amount"),
+        "reference_unit": row.get("reference_unit") or reference_product.get("unit"),
+        "reference_unit_group": row.get("reference_unit_group") or reference_product.get("unit_group") or reference_product.get("unitGroup"),
+        "reference_product": _slim_pts_artifact_exchange(reference_product),
+        "technosphere_inputs": [_slim_pts_artifact_exchange(item) for item in technosphere],
+        "elementary_flows": [_slim_pts_artifact_exchange(item) for item in elementary],
+    }
+
+
+def _pts_artifact_summary(artifact: dict) -> tuple[dict, list[dict]]:
+    virtual_processes_raw = artifact.get("virtual_processes") if isinstance(artifact.get("virtual_processes"), list) else []
+    virtual_processes = [_slim_pts_virtual_process(item) for item in virtual_processes_raw]
+    return (
+        {
+            "virtual_process_count": len(virtual_processes),
+            "technosphere_input_count": sum(len(row.get("technosphere_inputs") or []) for row in virtual_processes),
+            "elementary_flow_count": sum(len(row.get("elementary_flows") or []) for row in virtual_processes),
+            "external_boundary": artifact.get("external_boundary") if isinstance(artifact.get("external_boundary"), dict) else {},
+            "frontend_ports": artifact.get("frontend_ports") if isinstance(artifact.get("frontend_ports"), dict) else {},
+            "output_virtual_process_bindings": artifact.get("output_virtual_process_bindings") if isinstance(artifact.get("output_virtual_process_bindings"), list) else [],
+        },
+        virtual_processes,
+    )
 
 # -- Routers ----------------------------------------------------------------
 
@@ -566,6 +622,108 @@ def get_pts_published_history(pts_uuid: str, project_id: str, db: Session = Depe
             )
             for row in rows
         ],
+    )
+
+
+@_pts_api_router.get("/api/pts/{pts_uuid}/artifact-diagnostics", response_model=PtsArtifactDiagnosticsResponse)
+@_pts_base_router.get("/pts/{pts_uuid}/artifact-diagnostics", response_model=PtsArtifactDiagnosticsResponse)
+def get_pts_artifact_diagnostics(
+    pts_uuid: str,
+    project_id: str,
+    kind: str = Query("published", pattern="^(compile|published)$"),
+    artifact_id: str | None = Query(default=None),
+    version: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> PtsArtifactDiagnosticsResponse:
+    artifact_id = artifact_id if isinstance(artifact_id, str) and artifact_id.strip() else None
+    version = version if isinstance(version, int) else None
+    resource = (
+        db.query(PtsResource)
+        .filter(PtsResource.project_id == project_id, PtsResource.pts_uuid == pts_uuid)
+        .first()
+    )
+    active_published_version = (
+        int(resource.active_published_version)
+        if resource is not None and resource.active_published_version is not None
+        else None
+    )
+
+    if kind == "compile":
+        compile_query = db.query(PtsCompileArtifact).filter(
+            PtsCompileArtifact.project_id == project_id,
+            PtsCompileArtifact.pts_uuid == pts_uuid,
+        )
+        if artifact_id:
+            row = compile_query.filter(PtsCompileArtifact.id == artifact_id).first()
+        elif version is not None:
+            row = compile_query.filter(PtsCompileArtifact.compile_version == version).first()
+        else:
+            row = compile_query.order_by(
+                PtsCompileArtifact.compile_version.desc(),
+                PtsCompileArtifact.updated_at.desc(),
+                PtsCompileArtifact.created_at.desc(),
+            ).first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="PTS compile artifact not found")
+        artifact = row.artifact_json if isinstance(row.artifact_json, dict) else {}
+        summary, virtual_processes = _pts_artifact_summary(artifact)
+        resource_hash = str(resource.latest_graph_hash or "") if resource is not None and resource.latest_graph_hash else None
+        return PtsArtifactDiagnosticsResponse(
+            project_id=project_id,
+            pts_uuid=pts_uuid,
+            artifact_kind="compile",
+            artifact_id=str(row.id),
+            version=(int(row.compile_version) if row.compile_version is not None else None),
+            graph_hash=str(row.graph_hash),
+            resource_latest_graph_hash=resource_hash,
+            active_published_version=active_published_version,
+            stale_against_resource=bool(resource_hash and resource_hash != str(row.graph_hash)),
+            ok=bool(row.ok),
+            matrix_size=int(row.matrix_size),
+            invertible=bool(row.invertible),
+            errors=list(row.errors_json or []),
+            warnings=list(row.warnings_json or []),
+            summary=summary,
+            virtual_processes=virtual_processes,
+            artifact=artifact,
+        )
+
+    published_query = db.query(PtsExternalArtifact).filter(
+        PtsExternalArtifact.project_id == project_id,
+        PtsExternalArtifact.pts_uuid == pts_uuid,
+    )
+    if artifact_id:
+        published_row = published_query.filter(PtsExternalArtifact.id == artifact_id).first()
+    elif version is not None:
+        published_row = published_query.filter(PtsExternalArtifact.published_version == version).first()
+    elif active_published_version is not None:
+        published_row = published_query.filter(PtsExternalArtifact.published_version == active_published_version).first()
+    else:
+        published_row = published_query.order_by(
+            PtsExternalArtifact.published_version.desc(),
+            PtsExternalArtifact.updated_at.desc(),
+            PtsExternalArtifact.created_at.desc(),
+        ).first()
+    if published_row is None:
+        raise HTTPException(status_code=404, detail="PTS published artifact not found")
+    artifact = published_row.artifact_json if isinstance(published_row.artifact_json, dict) else {}
+    summary, virtual_processes = _pts_artifact_summary(artifact)
+    resource_hash = str(resource.latest_graph_hash or "") if resource is not None and resource.latest_graph_hash else None
+    return PtsArtifactDiagnosticsResponse(
+        project_id=project_id,
+        pts_uuid=pts_uuid,
+        artifact_kind="published",
+        artifact_id=str(published_row.id),
+        version=(int(published_row.published_version) if published_row.published_version is not None else None),
+        graph_hash=str(published_row.graph_hash),
+        resource_latest_graph_hash=resource_hash,
+        active_published_version=active_published_version,
+        source_compile_id=(str(published_row.source_compile_id) if published_row.source_compile_id else None),
+        source_compile_version=(int(published_row.source_compile_version) if published_row.source_compile_version is not None else None),
+        stale_against_resource=bool(resource_hash and resource_hash != str(published_row.graph_hash)),
+        summary=summary,
+        virtual_processes=virtual_processes,
+        artifact=artifact,
     )
 
 

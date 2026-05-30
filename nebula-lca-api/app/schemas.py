@@ -1120,6 +1120,28 @@ class PtsPublishedHistoryResponse(BaseModel):
     items: list[PtsVersionItem] = Field(default_factory=list)
 
 
+class PtsArtifactDiagnosticsResponse(BaseModel):
+    project_id: str
+    pts_uuid: str
+    artifact_kind: Literal["compile", "published"]
+    artifact_id: str
+    version: int | None = None
+    graph_hash: str
+    resource_latest_graph_hash: str | None = None
+    active_published_version: int | None = None
+    source_compile_id: str | None = None
+    source_compile_version: int | None = None
+    stale_against_resource: bool = False
+    ok: bool | None = None
+    matrix_size: int | None = None
+    invertible: bool | None = None
+    errors: list = Field(default_factory=list)
+    warnings: list = Field(default_factory=list)
+    summary: dict = Field(default_factory=dict)
+    virtual_processes: list[dict] = Field(default_factory=list)
+    artifact: dict = Field(default_factory=dict)
+
+
 class HandleValidationRequest(BaseModel):
     graph: HybridGraph
 
