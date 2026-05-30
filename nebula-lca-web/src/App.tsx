@@ -6326,6 +6326,7 @@ export default function App() {
               <PtsVersionHistoryDialog
                 open={ptsHistoryOpen}
                 loading={ptsHistoryLoading}
+                projectId={projectId}
                 ptsName={activePtsNode?.data.name ?? ""}
                 ptsUuid={activePtsUuid ?? ""}
                 compileItems={ptsCompileHistory}

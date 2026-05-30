@@ -1,8 +1,12 @@
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
-from app.models import FlowRecord, PtsCompileArtifact, UnitDefinition, UnitGroup
+from app.api.pts import get_pts_artifact_diagnostics
+from app.database import Base
+from app.models import FlowRecord, PtsCompileArtifact, PtsExternalArtifact, PtsResource, UnitDefinition, UnitGroup
 from app.pts_compile import compile_pts
 from app.schemas import HybridGraph
 from app.services.pts_resources import build_pts_external_payload
@@ -290,3 +294,93 @@ def test_pts_publish_payload_preserves_scaled_virtual_process_audit(monkeypatch)
     assert vp["normalization_reference_amount"] == pytest.approx(1.3333333333333333)
     assert vp["elementary_flows"][0]["amount"] == pytest.approx(33.33333333333333)
     assert payload["frontend_ports"]["outputs"][0]["unitGroup"] == "Units of mass"
+
+
+def test_pts_artifact_diagnostics_exposes_payload_and_stale_hash(tmp_path):
+    db_path = tmp_path / "pts-artifact-diagnostics.db"
+    engine = create_engine(f"sqlite:///{db_path}", future=True)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    artifact = {
+        "virtual_processes": [
+            {
+                "process_uuid": "vp-1",
+                "process_name": "virtual gas",
+                "product_key": "proc::gas",
+                "source_process_uuid": "proc-1",
+                "source_node_id": "node-1",
+                "source_port_id": "out-gas",
+                "allocation_fraction": 0.5,
+                "normalization_reference_amount": 2.0,
+                "reference_unit": "kg",
+                "reference_unit_group": "Units of mass",
+                "reference_product": {"flowUuid": "gas-flow", "name": "gas", "amount": 1.0, "unit": "kg"},
+                "technosphere_inputs": [{"flowUuid": "input-flow", "amount": 3.0, "unit": "kg"}],
+                "elementary_flows": [{"flowUuid": "co2-flow", "amount": 4.0, "unit": "kg"}],
+            }
+        ]
+    }
+    compile_row = PtsCompileArtifact(
+        project_id="project-1",
+        pts_node_id="pts-node",
+        pts_uuid="pts-diag",
+        graph_hash="compiled-hash",
+        compile_version=7,
+        ok=True,
+        matrix_size=1,
+        invertible=True,
+        errors_json=[],
+        warnings_json=[],
+        artifact_json=artifact,
+    )
+    db.add(
+        PtsResource(
+            project_id="project-1",
+            pts_uuid="pts-diag",
+            pts_node_id="pts-node",
+            latest_graph_hash="current-hash",
+            active_published_version=3,
+        )
+    )
+    db.add(compile_row)
+    db.commit()
+    db.refresh(compile_row)
+    db.add(
+        PtsExternalArtifact(
+            project_id="project-1",
+            pts_uuid="pts-diag",
+            pts_node_id="pts-node",
+            graph_hash="compiled-hash",
+            published_version=3,
+            source_compile_id=compile_row.id,
+            source_compile_version=7,
+            artifact_json=artifact,
+        )
+    )
+    db.commit()
+
+    compile_diag = get_pts_artifact_diagnostics(
+        pts_uuid="pts-diag",
+        project_id="project-1",
+        kind="compile",
+        artifact_id=None,
+        version=7,
+        db=db,
+    )
+    published_diag = get_pts_artifact_diagnostics(
+        pts_uuid="pts-diag",
+        project_id="project-1",
+        kind="published",
+        artifact_id=None,
+        version=3,
+        db=db,
+    )
+
+    assert compile_diag.stale_against_resource is True
+    assert compile_diag.summary["virtual_process_count"] == 1
+    assert compile_diag.virtual_processes[0]["source_port_id"] == "out-gas"
+    assert compile_diag.virtual_processes[0]["allocation_fraction"] == pytest.approx(0.5)
+    assert published_diag.source_compile_version == 7
+    assert published_diag.artifact["virtual_processes"][0]["product_key"] == "proc::gas"
+    db.close()
