@@ -39,6 +39,24 @@ type RemoteSearchResponse = {
   has_more: boolean;
 };
 
+type RemoteSyncResponse = {
+  job_id: string;
+  status: string;
+  tidas_import_job_id?: string | null;
+  tidas_import_report?: {
+    import_type?: string;
+    inserted?: number;
+    updated?: number;
+    skipped?: number;
+    failed?: number;
+    warning_count?: number;
+    unresolved_count?: number;
+    created_projects?: Array<{ project_id?: string; name?: string; version?: number }>;
+    errors?: string[];
+    warnings?: string[];
+  } | null;
+};
+
 type Props = {
   uiLanguage: UiLanguage;
   onStatus?: (text: string) => void;
@@ -90,6 +108,7 @@ export function ExternalPlatformAccounts(props: Props) {
   const [remoteResult, setRemoteResult] = useState<RemoteSearchResponse | null>(null);
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [syncingKey, setSyncingKey] = useState("");
+  const [lastSync, setLastSync] = useState<RemoteSyncResponse | null>(null);
 
   const tiangongAccounts = useMemo(
     () => accounts.filter((account) => account.platform === "tiangong"),
@@ -252,6 +271,7 @@ export function ExternalPlatformAccounts(props: Props) {
       );
       setRemoteResult(payload);
       setRemotePage(payload.page);
+      setLastSync(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : "search failed";
       setErrorText(zh ? `远程查询失败：${message}` : `Remote search failed: ${message}`);
@@ -273,12 +293,20 @@ export function ExternalPlatformAccounts(props: Props) {
           : remoteKind === "processes"
             ? { remote_process_id: remoteId, remote_version: item.remote_version ?? null }
             : { remote_model_id: remoteId, remote_version: item.remote_version ?? null, project_name: item.model_name ?? undefined };
-      await requestJson(`${API_BASE}/data-platforms/accounts/${encodeURIComponent(selectedAccount.id)}/${remoteKind}/sync`, {
+      const result = await requestJson<RemoteSyncResponse>(`${API_BASE}/data-platforms/accounts/${encodeURIComponent(selectedAccount.id)}/${remoteKind}/sync`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      onStatus?.(zh ? "已按需导入选中远程数据。" : "Selected remote data imported on demand.");
+      setLastSync(result);
+      const report = result.tidas_import_report;
+      const failed = Number(report?.failed ?? 0);
+      const warnings = Number(report?.warning_count ?? 0) + Number(report?.unresolved_count ?? 0);
+      onStatus?.(
+        zh
+          ? `已按需导入：新增 ${report?.inserted ?? 0}，更新 ${report?.updated ?? 0}，失败 ${failed}，警告 ${warnings}。`
+          : `Imported on demand: ${report?.inserted ?? 0} inserted, ${report?.updated ?? 0} updated, ${failed} failed, ${warnings} warnings.`,
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : "sync failed";
       setErrorText(zh ? `导入失败：${message}` : `Import failed: ${message}`);
@@ -527,6 +555,25 @@ export function ExternalPlatformAccounts(props: Props) {
             </button>
           </div>
         </div>
+        {lastSync?.tidas_import_report && (
+          <div className="pm-remote-sync-report">
+            <div>
+              <strong>{zh ? "最近导入" : "Last Import"}</strong>
+              <span>{lastSync.tidas_import_report.import_type ?? remoteKind}</span>
+              <span>Job {lastSync.tidas_import_job_id ?? lastSync.job_id}</span>
+            </div>
+            <div>
+              <span>{zh ? `新增 ${lastSync.tidas_import_report.inserted ?? 0}` : `${lastSync.tidas_import_report.inserted ?? 0} inserted`}</span>
+              <span>{zh ? `更新 ${lastSync.tidas_import_report.updated ?? 0}` : `${lastSync.tidas_import_report.updated ?? 0} updated`}</span>
+              <span>{zh ? `跳过 ${lastSync.tidas_import_report.skipped ?? 0}` : `${lastSync.tidas_import_report.skipped ?? 0} skipped`}</span>
+              <span>{zh ? `失败 ${lastSync.tidas_import_report.failed ?? 0}` : `${lastSync.tidas_import_report.failed ?? 0} failed`}</span>
+              <span>{zh ? `警告 ${Number(lastSync.tidas_import_report.warning_count ?? 0) + Number(lastSync.tidas_import_report.unresolved_count ?? 0)}` : `${Number(lastSync.tidas_import_report.warning_count ?? 0) + Number(lastSync.tidas_import_report.unresolved_count ?? 0)} warnings`}</span>
+            </div>
+            {(lastSync.tidas_import_report.errors?.[0] || lastSync.tidas_import_report.warnings?.[0]) && (
+              <p>{lastSync.tidas_import_report.errors?.[0] ?? lastSync.tidas_import_report.warnings?.[0]}</p>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="pm-platform-note pm-send-placeholder">

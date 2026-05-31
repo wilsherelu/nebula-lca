@@ -4985,6 +4985,37 @@ body,
   font-size: 12px;
 }
 
+.pm-remote-sync-report {
+  margin-top: 10px;
+  border: 1px solid #d7e2e8;
+  border-radius: 8px;
+  background: #f8fbfc;
+  padding: 10px 12px;
+  color: #3a5e70;
+  font-size: 12px;
+}
+
+.pm-remote-sync-report > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+}
+
+.pm-remote-sync-report > div + div {
+  margin-top: 6px;
+}
+
+.pm-remote-sync-report strong {
+  color: #244b5d;
+}
+
+.pm-remote-sync-report p {
+  margin: 8px 0 0;
+  color: #7a4f1c;
+  line-height: 1.45;
+}
+
 .pm-send-placeholder {
   justify-content: space-between;
 }
