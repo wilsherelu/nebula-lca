@@ -5,8 +5,8 @@ the router is included in main.py via ``app.include_router(_base_router)``.
 
 URL paths preserved to match the original ``@app.xxx`` registrations.
 
-Complex parsing/graph helpers are imported lazily from main.py via
-``_ensure_tidas_helpers()`` to avoid circular dependencies.
+Complex parsing/graph helpers are imported lazily from the shared TIDAS
+import core so upload routes and remote platform sync use the same semantics.
 """
 
 from __future__ import annotations
@@ -37,12 +37,12 @@ _tidas_helpers = None
 
 
 def _ensure_tidas_helpers():
-    """Lazily import shared helpers from main.py to break circular deps."""
+    """Lazily import shared helpers from service code to break circular deps."""
     global _tidas_helpers
     if _tidas_helpers is not None:
         return
     # fmt: off
-    from ..main import (
+    from ..services.tidas_import_core import (
         TIDAS_FLOW_IMPORT_SOURCE,
         TIDAS_BUNDLE_FLOW_IMPORT_SOURCE,
         _safe_str,

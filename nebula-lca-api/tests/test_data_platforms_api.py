@@ -18,6 +18,7 @@ from app.models import (
     DataPlatformAccountSession,
     DataPlatformRemoteCache,
     DataPlatformSyncJob,
+    DebugDiagnostic,
     ExternalDataSyncRecord,
     FlowRecord,
     LciBiosphereFlowKey,
@@ -45,6 +46,7 @@ def setup_db(monkeypatch):
     try:
         db.execute(ExternalDataSyncRecord.__table__.delete())
         db.execute(DataPlatformSyncJob.__table__.delete())
+        db.execute(DebugDiagnostic.__table__.delete())
         db.execute(DataPlatformRemoteCache.__table__.delete())
         db.execute(DataPlatformAccountSession.__table__.delete())
         db.execute(DataPlatformAccount.__table__.delete())
@@ -504,6 +506,9 @@ def test_tiangong_supabase_search_and_selected_sync(client, monkeypatch):
     assert flow_sync.status_code == 200, flow_sync.text
     assert process_sync.status_code == 200, process_sync.text
     assert model_sync.status_code == 200, model_sync.text
+    assert flow_sync.json()["tidas_import_job_id"]
+    assert process_sync.json()["tidas_import_report"]["import_type"] == "processes"
+    assert model_sync.json()["tidas_import_report"]["created_projects"]
     assert any("/auth/v1/token" in call["url"] for call in calls)
     assert any("/rest/v1/rpc/search_flows_latest" in call["url"] for call in calls)
     db = _db_module.SessionLocal()
@@ -519,6 +524,7 @@ def test_tiangong_supabase_search_and_selected_sync(client, monkeypatch):
         assert db.query(ReferenceProcess).count() == 1
         assert db.query(Model).count() == 1
         assert db.query(ModelVersion).count() == 1
+        assert db.query(DebugDiagnostic).count() >= 3
         assert db.query(ExternalDataSyncRecord).count() >= 4
     finally:
         db.close()
