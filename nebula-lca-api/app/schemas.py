@@ -1530,6 +1530,160 @@ class UploadChunkCompleteResponse(BaseModel):
 
 
 # ======================================================================
+# External LCA Data Platform Schemas
+# ======================================================================
+
+DataPlatformName = Literal["tiangong", "hiqlcd", "custom", "mock"]
+DataPlatformAuthType = Literal["none", "api_key", "bearer", "basic", "custom"]
+
+
+class DataPlatformCredentialInput(BaseModel):
+    api_key: str | None = None
+    token: str | None = None
+    username: str | None = None
+    password: str | None = None
+    extra: dict = Field(default_factory=dict)
+
+
+class DataPlatformAccountCreateRequest(BaseModel):
+    platform: DataPlatformName
+    alias: str
+    base_url: str | None = None
+    auth_type: DataPlatformAuthType = "api_key"
+    credential: DataPlatformCredentialInput | None = None
+    status: Literal["active", "disabled"] = "disabled"
+    metadata: dict = Field(default_factory=dict)
+
+
+class DataPlatformAccountUpdateRequest(BaseModel):
+    alias: str | None = None
+    base_url: str | None = None
+    auth_type: DataPlatformAuthType | None = None
+    credential: DataPlatformCredentialInput | None = None
+    status: Literal["active", "disabled"] | None = None
+    metadata: dict | None = None
+
+
+class DataPlatformAccountOut(BaseModel):
+    id: str
+    platform: str
+    alias: str
+    base_url: str | None = None
+    auth_type: str
+    status: str
+    has_credential: bool = False
+    last_validated_at: datetime | None = None
+    last_validation_status: str | None = None
+    last_validation_message: str | None = None
+    metadata: dict = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class DataPlatformConnectionTestResponse(BaseModel):
+    ok: bool
+    status: str
+    message: str
+    checked_at: datetime
+
+
+class RemoteFlowItem(BaseModel):
+    remote_id: str
+    flow_uuid: str
+    flow_name: str
+    flow_name_en: str | None = None
+    flow_type: str = "Product flow"
+    default_unit: str = "kg"
+    unit_group: str = "Units of mass"
+    source: str | None = None
+    remote_version: str | None = None
+    metadata: dict = Field(default_factory=dict)
+
+
+class RemoteProcessItem(BaseModel):
+    remote_id: str
+    process_uuid: str
+    process_name: str
+    process_type: str = "unit_process"
+    reference_flow_uuid: str | None = None
+    source: str | None = None
+    remote_version: str | None = None
+    metadata: dict = Field(default_factory=dict)
+
+
+class RemoteModelItem(BaseModel):
+    remote_id: str
+    model_uuid: str
+    model_name: str
+    source: str | None = None
+    remote_version: str | None = None
+    metadata: dict = Field(default_factory=dict)
+    model_config = ConfigDict(protected_namespaces=())
+
+
+class DataPlatformSearchResponse(BaseModel):
+    account_id: str
+    platform: str
+    query: str
+    page: int = 1
+    page_size: int = 20
+    has_more: bool = False
+    total: int = 0
+    items: list[RemoteFlowItem | RemoteProcessItem | RemoteModelItem] = Field(default_factory=list)
+
+
+class DataPlatformSyncFlowRequest(BaseModel):
+    remote_flow_id: str
+    remote_version: str | None = None
+    overwrite: bool = True
+
+
+class DataPlatformSyncFlowResponse(BaseModel):
+    job_id: str
+    account_id: str
+    platform: str
+    status: str
+    flow_uuid: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    synced_records: list[dict] = Field(default_factory=list)
+
+
+class DataPlatformSyncProcessRequest(BaseModel):
+    remote_process_id: str
+    remote_version: str | None = None
+    overwrite: bool = True
+
+
+class DataPlatformSyncProcessResponse(BaseModel):
+    job_id: str
+    account_id: str
+    platform: str
+    status: str
+    process_uuid: str | None = None
+    flow_count: int = 0
+    warnings: list[str] = Field(default_factory=list)
+    synced_records: list[dict] = Field(default_factory=list)
+
+
+class DataPlatformSyncModelRequest(BaseModel):
+    remote_model_id: str
+    remote_version: str | None = None
+    project_name: str | None = None
+    overwrite: bool = True
+
+
+class DataPlatformSyncModelResponse(BaseModel):
+    job_id: str
+    account_id: str
+    platform: str
+    status: str
+    project_id: str | None = None
+    version: int | None = None
+    warnings: list[str] = Field(default_factory=list)
+    synced_records: list[dict] = Field(default_factory=list)
+
+
+# ======================================================================
 # Import Job Schemas
 # ======================================================================
 

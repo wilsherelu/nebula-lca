@@ -299,6 +299,7 @@ app.include_router(_ref_catalog_base_router)
 # ── reference_data router (Stage 6B-lite: stats only) ──
 from .api.reference_data import _api_router as _reference_data_api_router
 from .api.pts import _pts_base_router, _pts_api_router
+from .api.data_platforms import api_router as _data_platforms_router
 from .api.reference_data import _base_router as _reference_data_base_router
 
 app.include_router(_ref_catalog_api_router)
@@ -306,6 +307,7 @@ app.include_router(_reference_data_base_router)
 app.include_router(_reference_data_api_router)
 app.include_router(_pts_base_router)
 app.include_router(_pts_api_router)
+app.include_router(_data_platforms_router)
 
 
 @app.get("/health")
