@@ -1,6 +1,7 @@
 ﻿import { useEffect, useRef, useState } from "react";
 import { CreateFlowDialog } from "../CreateFlowDialog";
 import Ef31ImportJobPanel from "../Ef31ImportJobPanel";
+import { ExternalPlatformAccounts } from "../ExternalPlatformAccounts";
 import { FlowAllocationPropertiesModal, type FlowAllocationProperty } from "../FlowAllocationPropertiesModal";
 import { TidasLocationCascade, normalizeTidasLocationValue } from "../TidasLocationCascade";
 
@@ -168,8 +169,8 @@ const getDisplayProcessName = (
   return row.processName;
 };
 
-type NavModule = "project" | "process" | "flow";
-type NavItem = "recent_projects" | "all_projects" | "all_processes" | "all_flows";
+type NavModule = "project" | "process" | "flow" | "platform";
+type NavItem = "recent_projects" | "all_projects" | "all_processes" | "all_flows" | "external_platforms";
 export type TidasRepairTarget = Record<string, unknown> & {
   desired_inspector_tab?: "external_in" | "external_out";
   desired_process_modal?: "metadata";
@@ -2331,6 +2332,20 @@ export function ProjectManagement(props: Props) {
               {zh ? "LCI 数据库" : "LCI Database"}
             </button>
           </div>
+
+          <div className="pm-sidebar-section">
+            <div className="pm-sidebar-title">{zh ? "外部平台" : "External Platforms"}</div>
+            <button
+              type="button"
+              className={`pm-nav-item ${activeItem === "external_platforms" ? "active" : ""}`}
+              onClick={() => {
+                setActiveModule("platform");
+                setActiveItem("external_platforms");
+              }}
+            >
+              {zh ? "账号绑定" : "Accounts"}
+            </button>
+          </div>
         </aside>
 
         <main className="pm-main">
@@ -2680,6 +2695,10 @@ export function ProjectManagement(props: Props) {
               </div>
               {renderPagination(flowPage, flowTotal, flowPageSize, setFlowPage)}
             </section>
+          )}
+
+          {activeModule === "platform" && (
+            <ExternalPlatformAccounts uiLanguage={uiLanguage} onStatus={onStatus} />
           )}
         </main>
       </div>

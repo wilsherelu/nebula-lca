@@ -309,6 +309,103 @@ class LciProcessVector(Base):
 
 
 # ======================================================================
+# External LCA Data Platform Integration
+# ======================================================================
+
+
+class DataPlatformAccount(Base):
+    """Configured account for an external LCA data platform."""
+
+    __tablename__ = "data_platform_accounts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    platform: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    alias: Mapped[str] = mapped_column(String(255), nullable=False)
+    base_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    auth_type: Mapped[str] = mapped_column(String(32), nullable=False, default="api_key")
+    credential_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="disabled", index=True)
+    last_validated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_validation_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    last_validation_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column(JsonType, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class DataPlatformAccountSession(Base):
+    """Encrypted session cache for an external platform account."""
+
+    __tablename__ = "data_platform_account_sessions"
+    __table_args__ = (
+        UniqueConstraint("account_id", name="uq_data_platform_account_session_account"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    account_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    session_ciphertext: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class DataPlatformRemoteCache(Base):
+    """Short-lived normalized cache for remote platform search/detail payloads."""
+
+    __tablename__ = "data_platform_remote_cache"
+    __table_args__ = (
+        UniqueConstraint("account_id", "remote_kind", "remote_id", name="uq_data_platform_remote_cache_identity"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    account_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    remote_kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    remote_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    query_key: Mapped[str | None] = mapped_column(String(512), nullable=True, index=True)
+    payload_json: Mapped[dict] = mapped_column(JsonType, nullable=False, default=dict)
+    cached_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class DataPlatformSyncJob(Base):
+    """Remote data synchronization job independent from local EF31 ImportJob."""
+
+    __tablename__ = "data_platform_sync_jobs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    account_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    remote_process_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    phase: Mapped[str] = mapped_column(String(32), nullable=False, default="created")
+    stats_json: Mapped[dict | None] = mapped_column(JsonType, nullable=True)
+    error_summary: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class ExternalDataSyncRecord(Base):
+    """Lineage mapping between remote platform entities and local catalog records."""
+
+    __tablename__ = "external_data_sync_records"
+    __table_args__ = (
+        UniqueConstraint("account_id", "local_kind", "local_uuid", name="uq_external_sync_local_record"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    account_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    local_kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    local_uuid: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    remote_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    remote_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column(JsonType, nullable=True)
+    synced_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+# ======================================================================
 # Ecoinvent Import Task System
 # ======================================================================
 

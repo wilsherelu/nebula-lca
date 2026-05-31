@@ -46,6 +46,7 @@ class Settings(BaseModel):
     auto_bootstrap_reference_data_on_startup: bool = _env_bool("AUTO_BOOTSTRAP_REFERENCE_DATA_ON_STARTUP", True)
     import_cache_retention_hours: int = int(os.getenv("IMPORT_CACHE_RETENTION_HOURS", "24"))
     import_cache_cleanup_on_terminal: bool = _env_bool("IMPORT_CACHE_CLEANUP_ON_TERMINAL", True)
+    data_platform_credential_key: str = os.getenv("DATA_PLATFORM_CREDENTIAL_KEY", "")
 
 
 settings = Settings()
