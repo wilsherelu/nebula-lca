@@ -1644,6 +1644,8 @@ class DataPlatformSyncFlowResponse(BaseModel):
     platform: str
     status: str
     flow_uuid: str | None = None
+    tidas_import_job_id: str | None = None
+    tidas_import_report: dict | None = None
     warnings: list[str] = Field(default_factory=list)
     synced_records: list[dict] = Field(default_factory=list)
 
@@ -1661,6 +1663,8 @@ class DataPlatformSyncProcessResponse(BaseModel):
     status: str
     process_uuid: str | None = None
     flow_count: int = 0
+    tidas_import_job_id: str | None = None
+    tidas_import_report: dict | None = None
     warnings: list[str] = Field(default_factory=list)
     synced_records: list[dict] = Field(default_factory=list)
 
@@ -1679,6 +1683,8 @@ class DataPlatformSyncModelResponse(BaseModel):
     status: str
     project_id: str | None = None
     version: int | None = None
+    tidas_import_job_id: str | None = None
+    tidas_import_report: dict | None = None
     warnings: list[str] = Field(default_factory=list)
     synced_records: list[dict] = Field(default_factory=list)
 
