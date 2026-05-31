@@ -1395,30 +1395,112 @@ def _ensure_unit_group_source_columns() -> dict:
     return ensure_unit_group_source_columns(engine)
 
 
-def _repair_builtin_elementary_flow_sources(*, db: Session) -> dict:
+# ---------------------------------------------------------------------------
+# Startup maintenance (repair / backfill) — runs once per marker version
+# ---------------------------------------------------------------------------
+
+_STARTUP_MAINTENANCE_KEYS = frozenset({
+    "backfill_tidas_unit_group_sources:v1",
+    "backfill_ecoinvent_unit_group_sources:v1",
+})
+
+
+def _is_maintenance_done(db: Session, key: str) -> bool:
+    """Return True if a diagnostic row for *key* already exists.
+
+    Uses the indexed *diagnostic_type* column with a key suffix so SQLite
+    can use the index and avoid a full-table scan on every startup.
+    """
+    count = (
+        db.query(func.count(DebugDiagnostic.id))
+        .filter(DebugDiagnostic.diagnostic_type == key)
+        .scalar()
+    )
+    return bool(count > 0)
+
+
+def _mark_maintenance_done(db: Session, key: str) -> None:
+    """Write a no-op diagnostic row to mark the maintenance step as complete."""
+    row = DebugDiagnostic(
+        diagnostic_type=key,
+        payload_json={"step": "startup_maintenance"},
+        result_json={"status": "done"},
+    )
+    db.add(row)
+
+
+def _run_startup_maintenance(*, db: Session) -> None:
+    if not settings.auto_startup_maintenance_on_startup:
+        print("[startup-maintenance] disabled by AUTO_STARTUP_MAINTENANCE_ON_STARTUP=false — all steps skipped")
+        return
+
+    steps = [
+        ("backfill_tidas_unit_group_sources:v1", lambda d: backfill_tidas_unit_group_sources(d)),
+        ("backfill_ecoinvent_unit_group_sources:v1", lambda d: backfill_ecoinvent_unit_group_sources(d)),
+    ]
+
+    for key, fn in steps:
+        start = time.monotonic()
+        if _is_maintenance_done(db, key):
+            elapsed = time.monotonic() - start
+            print(f"[startup-maintenance] {key} skipped (marker exists) duration={elapsed:.3f}s")
+            continue
+        try:
+            result = fn(db)
+            _mark_maintenance_done(db, key)
+            db.commit()
+            elapsed = time.monotonic() - start
+            print(f"[startup-maintenance] {key} completed result={result} duration={elapsed:.3f}s")
+        except Exception as exc:
+            db.rollback()
+            elapsed = time.monotonic() - start
+            print(f"[startup-maintenance] {key} FAILED after {elapsed:.3f}s: {exc}")
+            raise
+
+
+def _read_builtin_flow_uuids() -> list[str] | None:
+    """Return sorted list of flow_uuids from the builtin CSV, or None if missing."""
     data_root = Path(__file__).resolve().parents[1] / "data" / "Tiangong"
     elementary_flows_path = data_root / "elementary_flows_sample.csv"
     if not elementary_flows_path.exists():
-        return {"updated": 0, "reason": "source_file_missing"}
-
-    updated = 0
+        return None
+    uuids: list[str] = []
     with elementary_flows_path.open("r", encoding="utf-8-sig", newline="") as handle:
         for row in csv.DictReader(handle):
             flow_uuid = str(row.get("flow_uuid") or "").strip()
-            if not flow_uuid:
-                continue
-            item = db.get(FlowRecord, flow_uuid)
-            if item is None:
-                continue
-            source = str(item.source or "").strip().lower()
-            if source not in {"ecoinvent", "ecoinvent_3.11"}:
-                continue
-            item.source = BUILTIN_ELEMENTARY_FLOW_SOURCE
-            updated += 1
+            if flow_uuid:
+                uuids.append(flow_uuid)
+    return sorted(uuids)
 
-    if updated:
-        db.commit()
-    return {"updated": updated}
+
+def _repair_builtin_elementary_flow_sources(*, db: Session) -> dict:
+    uuids = _read_builtin_flow_uuids()
+    if not uuids:
+        return {"updated": 0, "reason": "source_file_missing"}
+
+    # Keep chunks deliberately small so SQLite never receives a huge expanding
+    # IN parameter list during startup.
+    CHUNK_SIZE = 500
+    repairable_sources = {"ecoinvent", "ecoinvent_3.11"}
+
+    total_updated = 0
+    for i in range(0, len(uuids), CHUNK_SIZE):
+        chunk = uuids[i : i + CHUNK_SIZE]
+        rows = (
+            db.query(FlowRecord)
+            .filter(
+                FlowRecord.flow_uuid.in_(chunk),
+                FlowRecord.source.in_(repairable_sources),
+            )
+            .all()
+        )
+        for item in rows:
+            item.source = BUILTIN_ELEMENTARY_FLOW_SOURCE
+        if rows:
+            db.commit()
+        total_updated += len(rows)
+
+    return {"updated": total_updated, "total_candidates": len(uuids)}
 
 
 @app.on_event("startup")
@@ -1431,11 +1513,7 @@ def _ensure_source_compliance_schema_on_startup() -> None:
     db = SessionLocal()
     try:
         _bootstrap_reference_data_if_needed(db=db)
-        repair_result = _repair_builtin_elementary_flow_sources(db=db)
-        if repair_result.get("updated"):
-            print(f"[startup-bootstrap] repaired builtin elementary flow sources: updated={repair_result.get('updated')}")
-        backfill_tidas_unit_group_sources(db)
-        backfill_ecoinvent_unit_group_sources(db)
+        _run_startup_maintenance(db=db)
     finally:
         db.close()
 

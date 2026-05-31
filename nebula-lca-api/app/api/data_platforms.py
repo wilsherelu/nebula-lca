@@ -26,6 +26,7 @@ from ..schemas import (
     DataPlatformAccountOut,
     DataPlatformAccountUpdateRequest,
     DataPlatformConnectionTestResponse,
+    DataPlatformRemotePreviewResponse,
     DataPlatformSearchResponse,
     DataPlatformSyncFlowRequest,
     DataPlatformSyncFlowResponse,
@@ -40,6 +41,7 @@ from ..schemas import (
 from ..services.catalog_cache import invalidate_management_caches
 from ..services.data_platform_connectors import (
     ConnectorError,
+    CredentialError,
     PlatformAccountContext,
     RemoteFlowDTO,
     RemoteModelDTO,
@@ -61,6 +63,26 @@ api_router = APIRouter(prefix="/api/data-platforms", tags=["data-platforms"])
 
 def _safe_str(value: object) -> str:
     return str(value or "").strip()
+
+
+def _credential_config_error(exc: CredentialError) -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail={
+            "code": "DATA_PLATFORM_CREDENTIAL_KEY_REQUIRED",
+            "message": str(exc),
+        },
+    )
+
+
+def _connector_error(exc: ConnectorError) -> HTTPException:
+    return HTTPException(
+        status_code=502,
+        detail={
+            "code": "DATA_PLATFORM_CONNECTOR_ERROR",
+            "message": str(exc),
+        },
+    )
 
 
 def _account_or_404(db: Session, account_id: str) -> DataPlatformAccount:
@@ -162,6 +184,170 @@ def _remote_model_item(item: RemoteModelDTO) -> RemoteModelItem:
         source=item.source,
         remote_version=item.remote_version,
         metadata=item.metadata,
+    )
+
+
+def _as_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def _localized_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        preferred = ""
+        for item in value:
+            if isinstance(item, dict) and str(item.get("@xml:lang") or "").lower().startswith("zh"):
+                preferred = _localized_text(item)
+                if preferred:
+                    return preferred
+            text = _localized_text(item)
+            if text and not preferred:
+                preferred = text
+        return preferred
+    if isinstance(value, dict):
+        for key in ("#text", "@value", "value", "text"):
+            text = _safe_str(value.get(key))
+            if text:
+                return text
+        for key in ("baseName", "common:baseName", "name", "common:name", "shortDescription", "common:shortDescription"):
+            text = _localized_text(value.get(key))
+            if text:
+                return text
+    return ""
+
+
+def _dataset_info(payload: dict[str, Any], dataset_key: str, info_key: str) -> dict[str, Any]:
+    dataset = payload.get(dataset_key) if isinstance(payload.get(dataset_key), dict) else payload
+    info = dataset.get(info_key) if isinstance(dataset, dict) and isinstance(dataset.get(info_key), dict) else {}
+    data_set_info = info.get("dataSetInformation") if isinstance(info.get("dataSetInformation"), dict) else {}
+    return data_set_info
+
+
+def _dataset_comment(data_set_info: dict[str, Any]) -> str:
+    return _localized_text(data_set_info.get("common:generalComment") or data_set_info.get("generalComment"))
+
+
+def _dataset_name(data_set_info: dict[str, Any], fallback: str) -> str:
+    return _localized_text(data_set_info.get("name") or data_set_info.get("common:name")) or fallback
+
+
+def _classification_path(data_set_info: dict[str, Any]) -> str:
+    raw = (
+        data_set_info.get("classificationInformation", {})
+        .get("common:classification", {})
+        .get("common:class")
+        if isinstance(data_set_info.get("classificationInformation"), dict)
+        else None
+    )
+    names = [_localized_text(item) for item in _as_list(raw)]
+    return " > ".join(item for item in names if item)
+
+
+def _process_exchanges_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    dataset = payload.get("processDataSet") if isinstance(payload.get("processDataSet"), dict) else payload
+    exchanges = dataset.get("exchanges") if isinstance(dataset, dict) else None
+    raw = exchanges.get("exchange") if isinstance(exchanges, dict) else exchanges
+    return [item for item in _as_list(raw) if isinstance(item, dict)]
+
+
+def _model_process_instances(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    dataset = payload.get("lifeCycleModelDataSet") if isinstance(payload.get("lifeCycleModelDataSet"), dict) else payload
+    info = dataset.get("lifeCycleModelInformation") if isinstance(dataset, dict) else None
+    technology = info.get("technology") if isinstance(info, dict) else None
+    processes = technology.get("processes") if isinstance(technology, dict) else None
+    raw = processes.get("processInstance") if isinstance(processes, dict) else None
+    return [item for item in _as_list(raw) if isinstance(item, dict)]
+
+
+def _preview_from_flow(account: DataPlatformAccount, flow: RemoteFlowDTO) -> DataPlatformRemotePreviewResponse:
+    row = flow.metadata.get("row") if isinstance(flow.metadata, dict) and isinstance(flow.metadata.get("row"), dict) else {}
+    payload = _remote_raw_row(flow.metadata, row)
+    data_info = _dataset_info(payload, "flowDataSet", "flowInformation")
+    return DataPlatformRemotePreviewResponse(
+        account_id=account.id,
+        platform=account.platform,
+        remote_kind="flow",
+        remote_id=flow.remote_id,
+        remote_version=flow.remote_version,
+        title=flow.flow_name or _dataset_name(data_info, flow.flow_uuid),
+        description=_dataset_comment(data_info),
+        summary={
+            "uuid": flow.flow_uuid,
+            "flow_type": flow.flow_type,
+            "default_unit": flow.default_unit,
+            "unit_group": flow.unit_group,
+            "classification": _classification_path(data_info),
+        },
+    )
+
+
+def _preview_from_process(account: DataPlatformAccount, detail: Any) -> DataPlatformRemotePreviewResponse:
+    process = detail.process
+    payload = detail.process_json if isinstance(detail.process_json, dict) else {}
+    data_info = _dataset_info(payload, "processDataSet", "processInformation")
+    exchanges = _process_exchanges_from_payload(payload)
+    input_count = sum(1 for item in exchanges if _safe_str(item.get("exchangeDirection")).lower() == "input")
+    output_count = sum(1 for item in exchanges if _safe_str(item.get("exchangeDirection")).lower() == "output")
+    samples = []
+    for exchange in exchanges[:5]:
+        ref = exchange.get("referenceToFlowDataSet") if isinstance(exchange.get("referenceToFlowDataSet"), dict) else {}
+        samples.append({
+            "direction": exchange.get("exchangeDirection"),
+            "flow_id": ref.get("@refObjectId") or ref.get("refObjectId") or exchange.get("flow_uuid") or exchange.get("flowUuid"),
+            "name": _localized_text(ref.get("common:shortDescription") or ref.get("shortDescription")) or _safe_str(exchange.get("flow_name") or exchange.get("flowName")),
+            "amount": exchange.get("meanAmount") or exchange.get("resultingAmount"),
+        })
+    return DataPlatformRemotePreviewResponse(
+        account_id=account.id,
+        platform=account.platform,
+        remote_kind="process",
+        remote_id=process.remote_id,
+        remote_version=process.remote_version,
+        title=process.process_name or _dataset_name(data_info, process.process_uuid),
+        description=_dataset_comment(data_info),
+        summary={
+            "uuid": process.process_uuid,
+            "process_type": process.process_type,
+            "reference_flow_uuid": process.reference_flow_uuid,
+            "classification": _classification_path(data_info),
+            "exchange_count": len(exchanges),
+            "input_count": input_count,
+            "output_count": output_count,
+        },
+        related=samples,
+    )
+
+
+def _preview_from_model(account: DataPlatformAccount, detail: Any) -> DataPlatformRemotePreviewResponse:
+    model = detail.model
+    payload = detail.model_json if isinstance(detail.model_json, dict) else {}
+    data_info = _dataset_info(payload, "lifeCycleModelDataSet", "lifeCycleModelInformation")
+    instances = _model_process_instances(payload)
+    samples = []
+    for item in instances[:5]:
+        ref = item.get("referenceToProcess") if isinstance(item.get("referenceToProcess"), dict) else {}
+        samples.append({
+            "process_id": ref.get("@refObjectId") or ref.get("refObjectId"),
+            "name": _localized_text(ref.get("common:shortDescription") or ref.get("shortDescription")),
+            "factor": item.get("@multiplicationFactor") or item.get("multiplicationFactor"),
+        })
+    return DataPlatformRemotePreviewResponse(
+        account_id=account.id,
+        platform=account.platform,
+        remote_kind="model",
+        remote_id=model.remote_id,
+        remote_version=model.remote_version,
+        title=model.model_name or _dataset_name(data_info, model.model_uuid),
+        description=_dataset_comment(data_info),
+        summary={
+            "uuid": model.model_uuid,
+            "classification": _classification_path(data_info),
+            "process_count": len(instances),
+        },
+        related=samples,
     )
 
 
@@ -439,12 +625,16 @@ def list_data_platform_accounts(db: Session = Depends(get_db)) -> list[DataPlatf
 
 @api_router.post("/accounts", response_model=DataPlatformAccountOut, status_code=201)
 def create_data_platform_account(payload: DataPlatformAccountCreateRequest, db: Session = Depends(get_db)) -> DataPlatformAccountOut:
+    try:
+        credential_ciphertext = encrypt_credential(payload.credential.model_dump(mode="python") if payload.credential else None)
+    except CredentialError as exc:
+        raise _credential_config_error(exc) from exc
     row = DataPlatformAccount(
         platform=payload.platform,
         alias=payload.alias.strip(),
         base_url=payload.base_url,
         auth_type=payload.auth_type,
-        credential_ciphertext=encrypt_credential(payload.credential.model_dump(mode="python") if payload.credential else None),
+        credential_ciphertext=credential_ciphertext,
         status=payload.status,
         metadata_json=payload.metadata,
     )
@@ -467,7 +657,10 @@ def update_data_platform_account(account_id: str, payload: DataPlatformAccountUp
         row.auth_type = payload.auth_type
         reset_session = True
     if payload.credential is not None:
-        row.credential_ciphertext = encrypt_credential(payload.credential.model_dump(mode="python"))
+        try:
+            row.credential_ciphertext = encrypt_credential(payload.credential.model_dump(mode="python"))
+        except CredentialError as exc:
+            raise _credential_config_error(exc) from exc
         reset_session = True
     if payload.status is not None:
         row.status = payload.status
@@ -512,11 +705,14 @@ def search_remote_flows(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     data_source: str = Query(default="tg"),
-    state_code: int = Query(default=100),
+    state_code: int | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> DataPlatformSearchResponse:
     account = _account_or_404(db, account_id)
-    result = connector_for_account(_account_context(account, db)).search_flows(q, page=page, page_size=page_size, data_source=data_source, state_code=state_code)
+    try:
+        result = connector_for_account(_account_context(account, db)).search_flows(q, page=page, page_size=page_size, data_source=data_source, state_code=state_code)
+    except ConnectorError as exc:
+        raise _connector_error(exc) from exc
     for item in result.items:
         _write_cache(db, account=account, remote_kind="flow", query_key=q, remote_id=item.remote_id, payload=_remote_flow_item(item).model_dump(mode="python"))
     db.commit()
@@ -539,11 +735,14 @@ def search_remote_processes(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     data_source: str = Query(default="tg"),
-    state_code: int = Query(default=100),
+    state_code: int | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> DataPlatformSearchResponse:
     account = _account_or_404(db, account_id)
-    result = connector_for_account(_account_context(account, db)).search_processes(q, page=page, page_size=page_size, data_source=data_source, state_code=state_code)
+    try:
+        result = connector_for_account(_account_context(account, db)).search_processes(q, page=page, page_size=page_size, data_source=data_source, state_code=state_code)
+    except ConnectorError as exc:
+        raise _connector_error(exc) from exc
     for item in result.items:
         _write_cache(db, account=account, remote_kind="process", query_key=q, remote_id=item.remote_id, payload=_remote_process_item(item).model_dump(mode="python"))
     db.commit()
@@ -566,11 +765,14 @@ def search_remote_models(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     data_source: str = Query(default="tg"),
-    state_code: int = Query(default=100),
+    state_code: int | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> DataPlatformSearchResponse:
     account = _account_or_404(db, account_id)
-    result = connector_for_account(_account_context(account, db)).search_models(q, page=page, page_size=page_size, data_source=data_source, state_code=state_code)
+    try:
+        result = connector_for_account(_account_context(account, db)).search_models(q, page=page, page_size=page_size, data_source=data_source, state_code=state_code)
+    except ConnectorError as exc:
+        raise _connector_error(exc) from exc
     for item in result.items:
         _write_cache(db, account=account, remote_kind="model", query_key=q, remote_id=item.remote_id, payload=_remote_model_item(item).model_dump(mode="python"))
     db.commit()
@@ -584,6 +786,51 @@ def search_remote_models(
         total=result.total,
         items=[_remote_model_item(item) for item in result.items],
     )
+
+
+@api_router.get("/accounts/{account_id}/flows/{remote_id}/preview", response_model=DataPlatformRemotePreviewResponse)
+def preview_remote_flow(
+    account_id: str,
+    remote_id: str,
+    remote_version: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> DataPlatformRemotePreviewResponse:
+    account = _account_or_404(db, account_id)
+    try:
+        flow = connector_for_account(_account_context(account, db)).get_flow_detail(remote_id, remote_version)
+        return _preview_from_flow(account, flow)
+    except ConnectorError as exc:
+        raise _connector_error(exc) from exc
+
+
+@api_router.get("/accounts/{account_id}/processes/{remote_id}/preview", response_model=DataPlatformRemotePreviewResponse)
+def preview_remote_process(
+    account_id: str,
+    remote_id: str,
+    remote_version: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> DataPlatformRemotePreviewResponse:
+    account = _account_or_404(db, account_id)
+    try:
+        detail = connector_for_account(_account_context(account, db)).get_process_detail(remote_id, remote_version)
+        return _preview_from_process(account, detail)
+    except ConnectorError as exc:
+        raise _connector_error(exc) from exc
+
+
+@api_router.get("/accounts/{account_id}/models/{remote_id}/preview", response_model=DataPlatformRemotePreviewResponse)
+def preview_remote_model(
+    account_id: str,
+    remote_id: str,
+    remote_version: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> DataPlatformRemotePreviewResponse:
+    account = _account_or_404(db, account_id)
+    try:
+        detail = connector_for_account(_account_context(account, db)).get_model_detail(remote_id, remote_version)
+        return _preview_from_model(account, detail)
+    except ConnectorError as exc:
+        raise _connector_error(exc) from exc
 
 
 @api_router.post("/accounts/{account_id}/flows/sync", response_model=DataPlatformSyncFlowResponse)

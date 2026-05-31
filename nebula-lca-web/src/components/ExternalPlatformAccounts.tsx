@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 
 const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
 const API_BASE = RAW_API_BASE.endsWith("/api") ? RAW_API_BASE : `${RAW_API_BASE}/api`;
+const TIANGONG_SUPABASE_URL = "https://qgzvkongdjqiiamzbbts.supabase.co";
+const TIANGONG_PUBLISHABLE_KEY = "sb_publishable_EFWH4E61tpAtf82WQ37xTA_Fxa5OPyg";
 
 type UiLanguage = "zh" | "en";
 type PlatformAccount = {
@@ -39,6 +41,17 @@ type RemoteSearchResponse = {
   has_more: boolean;
 };
 
+type RemotePreviewResponse = {
+  remote_kind: string;
+  remote_id: string;
+  remote_version?: string | null;
+  title: string;
+  description?: string | null;
+  summary?: Record<string, unknown>;
+  related?: Array<Record<string, unknown>>;
+  warnings?: string[];
+};
+
 type RemoteSyncResponse = {
   job_id: string;
   status: string;
@@ -64,10 +77,12 @@ type Props = {
 
 const emptyForm = {
   alias: "TianGong LCA",
-  baseUrl: "",
-  publishableKey: "",
+  baseUrl: TIANGONG_SUPABASE_URL,
+  publishableKey: TIANGONG_PUBLISHABLE_KEY,
   environmentLabel: "",
-  authType: "api_key" as "api_key" | "bearer",
+  authType: "basic" as "basic" | "bearer" | "api_key",
+  email: "",
+  password: "",
   secret: "",
   status: "active" as "active" | "disabled",
 };
@@ -107,6 +122,8 @@ export function ExternalPlatformAccounts(props: Props) {
   const [remotePage, setRemotePage] = useState(1);
   const [remoteResult, setRemoteResult] = useState<RemoteSearchResponse | null>(null);
   const [remoteLoading, setRemoteLoading] = useState(false);
+  const [previewLoadingKey, setPreviewLoadingKey] = useState("");
+  const [remotePreview, setRemotePreview] = useState<RemotePreviewResponse | null>(null);
   const [syncingKey, setSyncingKey] = useState("");
   const [lastSync, setLastSync] = useState<RemoteSyncResponse | null>(null);
 
@@ -156,7 +173,9 @@ export function ExternalPlatformAccounts(props: Props) {
       baseUrl: account.base_url ?? "",
       publishableKey: typeof account.metadata?.publishable_key === "string" ? account.metadata.publishable_key : "",
       environmentLabel: typeof account.metadata?.environment_label === "string" ? account.metadata.environment_label : "",
-      authType: account.auth_type === "bearer" ? "bearer" : "api_key",
+      authType: account.auth_type === "bearer" ? "bearer" : account.auth_type === "api_key" ? "api_key" : "basic",
+      email: "",
+      password: "",
       secret: "",
       status: account.status === "disabled" ? "disabled" : "active",
     });
@@ -168,19 +187,31 @@ export function ExternalPlatformAccounts(props: Props) {
       setErrorText(zh ? "账号名称不能为空。" : "Account alias is required.");
       return;
     }
-    if (!editingId && !form.secret.trim()) {
-      setErrorText(zh ? "首次绑定需要填写 API Key 或 Bearer Token。" : "API Key or Bearer token is required for first binding.");
+    if (!editingId && form.authType === "basic" && (!form.email.trim() || !form.password)) {
+      setErrorText(zh ? "首次绑定需要填写天工邮箱和密码。" : "TianGong email and password are required for first binding.");
+      return;
+    }
+    if (!editingId && form.authType === "bearer" && !form.secret.trim()) {
+      setErrorText(zh ? "首次绑定 Bearer Token 需要填写 token。" : "Bearer token is required for first binding.");
+      return;
+    }
+    if (!editingId && form.authType === "api_key" && !form.secret.trim()) {
+      setErrorText(zh ? "首次绑定兼容 API Key 需要填写凭据。" : "Legacy API Key credential is required for first binding.");
       return;
     }
     setSaving(true);
     setErrorText("");
     try {
       const credential =
-        form.secret.trim().length > 0
-          ? form.authType === "bearer"
-            ? { token: form.secret.trim() }
-            : { api_key: form.secret.trim() }
-          : undefined;
+        form.authType === "basic"
+          ? form.email.trim() && form.password
+            ? { username: form.email.trim(), password: form.password }
+            : undefined
+          : form.secret.trim().length > 0
+            ? form.authType === "bearer"
+              ? { token: form.secret.trim() }
+              : { api_key: form.secret.trim() }
+            : undefined;
       const body = {
         platform: "tiangong",
         alias: form.alias.trim(),
@@ -264,12 +295,12 @@ export function ExternalPlatformAccounts(props: Props) {
         page: String(nextPage),
         page_size: "10",
         data_source: "tg",
-        state_code: "100",
       });
       const payload = await requestJson<RemoteSearchResponse>(
         `${API_BASE}/data-platforms/accounts/${encodeURIComponent(selectedAccount.id)}/${remoteKind}/search?${params.toString()}`,
       );
       setRemoteResult(payload);
+      setRemotePreview(null);
       setRemotePage(payload.page);
       setLastSync(null);
     } catch (error) {
@@ -277,6 +308,27 @@ export function ExternalPlatformAccounts(props: Props) {
       setErrorText(zh ? `远程查询失败：${message}` : `Remote search failed: ${message}`);
     } finally {
       setRemoteLoading(false);
+    }
+  };
+
+  const previewRemoteItem = async (item: RemoteItem) => {
+    if (!selectedAccount) return;
+    const key = `${remoteKind}:${item.remote_id}`;
+    const params = new URLSearchParams();
+    if (item.remote_version) params.set("remote_version", item.remote_version);
+    setPreviewLoadingKey(key);
+    setErrorText("");
+    try {
+      const suffix = params.toString() ? `?${params.toString()}` : "";
+      const payload = await requestJson<RemotePreviewResponse>(
+        `${API_BASE}/data-platforms/accounts/${encodeURIComponent(selectedAccount.id)}/${remoteKind}/${encodeURIComponent(item.remote_id)}/preview${suffix}`,
+      );
+      setRemotePreview(payload);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "preview failed";
+      setErrorText(zh ? `预览失败：${message}` : `Preview failed: ${message}`);
+    } finally {
+      setPreviewLoadingKey("");
     }
   };
 
@@ -323,7 +375,7 @@ export function ExternalPlatformAccounts(props: Props) {
       <div className="pm-page-head">
         <div>
           <h2>{zh ? "外部平台账号" : "External Platform Accounts"}</h2>
-          <p>{zh ? "绑定天工 LCA 的 API Key 或 Bearer Token，供后续远程数据同步使用。" : "Bind a TianGong LCA API Key or Bearer token for future remote data sync."}</p>
+          <p>{zh ? "用天工账号登录换取 Supabase session，供后续远程数据同步使用。" : "Sign in with a TianGong account to obtain a Supabase session for remote data sync."}</p>
         </div>
         <div className="pm-head-actions">
           <button type="button" className="pm-ghost-btn" onClick={() => void loadAccounts()} disabled={loading}>
@@ -366,21 +418,47 @@ export function ExternalPlatformAccounts(props: Props) {
           </label>
           <label>
             <span>{zh ? "认证方式" : "Auth Type"}</span>
-            <select value={form.authType} onChange={(event) => setForm((prev) => ({ ...prev, authType: event.target.value as "api_key" | "bearer" }))}>
-              <option value="api_key">API Key</option>
+            <select value={form.authType} onChange={(event) => setForm((prev) => ({ ...prev, authType: event.target.value as "basic" | "bearer" | "api_key" }))}>
+              <option value="basic">{zh ? "天工账号登录" : "TianGong Login"}</option>
               <option value="bearer">Bearer Token</option>
+              <option value="api_key">{zh ? "兼容 API Key" : "Legacy API Key"}</option>
             </select>
           </label>
-          <label>
-            <span>{form.authType === "bearer" ? "Bearer Token" : "API Key"}</span>
-            <input
-              type="password"
-              autoComplete="off"
-              placeholder={editingId ? (zh ? "留空则保留原凭据" : "Leave blank to keep existing credential") : ""}
-              value={form.secret}
-              onChange={(event) => setForm((prev) => ({ ...prev, secret: event.target.value }))}
-            />
-          </label>
+          {form.authType === "basic" ? (
+            <>
+              <label>
+                <span>{zh ? "天工邮箱" : "TianGong Email"}</span>
+                <input
+                  type="email"
+                  autoComplete="username"
+                  placeholder={editingId ? (zh ? "留空则保留原凭据" : "Leave blank to keep existing credential") : ""}
+                  value={form.email}
+                  onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
+                />
+              </label>
+              <label>
+                <span>{zh ? "天工密码" : "TianGong Password"}</span>
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  placeholder={editingId ? (zh ? "留空则保留原凭据" : "Leave blank to keep existing credential") : ""}
+                  value={form.password}
+                  onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
+                />
+              </label>
+            </>
+          ) : (
+            <label>
+              <span>{form.authType === "bearer" ? "Bearer Token" : (zh ? "兼容 API Key" : "Legacy API Key")}</span>
+              <input
+                type="password"
+                autoComplete="off"
+                placeholder={editingId ? (zh ? "留空则保留原凭据" : "Leave blank to keep existing credential") : ""}
+                value={form.secret}
+                onChange={(event) => setForm((prev) => ({ ...prev, secret: event.target.value }))}
+              />
+            </label>
+          )}
           <label>
             <span>{zh ? "状态" : "Status"}</span>
             <select value={form.status} onChange={(event) => setForm((prev) => ({ ...prev, status: event.target.value as "active" | "disabled" }))}>
@@ -460,8 +538,8 @@ export function ExternalPlatformAccounts(props: Props) {
           </div>
           <div className="pm-platform-note">
             {zh
-              ? "API Key 按 Base64 JSON 邮箱/密码格式提交到后端，后端仅在内存中换取 Supabase session；搜索只写远程缓存，导入选中项才写星云目录或项目。"
-              : "The backend uses the Base64 JSON API Key only in memory to get a Supabase session. Search only writes remote cache; selected import writes Nebula catalog or projects."}
+              ? "推荐使用天工账号登录：密码只提交到星云后端换取 Supabase session，后端保存加密 session/refresh token，不向前端返回 token；搜索只写远程缓存，导入选中项才写星云目录或项目。"
+              : "TianGong Login is recommended: the password is sent only to the Nebula backend to obtain a Supabase session. The backend stores encrypted session/refresh tokens and never returns tokens to the frontend. Search only writes remote cache; selected import writes Nebula catalog or projects."}
           </div>
         </div>
       </div>
@@ -488,6 +566,7 @@ export function ExternalPlatformAccounts(props: Props) {
                 setRemoteKind(kind);
                 setRemotePage(1);
                 setRemoteResult(null);
+                setRemotePreview(null);
               }}
             >
               {kind === "flows" ? "Flow" : kind === "processes" ? "Process" : "Model"}
@@ -528,6 +607,9 @@ export function ExternalPlatformAccounts(props: Props) {
                     <td>{item.remote_version ?? "-"}</td>
                     <td>{item.source ?? "-"}</td>
                     <td>
+                      <button type="button" className="pm-link-btn" onClick={() => void previewRemoteItem(item)} disabled={previewLoadingKey === key}>
+                        {previewLoadingKey === key ? (zh ? "预览中" : "Previewing") : (zh ? "预览" : "Preview")}
+                      </button>
                       <button type="button" className="pm-link-btn primary" onClick={() => void syncRemoteItem(item)} disabled={syncingKey === key}>
                         {syncingKey === key ? (zh ? "导入中" : "Importing") : (zh ? "导入" : "Import")}
                       </button>
@@ -555,6 +637,26 @@ export function ExternalPlatformAccounts(props: Props) {
             </button>
           </div>
         </div>
+        {remotePreview && (
+          <div className="pm-remote-sync-report">
+            <div>
+              <strong>{remotePreview.title}</strong>
+              <span>{remotePreview.remote_kind}</span>
+              <span>{remotePreview.remote_version ?? "-"}</span>
+            </div>
+            {remotePreview.description && <p>{remotePreview.description}</p>}
+            <div>
+              {Object.entries(remotePreview.summary ?? {}).slice(0, 8).map(([key, value]) => (
+                value ? <span key={key}>{key}: {String(value)}</span> : null
+              ))}
+            </div>
+            {(remotePreview.related ?? []).length > 0 && (
+              <p>
+                {(remotePreview.related ?? []).slice(0, 3).map((item) => String(item.name ?? item.flow_id ?? item.process_id ?? "")).filter(Boolean).join(" | ")}
+              </p>
+            )}
+          </div>
+        )}
         {lastSync?.tidas_import_report && (
           <div className="pm-remote-sync-report">
             <div>

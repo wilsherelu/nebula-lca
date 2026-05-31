@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 from datetime import datetime, timedelta
+from urllib.error import HTTPError
 
 import pytest
 from fastapi.testclient import TestClient
@@ -92,6 +93,12 @@ def _tg_api_key(email: str = "user@example.com", password: str = "password") -> 
     return base64.b64encode(json.dumps({"email": email, "password": password}).encode("utf-8")).decode("ascii")
 
 
+def _jwt(sub: str = "user-1") -> str:
+    header = base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode("utf-8")).decode("ascii").rstrip("=")
+    payload = base64.urlsafe_b64encode(json.dumps({"sub": sub}).encode("utf-8")).decode("ascii").rstrip("=")
+    return f"{header}.{payload}.sig"
+
+
 def _create_tiangong_account(client: TestClient, api_key: str | None = None) -> str:
     response = client.post(
         "/api/data-platforms/accounts",
@@ -106,6 +113,24 @@ def _create_tiangong_account(client: TestClient, api_key: str | None = None) -> 
         },
     )
     assert response.status_code == 201
+    return response.json()["id"]
+
+
+def _create_tiangong_login_account(client: TestClient) -> str:
+    response = client.post(
+        "/api/data-platforms/accounts",
+        json={
+            "platform": "tiangong",
+            "alias": "TianGong Login",
+            "base_url": "https://tg.example",
+            "auth_type": "basic",
+            "credential": {"username": "user@example.com", "password": "password"},
+            "status": "active",
+            "metadata": {"publishable_key": "pub-key", "environment_label": "test"},
+        },
+    )
+    assert response.status_code == 201
+    assert "password" not in str(response.json())
     return response.json()["id"]
 
 
@@ -215,7 +240,7 @@ def _unitgroup_row():
     }
 
 
-def _install_fake_tiangong_http(monkeypatch, *, invalid_model: bool = False, refresh_fails: bool = False):
+def _install_fake_tiangong_http(monkeypatch, *, invalid_model: bool = False, refresh_fails: bool = False, new_search_404: bool = False, legacy_search_404: bool = False):
     calls = []
 
     def fake_urlopen(req, timeout=20):  # noqa: ARG001
@@ -224,14 +249,38 @@ def _install_fake_tiangong_http(monkeypatch, *, invalid_model: bool = False, ref
         if "/auth/v1/token?grant_type=refresh_token" in url:
             if refresh_fails:
                 return _FakeSupabaseResponse({})
-            return _FakeSupabaseResponse({"access_token": "refreshed-token", "refresh_token": "refresh-token-2", "expires_in": 3600, "token_type": "bearer"})
+            return _FakeSupabaseResponse({"access_token": _jwt("user-2"), "refresh_token": "refresh-token-2", "expires_in": 3600, "token_type": "bearer"})
         if "/auth/v1/token?grant_type=password" in url:
-            return _FakeSupabaseResponse({"access_token": "session-token", "refresh_token": "refresh-token-1", "expires_in": 3600, "token_type": "bearer"})
+            return _FakeSupabaseResponse({"access_token": _jwt(), "refresh_token": "refresh-token-1", "expires_in": 3600, "token_type": "bearer"})
+        if "/rest/v1/rpc/get_latest_flow_versions" in url:
+            return _FakeSupabaseResponse([{"id": "flow-1", "name": "Remote flow", "version": "1", "total_count": 1}])
+        if "/rest/v1/rpc/get_latest_process_versions" in url:
+            return _FakeSupabaseResponse([{"id": "process-1", "name": "Remote process", "version": "1", "total_count": 1}])
+        if "/rest/v1/rpc/get_latest_lifecyclemodel_versions" in url:
+            return _FakeSupabaseResponse([{"id": "model-1", "name": "Remote model", "version": "1", "total_count": 1}])
+        if "/rest/v1/rpc/pgroonga_search_flows_v1" in url:
+            if new_search_404:
+                raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
+            return _FakeSupabaseResponse([{"id": "flow-1", "name": "Remote flow", "version": "1", "total_count": 1}])
+        if "/rest/v1/rpc/pgroonga_search_processes_v1" in url:
+            if new_search_404:
+                raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
+            return _FakeSupabaseResponse([{"id": "process-1", "name": "Remote process", "version": "1", "total_count": 1}])
+        if "/rest/v1/rpc/pgroonga_search_lifecyclemodels_v1" in url:
+            if new_search_404:
+                raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
+            return _FakeSupabaseResponse([{"id": "model-1", "name": "Remote model", "version": "1", "total_count": 1}])
         if "/rest/v1/rpc/search_flows_latest" in url:
+            if legacy_search_404:
+                raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
             return _FakeSupabaseResponse({"items": [{"id": "flow-1", "name": "Remote flow", "version": "1"}], "total": 1})
         if "/rest/v1/rpc/search_processes_latest" in url:
+            if legacy_search_404:
+                raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
             return _FakeSupabaseResponse({"items": [{"id": "process-1", "name": "Remote process", "version": "1"}], "total": 1})
         if "/rest/v1/rpc/search_lifecyclemodels_latest" in url:
+            if legacy_search_404:
+                raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
             return _FakeSupabaseResponse({"items": [{"id": "model-1", "name": "Remote model", "version": "1"}], "total": 1})
         if "/rest/v1/flows" in url:
             flow_id = "flow-model" if "flow-model" in url else "flow-1"
@@ -290,6 +339,44 @@ def test_data_platform_account_crud_keeps_credentials_private(client):
     assert deleted.json()["deleted"] is True
 
 
+def test_local_sqlite_generates_persistent_credential_key(monkeypatch, tmp_path):
+    key_file = tmp_path / "data_platform_credential.key"
+    monkeypatch.setattr(settings, "data_platform_credential_key", "")
+    monkeypatch.setattr(settings, "admin_token", "")
+    monkeypatch.setattr(settings, "debug", False)
+    monkeypatch.setattr(settings, "database_url", "sqlite:///local-test.db")
+    monkeypatch.setattr(settings, "data_platform_credential_key_file", str(key_file))
+
+    ciphertext = encrypt_credential({"api_key": "secret-api-key"})
+
+    assert key_file.exists()
+    assert key_file.read_text(encoding="utf-8").strip()
+    assert "secret-api-key" not in ciphertext
+
+
+def test_account_create_returns_safe_error_when_credential_key_missing(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "data_platform_credential_key", "")
+    monkeypatch.setattr(settings, "admin_token", "")
+    monkeypatch.setattr(settings, "debug", False)
+    monkeypatch.setattr(settings, "database_url", "postgresql://example/db")
+    monkeypatch.setattr(settings, "data_platform_credential_key_file", str(tmp_path / "missing.key"))
+
+    response = client.post(
+        "/api/data-platforms/accounts",
+        json={
+            "platform": "tiangong",
+            "alias": "TianGong",
+            "auth_type": "basic",
+            "credential": {"username": "user@example.com", "password": "secret-password"},
+            "status": "active",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "DATA_PLATFORM_CREDENTIAL_KEY_REQUIRED"
+    assert "secret-password" not in str(response.json())
+
+
 def test_mock_connector_connection_success_and_failure(client):
     ok_id = _create_mock_account(client)
     failed_id = _create_mock_account(client, metadata={"fail_connection": True})
@@ -301,6 +388,15 @@ def test_mock_connector_connection_success_and_failure(client):
     assert ok.json()["ok"] is True
     assert failed.status_code == 200
     assert failed.json()["ok"] is False
+
+
+def test_search_connector_error_returns_safe_502(client):
+    account_id = _create_mock_account(client, metadata={"raise_search_error": True})
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/flows/search?q=wind")
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "DATA_PLATFORM_CONNECTOR_ERROR"
 
 
 def test_tiangong_api_key_account_can_be_bound_without_exposing_secret(client, monkeypatch):
@@ -339,6 +435,29 @@ def test_tiangong_api_key_account_can_be_bound_without_exposing_secret(client, m
         db.close()
 
 
+def test_tiangong_account_login_gets_cached_session_without_exposing_password(client, monkeypatch):
+    calls = _install_fake_tiangong_http(monkeypatch)
+    account_id = _create_tiangong_login_account(client)
+
+    checked = client.post(f"/api/data-platforms/accounts/{account_id}/test")
+    searched = client.get(f"/api/data-platforms/accounts/{account_id}/flows/search?q=remote")
+
+    assert checked.status_code == 200
+    assert checked.json()["ok"] is True
+    assert searched.status_code == 200
+    password_grants = [call for call in calls if "grant_type=password" in call["url"]]
+    assert len(password_grants) == 1
+    assert "password" in password_grants[0]["body"]
+    assert "password" not in str(checked.json())
+    db = _db_module.SessionLocal()
+    try:
+        row = db.query(DataPlatformAccountSession).filter(DataPlatformAccountSession.account_id == account_id).first()
+        assert row is not None
+        assert "session-token" not in row.session_ciphertext
+    finally:
+        db.close()
+
+
 def test_tiangong_session_cache_reuses_unexpired_token(client, monkeypatch):
     calls = _install_fake_tiangong_http(monkeypatch)
     account_id = _create_tiangong_account(client)
@@ -350,6 +469,91 @@ def test_tiangong_session_cache_reuses_unexpired_token(client, monkeypatch):
     assert second.status_code == 200
     password_grants = [call for call in calls if "grant_type=password" in call["url"]]
     assert len(password_grants) == 1
+
+
+def test_tiangong_search_uses_latest_search_rpc_payload(client, monkeypatch):
+    calls = _install_fake_tiangong_http(monkeypatch)
+    account_id = _create_tiangong_account(client)
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/processes/search?q=remote&page=2&page_size=5&state_code=100")
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    search_call = next(call for call in calls if "/rest/v1/rpc/search_processes_latest" in call["url"])
+    body = json.loads(search_call["body"])
+    assert body["query_text"] == "remote"
+    assert body["page_current"] == 2
+    assert body["page_size"] == 5
+    assert body["data_source"] == "tg"
+    assert body["state_code_filter"] == 100
+    assert body["type_of_data_set_filter"] == "all"
+    assert body["this_user_id"] == "user-1"
+    assert body["team_id_filter"] is None
+    assert "sort_by" not in body
+    assert "sort_direction" not in body
+
+
+def test_tiangong_empty_query_uses_latest_rpc_with_nullable_state_code(client, monkeypatch):
+    calls = _install_fake_tiangong_http(monkeypatch)
+    account_id = _create_tiangong_account(client)
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/processes/search?page=1&page_size=10")
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["process_uuid"] == "process-1"
+    search_call = next(call for call in calls if "/rest/v1/rpc/get_latest_process_versions" in call["url"])
+    body = json.loads(search_call["body"])
+    assert body["page_current"] == 1
+    assert body["page_size"] == 10
+    assert body["data_source"] == "tg"
+    assert body["state_code_filter"] is None
+    assert body["type_of_data_set_filter"] == "all"
+
+
+def test_tiangong_preview_reads_detail_without_importing(client, monkeypatch):
+    calls = _install_fake_tiangong_http(monkeypatch)
+    account_id = _create_tiangong_account(client)
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/processes/process-1/preview?remote_version=1")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["remote_kind"] == "process"
+    assert payload["title"] == "Remote process"
+    assert payload["summary"]["exchange_count"] == 1
+    assert payload["related"][0]["flow_id"] == "flow-1"
+    assert any("/rest/v1/processes" in call["url"] for call in calls)
+    db = _db_module.SessionLocal()
+    try:
+        assert db.query(FlowRecord).count() == 0
+        assert db.query(ReferenceProcess).count() == 0
+        assert db.query(Model).count() == 0
+    finally:
+        db.close()
+
+
+def test_tiangong_search_falls_back_to_pgroonga_rpc_on_latest_search_rpc_404(client, monkeypatch):
+    calls = _install_fake_tiangong_http(monkeypatch, legacy_search_404=True)
+    account_id = _create_tiangong_account(client)
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/flows/search?q=remote&page=1&page_size=10")
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["flow_uuid"] == "flow-1"
+    assert any("/rest/v1/rpc/search_flows_latest" in call["url"] for call in calls)
+    assert any("/rest/v1/rpc/pgroonga_search_flows_v1" in call["url"] for call in calls)
+
+
+def test_tiangong_search_reports_attempted_rpcs_when_all_search_rpcs_fail(client, monkeypatch):
+    _install_fake_tiangong_http(monkeypatch, new_search_404=True, legacy_search_404=True)
+    account_id = _create_tiangong_account(client)
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/flows/search?q=remote&page=1&page_size=10")
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "DATA_PLATFORM_CONNECTOR_ERROR"
+    assert "search_flows_latest" in response.json()["detail"]["message"]
+    assert "pgroonga_search_flows_v1" in response.json()["detail"]["message"]
 
 
 def test_tiangong_expired_session_refreshes_then_falls_back_to_password(client, monkeypatch):

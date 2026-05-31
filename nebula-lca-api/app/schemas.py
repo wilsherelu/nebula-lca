@@ -1632,6 +1632,19 @@ class DataPlatformSearchResponse(BaseModel):
     items: list[RemoteFlowItem | RemoteProcessItem | RemoteModelItem] = Field(default_factory=list)
 
 
+class DataPlatformRemotePreviewResponse(BaseModel):
+    account_id: str
+    platform: str
+    remote_kind: str
+    remote_id: str
+    remote_version: str | None = None
+    title: str
+    description: str | None = None
+    summary: dict = Field(default_factory=dict)
+    related: list[dict] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class DataPlatformSyncFlowRequest(BaseModel):
     remote_flow_id: str
     remote_version: str | None = None
