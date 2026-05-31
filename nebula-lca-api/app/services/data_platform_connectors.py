@@ -7,8 +7,10 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Callable
 from urllib import error as url_error
 from urllib import parse as url_parse
@@ -22,14 +24,36 @@ class CredentialError(ValueError):
 
 
 class ConnectorError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def _credential_key() -> bytes:
     key = settings.data_platform_credential_key or settings.admin_token or ""
-    if not key and not settings.debug:
+    if key:
+        return key.encode("utf-8")
+
+    key_file = Path(settings.data_platform_credential_key_file)
+    if key_file.exists():
+        stored = key_file.read_text(encoding="utf-8").strip()
+        if stored:
+            return stored.encode("utf-8")
+
+    is_local_sqlite = str(settings.database_url).startswith("sqlite:///")
+    if settings.debug or is_local_sqlite:
+        key_file.parent.mkdir(parents=True, exist_ok=True)
+        stored = secrets.token_urlsafe(48)
+        key_file.write_text(stored, encoding="utf-8")
+        try:
+            os.chmod(key_file, 0o600)
+        except OSError:
+            pass
+        return stored.encode("utf-8")
+
+    if not key:
         raise CredentialError("DATA_PLATFORM_CREDENTIAL_KEY is required to store external platform credentials.")
-    return (key or "dev-data-platform-key").encode("utf-8")
+    return key.encode("utf-8")
 
 
 def _keystream(key: bytes, nonce: bytes, size: int) -> bytes:
@@ -178,13 +202,13 @@ class BaseDataPlatformConnector:
     def test_connection(self) -> tuple[bool, str]:
         raise NotImplementedError
 
-    def search_flows(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int = 100) -> RemotePageDTO:
+    def search_flows(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
         raise NotImplementedError
 
-    def search_processes(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int = 100) -> RemotePageDTO:
+    def search_processes(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
         raise NotImplementedError
 
-    def search_models(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int = 100) -> RemotePageDTO:
+    def search_models(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
         raise NotImplementedError
 
     def get_flow_detail(self, remote_flow_id: str, remote_version: str | None = None) -> RemoteFlowDTO:
@@ -206,7 +230,9 @@ class MockDataPlatformConnector(BaseDataPlatformConnector):
             return False, "mock connection failed by account metadata"
         return True, "mock connection ok"
 
-    def search_flows(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int = 100) -> RemotePageDTO:
+    def search_flows(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
+        if self.account.metadata.get("raise_search_error"):
+            raise ConnectorError("mock search failed by account metadata")
         token = (query or "flow").strip() or "flow"
         items = [
             RemoteFlowDTO(
@@ -223,7 +249,7 @@ class MockDataPlatformConnector(BaseDataPlatformConnector):
         ]
         return RemotePageDTO(items=items, total=len(items), page=page, page_size=page_size, has_more=False)
 
-    def search_processes(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int = 100) -> RemotePageDTO:
+    def search_processes(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
         token = (query or "process").strip() or "process"
         items = [
             RemoteProcessDTO(
@@ -239,7 +265,7 @@ class MockDataPlatformConnector(BaseDataPlatformConnector):
         ]
         return RemotePageDTO(items=items, total=len(items), page=page, page_size=page_size, has_more=False)
 
-    def search_models(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int = 100) -> RemotePageDTO:
+    def search_models(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
         token = (query or "model").strip() or "model"
         items = [
             RemoteModelDTO(
@@ -332,21 +358,21 @@ class CustomHttpDataPlatformConnector(BaseDataPlatformConnector):
         payload = self._json_get("/health")
         return True, str(payload.get("message") if isinstance(payload, dict) else "custom connector ok")
 
-    def search_flows(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int = 100) -> RemotePageDTO:
+    def search_flows(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
         payload = self._json_get("/flows", {"q": query, "page": page, "page_size": page_size, "data_source": data_source, "state_code": state_code})
         rows = payload.get("items", payload) if isinstance(payload, dict) else payload
         items = [_flow_from_mapping(row, self.account.platform) for row in rows if isinstance(row, dict)]
         total = int(payload.get("total") or len(items)) if isinstance(payload, dict) else len(items)
         return RemotePageDTO(items=items, total=total, page=page, page_size=page_size, has_more=(page * page_size) < total)
 
-    def search_processes(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int = 100) -> RemotePageDTO:
+    def search_processes(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
         payload = self._json_get("/processes", {"q": query, "page": page, "page_size": page_size, "data_source": data_source, "state_code": state_code})
         rows = payload.get("items", payload) if isinstance(payload, dict) else payload
         items = [_process_from_mapping(row, self.account.platform) for row in rows if isinstance(row, dict)]
         total = int(payload.get("total") or len(items)) if isinstance(payload, dict) else len(items)
         return RemotePageDTO(items=items, total=total, page=page, page_size=page_size, has_more=(page * page_size) < total)
 
-    def search_models(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int = 100) -> RemotePageDTO:
+    def search_models(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
         payload = self._json_get("/models", {"q": query, "page": page, "page_size": page_size, "data_source": data_source, "state_code": state_code})
         rows = payload.get("items", payload) if isinstance(payload, dict) else payload
         items = [_model_from_mapping(row, self.account.platform) for row in rows if isinstance(row, dict)]
@@ -388,6 +414,7 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
     """On-demand TianGong connector backed by Supabase Auth, RPC, and tables."""
 
     SESSION_REFRESH_MARGIN_SECONDS = 60
+    REQUEST_TIMEOUT_SECONDS = 90
 
     def __init__(self, account: PlatformAccountContext):
         super().__init__(account)
@@ -422,18 +449,29 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
             raise CredentialError("TianGong API Key payload must include email and password.")
         return {"email": email, "password": password}
 
+    def _password_credentials(self) -> dict[str, str]:
+        if self.account.auth_type == "basic":
+            email = str(self.account.credential.get("username") or "").strip()
+            password = str(self.account.credential.get("password") or "")
+            if not email or not password:
+                raise CredentialError("TianGong account login requires email and password.")
+            return {"email": email, "password": password}
+        return self._decode_api_key()
+
     def _request_json(self, method: str, path: str, *, headers: dict[str, str] | None = None, body: dict[str, Any] | None = None) -> Any:
         url = f"{self._base_url()}{path}"
         data = json.dumps(body or {}, ensure_ascii=False).encode("utf-8") if body is not None else None
         req = url_request.Request(url, data=data, headers=headers or {}, method=method)
         try:
-            with url_request.urlopen(req, timeout=20) as resp:  # noqa: S310 - account-configured Supabase endpoint
+            with url_request.urlopen(req, timeout=self.REQUEST_TIMEOUT_SECONDS) as resp:  # noqa: S310 - account-configured Supabase endpoint
                 raw = resp.read().decode("utf-8")
                 return json.loads(raw) if raw else None
         except url_error.HTTPError as exc:
-            raise ConnectorError(f"TianGong Supabase request failed with HTTP {exc.code}.") from exc
+            raise ConnectorError(f"TianGong Supabase request failed with HTTP {exc.code}.", status_code=exc.code) from exc
         except url_error.URLError as exc:
-            raise ConnectorError("TianGong Supabase request failed.") from exc
+            reason = str(getattr(exc, "reason", "") or "").strip()
+            message = f"TianGong Supabase request failed: {reason}" if reason else "TianGong Supabase request failed."
+            raise ConnectorError(message) from exc
 
     def _session_payload(self) -> dict[str, Any]:
         if not self.account.session_ciphertext:
@@ -467,7 +505,7 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
         return token
 
     def _password_grant_token(self) -> str:
-        auth = self._decode_api_key()
+        auth = self._password_credentials()
         payload = self._request_json(
             "POST",
             "/auth/v1/token?grant_type=password",
@@ -488,11 +526,13 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
     def _access_token(self) -> str:
         if self._runtime_access_token:
             return self._runtime_access_token
-        if self.account.auth_type != "api_key":
+        if self.account.auth_type == "bearer":
             token = str(self.account.credential.get("token") or "").strip()
             if token:
                 return token
-            raise CredentialError("TianGong connector requires api_key auth or a bearer token.")
+            raise CredentialError("TianGong connector requires a bearer token.")
+        if self.account.auth_type not in {"api_key", "basic"}:
+            raise CredentialError("TianGong connector requires account login, api_key auth, or a bearer token.")
         cached = self._session_payload()
         cached_token = str(cached.get("access_token") or "").strip()
         if cached_token and self._is_session_usable():
@@ -504,6 +544,18 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
             except ConnectorError:
                 pass
         return self._password_grant_token()
+
+    def _current_user_id(self) -> str:
+        token = self._access_token()
+        parts = token.split(".")
+        if len(parts) < 2:
+            return ""
+        try:
+            padded = parts[1] + ("=" * (-len(parts[1]) % 4))
+            payload = json.loads(base64.urlsafe_b64decode(padded.encode("utf-8")).decode("utf-8"))
+        except Exception:  # noqa: BLE001
+            return ""
+        return str(payload.get("sub") or payload.get("user_id") or "").strip()
 
     def _headers(self) -> dict[str, str]:
         token = self._access_token()
@@ -531,29 +583,71 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
             raise ConnectorError(f"TianGong {table} detail row must be an object.")
         return row
 
-    def _search_rpc(self, *, kind: str, query: str, page: int, page_size: int, data_source: str, state_code: int) -> RemotePageDTO:
+    def _search_rpc(self, *, kind: str, query: str, page: int, page_size: int, data_source: str, state_code: int | None) -> RemotePageDTO:
         if kind == "flow":
-            latest_rpc, search_rpc, mapper = "get_latest_flow_versions", "search_flows_latest", _tiangong_flow_from_row
+            new_rpc, latest_rpc, search_rpc, mapper = "pgroonga_search_flows_v1", "get_latest_flow_versions", "search_flows_latest", _tiangong_flow_from_row
         elif kind == "process":
-            latest_rpc, search_rpc, mapper = "get_latest_process_versions", "search_processes_latest", _tiangong_process_from_row
+            new_rpc, latest_rpc, search_rpc, mapper = "pgroonga_search_processes_v1", "get_latest_process_versions", "search_processes_latest", _tiangong_process_from_row
         else:
-            latest_rpc, search_rpc, mapper = "get_latest_lifecyclemodel_versions", "search_lifecyclemodels_latest", _tiangong_model_from_row
-        payload: dict[str, Any] = {
+            new_rpc, latest_rpc, search_rpc, mapper = "pgroonga_search_lifecyclemodels_v1", "get_latest_lifecyclemodel_versions", "search_lifecyclemodels_latest", _tiangong_model_from_row
+        user_id = self._current_user_id()
+        legacy_payload: dict[str, Any] = {
             "page_size": page_size,
             "page_current": page,
             "data_source": data_source,
-            "this_user_id": "",
+            "this_user_id": user_id,
             "team_id_filter": None,
             "state_code_filter": state_code,
             "sort_by": "modified_at",
             "sort_direction": "desc",
         }
-        if query.strip():
-            payload.update({"query_text": query.strip(), "filter_condition": {}, "order_by": {}})
-            rpc_name = search_rpc
-        else:
-            rpc_name = latest_rpc
-        raw = self._rpc(rpc_name, payload)
+        if kind == "process":
+            legacy_payload["type_of_data_set_filter"] = "all"
+        if not query.strip():
+            raw = self._rpc(latest_rpc, legacy_payload)
+            rows, total = _tiangong_rows_and_total(raw)
+            items = [mapper(row) for row in rows if isinstance(row, dict)]
+            return RemotePageDTO(items=items, total=total if total is not None else len(items), page=page, page_size=page_size, has_more=(page * page_size) < (total if total is not None else len(items)))
+
+        search_payload: dict[str, Any] = {
+            "query_text": query.strip(),
+            "filter_condition": {},
+            "order_by": {},
+            "page_size": page_size,
+            "page_current": page,
+            "data_source": data_source,
+            "this_user_id": user_id,
+            "team_id_filter": None,
+            "state_code_filter": state_code,
+        }
+        if kind == "process":
+            search_payload["type_of_data_set_filter"] = "all"
+        tried = [search_rpc]
+        try:
+            raw = self._rpc(search_rpc, search_payload)
+        except ConnectorError as search_exc:
+            if search_exc.status_code not in {404, 500}:
+                raise
+            new_payload: dict[str, Any] = {
+                "query_text": query.strip(),
+                "filter_condition": {},
+                "page_size": page_size,
+                "page_current": page,
+                "data_source": data_source,
+                "order_by": {},
+            }
+            if state_code is not None:
+                new_payload["state_code"] = state_code
+            if kind == "process":
+                new_payload["type_of_data_set"] = "all"
+            tried.append(new_rpc)
+            try:
+                raw = self._rpc(new_rpc, new_payload)
+            except ConnectorError as new_exc:
+                raise ConnectorError(
+                    f"TianGong Supabase search failed after trying RPCs: {', '.join(tried)}. Last error: {new_exc}",
+                    status_code=new_exc.status_code,
+                ) from new_exc
         rows, total = _tiangong_rows_and_total(raw)
         items = [mapper(row) for row in rows if isinstance(row, dict)]
         return RemotePageDTO(items=items, total=total if total is not None else len(items), page=page, page_size=page_size, has_more=(page * page_size) < (total if total is not None else len(items)))
@@ -562,13 +656,13 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
         self._access_token()
         return True, "TianGong Supabase Auth ok."
 
-    def search_flows(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int = 100) -> RemotePageDTO:
+    def search_flows(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
         return self._search_rpc(kind="flow", query=query, page=page, page_size=page_size, data_source=data_source, state_code=state_code)
 
-    def search_processes(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int = 100) -> RemotePageDTO:
+    def search_processes(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
         return self._search_rpc(kind="process", query=query, page=page, page_size=page_size, data_source=data_source, state_code=state_code)
 
-    def search_models(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int = 100) -> RemotePageDTO:
+    def search_models(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
         return self._search_rpc(kind="model", query=query, page=page, page_size=page_size, data_source=data_source, state_code=state_code)
 
     def get_flow_detail(self, remote_flow_id: str, remote_version: str | None = None) -> RemoteFlowDTO:
@@ -643,13 +737,13 @@ class SkeletonDataPlatformConnector(BaseDataPlatformConnector):
     def test_connection(self) -> tuple[bool, str]:
         return False, f"{self.account.platform} connector skeleton is registered but not configured for live API calls yet"
 
-    def search_flows(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int = 100) -> RemotePageDTO:
+    def search_flows(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
         raise ConnectorError(f"{self.account.platform} live flow search is not implemented yet")
 
-    def search_processes(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int = 100) -> RemotePageDTO:
+    def search_processes(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
         raise ConnectorError(f"{self.account.platform} live process search is not implemented yet")
 
-    def search_models(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int = 100) -> RemotePageDTO:
+    def search_models(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
         raise ConnectorError(f"{self.account.platform} live model search is not implemented yet")
 
     def get_flow_detail(self, remote_flow_id: str, remote_version: str | None = None) -> RemoteFlowDTO:
@@ -669,10 +763,9 @@ def _nested_text(value: Any, *path: str) -> str:
             return ""
         cur = cur.get(key)
     if isinstance(cur, dict):
-        values = [str(item.get("@value") or item.get("value") or "").strip() for item in cur.get("baseName", []) if isinstance(item, dict)] if isinstance(cur.get("baseName"), list) else []
-        return next((item for item in values if item), "")
+        return _localized_name(cur)
     if isinstance(cur, list):
-        return next((str(item.get("@value") or item.get("value") or item).strip() for item in cur if item), "")
+        return _localized_name(cur)
     return str(cur or "").strip()
 
 
@@ -686,7 +779,14 @@ def _extract_json_payload(row: dict[str, Any]) -> dict[str, Any]:
 
 def _tiangong_rows_and_total(payload: Any) -> tuple[list[dict[str, Any]], int | None]:
     if isinstance(payload, list):
-        return [row for row in payload if isinstance(row, dict)], None
+        rows = [row for row in payload if isinstance(row, dict)]
+        total = None
+        if rows:
+            try:
+                total = int(rows[0].get("total_count")) if rows[0].get("total_count") is not None else None
+            except (TypeError, ValueError):
+                total = None
+        return rows, total
     if not isinstance(payload, dict):
         return [], None
     rows = payload.get("items") or payload.get("data") or payload.get("rows") or payload.get("result")
@@ -882,13 +982,13 @@ def _unit_group_from_payload(payload: dict[str, Any]) -> RemoteUnitGroupDTO | No
 
 def _tiangong_flow_from_row(row: dict[str, Any]) -> RemoteFlowDTO:
     payload = _extract_json_payload(row)
-    flow_uuid = str(row.get("id") or row.get("flow_uuid") or row.get("uuid") or _nested_text(payload, "flowDataSet", "flowInformation", "dataSetInformation", "UUID")).strip()
+    flow_uuid = str(row.get("id") or row.get("flow_uuid") or row.get("uuid") or _nested_text(payload, "flowDataSet", "flowInformation", "dataSetInformation", "common:UUID")).strip()
     name = (
         str(row.get("name") or row.get("flow_name") or "").strip()
         or _nested_text(payload, "flowDataSet", "flowInformation", "dataSetInformation", "name")
         or flow_uuid
     )
-    flow_type = str(row.get("flow_type") or row.get("type") or _nested_text(payload, "flowDataSet", "flowInformation", "dataSetInformation", "classificationInformation") or "Product flow").strip()
+    flow_type = str(row.get("flow_type") or row.get("type") or _nested_text(payload, "flowDataSet", "modellingAndValidation", "LCIMethod", "typeOfDataSet") or "Product flow").strip()
     unit = str(row.get("default_unit") or row.get("unit") or "kg").strip()
     unit_group = str(row.get("unit_group") or row.get("unitGroup") or "Units of mass").strip()
     return RemoteFlowDTO(
@@ -907,7 +1007,7 @@ def _tiangong_flow_from_row(row: dict[str, Any]) -> RemoteFlowDTO:
 
 def _tiangong_process_from_row(row: dict[str, Any]) -> RemoteProcessDTO:
     payload = _extract_json_payload(row)
-    process_uuid = str(row.get("id") or row.get("process_uuid") or row.get("uuid") or _nested_text(payload, "processDataSet", "processInformation", "dataSetInformation", "UUID")).strip()
+    process_uuid = str(row.get("id") or row.get("process_uuid") or row.get("uuid") or _nested_text(payload, "processDataSet", "processInformation", "dataSetInformation", "common:UUID")).strip()
     name = (
         str(row.get("name") or row.get("process_name") or "").strip()
         or _nested_text(payload, "processDataSet", "processInformation", "dataSetInformation", "name")
@@ -927,8 +1027,12 @@ def _tiangong_process_from_row(row: dict[str, Any]) -> RemoteProcessDTO:
 
 def _tiangong_model_from_row(row: dict[str, Any]) -> RemoteModelDTO:
     payload = _extract_json_payload(row)
-    model_uuid = str(row.get("id") or row.get("model_uuid") or row.get("uuid") or payload.get("id") or "").strip()
-    name = str(row.get("name") or row.get("model_name") or payload.get("name") or payload.get("title") or model_uuid).strip()
+    model_uuid = str(row.get("id") or row.get("model_uuid") or row.get("uuid") or payload.get("id") or _nested_text(payload, "lifeCycleModelDataSet", "lifeCycleModelInformation", "dataSetInformation", "common:UUID") or "").strip()
+    name = (
+        str(row.get("name") or row.get("model_name") or payload.get("name") or payload.get("title") or "").strip()
+        or _nested_text(payload, "lifeCycleModelDataSet", "lifeCycleModelInformation", "dataSetInformation", "name")
+        or model_uuid
+    )
     return RemoteModelDTO(
         remote_id=str(row.get("id") or model_uuid).strip(),
         model_uuid=model_uuid,

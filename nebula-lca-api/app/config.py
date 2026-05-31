@@ -44,9 +44,14 @@ class Settings(BaseModel):
     auto_prune_on_startup: bool = _env_bool("AUTO_PRUNE_ON_STARTUP", False)
     auto_vacuum_after_prune_on_startup: bool = _env_bool("AUTO_VACUUM_AFTER_PRUNE_ON_STARTUP", False)
     auto_bootstrap_reference_data_on_startup: bool = _env_bool("AUTO_BOOTSTRAP_REFERENCE_DATA_ON_STARTUP", True)
+    auto_startup_maintenance_on_startup: bool = _env_bool("AUTO_STARTUP_MAINTENANCE_ON_STARTUP", True)
     import_cache_retention_hours: int = int(os.getenv("IMPORT_CACHE_RETENTION_HOURS", "24"))
     import_cache_cleanup_on_terminal: bool = _env_bool("IMPORT_CACHE_CLEANUP_ON_TERMINAL", True)
     data_platform_credential_key: str = os.getenv("DATA_PLATFORM_CREDENTIAL_KEY", "")
+    data_platform_credential_key_file: str = os.getenv(
+        "DATA_PLATFORM_CREDENTIAL_KEY_FILE",
+        str(Path(os.getenv("NEBULA_LCA_RUNTIME_ROOT", str(PROJECT_ROOT / "runtime"))) / "secrets" / "data_platform_credential.key"),
+    )
 
 
 settings = Settings()
