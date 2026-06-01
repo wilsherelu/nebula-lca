@@ -1,4 +1,5 @@
-﻿import { useEffect, useRef, useState } from "react";
+import { getApiBase } from "../../apiBase";
+import { useEffect, useRef, useState } from "react";
 import { CreateFlowDialog } from "../CreateFlowDialog";
 import Ef31ImportJobPanel from "../Ef31ImportJobPanel";
 import { ExternalPlatformAccounts } from "../ExternalPlatformAccounts";
@@ -209,8 +210,7 @@ const normalizeSourcePolicy = (value: unknown): SourcePolicy => {
   }
   return "open_mixed";
 };
-const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
-const API_BASE = RAW_API_BASE.endsWith("/api") ? RAW_API_BASE : `${RAW_API_BASE}/api`;
+const API_BASE = getApiBase();
 const PM_CACHE_TTL_MS = 30_000;
 
 const readPmCacheEntry = <T,>(key: string): { ts: number; data: T; etag?: string } | null => {

@@ -1,4 +1,5 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getApiBase } from "./apiBase";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GraphCanvas } from "./components/GraphCanvas/GraphCanvas";
 import { startTransition } from "react";
 import { FlowBalanceDialog } from "./components/Inspector/FlowBalanceDialog";
@@ -266,8 +267,7 @@ type ProjectTargetProductConfig = {
   quantity: number;
 };
 
-const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
-const API_BASE = RAW_API_BASE.endsWith("/api") ? RAW_API_BASE : `${RAW_API_BASE}/api`;
+const API_BASE = getApiBase();
 const APP_DEBUG = Boolean(import.meta.env.VITE_DEBUG);
 const debugPts = (scope: string, payload?: unknown) => {
   if (!APP_DEBUG) {

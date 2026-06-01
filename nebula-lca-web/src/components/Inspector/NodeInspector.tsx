@@ -1,4 +1,5 @@
-﻿import type { Node } from "@xyflow/react";
+import { getApiBase } from "../../apiBase";
+import type { Node } from "@xyflow/react";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { AllocationBasisMethod, FlowPort, LcaNodeData, ProcessMode, UnitGroupSwitchSnapshot } from "../../model/node";
@@ -80,8 +81,7 @@ type RemoteInventoryGroupState = {
   error: string;
 };
 
-const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
-const API_BASE = RAW_API_BASE.endsWith("/api") ? RAW_API_BASE : `${RAW_API_BASE}/api`;
+const API_BASE = getApiBase();
 
 function updatePortValue(ports: FlowPort[], portId: string, key: keyof FlowPort, value: unknown): FlowPort[] {
   return ports.map((port) => {

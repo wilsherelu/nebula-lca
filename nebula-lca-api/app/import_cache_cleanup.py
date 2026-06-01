@@ -15,7 +15,7 @@ from .config import PROJECT_ROOT, settings
 
 logger = logging.getLogger(__name__)
 
-IMPORT_CACHE_ROOT = PROJECT_ROOT / "import-cache"
+IMPORT_CACHE_ROOT = Path(settings.import_cache_root)
 UPLOAD_SESSIONS_ROOT = IMPORT_CACHE_ROOT / "upload_sessions"
 JOB_EXTRACT_ROOT = IMPORT_CACHE_ROOT / "job_extract"
 EF31_JOBS_ROOT = IMPORT_CACHE_ROOT / "ef31_jobs"

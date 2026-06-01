@@ -32,7 +32,13 @@ lca_demo.backup_*
 
 node_modules/
 dist/
+build/
 nebula-lca-web/dist/
+nebula-lca-api/build/
+nebula-lca-api/dist/
+nebula-lca-desktop/resources/api/
+nebula-lca-desktop/resources/web/
+nebula-lca-desktop/release/
 exports/
 *.tsbuildinfo
 

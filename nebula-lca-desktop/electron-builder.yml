@@ -1,0 +1,24 @@
+appId: com.nebula.lca.desktop
+productName: Nebula LCA
+directories:
+  output: release
+files:
+  - dist/**
+  - package.json
+extraResources:
+  - from: resources/web
+    to: web
+  - from: resources/api
+    to: api
+  - from: resources/runtime
+    to: runtime
+    filter:
+      - "**/*"
+win:
+  signAndEditExecutable: false
+  target:
+    - nsis
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true

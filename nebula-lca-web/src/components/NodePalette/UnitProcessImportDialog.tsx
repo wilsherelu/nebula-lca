@@ -1,4 +1,5 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { getApiBase } from "../../apiBase";
+import { useEffect, useMemo, useState } from "react";
 import {
   useLcaGraphStore,
   type FilteredExchangeEvidence,
@@ -8,8 +9,7 @@ import {
 } from "../../store/lcaGraphStore";
 import type { ExchangeType, FlowPort } from "../../model/node";
 
-const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
-const API_BASE = RAW_API_BASE.endsWith("/api") ? RAW_API_BASE : `${RAW_API_BASE}/api`;
+const API_BASE = getApiBase();
 const CATALOG_CACHE_PREFIX = "nebula:import-catalog:";
 const CATALOG_CACHE_TTL_MS = 30_000;
 

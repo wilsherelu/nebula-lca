@@ -1,3 +1,4 @@
+import { getApiBase, getImportApiBase } from "../apiBase";
 /**
  * EF3.1 resumable import panel: chunked upload, background import job,
  * checkpoint resume, pause/cancel, and LCIA runtime generation.
@@ -42,14 +43,8 @@ interface LciaMethodStatus {
 
 type ImportFileType = "lci" | "lcia" | "masterdata";
 
-const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
-const API_BASE = RAW_API_BASE.endsWith("/api") ? RAW_API_BASE : `${RAW_API_BASE}/api`;
-const RAW_IMPORT_API_BASE = ((import.meta.env.VITE_IMPORT_API_BASE_URL as string | undefined) ?? "").replace(/\/$/, "");
-const IMPORT_API_BASE = RAW_IMPORT_API_BASE
-  ? (RAW_IMPORT_API_BASE.endsWith("/api") ? RAW_IMPORT_API_BASE : `${RAW_IMPORT_API_BASE}/api`)
-  : (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") && window.location.port === "5173"
-    ? "http://127.0.0.1:8001/api"
-    : API_BASE;
+const API_BASE = getApiBase();
+const IMPORT_API_BASE = getImportApiBase();
 const DEFAULT_CHUNK_SIZE = 64 * 1024 * 1024;
 const DEFAULT_IMPORT_WORKERS = 8;
 const STATUS_POLL_INTERVAL_MS = 2000;

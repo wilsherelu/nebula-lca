@@ -19,11 +19,11 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from app.config import PROJECT_ROOT
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_EF31_RUNTIME_ROOT = PROJECT_ROOT / "runtime" / "ef31"
+DEFAULT_EF31_RUNTIME_ROOT = Path(settings.nebula_lca_runtime_root) / "ef31"
 ACTIVE_MANIFEST_NAME = "active_manifest.json"
 
 

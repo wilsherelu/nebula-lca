@@ -1,4 +1,5 @@
-﻿import type { Edge } from "@xyflow/react";
+import { getApiBase } from "../../apiBase";
+import type { Edge } from "@xyflow/react";
 import { useEffect, useMemo, useState } from "react";
 import type { LcaEdgeData } from "../../model/exchange";
 import { useLcaGraphStore } from "../../store/lcaGraphStore";
@@ -19,8 +20,7 @@ type Props = {
   onClose?: () => void;
 };
 
-const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
-const API_BASE = RAW_API_BASE.endsWith("/api") ? RAW_API_BASE : `${RAW_API_BASE}/api`;
+const API_BASE = getApiBase();
 
 export function EdgeInspector({ edge, onClose }: Props) {
   const setFlowBalanceTotal = useLcaGraphStore((state) => state.setFlowBalanceTotal);

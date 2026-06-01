@@ -311,8 +311,59 @@ app.include_router(_data_platforms_router)
 
 
 @app.get("/health")
+@app.get("/api/health")
 def healthcheck() -> dict:
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "desktop": settings.desktop_mode,
+        "database": settings.database_url,
+    }
+
+
+@app.get("/api/desktop/status")
+def desktop_status(db: Session = Depends(get_db)) -> dict:
+    unit_count = db.query(func.count(UnitDefinition.id)).scalar() or 0
+    elementary_count = (
+        db.query(func.count(FlowRecord.flow_uuid))
+        .filter(FlowRecord.source == BUILTIN_ELEMENTARY_FLOW_SOURCE)
+        .scalar()
+        or 0
+    )
+    intermediate_count = (
+        db.query(func.count(FlowRecord.flow_uuid))
+        .filter(FlowRecord.source == BUILTIN_INTERMEDIATE_FLOW_SOURCE)
+        .scalar()
+        or 0
+    )
+    reference_process_count = db.query(func.count(ReferenceProcess.process_uuid)).scalar() or 0
+    return {
+        "status": "ok",
+        "app_version": app.version,
+        "desktop": settings.desktop_mode,
+        "paths": {
+            "data_dir": settings.data_dir,
+            "database_url": settings.database_url,
+            "runtime_root": settings.nebula_lca_runtime_root,
+            "import_cache_root": settings.import_cache_root,
+            "credential_key_file": settings.data_platform_credential_key_file,
+        },
+        "catalog": {
+            "unit_definitions": unit_count,
+            "elementary_flows": elementary_count,
+            "intermediate_flows": intermediate_count,
+            "reference_processes": reference_process_count,
+            "ready": bool(unit_count and elementary_count and intermediate_count),
+        },
+        "runtime": {
+            "ef31_dir": settings.nebula_lca_ef31_dir,
+            "runtime_root": settings.nebula_lca_runtime_root,
+            "ecoinvent_lcia_runtime_available": _has_active_ecoinvent_lcia_runtime(),
+        },
+        "bootstrap": {
+            "auto_bootstrap_reference_data_on_startup": settings.auto_bootstrap_reference_data_on_startup,
+            "auto_startup_maintenance_on_startup": settings.auto_startup_maintenance_on_startup,
+        },
+    }
 
 
 def get_model_or_404(db: Session, model_id: str) -> Model:

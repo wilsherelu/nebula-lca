@@ -25,7 +25,9 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-SIGNAL_DIR = Path("import-cache") / "job_control"
+from .config import settings
+
+SIGNAL_DIR = Path(settings.import_cache_root) / "job_control"
 
 
 def _ensure_signal_dir() -> None:
