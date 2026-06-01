@@ -4,9 +4,22 @@ import path from "node:path";
 import { startApiProcess, ApiProcessHandle } from "./apiProcess.js";
 import { resolveDesktopPaths } from "./paths.js";
 
+app.setName("nebula-lca-desktop");
+
 let apiHandle: ApiProcessHandle | null = null;
 const smokeMode = process.argv.includes("--smoke");
 let quitting = false;
+const rendererLogPath = path.join(resolveDesktopPaths().logs, "renderer.log");
+
+function writeRendererLog(...args: unknown[]): void {
+  const line = `[${new Date().toISOString()}] ${args.map((arg) => String(arg)).join(" ")}\n`;
+  try {
+    fs.mkdirSync(path.dirname(rendererLogPath), { recursive: true });
+    fs.appendFileSync(rendererLogPath, line);
+  } catch {
+    // Ignore diagnostic logging failures.
+  }
+}
 
 function loadingHtml(message: string): string {
   return `data:text/html;charset=utf-8,${encodeURIComponent(
@@ -16,6 +29,9 @@ function loadingHtml(message: string): string {
 
 async function createWindow(): Promise<void> {
   const paths = resolveDesktopPaths();
+  const appRoot = app.getAppPath();
+  const preloadPath =
+    path.basename(appRoot) === "dist" ? path.join(appRoot, "preload.cjs") : path.join(appRoot, "dist", "preload.cjs");
   const win = new BrowserWindow({
     width: 1440,
     height: 920,
@@ -23,7 +39,7 @@ async function createWindow(): Promise<void> {
     minHeight: 720,
     show: false,
     webPreferences: {
-      preload: path.join(app.getAppPath(), "dist", "preload.js"),
+      preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
@@ -33,8 +49,22 @@ async function createWindow(): Promise<void> {
   win.loadURL(loadingHtml("Starting local API..."));
   win.once("ready-to-show", () => win.show());
 
+  win.webContents.on("console-message", (_event, _level, message) => {
+    writeRendererLog("RENDERER-CONSOLE:", message);
+  });
+  win.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
+    writeRendererLog("DID-FAIL-LOAD:", errorCode, errorDescription, validatedURL);
+  });
+  win.webContents.on("render-process-gone", (_event, details) => {
+    writeRendererLog("RENDER-PROCESS-GONE:", JSON.stringify(details));
+  });
+
   apiHandle = await startApiProcess(paths);
-  process.env.NEBULA_API_BASE = `${apiHandle.baseUrl}/api`;
+  const apiBase = `${apiHandle.baseUrl}/api`;
+  win.webContents.on("did-finish-load", () => {
+    win.webContents.send("set-api-base", apiBase);
+  });
+  process.env.NEBULA_API_BASE = apiBase;
 
   const indexPath = path.join(paths.webRoot, "index.html");
   if (!fs.existsSync(indexPath)) {
