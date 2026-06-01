@@ -55,7 +55,7 @@ from app.ef31_db_service import (
     DbCommitResult,
 )
 
-_IMPORT_CACHE_ROOT = Path("import-cache") / "ef31_jobs"
+_IMPORT_CACHE_ROOT = Path(settings.import_cache_root) / "ef31_jobs"
 _JOB_EXPIRY_HOURS = 24
 
 

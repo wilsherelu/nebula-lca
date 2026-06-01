@@ -1,3 +1,4 @@
+import { getApiBase } from "../apiBase";
 import { useEffect, useMemo, useState } from "react";
 
 type UnitDefinition = {
@@ -70,8 +71,7 @@ type CreateFlowDialogProps = {
   onStatus?: (text: string) => void;
 };
 
-const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
-const API_BASE = RAW_API_BASE.endsWith("/api") ? RAW_API_BASE : `${RAW_API_BASE}/api`;
+const API_BASE = getApiBase();
 
 const normalizeUnitGroupKey = (value: string): string => value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 

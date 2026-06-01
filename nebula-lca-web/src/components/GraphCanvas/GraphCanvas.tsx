@@ -1,4 +1,5 @@
-﻿import {
+import { getApiBase } from "../../apiBase";
+import {
   Background,
   Controls,
   type Node,
@@ -16,8 +17,7 @@ import { LcaProcessNode } from "./LcaProcessNode";
 import type { LcaNodeData } from "../../model/node";
 import { useLcaGraphStore } from "../../store/lcaGraphStore";
 
-const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
-const API_BASE = RAW_API_BASE.endsWith("/api") ? RAW_API_BASE : `${RAW_API_BASE}/api`;
+const API_BASE = getApiBase();
 const ENABLE_LARGE_GRAPH_EDGE_STAGING = true;
 const ENABLE_LARGE_GRAPH_VISIBLE_CULLING = false;
 const ENABLE_LARGE_GRAPH_VIEWPORT_DEGRADE = true;

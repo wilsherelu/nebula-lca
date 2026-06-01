@@ -1,3 +1,4 @@
+import { getApiBase } from "../../apiBase";
 import { useState } from "react";
 
 type PtsVersionItem = {
@@ -44,6 +45,8 @@ type PtsArtifactDiagnostics = {
   artifact?: Record<string, unknown>;
 };
 
+const API_BASE = getApiBase();
+
 const formatDateTime = (value: string, uiLanguage: "zh" | "en") => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -88,7 +91,7 @@ export function PtsVersionHistoryDialog({
         kind,
         artifact_id: item.id,
       });
-      const resp = await fetch(`/api/pts/${encodeURIComponent(ptsUuid)}/artifact-diagnostics?${params.toString()}`);
+      const resp = await fetch(`${API_BASE}/pts/${encodeURIComponent(ptsUuid)}/artifact-diagnostics?${params.toString()}`);
       if (!resp.ok) {
         throw new Error(await resp.text());
       }

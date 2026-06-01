@@ -1,11 +1,11 @@
-﻿import { Handle, Position, useUpdateNodeInternals, type NodeProps } from "@xyflow/react";
+import { getApiBase } from "../../apiBase";
+import { Handle, Position, useUpdateNodeInternals, type NodeProps } from "@xyflow/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import type { FlowPort, LcaNodeData } from "../../model/node";
 import { useLcaGraphStore } from "../../store/lcaGraphStore";
 
-const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
-const API_BASE = RAW_API_BASE.endsWith("/api") ? RAW_API_BASE : `${RAW_API_BASE}/api`;
+const API_BASE = getApiBase();
 
 const sectionTitleStyle: React.CSSProperties = {
   margin: "6px 0 3px",

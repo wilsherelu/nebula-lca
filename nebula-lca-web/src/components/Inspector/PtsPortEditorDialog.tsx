@@ -1,9 +1,9 @@
-﻿import { useMemo } from "react";
+import { getApiBase } from "../../apiBase";
+import { useMemo } from "react";
 import { useLcaGraphStore } from "../../store/lcaGraphStore";
 import * as React from "react";
 
-const RAW_API_BASE = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api").replace(/\/$/, "");
-const API_BASE = RAW_API_BASE.endsWith("/api") ? RAW_API_BASE : `${RAW_API_BASE}/api`;
+const API_BASE = getApiBase();
 
 type Candidate = {
   key: string;

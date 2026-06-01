@@ -17,7 +17,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from app.config import PROJECT_ROOT
+from app.config import settings
 from app.ecoinvent_ef31_loader import (
     parse_lcia_excel,
     match_cf_to_flows as _match_cf_to_flows,
@@ -30,7 +30,7 @@ from app.services.ef31_runtime_csv import (
 
 logger = logging.getLogger(__name__)
 
-_RUNTIME_LCIA_ROOT = PROJECT_ROOT / "runtime" / "lcia"
+_RUNTIME_LCIA_ROOT = Path(settings.nebula_lca_runtime_root) / "lcia"
 
 
 def _field(obj, name: str, default=None):

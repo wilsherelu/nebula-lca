@@ -22,6 +22,7 @@ from sqlalchemy import text
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..database import SessionLocal, get_db
 from ..models import FlowRecord, ImportJob, DatasetCheckpoint, LciBiosphereFlowKey
 from ..schemas import (
@@ -95,9 +96,7 @@ def _apply_import_sqlite_pragmas(db: Session) -> dict:
 
 def _ecoinvent_elementary_flows_for_lcia(db: Session) -> list[dict]:
     from ..ecoinvent_ef31_loader import parse_elementary_exchanges, parse_units
-    from ..config import PROJECT_ROOT
-
-    cache_root = PROJECT_ROOT / "import-cache" / "job_extract"
+    cache_root = Path(settings.import_cache_root) / "job_extract"
     masterdata_files = sorted(
         cache_root.glob("*/MasterData/ElementaryExchanges.xml"),
         key=lambda item: item.stat().st_mtime,
@@ -290,7 +289,7 @@ def _run_job_background(job_id: str, resume_from_failed: bool) -> None:
         import_pragmas: dict | None = None
         if file_path.suffix.lower() == ".7z":
             _set_job_phase(db, job_id, "extracting", {"message": "extracting_archive"})
-            extract_dir = Path("import-cache") / "job_extract" / job_id
+            extract_dir = Path(settings.import_cache_root) / "job_extract" / job_id
             extract_dir.mkdir(parents=True, exist_ok=True)
             from ..ecoinvent_ef31_loader import selective_extract_7z
 
