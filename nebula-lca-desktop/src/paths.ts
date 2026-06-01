@@ -14,7 +14,9 @@ export type DesktopPaths = {
 
 export function resolveDesktopPaths(): DesktopPaths {
   const userData = app.getPath("userData");
-  const resourcesRoot = app.isPackaged ? process.resourcesPath : path.resolve(app.getAppPath(), "resources");
+  const appRoot = app.getAppPath();
+  const devRoot = path.basename(appRoot) === "dist" ? path.dirname(appRoot) : appRoot;
+  const resourcesRoot = app.isPackaged ? process.resourcesPath : path.resolve(devRoot, "resources");
   return {
     userData,
     logs: path.join(userData, "logs"),

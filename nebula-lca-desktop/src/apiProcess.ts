@@ -1,5 +1,6 @@
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import path from "node:path";
 import net from "node:net";
 import { DesktopPaths } from "./paths.js";
@@ -24,20 +25,38 @@ function findFreePort(): Promise<number> {
   });
 }
 
-async function waitForHealth(baseUrl: string, timeoutMs = 90000): Promise<void> {
+function checkHealth(baseUrl: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const req = http.get(`${baseUrl}/api/health`, { timeout: 3000 }, (resp) => {
+      resp.resume();
+      if (resp.statusCode && resp.statusCode >= 200 && resp.statusCode < 300) {
+        resolve();
+      } else {
+        reject(new Error(`health status ${resp.statusCode ?? "unknown"}`));
+      }
+    });
+    req.on("timeout", () => {
+      req.destroy(new Error("health request timed out"));
+    });
+    req.on("error", reject);
+  });
+}
+
+async function waitForHealth(baseUrl: string, logPath: string, timeoutMs = 90000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown;
   while (Date.now() < deadline) {
     try {
-      const resp = await fetch(`${baseUrl}/api/health`, { cache: "no-store" });
-      if (resp.ok) return;
-      lastError = new Error(`health status ${resp.status}`);
+      await checkHealth(baseUrl);
+      return;
     } catch (error) {
       lastError = error;
     }
     await new Promise((resolve) => setTimeout(resolve, 800));
   }
-  throw lastError instanceof Error ? lastError : new Error("API health check timed out");
+  const message = lastError instanceof Error ? lastError.message : "API health check timed out";
+  fs.appendFileSync(logPath, `[api-health-failed] ${message}\n`);
+  throw new Error(`API health check failed: ${message}`);
 }
 
 function attachLog(child: ChildProcessWithoutNullStreams, logPath: string): void {
@@ -75,11 +94,13 @@ export async function startApiProcess(paths: DesktopPaths): Promise<ApiProcessHa
     cwd: paths.userData,
     windowsHide: true,
   });
-  attachLog(child, path.join(paths.logs, "api.log"));
+  const apiLogPath = path.join(paths.logs, "api.log");
+  fs.appendFileSync(apiLogPath, `[api-start] exe=${paths.apiExe} cwd=${paths.userData} baseUrl=${baseUrl}\n`);
+  attachLog(child, apiLogPath);
   child.on("error", (error) => {
-    fs.appendFileSync(path.join(paths.logs, "api.log"), `[api-error] ${String(error)}\n`);
+    fs.appendFileSync(apiLogPath, `[api-error] ${String(error)}\n`);
   });
-  await waitForHealth(baseUrl);
+  await waitForHealth(baseUrl, apiLogPath);
   return {
     port,
     baseUrl,
