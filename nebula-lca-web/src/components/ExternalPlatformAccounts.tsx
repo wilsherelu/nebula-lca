@@ -25,10 +25,15 @@ type RemoteItem = {
   remote_id: string;
   remote_version?: string | null;
   source?: string | null;
+  metadata?: Record<string, unknown>;
   flow_name?: string;
   flow_uuid?: string;
+  flow_type?: string;
+  default_unit?: string;
+  unit_group?: string;
   process_name?: string;
   process_uuid?: string;
+  process_type?: string;
   model_name?: string;
   model_uuid?: string;
 };
@@ -88,6 +93,8 @@ const emptyForm = {
 };
 
 const remoteKinds: RemoteKind[] = ["flows", "processes", "models"];
+const flowTypeOptions = ["all", "Product flow", "Elementary flow", "Waste flow", "Other flow"] as const;
+const processTypeOptions = ["all", "Unit process, single operation", "Unit process, black box", "LCI result", "Partly terminated system", "Avoided product system"] as const;
 
 const formatTime = (value?: string | null): string => {
   if (!value) return "-";
@@ -110,15 +117,19 @@ export function ExternalPlatformAccounts(props: Props) {
   const { uiLanguage, onStatus } = props;
   const zh = uiLanguage === "zh";
   const [accounts, setAccounts] = useState<PlatformAccount[]>([]);
-  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testingId, setTestingId] = useState("");
   const [errorText, setErrorText] = useState("");
   const [editingId, setEditingId] = useState("");
+  const [accountDialogOpen, setAccountDialogOpen] = useState(false);
+  const [validationDialog, setValidationDialog] = useState<{ ok: boolean; message: string; checkedAt?: string } | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [selectedAccountId, setSelectedAccountId] = useState("");
   const [remoteKind, setRemoteKind] = useState<RemoteKind>("flows");
   const [remoteQuery, setRemoteQuery] = useState("");
+  const [remoteStateMode, setRemoteStateMode] = useState<"open" | "all">("open");
+  const [remoteFlowType, setRemoteFlowType] = useState("Product flow");
+  const [remoteProcessType, setRemoteProcessType] = useState("all");
   const [remotePage, setRemotePage] = useState(1);
   const [remoteResult, setRemoteResult] = useState<RemoteSearchResponse | null>(null);
   const [remoteLoading, setRemoteLoading] = useState(false);
@@ -143,7 +154,6 @@ export function ExternalPlatformAccounts(props: Props) {
   }, [selectedAccountId, tiangongAccounts]);
 
   const loadAccounts = async () => {
-    setLoading(true);
     setErrorText("");
     try {
       const payload = await requestJson<PlatformAccount[]>(`${API_BASE}/data-platforms/accounts`);
@@ -151,8 +161,6 @@ export function ExternalPlatformAccounts(props: Props) {
     } catch (error) {
       const message = error instanceof Error ? error.message : "load failed";
       setErrorText(zh ? `账号加载失败：${message}` : `Failed to load accounts: ${message}`);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -164,6 +172,14 @@ export function ExternalPlatformAccounts(props: Props) {
     setEditingId("");
     setForm(emptyForm);
     setErrorText("");
+    setAccountDialogOpen(false);
+  };
+
+  const openNewAccountDialog = () => {
+    setEditingId("");
+    setForm(emptyForm);
+    setErrorText("");
+    setAccountDialogOpen(true);
   };
 
   const editAccount = (account: PlatformAccount) => {
@@ -180,6 +196,7 @@ export function ExternalPlatformAccounts(props: Props) {
       status: account.status === "disabled" ? "disabled" : "active",
     });
     setErrorText("");
+    setAccountDialogOpen(true);
   };
 
   const saveAccount = async () => {
@@ -252,14 +269,16 @@ export function ExternalPlatformAccounts(props: Props) {
     setTestingId(accountId);
     setErrorText("");
     try {
-      const result = await requestJson<{ ok: boolean; message: string }>(
+      const result = await requestJson<{ ok: boolean; message: string; checked_at?: string }>(
         `${API_BASE}/data-platforms/accounts/${encodeURIComponent(accountId)}/test`,
         { method: "POST" },
       );
+      setValidationDialog({ ok: result.ok, message: result.message, checkedAt: result.checked_at });
       onStatus?.(zh ? `天工账号校验：${result.message}` : `TianGong account check: ${result.message}`);
       await loadAccounts();
     } catch (error) {
       const message = error instanceof Error ? error.message : "test failed";
+      setValidationDialog({ ok: false, message });
       setErrorText(zh ? `校验失败：${message}` : `Check failed: ${message}`);
     } finally {
       setTestingId("");
@@ -296,6 +315,17 @@ export function ExternalPlatformAccounts(props: Props) {
         page_size: "10",
         data_source: "tg",
       });
+      if (remoteStateMode === "open") {
+        params.set("state_code", "100");
+      } else {
+        params.set("state_scope", "all");
+      }
+      if (remoteKind === "flows" && remoteFlowType !== "all") {
+        params.set("flow_type", remoteFlowType);
+      }
+      if (remoteKind === "processes" && remoteProcessType !== "all") {
+        params.set("process_type", remoteProcessType);
+      }
       const payload = await requestJson<RemoteSearchResponse>(
         `${API_BASE}/data-platforms/accounts/${encodeURIComponent(selectedAccount.id)}/${remoteKind}/search?${params.toString()}`,
       );
@@ -369,231 +399,118 @@ export function ExternalPlatformAccounts(props: Props) {
 
   const itemTitle = (item: RemoteItem): string => item.flow_name ?? item.process_name ?? item.model_name ?? item.remote_id;
   const itemUuid = (item: RemoteItem): string => item.flow_uuid ?? item.process_uuid ?? item.model_uuid ?? item.remote_id;
+  const itemType = (item: RemoteItem): string => item.flow_type ?? item.process_type ?? (remoteKind === "models" ? "Model" : "-");
+  const itemSummary = (item: RemoteItem): string => {
+    const classification = typeof item.metadata?.classification === "string" ? item.metadata.classification : "";
+    if (classification) return classification;
+    if (item.default_unit || item.unit_group) return [item.default_unit, item.unit_group].filter(Boolean).join(" / ");
+    return "-";
+  };
+  const itemModifiedAt = (item: RemoteItem): string => {
+    const raw = typeof item.metadata?.modified_at === "string" ? item.metadata.modified_at : "";
+    return raw ? formatTime(raw) : "-";
+  };
+  const copyText = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      onStatus?.(zh ? "已复制 ID。" : "ID copied.");
+    } catch {
+      onStatus?.(text);
+    }
+  };
 
   return (
-    <section className="pm-page">
+    <section className="pm-page pm-platform-workbench">
       <div className="pm-page-head">
         <div>
-          <h2>{zh ? "外部平台账号" : "External Platform Accounts"}</h2>
-          <p>{zh ? "用天工账号登录换取 Supabase session，供后续远程数据同步使用。" : "Sign in with a TianGong account to obtain a Supabase session for remote data sync."}</p>
+          <h2>{zh ? "天工数据接入" : "TianGong Data Access"}</h2>
         </div>
         <div className="pm-head-actions">
-          <button type="button" className="pm-ghost-btn" onClick={() => void loadAccounts()} disabled={loading}>
-            {zh ? "刷新" : "Refresh"}
+          <span className={`pm-connection-pill ${selectedAccount?.last_validation_status === "ok" ? "connected" : ""}`}>
+            {selectedAccount
+              ? `${selectedAccount.alias} · ${selectedAccount.last_validation_status === "ok" ? (zh ? "已连接" : "Connected") : (zh ? "未校验" : "Unchecked")}`
+              : (zh ? "未绑定" : "Not bound")}
+          </span>
+          {selectedAccount && (
+            <button type="button" className="pm-ghost-btn" onClick={() => void testAccount(selectedAccount.id)} disabled={testingId === selectedAccount.id}>
+              {testingId === selectedAccount.id ? (zh ? "校验中" : "Checking") : (zh ? "校验" : "Check")}
+            </button>
+          )}
+          <button type="button" className="pm-ghost-btn" onClick={() => selectedAccount ? editAccount(selectedAccount) : openNewAccountDialog()}>
+            {selectedAccount ? (zh ? "账号设置" : "Account") : (zh ? "绑定账号" : "Bind Account")}
           </button>
         </div>
       </div>
 
-      <div className="pm-platform-grid">
-        <div className="pm-platform-form">
-          <h3>{editingId ? (zh ? "更新天工账号" : "Update TianGong Account") : (zh ? "绑定天工账号" : "Bind TianGong Account")}</h3>
-          <label>
-            <span>{zh ? "账号名称" : "Alias"}</span>
-            <input value={form.alias} onChange={(event) => setForm((prev) => ({ ...prev, alias: event.target.value }))} />
-          </label>
-          <label>
-            <span>{zh ? "Supabase URL" : "Supabase URL"}</span>
-            <input
-              placeholder="https://..."
-              value={form.baseUrl}
-              onChange={(event) => setForm((prev) => ({ ...prev, baseUrl: event.target.value }))}
-            />
-          </label>
-          <label>
-            <span>{zh ? "Publishable Key" : "Publishable Key"}</span>
-            <input
-              type="password"
-              autoComplete="off"
-              value={form.publishableKey}
-              onChange={(event) => setForm((prev) => ({ ...prev, publishableKey: event.target.value }))}
-            />
-          </label>
-          <label>
-            <span>{zh ? "环境名" : "Environment"}</span>
-            <input
-              placeholder={zh ? "测试 / 生产 / 客户环境" : "test / prod / customer"}
-              value={form.environmentLabel}
-              onChange={(event) => setForm((prev) => ({ ...prev, environmentLabel: event.target.value }))}
-            />
-          </label>
-          <label>
-            <span>{zh ? "认证方式" : "Auth Type"}</span>
-            <select value={form.authType} onChange={(event) => setForm((prev) => ({ ...prev, authType: event.target.value as "basic" | "bearer" | "api_key" }))}>
-              <option value="basic">{zh ? "天工账号登录" : "TianGong Login"}</option>
-              <option value="bearer">Bearer Token</option>
-              <option value="api_key">{zh ? "兼容 API Key" : "Legacy API Key"}</option>
-            </select>
-          </label>
-          {form.authType === "basic" ? (
-            <>
-              <label>
-                <span>{zh ? "天工邮箱" : "TianGong Email"}</span>
-                <input
-                  type="email"
-                  autoComplete="username"
-                  placeholder={editingId ? (zh ? "留空则保留原凭据" : "Leave blank to keep existing credential") : ""}
-                  value={form.email}
-                  onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
-                />
-              </label>
-              <label>
-                <span>{zh ? "天工密码" : "TianGong Password"}</span>
-                <input
-                  type="password"
-                  autoComplete="current-password"
-                  placeholder={editingId ? (zh ? "留空则保留原凭据" : "Leave blank to keep existing credential") : ""}
-                  value={form.password}
-                  onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
-                />
-              </label>
-            </>
-          ) : (
-            <label>
-              <span>{form.authType === "bearer" ? "Bearer Token" : (zh ? "兼容 API Key" : "Legacy API Key")}</span>
-              <input
-                type="password"
-                autoComplete="off"
-                placeholder={editingId ? (zh ? "留空则保留原凭据" : "Leave blank to keep existing credential") : ""}
-                value={form.secret}
-                onChange={(event) => setForm((prev) => ({ ...prev, secret: event.target.value }))}
-              />
-            </label>
-          )}
-          <label>
-            <span>{zh ? "状态" : "Status"}</span>
-            <select value={form.status} onChange={(event) => setForm((prev) => ({ ...prev, status: event.target.value as "active" | "disabled" }))}>
-              <option value="active">{zh ? "启用" : "Active"}</option>
-              <option value="disabled">{zh ? "停用" : "Disabled"}</option>
-            </select>
-          </label>
-          {errorText && <div className="pm-field-error">{errorText}</div>}
-          <div className="pm-platform-actions">
-            {editingId && (
-              <button type="button" className="pm-ghost-btn" onClick={resetForm} disabled={saving}>
-                {zh ? "取消编辑" : "Cancel"}
+      {errorText && <div className="pm-field-error pm-workbench-error">{errorText}</div>}
+
+      <div className="pm-remote-workspace">
+        <div className="pm-remote-toolbar">
+          <div className="pm-remote-tabs">
+            {remoteKinds.map((kind) => (
+              <button
+                key={kind}
+                type="button"
+                className={remoteKind === kind ? "active" : ""}
+                onClick={() => {
+                  setRemoteKind(kind);
+                  setRemotePage(1);
+                  setRemoteResult(null);
+                  setRemotePreview(null);
+                }}
+              >
+                {kind === "flows" ? "Flow" : kind === "processes" ? "Process" : "Model"}
               </button>
-            )}
-            <button type="button" className="pm-primary-btn" onClick={() => void saveAccount()} disabled={saving}>
-              {saving ? (zh ? "保存中..." : "Saving...") : (zh ? "保存绑定" : "Save Binding")}
-            </button>
-          </div>
-        </div>
-
-        <div className="pm-platform-list">
-          <div className="pm-table-wrap pm-platform-table-wrap">
-            <table className="pm-table">
-              <thead>
-                <tr>
-                  <th>{zh ? "账号" : "Account"}</th>
-                  <th>{zh ? "认证" : "Auth"}</th>
-                  <th>{zh ? "状态" : "Status"}</th>
-                  <th>{zh ? "最近校验" : "Last Check"}</th>
-                  <th>{zh ? "操作" : "Actions"}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tiangongAccounts.map((account) => (
-                  <tr key={account.id}>
-                    <td>
-                      <strong>{account.alias}</strong>
-                      <div className="pm-platform-muted">{account.base_url || (zh ? "未配置 API 地址" : "No API base URL")}</div>
-                      <div className="pm-platform-muted">
-                        {typeof account.metadata?.environment_label === "string" && account.metadata.environment_label
-                          ? account.metadata.environment_label
-                          : (zh ? "未配置环境名" : "No environment label")}
-                      </div>
-                    </td>
-                    <td>{account.has_credential ? account.auth_type : "-"}</td>
-                    <td>
-                      <span className={`pm-status-badge ${account.status === "active" ? "pm-status-badge--balanced" : "pm-status-badge--unchecked"}`}>
-                        {account.status === "active" ? (zh ? "启用" : "Active") : (zh ? "停用" : "Disabled")}
-                      </span>
-                    </td>
-                    <td>
-                      <div>{formatTime(account.last_validated_at)}</div>
-                      <div className="pm-platform-muted">{account.last_validation_message || "-"}</div>
-                    </td>
-                    <td>
-                      <div className="pm-row-actions">
-                        <button type="button" className="pm-link-btn primary" onClick={() => void testAccount(account.id)} disabled={testingId === account.id}>
-                          {testingId === account.id ? (zh ? "校验中" : "Checking") : (zh ? "校验" : "Check")}
-                        </button>
-                        <button type="button" className="pm-link-btn" onClick={() => editAccount(account)}>
-                          {zh ? "编辑" : "Edit"}
-                        </button>
-                        <button type="button" className="pm-link-btn danger" onClick={() => void deleteAccount(account.id)} disabled={saving}>
-                          {zh ? "删除" : "Delete"}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {tiangongAccounts.length === 0 && (
-                  <tr>
-                    <td colSpan={5}>{loading ? (zh ? "加载中..." : "Loading...") : (zh ? "尚未绑定天工账号。" : "No TianGong account bound.")}</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          <div className="pm-platform-note">
-            {zh
-              ? "推荐使用天工账号登录：密码只提交到星云后端换取 Supabase session，后端保存加密 session/refresh token，不向前端返回 token；搜索只写远程缓存，导入选中项才写星云目录或项目。"
-              : "TianGong Login is recommended: the password is sent only to the Nebula backend to obtain a Supabase session. The backend stores encrypted session/refresh tokens and never returns tokens to the frontend. Search only writes remote cache; selected import writes Nebula catalog or projects."}
-          </div>
-        </div>
-      </div>
-
-      <div className="pm-remote-browser">
-        <div className="pm-remote-browser-head">
-          <div>
-            <h3>{zh ? "远程数据浏览" : "Remote Browser"}</h3>
-            <p>{zh ? "按需检索天工 Flow / Process / Model，选中后导入星云。" : "Search TianGong Flow / Process / Model on demand and import selected records."}</p>
-          </div>
-          <select value={selectedAccount?.id ?? ""} onChange={(event) => setSelectedAccountId(event.target.value)} disabled={tiangongAccounts.length === 0}>
-            {tiangongAccounts.map((account) => (
-              <option key={account.id} value={account.id}>{account.alias}</option>
             ))}
-          </select>
-        </div>
-        <div className="pm-remote-tabs">
-          {remoteKinds.map((kind) => (
-            <button
-              key={kind}
-              type="button"
-              className={remoteKind === kind ? "active" : ""}
-              onClick={() => {
-                setRemoteKind(kind);
-                setRemotePage(1);
-                setRemoteResult(null);
-                setRemotePreview(null);
-              }}
-            >
-              {kind === "flows" ? "Flow" : kind === "processes" ? "Process" : "Model"}
+          </div>
+          {!selectedAccount && (
+            <button type="button" className="pm-primary-btn" onClick={openNewAccountDialog}>
+              {zh ? "绑定天工账号" : "Bind TianGong Account"}
             </button>
-          ))}
+          )}
         </div>
-        <div className="pm-remote-search">
+
+        <div className="pm-remote-filterbar">
           <input
             value={remoteQuery}
             onChange={(event) => setRemoteQuery(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") void searchRemote(1);
             }}
-            placeholder={zh ? "输入关键词搜索远程数据" : "Search remote data"}
+            placeholder={zh ? "搜索名称、中文名、英文名或同义词" : "Search name, localized title, or synonym"}
           />
+          <select value={remoteStateMode} onChange={(event) => setRemoteStateMode(event.target.value as "open" | "all")}>
+            <option value="open">{zh ? "开放数据" : "Open data"}</option>
+            <option value="all">{zh ? "全部状态" : "All states"}</option>
+          </select>
+          {remoteKind === "flows" && (
+            <select value={remoteFlowType} onChange={(event) => setRemoteFlowType(event.target.value)}>
+              {flowTypeOptions.map((value) => (
+                <option key={value} value={value}>{value === "all" ? (zh ? "全部流类型" : "All flow types") : value}</option>
+              ))}
+            </select>
+          )}
+          {remoteKind === "processes" && (
+            <select value={remoteProcessType} onChange={(event) => setRemoteProcessType(event.target.value)}>
+              {processTypeOptions.map((value) => (
+                <option key={value} value={value}>{value === "all" ? (zh ? "全部数据集类型" : "All dataset types") : value}</option>
+              ))}
+            </select>
+          )}
           <button type="button" className="pm-primary-btn" onClick={() => void searchRemote(1)} disabled={remoteLoading || !selectedAccount}>
             {remoteLoading ? (zh ? "查询中..." : "Searching...") : (zh ? "查询" : "Search")}
           </button>
         </div>
-        <div className="pm-table-wrap pm-remote-table-wrap">
-          <table className="pm-table">
+
+        <div className="pm-remote-table-panel">
+          <table className="pm-table pm-remote-result-table">
             <thead>
               <tr>
                 <th>{zh ? "名称" : "Name"}</th>
-                <th>ID</th>
+                <th>{zh ? "类型" : "Type"}</th>
+                <th>{zh ? "分类 / 摘要" : "Classification / Summary"}</th>
                 <th>{zh ? "版本" : "Version"}</th>
-                <th>{zh ? "来源" : "Source"}</th>
+                <th>{zh ? "更新" : "Updated"}</th>
                 <th>{zh ? "操作" : "Actions"}</th>
               </tr>
             </thead>
@@ -602,29 +519,38 @@ export function ExternalPlatformAccounts(props: Props) {
                 const key = `${remoteKind}:${item.remote_id}`;
                 return (
                   <tr key={`${item.remote_id}:${item.remote_version ?? ""}`}>
-                    <td><strong>{itemTitle(item)}</strong></td>
-                    <td><span className="pm-platform-muted">{itemUuid(item)}</span></td>
-                    <td>{item.remote_version ?? "-"}</td>
-                    <td>{item.source ?? "-"}</td>
                     <td>
-                      <button type="button" className="pm-link-btn" onClick={() => void previewRemoteItem(item)} disabled={previewLoadingKey === key}>
-                        {previewLoadingKey === key ? (zh ? "预览中" : "Previewing") : (zh ? "预览" : "Preview")}
+                      <strong>{itemTitle(item)}</strong>
+                      <button type="button" className="pm-copy-id-btn" onClick={() => void copyText(itemUuid(item))}>
+                        {zh ? "复制ID" : "Copy ID"}
                       </button>
-                      <button type="button" className="pm-link-btn primary" onClick={() => void syncRemoteItem(item)} disabled={syncingKey === key}>
-                        {syncingKey === key ? (zh ? "导入中" : "Importing") : (zh ? "导入" : "Import")}
-                      </button>
+                    </td>
+                    <td>{itemType(item)}</td>
+                    <td><span className="pm-result-summary">{itemSummary(item)}</span></td>
+                    <td>{item.remote_version ?? "-"}</td>
+                    <td>{itemModifiedAt(item)}</td>
+                    <td>
+                      <div className="pm-row-actions">
+                        <button type="button" className="pm-link-btn" onClick={() => void previewRemoteItem(item)} disabled={previewLoadingKey === key}>
+                          {previewLoadingKey === key ? (zh ? "预览中" : "Previewing") : (zh ? "预览" : "Preview")}
+                        </button>
+                        <button type="button" className="pm-link-btn primary" onClick={() => void syncRemoteItem(item)} disabled={syncingKey === key}>
+                          {syncingKey === key ? (zh ? "导入中" : "Importing") : (zh ? "导入" : "Import")}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
               })}
               {(!remoteResult || remoteResult.items.length === 0) && (
                 <tr>
-                  <td colSpan={5}>{remoteLoading ? (zh ? "加载中..." : "Loading...") : (zh ? "暂无远程结果。" : "No remote results.")}</td>
+                  <td colSpan={6}>{remoteLoading ? (zh ? "加载中..." : "Loading...") : (zh ? "暂无远程结果。" : "No remote results.")}</td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
+
         <div className="pm-remote-footer">
           <span>{zh ? `共 ${remoteResult?.total ?? 0} 条` : `${remoteResult?.total ?? 0} total`}</span>
           <div className="pm-row-actions">
@@ -637,52 +563,118 @@ export function ExternalPlatformAccounts(props: Props) {
             </button>
           </div>
         </div>
-        {remotePreview && (
-          <div className="pm-remote-sync-report">
-            <div>
-              <strong>{remotePreview.title}</strong>
-              <span>{remotePreview.remote_kind}</span>
-              <span>{remotePreview.remote_version ?? "-"}</span>
-            </div>
-            {remotePreview.description && <p>{remotePreview.description}</p>}
-            <div>
-              {Object.entries(remotePreview.summary ?? {}).slice(0, 8).map(([key, value]) => (
-                value ? <span key={key}>{key}: {String(value)}</span> : null
-              ))}
-            </div>
-            {(remotePreview.related ?? []).length > 0 && (
-              <p>
-                {(remotePreview.related ?? []).slice(0, 3).map((item) => String(item.name ?? item.flow_id ?? item.process_id ?? "")).filter(Boolean).join(" | ")}
-              </p>
-            )}
-          </div>
-        )}
-        {lastSync?.tidas_import_report && (
-          <div className="pm-remote-sync-report">
-            <div>
-              <strong>{zh ? "最近导入" : "Last Import"}</strong>
-              <span>{lastSync.tidas_import_report.import_type ?? remoteKind}</span>
-              <span>Job {lastSync.tidas_import_job_id ?? lastSync.job_id}</span>
-            </div>
-            <div>
-              <span>{zh ? `新增 ${lastSync.tidas_import_report.inserted ?? 0}` : `${lastSync.tidas_import_report.inserted ?? 0} inserted`}</span>
-              <span>{zh ? `更新 ${lastSync.tidas_import_report.updated ?? 0}` : `${lastSync.tidas_import_report.updated ?? 0} updated`}</span>
-              <span>{zh ? `跳过 ${lastSync.tidas_import_report.skipped ?? 0}` : `${lastSync.tidas_import_report.skipped ?? 0} skipped`}</span>
-              <span>{zh ? `失败 ${lastSync.tidas_import_report.failed ?? 0}` : `${lastSync.tidas_import_report.failed ?? 0} failed`}</span>
-              <span>{zh ? `警告 ${Number(lastSync.tidas_import_report.warning_count ?? 0) + Number(lastSync.tidas_import_report.unresolved_count ?? 0)}` : `${Number(lastSync.tidas_import_report.warning_count ?? 0) + Number(lastSync.tidas_import_report.unresolved_count ?? 0)} warnings`}</span>
-            </div>
-            {(lastSync.tidas_import_report.errors?.[0] || lastSync.tidas_import_report.warnings?.[0]) && (
-              <p>{lastSync.tidas_import_report.errors?.[0] ?? lastSync.tidas_import_report.warnings?.[0]}</p>
-            )}
-          </div>
-        )}
       </div>
 
-      <div className="pm-platform-note pm-send-placeholder">
-        <strong>{zh ? "Send to TianGong" : "Send to TianGong"}</strong>
-        <span>{zh ? "第二阶段接入：从星云项目直接创建/保存天工 draft；当前不走 TIDAS ZIP 主路径。" : "Phase 2: create/save TianGong drafts directly from Nebula projects. TIDAS ZIP remains fallback/debug only."}</span>
-        <button type="button" className="pm-ghost-btn" disabled>{zh ? "接口占位" : "API placeholder"}</button>
-      </div>
+      {lastSync?.tidas_import_report && (
+        <div className="pm-import-toast">
+          <strong>{zh ? "最近导入" : "Last Import"}</strong>
+          <span>{zh ? `新增 ${lastSync.tidas_import_report.inserted ?? 0}` : `${lastSync.tidas_import_report.inserted ?? 0} inserted`}</span>
+          <span>{zh ? `更新 ${lastSync.tidas_import_report.updated ?? 0}` : `${lastSync.tidas_import_report.updated ?? 0} updated`}</span>
+          <span>{zh ? `失败 ${lastSync.tidas_import_report.failed ?? 0}` : `${lastSync.tidas_import_report.failed ?? 0} failed`}</span>
+          <span>{zh ? `警告 ${Number(lastSync.tidas_import_report.warning_count ?? 0) + Number(lastSync.tidas_import_report.unresolved_count ?? 0)}` : `${Number(lastSync.tidas_import_report.warning_count ?? 0) + Number(lastSync.tidas_import_report.unresolved_count ?? 0)} warnings`}</span>
+        </div>
+      )}
+
+      {accountDialogOpen && (
+        <div className="pm-modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) resetForm();
+        }}>
+          <div className="pm-account-dialog" role="dialog" aria-modal="true">
+            <div className="pm-dialog-head">
+              <h3>{editingId ? (zh ? "编辑天工账号" : "Edit TianGong Account") : (zh ? "绑定天工账号" : "Bind TianGong Account")}</h3>
+              <button type="button" className="pm-icon-btn" onClick={resetForm}>×</button>
+            </div>
+            <div className="pm-platform-form pm-platform-form--dialog">
+              <label><span>{zh ? "账号名称" : "Alias"}</span><input value={form.alias} onChange={(event) => setForm((prev) => ({ ...prev, alias: event.target.value }))} /></label>
+              <label><span>Supabase URL</span><input value={form.baseUrl} onChange={(event) => setForm((prev) => ({ ...prev, baseUrl: event.target.value }))} /></label>
+              <label><span>Publishable Key</span><input type="password" autoComplete="off" value={form.publishableKey} onChange={(event) => setForm((prev) => ({ ...prev, publishableKey: event.target.value }))} /></label>
+              <label><span>{zh ? "环境名" : "Environment"}</span><input value={form.environmentLabel} onChange={(event) => setForm((prev) => ({ ...prev, environmentLabel: event.target.value }))} /></label>
+              <label>
+                <span>{zh ? "认证方式" : "Auth Type"}</span>
+                <select value={form.authType} onChange={(event) => setForm((prev) => ({ ...prev, authType: event.target.value as "basic" | "bearer" | "api_key" }))}>
+                  <option value="basic">{zh ? "天工账号登录" : "TianGong Login"}</option>
+                  <option value="bearer">Bearer Token</option>
+                  <option value="api_key">{zh ? "兼容 API Key" : "Legacy API Key"}</option>
+                </select>
+              </label>
+              {form.authType === "basic" ? (
+                <>
+                  <label><span>{zh ? "天工邮箱" : "TianGong Email"}</span><input type="email" autoComplete="username" placeholder={editingId ? (zh ? "留空则保留原凭据" : "Leave blank to keep existing credential") : ""} value={form.email} onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))} /></label>
+                  <label><span>{zh ? "天工密码" : "TianGong Password"}</span><input type="password" autoComplete="current-password" placeholder={editingId ? (zh ? "留空则保留原凭据" : "Leave blank to keep existing credential") : ""} value={form.password} onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))} /></label>
+                </>
+              ) : (
+                <label><span>{form.authType === "bearer" ? "Bearer Token" : (zh ? "兼容 API Key" : "Legacy API Key")}</span><input type="password" autoComplete="off" placeholder={editingId ? (zh ? "留空则保留原凭据" : "Leave blank to keep existing credential") : ""} value={form.secret} onChange={(event) => setForm((prev) => ({ ...prev, secret: event.target.value }))} /></label>
+              )}
+              <label>
+                <span>{zh ? "状态" : "Status"}</span>
+                <select value={form.status} onChange={(event) => setForm((prev) => ({ ...prev, status: event.target.value as "active" | "disabled" }))}>
+                  <option value="active">{zh ? "启用" : "Active"}</option>
+                  <option value="disabled">{zh ? "停用" : "Disabled"}</option>
+                </select>
+              </label>
+            </div>
+            <div className="pm-dialog-actions">
+              {editingId && (
+                <button type="button" className="pm-ghost-btn danger" onClick={() => void deleteAccount(editingId)} disabled={saving}>
+                  {zh ? "删除绑定" : "Delete Binding"}
+                </button>
+              )}
+              <button type="button" className="pm-ghost-btn" onClick={resetForm}>{zh ? "取消" : "Cancel"}</button>
+              <button type="button" className="pm-primary-btn" onClick={() => void saveAccount()} disabled={saving}>{saving ? (zh ? "保存中..." : "Saving...") : (zh ? "保存" : "Save")}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {validationDialog && (
+        <div className="pm-modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setValidationDialog(null);
+        }}>
+          <div className="pm-validation-dialog" role="dialog" aria-modal="true">
+            <div className="pm-dialog-head">
+              <h3>{zh ? "天工账号校验" : "TianGong Account Check"}</h3>
+              <button type="button" className="pm-icon-btn" onClick={() => setValidationDialog(null)}>×</button>
+            </div>
+            <div className="pm-validation-body">
+              <span className={`pm-status-badge ${validationDialog.ok ? "pm-status-badge--balanced" : "pm-status-badge--unchecked"}`}>
+                {validationDialog.ok ? (zh ? "通过" : "OK") : (zh ? "未通过" : "Failed")}
+              </span>
+              <p>{validationDialog.message}</p>
+              <small>{formatTime(validationDialog.checkedAt)}</small>
+            </div>
+            <div className="pm-dialog-actions">
+              <button type="button" className="pm-primary-btn" onClick={() => setValidationDialog(null)}>{zh ? "知道了" : "OK"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {remotePreview && (
+        <aside className="pm-preview-drawer">
+          <div className="pm-dialog-head">
+            <h3>{remotePreview.title}</h3>
+            <button type="button" className="pm-icon-btn" onClick={() => setRemotePreview(null)}>×</button>
+          </div>
+          <div className="pm-preview-meta">
+            <span>{remotePreview.remote_kind}</span>
+            <span>{remotePreview.remote_version ?? "-"}</span>
+          </div>
+          {remotePreview.description && <p>{remotePreview.description}</p>}
+          <dl>
+            {Object.entries(remotePreview.summary ?? {}).slice(0, 10).map(([key, value]) => (
+              value ? <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div> : null
+            ))}
+          </dl>
+          {(remotePreview.related ?? []).length > 0 && (
+            <div className="pm-preview-related">
+              <strong>{zh ? "关联项" : "Related"}</strong>
+              {(remotePreview.related ?? []).slice(0, 5).map((item, index) => (
+                <span key={index}>{String(item.name ?? item.flow_id ?? item.process_id ?? "")}</span>
+              ))}
+            </div>
+          )}
+        </aside>
+      )}
     </section>
   );
 }
