@@ -705,12 +705,15 @@ def search_remote_flows(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     data_source: str = Query(default="tg"),
-    state_code: int | None = Query(default=None),
+    state_code: int | None = Query(default=100),
+    state_scope: str = Query(default="open"),
+    flow_type: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> DataPlatformSearchResponse:
     account = _account_or_404(db, account_id)
+    effective_state_code = None if state_scope == "all" else state_code
     try:
-        result = connector_for_account(_account_context(account, db)).search_flows(q, page=page, page_size=page_size, data_source=data_source, state_code=state_code)
+        result = connector_for_account(_account_context(account, db)).search_flows(q, page=page, page_size=page_size, data_source=data_source, state_code=effective_state_code, flow_type=flow_type)
     except ConnectorError as exc:
         raise _connector_error(exc) from exc
     for item in result.items:
@@ -735,12 +738,15 @@ def search_remote_processes(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     data_source: str = Query(default="tg"),
-    state_code: int | None = Query(default=None),
+    state_code: int | None = Query(default=100),
+    state_scope: str = Query(default="open"),
+    process_type: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> DataPlatformSearchResponse:
     account = _account_or_404(db, account_id)
+    effective_state_code = None if state_scope == "all" else state_code
     try:
-        result = connector_for_account(_account_context(account, db)).search_processes(q, page=page, page_size=page_size, data_source=data_source, state_code=state_code)
+        result = connector_for_account(_account_context(account, db)).search_processes(q, page=page, page_size=page_size, data_source=data_source, state_code=effective_state_code, process_type=process_type)
     except ConnectorError as exc:
         raise _connector_error(exc) from exc
     for item in result.items:
@@ -765,12 +771,14 @@ def search_remote_models(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     data_source: str = Query(default="tg"),
-    state_code: int | None = Query(default=None),
+    state_code: int | None = Query(default=100),
+    state_scope: str = Query(default="open"),
     db: Session = Depends(get_db),
 ) -> DataPlatformSearchResponse:
     account = _account_or_404(db, account_id)
+    effective_state_code = None if state_scope == "all" else state_code
     try:
-        result = connector_for_account(_account_context(account, db)).search_models(q, page=page, page_size=page_size, data_source=data_source, state_code=state_code)
+        result = connector_for_account(_account_context(account, db)).search_models(q, page=page, page_size=page_size, data_source=data_source, state_code=effective_state_code)
     except ConnectorError as exc:
         raise _connector_error(exc) from exc
     for item in result.items:

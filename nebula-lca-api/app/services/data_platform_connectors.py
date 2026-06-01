@@ -202,10 +202,10 @@ class BaseDataPlatformConnector:
     def test_connection(self) -> tuple[bool, str]:
         raise NotImplementedError
 
-    def search_flows(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
+    def search_flows(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100, flow_type: str | None = None) -> RemotePageDTO:
         raise NotImplementedError
 
-    def search_processes(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
+    def search_processes(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100, process_type: str | None = None) -> RemotePageDTO:
         raise NotImplementedError
 
     def search_models(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
@@ -230,7 +230,7 @@ class MockDataPlatformConnector(BaseDataPlatformConnector):
             return False, "mock connection failed by account metadata"
         return True, "mock connection ok"
 
-    def search_flows(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
+    def search_flows(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100, flow_type: str | None = None) -> RemotePageDTO:
         if self.account.metadata.get("raise_search_error"):
             raise ConnectorError("mock search failed by account metadata")
         token = (query or "flow").strip() or "flow"
@@ -249,7 +249,7 @@ class MockDataPlatformConnector(BaseDataPlatformConnector):
         ]
         return RemotePageDTO(items=items, total=len(items), page=page, page_size=page_size, has_more=False)
 
-    def search_processes(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
+    def search_processes(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100, process_type: str | None = None) -> RemotePageDTO:
         token = (query or "process").strip() or "process"
         items = [
             RemoteProcessDTO(
@@ -358,15 +358,15 @@ class CustomHttpDataPlatformConnector(BaseDataPlatformConnector):
         payload = self._json_get("/health")
         return True, str(payload.get("message") if isinstance(payload, dict) else "custom connector ok")
 
-    def search_flows(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
-        payload = self._json_get("/flows", {"q": query, "page": page, "page_size": page_size, "data_source": data_source, "state_code": state_code})
+    def search_flows(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100, flow_type: str | None = None) -> RemotePageDTO:
+        payload = self._json_get("/flows", {"q": query, "page": page, "page_size": page_size, "data_source": data_source, "state_code": state_code, "flow_type": flow_type})
         rows = payload.get("items", payload) if isinstance(payload, dict) else payload
         items = [_flow_from_mapping(row, self.account.platform) for row in rows if isinstance(row, dict)]
         total = int(payload.get("total") or len(items)) if isinstance(payload, dict) else len(items)
         return RemotePageDTO(items=items, total=total, page=page, page_size=page_size, has_more=(page * page_size) < total)
 
-    def search_processes(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
-        payload = self._json_get("/processes", {"q": query, "page": page, "page_size": page_size, "data_source": data_source, "state_code": state_code})
+    def search_processes(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100, process_type: str | None = None) -> RemotePageDTO:
+        payload = self._json_get("/processes", {"q": query, "page": page, "page_size": page_size, "data_source": data_source, "state_code": state_code, "process_type": process_type})
         rows = payload.get("items", payload) if isinstance(payload, dict) else payload
         items = [_process_from_mapping(row, self.account.platform) for row in rows if isinstance(row, dict)]
         total = int(payload.get("total") or len(items)) if isinstance(payload, dict) else len(items)
@@ -583,7 +583,18 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
             raise ConnectorError(f"TianGong {table} detail row must be an object.")
         return row
 
-    def _search_rpc(self, *, kind: str, query: str, page: int, page_size: int, data_source: str, state_code: int | None) -> RemotePageDTO:
+    def _search_rpc(
+        self,
+        *,
+        kind: str,
+        query: str,
+        page: int,
+        page_size: int,
+        data_source: str,
+        state_code: int | None,
+        flow_type: str | None = None,
+        process_type: str | None = None,
+    ) -> RemotePageDTO:
         if kind == "flow":
             new_rpc, latest_rpc, search_rpc, mapper = "pgroonga_search_flows_v1", "get_latest_flow_versions", "search_flows_latest", _tiangong_flow_from_row
         elif kind == "process":
@@ -591,6 +602,11 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
         else:
             new_rpc, latest_rpc, search_rpc, mapper = "pgroonga_search_lifecyclemodels_v1", "get_latest_lifecyclemodel_versions", "search_lifecyclemodels_latest", _tiangong_model_from_row
         user_id = self._current_user_id()
+        filter_condition: dict[str, Any] = {}
+        normalized_flow_type = str(flow_type or "").strip()
+        normalized_process_type = str(process_type or "").strip()
+        if kind == "flow" and normalized_flow_type and normalized_flow_type != "all":
+            filter_condition["flowType"] = normalized_flow_type
         legacy_payload: dict[str, Any] = {
             "page_size": page_size,
             "page_current": page,
@@ -601,8 +617,10 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
             "sort_by": "modified_at",
             "sort_direction": "desc",
         }
+        if kind == "flow":
+            legacy_payload["filter_condition"] = filter_condition
         if kind == "process":
-            legacy_payload["type_of_data_set_filter"] = "all"
+            legacy_payload["type_of_data_set_filter"] = normalized_process_type if normalized_process_type and normalized_process_type != "all" else "all"
         if not query.strip():
             raw = self._rpc(latest_rpc, legacy_payload)
             rows, total = _tiangong_rows_and_total(raw)
@@ -611,7 +629,7 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
 
         search_payload: dict[str, Any] = {
             "query_text": query.strip(),
-            "filter_condition": {},
+            "filter_condition": filter_condition,
             "order_by": {},
             "page_size": page_size,
             "page_current": page,
@@ -621,7 +639,7 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
             "state_code_filter": state_code,
         }
         if kind == "process":
-            search_payload["type_of_data_set_filter"] = "all"
+            search_payload["type_of_data_set_filter"] = normalized_process_type if normalized_process_type and normalized_process_type != "all" else "all"
         tried = [search_rpc]
         try:
             raw = self._rpc(search_rpc, search_payload)
@@ -630,7 +648,7 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
                 raise
             new_payload: dict[str, Any] = {
                 "query_text": query.strip(),
-                "filter_condition": {},
+                "filter_condition": filter_condition,
                 "page_size": page_size,
                 "page_current": page,
                 "data_source": data_source,
@@ -639,7 +657,7 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
             if state_code is not None:
                 new_payload["state_code"] = state_code
             if kind == "process":
-                new_payload["type_of_data_set"] = "all"
+                new_payload["type_of_data_set"] = normalized_process_type if normalized_process_type and normalized_process_type != "all" else "all"
             tried.append(new_rpc)
             try:
                 raw = self._rpc(new_rpc, new_payload)
@@ -649,6 +667,7 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
                     status_code=new_exc.status_code,
                 ) from new_exc
         rows, total = _tiangong_rows_and_total(raw)
+        rows = _rerank_tiangong_rows(kind, rows, query)
         items = [mapper(row) for row in rows if isinstance(row, dict)]
         return RemotePageDTO(items=items, total=total if total is not None else len(items), page=page, page_size=page_size, has_more=(page * page_size) < (total if total is not None else len(items)))
 
@@ -656,11 +675,11 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
         self._access_token()
         return True, "TianGong Supabase Auth ok."
 
-    def search_flows(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
-        return self._search_rpc(kind="flow", query=query, page=page, page_size=page_size, data_source=data_source, state_code=state_code)
+    def search_flows(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100, flow_type: str | None = None) -> RemotePageDTO:
+        return self._search_rpc(kind="flow", query=query, page=page, page_size=page_size, data_source=data_source, state_code=state_code, flow_type=flow_type)
 
-    def search_processes(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
-        return self._search_rpc(kind="process", query=query, page=page, page_size=page_size, data_source=data_source, state_code=state_code)
+    def search_processes(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100, process_type: str | None = None) -> RemotePageDTO:
+        return self._search_rpc(kind="process", query=query, page=page, page_size=page_size, data_source=data_source, state_code=state_code, process_type=process_type)
 
     def search_models(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
         return self._search_rpc(kind="model", query=query, page=page, page_size=page_size, data_source=data_source, state_code=state_code)
@@ -737,10 +756,10 @@ class SkeletonDataPlatformConnector(BaseDataPlatformConnector):
     def test_connection(self) -> tuple[bool, str]:
         return False, f"{self.account.platform} connector skeleton is registered but not configured for live API calls yet"
 
-    def search_flows(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
+    def search_flows(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100, flow_type: str | None = None) -> RemotePageDTO:
         raise ConnectorError(f"{self.account.platform} live flow search is not implemented yet")
 
-    def search_processes(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
+    def search_processes(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100, process_type: str | None = None) -> RemotePageDTO:
         raise ConnectorError(f"{self.account.platform} live process search is not implemented yet")
 
     def search_models(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
@@ -980,6 +999,86 @@ def _unit_group_from_payload(payload: dict[str, Any]) -> RemoteUnitGroupDTO | No
     )
 
 
+def _localized_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, list):
+        values: list[str] = []
+        for item in value:
+            values.extend(_localized_values(item))
+        return values
+    if isinstance(value, dict):
+        values = []
+        for key in ("#text", "@value", "value", "text"):
+            text = str(value.get(key) or "").strip()
+            if text:
+                values.append(text)
+        for key in ("baseName", "common:baseName", "name", "common:name", "shortDescription", "common:shortDescription", "mixAndLocationTypes", "treatmentStandardsRoutes"):
+            values.extend(_localized_values(value.get(key)))
+        return values
+    return []
+
+
+def _classification_text(payload: dict[str, Any], kind: str) -> str:
+    if kind == "flow":
+        info = payload.get("flowDataSet", {}).get("flowInformation", {}).get("dataSetInformation", {}) if isinstance(payload.get("flowDataSet"), dict) else {}
+    elif kind == "process":
+        info = payload.get("processDataSet", {}).get("processInformation", {}).get("dataSetInformation", {}) if isinstance(payload.get("processDataSet"), dict) else {}
+    else:
+        info = payload.get("lifeCycleModelDataSet", {}).get("lifeCycleModelInformation", {}).get("dataSetInformation", {}) if isinstance(payload.get("lifeCycleModelDataSet"), dict) else {}
+    if not isinstance(info, dict):
+        return ""
+    classification = info.get("classificationInformation")
+    return " ".join(_localized_values(classification))
+
+
+def _row_search_texts(kind: str, row: dict[str, Any]) -> tuple[list[str], list[str], str]:
+    payload = _extract_json_payload(row)
+    if kind == "flow":
+        info = payload.get("flowDataSet", {}).get("flowInformation", {}).get("dataSetInformation", {}) if isinstance(payload.get("flowDataSet"), dict) else {}
+        title_values = _localized_values(row.get("name") or row.get("flow_name")) + _localized_values(info.get("name") if isinstance(info, dict) else None)
+        secondary = _localized_values(info.get("common:synonyms") if isinstance(info, dict) else None)
+    elif kind == "process":
+        info = payload.get("processDataSet", {}).get("processInformation", {}).get("dataSetInformation", {}) if isinstance(payload.get("processDataSet"), dict) else {}
+        title_values = _localized_values(row.get("name") or row.get("process_name")) + _localized_values(info.get("name") if isinstance(info, dict) else None)
+        secondary = _localized_values(info.get("common:generalComment") if isinstance(info, dict) else None)
+    else:
+        info = payload.get("lifeCycleModelDataSet", {}).get("lifeCycleModelInformation", {}).get("dataSetInformation", {}) if isinstance(payload.get("lifeCycleModelDataSet"), dict) else {}
+        title_values = _localized_values(row.get("name") or row.get("model_name")) + _localized_values(info.get("name") if isinstance(info, dict) else None)
+        secondary = _localized_values(info.get("common:generalComment") if isinstance(info, dict) else None)
+    return title_values, secondary, _classification_text(payload, kind)
+
+
+def _rank_tiangong_row(kind: str, row: dict[str, Any], query: str) -> int:
+    token = query.strip().lower()
+    if not token:
+        return 0
+    title_values, secondary_values, classification = _row_search_texts(kind, row)
+    title_text = " ".join(title_values).lower()
+    secondary_text = " ".join(secondary_values).lower()
+    classification_text = classification.lower()
+    if token in title_text:
+        return 300
+    if all(part and part in title_text for part in token.split()):
+        return 240
+    if token in secondary_text:
+        return 120
+    if token in classification_text:
+        return 80
+    return 0
+
+
+def _rerank_tiangong_rows(kind: str, rows: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
+    if not query.strip() or not rows:
+        return rows
+    ranked = [(_rank_tiangong_row(kind, row, query), index, row) for index, row in enumerate(rows)]
+    if any(score > 0 for score, _, _ in ranked):
+        ranked.sort(key=lambda item: (-item[0], item[1]))
+        return [row for _, _, row in ranked]
+    return rows
+
+
 def _tiangong_flow_from_row(row: dict[str, Any]) -> RemoteFlowDTO:
     payload = _extract_json_payload(row)
     flow_uuid = str(row.get("id") or row.get("flow_uuid") or row.get("uuid") or _nested_text(payload, "flowDataSet", "flowInformation", "dataSetInformation", "common:UUID")).strip()
@@ -991,6 +1090,12 @@ def _tiangong_flow_from_row(row: dict[str, Any]) -> RemoteFlowDTO:
     flow_type = str(row.get("flow_type") or row.get("type") or _nested_text(payload, "flowDataSet", "modellingAndValidation", "LCIMethod", "typeOfDataSet") or "Product flow").strip()
     unit = str(row.get("default_unit") or row.get("unit") or "kg").strip()
     unit_group = str(row.get("unit_group") or row.get("unitGroup") or "Units of mass").strip()
+    metadata = {
+        "row": row,
+        "classification": _classification_text(payload, "flow"),
+        "modified_at": row.get("modified_at"),
+        "state_code": row.get("state_code"),
+    }
     return RemoteFlowDTO(
         remote_id=str(row.get("id") or flow_uuid).strip(),
         flow_uuid=flow_uuid,
@@ -1001,7 +1106,7 @@ def _tiangong_flow_from_row(row: dict[str, Any]) -> RemoteFlowDTO:
         unit_group=unit_group,
         source="tiangong",
         remote_version=_row_version(row),
-        metadata={"row": row},
+        metadata=metadata,
     )
 
 
@@ -1013,15 +1118,27 @@ def _tiangong_process_from_row(row: dict[str, Any]) -> RemoteProcessDTO:
         or _nested_text(payload, "processDataSet", "processInformation", "dataSetInformation", "name")
         or process_uuid
     )
+    process_type = str(
+        row.get("process_type")
+        or row.get("type")
+        or _nested_text(payload, "processDataSet", "modellingAndValidation", "LCIMethodAndAllocation", "typeOfDataSet")
+        or "unit_process"
+    ).strip()
+    metadata = {
+        "row": row,
+        "classification": _classification_text(payload, "process"),
+        "modified_at": row.get("modified_at"),
+        "state_code": row.get("state_code"),
+    }
     return RemoteProcessDTO(
         remote_id=str(row.get("id") or process_uuid).strip(),
         process_uuid=process_uuid,
         process_name=name,
-        process_type=str(row.get("process_type") or row.get("type") or "unit_process").strip(),
+        process_type=process_type,
         reference_flow_uuid=str(row.get("reference_flow_uuid") or row.get("referenceFlowUuid") or "").strip() or None,
         source="tiangong",
         remote_version=_row_version(row),
-        metadata={"row": row},
+        metadata=metadata,
     )
 
 
@@ -1039,7 +1156,7 @@ def _tiangong_model_from_row(row: dict[str, Any]) -> RemoteModelDTO:
         model_name=name,
         source="tiangong",
         remote_version=_row_version(row),
-        metadata={"row": row},
+        metadata={"row": row, "classification": _classification_text(payload, "model"), "modified_at": row.get("modified_at"), "state_code": row.get("state_code")},
     )
 
 

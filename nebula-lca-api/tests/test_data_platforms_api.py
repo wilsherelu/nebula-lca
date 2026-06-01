@@ -493,7 +493,7 @@ def test_tiangong_search_uses_latest_search_rpc_payload(client, monkeypatch):
     assert "sort_direction" not in body
 
 
-def test_tiangong_empty_query_uses_latest_rpc_with_nullable_state_code(client, monkeypatch):
+def test_tiangong_empty_query_uses_latest_rpc_with_open_state_code(client, monkeypatch):
     calls = _install_fake_tiangong_http(monkeypatch)
     account_id = _create_tiangong_account(client)
 
@@ -506,8 +506,46 @@ def test_tiangong_empty_query_uses_latest_rpc_with_nullable_state_code(client, m
     assert body["page_current"] == 1
     assert body["page_size"] == 10
     assert body["data_source"] == "tg"
-    assert body["state_code_filter"] is None
+    assert body["state_code_filter"] == 100
     assert body["type_of_data_set_filter"] == "all"
+
+
+def test_tiangong_search_can_request_all_states(client, monkeypatch):
+    calls = _install_fake_tiangong_http(monkeypatch)
+    account_id = _create_tiangong_account(client)
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/processes/search?q=remote&page=1&page_size=10&state_scope=all")
+
+    assert response.status_code == 200
+    search_call = next(call for call in calls if "/rest/v1/rpc/search_processes_latest" in call["url"])
+    body = json.loads(search_call["body"])
+    assert body["state_code_filter"] is None
+
+
+def test_tiangong_search_sends_flow_type_filter(client, monkeypatch):
+    calls = _install_fake_tiangong_http(monkeypatch)
+    account_id = _create_tiangong_account(client)
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/flows/search?q=remote&page=1&page_size=10&state_code=100&flow_type=Product+flow")
+
+    assert response.status_code == 200
+    search_call = next(call for call in calls if "/rest/v1/rpc/search_flows_latest" in call["url"])
+    body = json.loads(search_call["body"])
+    assert body["state_code_filter"] == 100
+    assert body["filter_condition"] == {"flowType": "Product flow"}
+
+
+def test_tiangong_search_sends_process_type_filter(client, monkeypatch):
+    calls = _install_fake_tiangong_http(monkeypatch)
+    account_id = _create_tiangong_account(client)
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/processes/search?q=remote&page=1&page_size=10&state_code=100&process_type=LCI+result")
+
+    assert response.status_code == 200
+    search_call = next(call for call in calls if "/rest/v1/rpc/search_processes_latest" in call["url"])
+    body = json.loads(search_call["body"])
+    assert body["state_code_filter"] == 100
+    assert body["type_of_data_set_filter"] == "LCI result"
 
 
 def test_tiangong_preview_reads_detail_without_importing(client, monkeypatch):
