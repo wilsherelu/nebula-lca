@@ -90,6 +90,7 @@ app.whenReady().then(async () => {
     appVersion: app.getVersion(),
     apiBase: apiHandle?.baseUrl,
     userData: paths.userData,
+    database: paths.database,
     runtime: paths.runtime,
     importCache: paths.importCache,
     logs: paths.logs,
