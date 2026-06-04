@@ -73,6 +73,7 @@ export async function startApiProcess(paths: DesktopPaths): Promise<ApiProcessHa
   fs.mkdirSync(paths.logs, { recursive: true });
   fs.mkdirSync(paths.runtime, { recursive: true });
   fs.mkdirSync(paths.importCache, { recursive: true });
+  fs.mkdirSync(path.dirname(paths.database), { recursive: true });
   fs.mkdirSync(path.dirname(paths.credentialKeyFile), { recursive: true });
 
   const port = await findFreePort();
@@ -95,7 +96,7 @@ export async function startApiProcess(paths: DesktopPaths): Promise<ApiProcessHa
     windowsHide: true,
   });
   const apiLogPath = path.join(paths.logs, "api.log");
-  fs.appendFileSync(apiLogPath, `[api-start] exe=${paths.apiExe} cwd=${paths.userData} baseUrl=${baseUrl}\n`);
+  fs.appendFileSync(apiLogPath, `[api-start] exe=${paths.apiExe} cwd=${paths.userData} db=${paths.database} baseUrl=${baseUrl}\n`);
   attachLog(child, apiLogPath);
   child.on("error", (error) => {
     fs.appendFileSync(apiLogPath, `[api-error] ${String(error)}\n`);
