@@ -1,9 +1,79 @@
 from __future__ import annotations
 
 import os
+import json
+import shutil
+import sys
 from pathlib import Path
 
 import uvicorn
+
+
+def _bundled_runtime_root() -> Path | None:
+    bundle_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
+    candidate = bundle_root / "runtime"
+    return candidate if candidate.exists() else None
+
+
+def _is_under(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _runtime_manifest_ready(runtime_root: Path) -> bool:
+    manifest_path = runtime_root / "ef31" / "active_manifest.json"
+    if not manifest_path.exists():
+        return False
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    artifact_dir = Path(str(manifest.get("artifact_dir") or manifest.get("output_dir") or ""))
+    if not artifact_dir.is_absolute():
+        artifact_dir = manifest_path.parent / artifact_dir
+    if not _is_under(artifact_dir, runtime_root):
+        return False
+    return all(
+        (artifact_dir / name).exists()
+        for name in ("flow_index.csv", "indicator_index.csv", "lcia_factors.csv")
+    )
+
+
+def _normalize_ef31_active_manifest(runtime_root: Path) -> None:
+    manifest_path = runtime_root / "ef31" / "active_manifest.json"
+    if not manifest_path.exists():
+        return
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    job_id = str(manifest.get("job_id") or "")
+    artifact_dir = runtime_root / "ef31" / job_id if job_id else None
+    if artifact_dir is None or not artifact_dir.exists():
+        raw_artifact_dir = Path(str(manifest.get("artifact_dir") or manifest.get("output_dir") or ""))
+        artifact_dir = raw_artifact_dir if raw_artifact_dir.is_absolute() else manifest_path.parent / raw_artifact_dir
+    if not artifact_dir.exists():
+        return
+    manifest["artifact_dir"] = str(artifact_dir)
+    manifest["output_dir"] = str(artifact_dir)
+    text = json.dumps(manifest, ensure_ascii=False, default=str)
+    manifest_path.write_text(text, encoding="utf-8")
+    artifact_manifest = artifact_dir / "active_manifest.json"
+    if artifact_manifest.exists():
+        artifact_manifest.write_text(text, encoding="utf-8")
+
+
+def _seed_runtime_if_needed(runtime_root: Path) -> None:
+    if _runtime_manifest_ready(runtime_root):
+        return
+    bundled = _bundled_runtime_root()
+    if bundled is None:
+        return
+    shutil.copytree(bundled, runtime_root, dirs_exist_ok=True)
+    _normalize_ef31_active_manifest(runtime_root)
 
 
 def _ensure_desktop_dirs() -> None:
@@ -23,6 +93,7 @@ def _ensure_desktop_dirs() -> None:
         credential_file.parent,
     ):
         path.mkdir(parents=True, exist_ok=True)
+    _seed_runtime_if_needed(runtime_root)
 
 
 def main() -> None:
