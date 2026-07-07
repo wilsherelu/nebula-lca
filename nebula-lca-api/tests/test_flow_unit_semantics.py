@@ -139,6 +139,51 @@ def test_flow_unit_semantics_treats_ecoinvent_mass_alias_as_same_group():
     assert violations == []
 
 
+def test_flow_unit_semantics_treats_flow_name_saved_as_unit_as_default_unit():
+    db = _FakeDb()
+    db.flow_by_uuid["limestone-flow"] = SimpleNamespace(
+        flow_uuid="limestone-flow",
+        flow_name="石灰石，粉碎，磨机用",
+        flow_name_en="Limestone, crushed, for mill",
+        default_unit="kg",
+        unit_group="Units of mass",
+        allocation_properties=[],
+    )
+    port = {
+        "id": "input_limestone",
+        "flowUuid": "limestone-flow",
+        "name": "石灰石，粉碎，磨机用",
+        "type": "technosphere",
+        "direction": "input",
+        "isProduct": False,
+        "amount": 588.5,
+        "unit": "Limestone, crushed, for mill",
+        "unitGroup": "Units of mass",
+        "unitGroupSwitch": None,
+    }
+
+    sem = resolve_flow_port_unit_semantics(db, port)
+    violations = collect_flow_default_unit_conversion_violations(
+        {
+            "nodes": [
+                {
+                    "id": "node-1",
+                    "process_uuid": "process-1",
+                    "inputs": [port],
+                    "outputs": [],
+                    "emissions": [],
+                }
+            ]
+        },
+        db,
+    )
+
+    assert sem.ok is True
+    assert sem.amount_in_flow_default_unit == 588.5
+    assert sem.result_factor_to_flow_default_unit == 1
+    assert violations == []
+
+
 def test_unit_group_identity_uses_physical_id_for_basic_groups():
     db = _FakeDb()
     db.unit_groups.append(
