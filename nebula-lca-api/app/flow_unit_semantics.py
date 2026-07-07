@@ -228,6 +228,18 @@ def _unit_factor(
     return None
 
 
+def _looks_like_flow_name_unit(flow_record: FlowRecord | None, port: Any, current_unit: str) -> bool:
+    current = _clean(current_unit).lower()
+    if not current:
+        return False
+    candidates = {
+        _clean(getattr(flow_record, "flow_name", None)).lower() if flow_record is not None else "",
+        _clean(getattr(flow_record, "flow_name_en", None)).lower() if flow_record is not None else "",
+        _clean(_get(port, "name", None)).lower(),
+    }
+    return current in {item for item in candidates if item}
+
+
 @dataclass(frozen=True)
 class FlowPortUnitSemantics:
     flow_uuid: str
@@ -348,6 +360,14 @@ def resolve_flow_port_unit_semantics(
         flow_default_unit_group,
         flow_default_unit,
     )
+    if (
+        (current_factor is None or current_factor <= 0)
+        and default_factor is not None
+        and default_factor > 0
+        and _same_group_identity(current_unit_group, flow_default_unit_group, unit_group_identity_by_name)
+        and _looks_like_flow_name_unit(flow_record, port, current_unit)
+    ):
+        current_factor = default_factor
     if current_factor is None or current_factor <= 0:
         return FlowPortUnitSemantics(
             flow_uuid,
