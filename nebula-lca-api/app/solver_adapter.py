@@ -52,7 +52,7 @@ def _has_ef31_runtime_csvs(path: Path) -> bool:
     )
 
 
-def _resolve_embedded_ef31_dir() -> Path:
+def _embedded_ef31_candidates() -> list[Path]:
     candidates: list[Path] = []
     pyinstaller_root_raw = str(getattr(sys, "_MEIPASS", "") or "").strip()
     if settings.desktop_mode:
@@ -68,14 +68,28 @@ def _resolve_embedded_ef31_dir() -> Path:
                 pyinstaller_root / "solver-data" / "EF3.1",
             ])
     candidates.append(Path(settings.nebula_lca_ef31_dir))
+    return candidates
 
-    checked: list[str] = []
-    for candidate in candidates:
+
+def _resolve_embedded_ef31_dirs() -> list[Path]:
+    resolved_dirs: list[Path] = []
+    seen: set[str] = set()
+    for candidate in _embedded_ef31_candidates():
         resolved = _resolve_runtime_csv_dir(candidate)
-        checked.append(str(resolved))
+        key = str(resolved.resolve()) if resolved.exists() else str(resolved)
+        if key in seen:
+            continue
         if _has_ef31_runtime_csvs(resolved):
-            return resolved
+            seen.add(key)
+            resolved_dirs.append(resolved)
+    if resolved_dirs:
+        return resolved_dirs
+    checked = [str(_resolve_runtime_csv_dir(candidate)) for candidate in _embedded_ef31_candidates()]
     raise FileNotFoundError("EF3.1 runtime CSVs not found; checked: " + "; ".join(checked))
+
+
+def _resolve_embedded_ef31_dir() -> Path:
+    return _resolve_embedded_ef31_dirs()[0]
 
 
 def _run_embedded_lcia(snapshot: dict, lcia_methods: list[str]) -> dict:
@@ -87,9 +101,9 @@ def _run_embedded_lcia(snapshot: dict, lcia_methods: list[str]) -> dict:
     base = matrix_builder.build_matrices_from_snapshot(snapshot)
     issues = base.setdefault("issues", [])
     b_matrix = base["B"]
-    ef31_dir = _resolve_embedded_ef31_dir()
-    c_pack = runtime_cache.GLOBAL_EF31_RUNTIME_CACHE.build_c_matrix_from_dir(
-        str(ef31_dir),
+    ef31_dirs = _resolve_embedded_ef31_dirs()
+    c_pack = runtime_cache.GLOBAL_EF31_RUNTIME_CACHE.build_c_matrix_from_sources(
+        [str(path) for path in ef31_dirs],
         b_matrix,
         lcia_methods=lcia_methods,
         issues=issues,
@@ -113,10 +127,11 @@ def _run_embedded_lcia(snapshot: dict, lcia_methods: list[str]) -> dict:
             "missing_ef31_flow_count": len(missing_ef31_flow_uuids),
             "ef31_runtime_cache_hit": bool(c_pack.get("cache_hit", False)),
             "ef31_runtime_source_count": int(c_pack.get("runtime_source_count", 0)),
+            "ef31_runtime_sources": [str(path) for path in ef31_dirs],
         },
         "missing_ef31_flow_uuids": missing_ef31_flow_uuids,
         "missing_ef31_flows": [
-            {"flow_uuid": uuid, "flow_name": flow_name_map.get(uuid, "")}
+            {"flow_uuid": uuid, "flow_name": flow_name_map.get(uuid, ""), "covered_by_runtime_sources": 0}
             for uuid in missing_ef31_flow_uuids
         ],
         "indicator_index": [

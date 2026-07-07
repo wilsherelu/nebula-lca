@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import sys
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from ..config import PROJECT_ROOT, WORKSPACE_ROOT, settings
 from .ef31_runtime_csv import ACTIVE_MANIFEST_NAME, DEFAULT_EF31_RUNTIME_ROOT
 from .lci_runtime import expand_graph_lci_inventory
 from ..models import LciBiosphereFlowKey
@@ -23,6 +25,11 @@ class Ef31SparseRuntime:
     indicator_index: list[dict[str, Any]]
     cf_by_flow_uuid: dict[str, list[tuple[int, float]]]
     flow_name_by_uuid: dict[str, str]
+    source_dirs: tuple[str, ...] = ()
+
+    @property
+    def source_count(self) -> int:
+        return len(self.source_dirs) or 1
 
 
 @dataclass(frozen=True)
@@ -41,7 +48,7 @@ def try_run_direct_sparse_lcia(
     """Run direct LCIA for pure compressed LCI graphs, otherwise return None."""
     if not _is_direct_sparse_candidate(graph, lcia_methods):
         return None
-    runtime = load_active_ef31_sparse_runtime(runtime_root=runtime_root)
+    runtime = load_ef31_sparse_runtime_bundle(runtime_root=runtime_root)
     if runtime is None:
         return None
     runtime = _filter_runtime_by_methods(runtime, lcia_methods)
@@ -65,6 +72,8 @@ def try_run_direct_sparse_lcia(
             "indicator_count": len(runtime.indicator_index),
             "issue_count": 0,
             "missing_ef31_flow_count": len(aggregate_result["missing_ef31_flow_uuids"]),
+            "ef31_runtime_source_count": runtime.source_count,
+            "ef31_runtime_sources": runtime.source_dirs,
         },
         "issues": [],
         "missing_ef31_flow_uuids": aggregate_result["missing_ef31_flow_uuids"],
@@ -80,6 +89,8 @@ def try_run_direct_sparse_lcia(
             "missing_vectors": expanded.missing_vectors,
             "provenance": expanded.provenance,
             "runtime_dir": str(runtime.runtime_dir),
+            "runtime_source_count": runtime.source_count,
+            "runtime_sources": runtime.source_dirs,
         },
     }
     return DirectSparseLciaResult(
@@ -116,6 +127,7 @@ def characterize_inventory(
                     "direction": flow_key.direction,
                     "compartment": flow_key.compartment,
                     "subcompartment": flow_key.subcompartment,
+                    "covered_by_runtime_sources": 0,
                 },
             )
             item["amount"] = float(item["amount"]) + float(amount)
@@ -135,7 +147,112 @@ def load_active_ef31_sparse_runtime(runtime_root: Path | None = None) -> Ef31Spa
     runtime_dir = _resolve_runtime_dir(root)
     if runtime_dir is None:
         return None
-    return _load_runtime_cached(str(runtime_dir.resolve()))
+    runtime = _load_runtime_cached(str(runtime_dir.resolve()))
+    return _with_runtime_sources(runtime, [runtime_dir])
+
+
+def load_ef31_sparse_runtime_bundle(runtime_root: Path | None = None) -> Ef31SparseRuntime | None:
+    runtime_dirs: list[Path] = []
+    seen: set[str] = set()
+    for candidate in _ef31_runtime_candidates(runtime_root=runtime_root):
+        runtime_dir = _resolve_runtime_dir(candidate)
+        if runtime_dir is None:
+            continue
+        key = str(runtime_dir.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        runtime_dirs.append(runtime_dir)
+    if not runtime_dirs:
+        return None
+    runtimes = [_with_runtime_sources(_load_runtime_cached(str(path.resolve())), [path]) for path in runtime_dirs]
+    return _merge_sparse_runtimes(runtimes)
+
+
+def _ef31_runtime_candidates(runtime_root: Path | None = None) -> list[Path]:
+    candidates = [runtime_root or DEFAULT_EF31_RUNTIME_ROOT]
+    if settings.desktop_mode:
+        bundle_root_raw = str(getattr(sys, "_MEIPASS", "") or "").strip()
+        if bundle_root_raw:
+            bundle_root = Path(bundle_root_raw)
+            candidates.extend([
+                bundle_root / "runtime" / "ef31",
+                bundle_root / "solver-data" / "EF3.1",
+            ])
+    if runtime_root is None:
+        candidates.extend([
+            Path(settings.nebula_lca_ef31_dir),
+            PROJECT_ROOT / "data" / "EF3.1",
+            WORKSPACE_ROOT / "nebula-lca-solver" / "data" / "EF3.1",
+        ])
+    return candidates
+
+
+def _with_runtime_sources(runtime: Ef31SparseRuntime, paths: list[Path]) -> Ef31SparseRuntime:
+    return Ef31SparseRuntime(
+        runtime_dir=runtime.runtime_dir,
+        indicator_index=runtime.indicator_index,
+        cf_by_flow_uuid=runtime.cf_by_flow_uuid,
+        flow_name_by_uuid=runtime.flow_name_by_uuid,
+        source_dirs=tuple(str(path) for path in paths),
+    )
+
+
+def _indicator_key(row: dict[str, Any]) -> str:
+    canonical = str(row.get("canonical_indicator_key") or "").strip().lower()
+    if canonical:
+        return canonical
+    method = str(row.get("method_en") or row.get("method_zh") or row.get("method") or "").strip().lower()
+    indicator = str(row.get("indicator_en") or row.get("indicator_zh") or row.get("indicator") or "").strip().lower()
+    category = str(row.get("ecoinvent_category") or "").strip().lower()
+    return "||".join(part for part in (method, indicator, category) if part)
+
+
+def _merge_sparse_runtimes(runtimes: list[Ef31SparseRuntime]) -> Ef31SparseRuntime:
+    if len(runtimes) == 1:
+        return runtimes[0]
+    indicator_rows: list[dict[str, Any]] = []
+    key_to_pos: dict[str, int] = {}
+    row_pos_maps: list[dict[int, int]] = []
+    cf_by_flow_uuid: dict[str, list[tuple[int, float]]] = {}
+    flow_name_by_uuid: dict[str, str] = {}
+    source_dirs: list[str] = []
+
+    for runtime in runtimes:
+        source_dirs.extend(runtime.source_dirs or (str(runtime.runtime_dir),))
+        pos_map: dict[int, int] = {}
+        for old_pos, row in enumerate(runtime.indicator_index):
+            key = _indicator_key(row) or f"{runtime.runtime_dir}:{old_pos}"
+            new_pos = key_to_pos.get(key)
+            if new_pos is None:
+                new_pos = len(indicator_rows)
+                key_to_pos[key] = new_pos
+                item = dict(row)
+                item["indicator_index"] = new_pos
+                indicator_rows.append(item)
+            pos_map[old_pos] = new_pos
+        row_pos_maps.append(pos_map)
+        for flow_uuid, flow_name in runtime.flow_name_by_uuid.items():
+            flow_name_by_uuid.setdefault(flow_uuid, flow_name)
+
+    for runtime, pos_map in zip(runtimes, row_pos_maps):
+        for flow_uuid, factors in runtime.cf_by_flow_uuid.items():
+            rows = cf_by_flow_uuid.setdefault(flow_uuid, [])
+            existing_positions = {pos for pos, _ in rows}
+            for old_pos, coefficient in factors:
+                new_pos = pos_map.get(old_pos)
+                if new_pos is None or new_pos in existing_positions:
+                    continue
+                rows.append((new_pos, coefficient))
+                existing_positions.add(new_pos)
+
+    return Ef31SparseRuntime(
+        runtime_dir=runtimes[0].runtime_dir,
+        indicator_index=indicator_rows,
+        cf_by_flow_uuid=cf_by_flow_uuid,
+        flow_name_by_uuid=flow_name_by_uuid,
+        source_dirs=tuple(source_dirs),
+    )
 
 
 @lru_cache(maxsize=4)
@@ -239,6 +356,7 @@ def _filter_runtime_by_methods(runtime: Ef31SparseRuntime, lcia_methods: list[st
             indicator_index=[],
             cf_by_flow_uuid={},
             flow_name_by_uuid=runtime.flow_name_by_uuid,
+            source_dirs=runtime.source_dirs,
         )
     old_to_new = {old_pos: new_pos for new_pos, (old_pos, _) in enumerate(selected_rows)}
     remapped_rows = []
@@ -260,6 +378,7 @@ def _filter_runtime_by_methods(runtime: Ef31SparseRuntime, lcia_methods: list[st
         indicator_index=remapped_rows,
         cf_by_flow_uuid=cf_by_flow_uuid,
         flow_name_by_uuid=runtime.flow_name_by_uuid,
+        source_dirs=runtime.source_dirs,
     )
 
 

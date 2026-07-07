@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -7,6 +8,16 @@ from fastapi.testclient import TestClient
 from app.config import Settings
 from app.main import app
 from app import solver_adapter
+
+
+def _write_runtime_csvs(root: Path) -> None:
+    root.mkdir(parents=True)
+    (root / "flow_index.csv").write_text("flow_index;FlowUUID;FlowName\n0;flow-a;Flow A\n", encoding="utf-8")
+    (root / "indicator_index.csv").write_text(
+        "indicator_index;method_en;method_zh;indicator_en;indicator_zh\n0;EF v3.1;EF v3.1;Climate change;Climate change\n",
+        encoding="utf-8",
+    )
+    (root / "lcia_factors.csv").write_text("row;column;coefficient\n0;0;1.0\n", encoding="utf-8")
 
 
 def test_desktop_settings_keep_writable_paths_in_data_dir(monkeypatch, tmp_path: Path) -> None:
@@ -59,3 +70,26 @@ def test_desktop_embedded_solver_uses_appdata_runtime_before_workspace_default(
     monkeypatch.setattr(solver_adapter.settings, "nebula_lca_ef31_dir", str(tmp_path / "missing-ref-code"))
 
     assert solver_adapter._resolve_embedded_ef31_dir() == artifact_dir
+
+
+def test_desktop_embedded_solver_resolves_appdata_and_bundled_baseline(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    runtime_dir = tmp_path / "runtime" / "ef31"
+    active_dir = runtime_dir / "active"
+    _write_runtime_csvs(active_dir)
+    (runtime_dir / "active_manifest.json").write_text(
+        '{"artifact_dir":"' + active_dir.as_posix() + '"}',
+        encoding="utf-8",
+    )
+    bundle_root = tmp_path / "bundle"
+    baseline_dir = bundle_root / "solver-data" / "EF3.1"
+    _write_runtime_csvs(baseline_dir)
+
+    monkeypatch.setattr(sys, "_MEIPASS", str(bundle_root), raising=False)
+    monkeypatch.setattr(solver_adapter.settings, "desktop_mode", True)
+    monkeypatch.setattr(solver_adapter.settings, "nebula_lca_runtime_root", str(tmp_path / "runtime"))
+    monkeypatch.setattr(solver_adapter.settings, "nebula_lca_ef31_dir", str(tmp_path / "missing-ref-code"))
+
+    assert solver_adapter._resolve_embedded_ef31_dirs() == [active_dir, baseline_dir]

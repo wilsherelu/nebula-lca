@@ -141,7 +141,7 @@ from .ingest import convert_unit_value, import_flows_from_file, import_unit_grou
 from .ingest import import_processes_from_json
 from .preprocess import normalize_graph_units_to_reference
 from .solver import to_tiangong_like
-from .solver_adapter import run_tiangong_lcia
+from .solver_adapter import run_tiangong_lcia, _resolve_embedded_ef31_dirs
 from .schema_maintenance import (
     backfill_ecoinvent_unit_group_sources,
     backfill_tidas_unit_group_sources,
@@ -336,6 +336,17 @@ def desktop_status(db: Session = Depends(get_db)) -> dict:
         or 0
     )
     reference_process_count = db.query(func.count(ReferenceProcess.process_uuid)).scalar() or 0
+    ef31_runtime_sources: list[dict[str, object]] = []
+    try:
+        for path in _resolve_embedded_ef31_dirs():
+            flow_index = path / "flow_index.csv"
+            try:
+                flows_count = max(sum(1 for _ in flow_index.open("r", encoding="utf-8-sig")) - 1, 0)
+            except OSError:
+                flows_count = 0
+            ef31_runtime_sources.append({"path": str(path), "flows_count": flows_count})
+    except Exception:
+        ef31_runtime_sources = []
     return {
         "status": "ok",
         "app_version": app.version,
@@ -358,6 +369,8 @@ def desktop_status(db: Session = Depends(get_db)) -> dict:
             "ef31_dir": settings.nebula_lca_ef31_dir,
             "runtime_root": settings.nebula_lca_runtime_root,
             "ecoinvent_lcia_runtime_available": _has_active_ecoinvent_lcia_runtime(),
+            "ef31_runtime_source_count": len(ef31_runtime_sources),
+            "ef31_runtime_sources": ef31_runtime_sources,
         },
         "bootstrap": {
             "auto_bootstrap_reference_data_on_startup": settings.auto_bootstrap_reference_data_on_startup,
