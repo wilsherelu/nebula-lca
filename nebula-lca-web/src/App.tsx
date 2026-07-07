@@ -1,4 +1,5 @@
 import { getApiBase } from "./apiBase";
+import { findClimateChangeIndicatorIndex, getRunProcessCount } from "./resultAnalysis";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GraphCanvas } from "./components/GraphCanvas/GraphCanvas";
 import { startTransition } from "react";
@@ -5084,6 +5085,7 @@ export default function App() {
     [resultProductViewMode, targetProductQuantityValue],
   );
   const runUsesEf31CfpView = lciaMethodSelection === "EF v3.1";
+  const runProcessCount = useMemo(() => getRunProcessCount(lastRun), [lastRun]);
 
   const indicatorRows = useMemo(() => {
     if (!lastRun) {
@@ -5187,19 +5189,7 @@ export default function App() {
     const valuesRaw = lastRun.lci_result?.product_values;
     const values = Array.isArray(valuesRaw) ? valuesRaw : [];
 
-    const climateIdx = indicatorIndex.findIndex((item) => {
-      if (typeof item === "object" && item !== null) {
-        const obj = item as Record<string, unknown>;
-        const idx = Number(obj.indicator_index ?? -1);
-        const methodEn = String(obj.method_en ?? "");
-        const category = String(obj.ecoinvent_category ?? "");
-        if (idx === 1) {
-          return true;
-        }
-        return methodEn === "Climate change" && category === "climate change";
-      }
-      return Number(item) === 1;
-    });
+    const climateIdx = findClimateChangeIndicatorIndex(indicatorIndex);
 
     if (climateIdx < 0 || climateIdx >= values.length) {
       return [];
@@ -5660,7 +5650,7 @@ export default function App() {
               </div>
               <div className="run-analysis-summary-card">
                 <span className="run-analysis-summary-label">{uiLanguage === "zh" ? "过程数" : "Processes"}</span>
-                <strong className="run-analysis-summary-value">{groupedProductCfpRows.length}</strong>
+                <strong className="run-analysis-summary-value">{runProcessCount}</strong>
               </div>
               <div className="run-analysis-summary-card">
                 <span className="run-analysis-summary-label">{uiLanguage === "zh" ? "产品数" : "Products"}</span>
@@ -5842,7 +5832,7 @@ export default function App() {
                           <td colSpan={5}>
                             {!hasProductResultView
                               ? "后端尚未返回产品结果视图（product_result_index / product_values）。"
-                              : "未找到 Climate change 结果"}
+                              : "未找到 Climate change / GWP100 指标结果，请检查 indicator_index。"}
                           </td>
                         </tr>
                       )}

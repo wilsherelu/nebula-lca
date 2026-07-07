@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import sys
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -230,6 +231,34 @@ def test_direct_sparse_lcia_reports_missing_cf_flows(tmp_path: Path) -> None:
         assert solver_output["values"] == [[1.0]]
         assert solver_output["missing_ef31_flow_uuids"] == ["flow-ch4"]
         assert solver_output["missing_ef31_flows"][0]["amount"] == 0.1
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_direct_sparse_lcia_merges_desktop_baseline_runtime(monkeypatch, tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime-active"
+    _write_runtime(runtime_root, include_ch4=False)
+    bundle_root = tmp_path / "bundle"
+    _write_runtime(bundle_root / "solver-data" / "EF3.1", include_ch4=True)
+    monkeypatch.setattr(sys, "_MEIPASS", str(bundle_root), raising=False)
+    monkeypatch.setattr("app.services.ef31_sparse_lcia_runtime.settings.desktop_mode", True)
+
+    db, engine = _db_session()
+    try:
+        _seed_lci_vector(db)
+        result = try_run_direct_sparse_lcia(
+            db=db,
+            graph=_graph(amount=1.0),
+            lcia_methods=["EF v3.1"],
+            runtime_root=runtime_root,
+        )
+
+        assert result is not None
+        solver_output = result.solver_output
+        assert solver_output["values"] == [[3.5]]
+        assert solver_output["missing_ef31_flow_uuids"] == []
+        assert solver_output["summary"]["ef31_runtime_source_count"] == 2
     finally:
         db.close()
         engine.dispose()
