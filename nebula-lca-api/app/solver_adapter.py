@@ -28,6 +28,56 @@ def _ensure_embedded_solver_core() -> None:
     sys.modules.setdefault("app.core", core_package)
 
 
+def _resolve_runtime_csv_dir(path: Path) -> Path:
+    if path.is_file() and path.name == "active_manifest.json":
+        manifest_path = path
+    else:
+        manifest_path = path / "active_manifest.json"
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            artifact_dir = str(manifest.get("artifact_dir") or "").strip()
+            if artifact_dir:
+                return Path(artifact_dir)
+        except Exception:
+            pass
+    return path
+
+
+def _has_ef31_runtime_csvs(path: Path) -> bool:
+    return (
+        (path / "flow_index.csv").exists()
+        and (path / "indicator_index.csv").exists()
+        and (path / "lcia_factors.csv").exists()
+    )
+
+
+def _resolve_embedded_ef31_dir() -> Path:
+    candidates: list[Path] = []
+    pyinstaller_root_raw = str(getattr(sys, "_MEIPASS", "") or "").strip()
+    if settings.desktop_mode:
+        runtime_root = Path(settings.nebula_lca_runtime_root)
+        candidates.extend([
+            runtime_root / "ef31",
+            runtime_root / "ef31" / "active_manifest.json",
+        ])
+        if pyinstaller_root_raw:
+            pyinstaller_root = Path(pyinstaller_root_raw)
+            candidates.extend([
+                pyinstaller_root / "runtime" / "ef31",
+                pyinstaller_root / "solver-data" / "EF3.1",
+            ])
+    candidates.append(Path(settings.nebula_lca_ef31_dir))
+
+    checked: list[str] = []
+    for candidate in candidates:
+        resolved = _resolve_runtime_csv_dir(candidate)
+        checked.append(str(resolved))
+        if _has_ef31_runtime_csvs(resolved):
+            return resolved
+    raise FileNotFoundError("EF3.1 runtime CSVs not found; checked: " + "; ".join(checked))
+
+
 def _run_embedded_lcia(snapshot: dict, lcia_methods: list[str]) -> dict:
     _ensure_embedded_solver_core()
     lcia_module = importlib.import_module("app.core.lcia")
@@ -37,23 +87,7 @@ def _run_embedded_lcia(snapshot: dict, lcia_methods: list[str]) -> dict:
     base = matrix_builder.build_matrices_from_snapshot(snapshot)
     issues = base.setdefault("issues", [])
     b_matrix = base["B"]
-    ef31_dir = Path(settings.nebula_lca_ef31_dir)
-    if ef31_dir.is_file() and ef31_dir.name == "active_manifest.json":
-        try:
-            manifest = json.loads(ef31_dir.read_text(encoding="utf-8"))
-            artifact_dir = manifest.get("artifact_dir")
-            if artifact_dir:
-                ef31_dir = Path(artifact_dir)
-        except Exception:
-            pass
-    elif (ef31_dir / "active_manifest.json").exists():
-        try:
-            manifest = json.loads((ef31_dir / "active_manifest.json").read_text(encoding="utf-8"))
-            artifact_dir = manifest.get("artifact_dir")
-            if artifact_dir:
-                ef31_dir = Path(artifact_dir)
-        except Exception:
-            pass
+    ef31_dir = _resolve_embedded_ef31_dir()
     c_pack = runtime_cache.GLOBAL_EF31_RUNTIME_CACHE.build_c_matrix_from_dir(
         str(ef31_dir),
         b_matrix,
