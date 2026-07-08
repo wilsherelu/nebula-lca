@@ -5367,6 +5367,137 @@ body,
   color: #203743;
 }
 
+.pm-sync-history-panel {
+  margin-top: 12px;
+  border: 1px solid #d7e2e8;
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px;
+  color: #31536a;
+  font-size: 13px;
+}
+
+.pm-sync-history-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  color: #244b5d;
+}
+
+.pm-sync-history-count {
+  color: #7a8e98;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.pm-sync-history-error {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+.pm-sync-history-empty {
+  color: #7a8e98;
+  font-size: 12px;
+  padding: 8px 0;
+}
+
+.pm-sync-history-section h4 {
+  margin: 10px 0 6px;
+  color: #244b5d;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.pm-sync-history-section:first-child h4 {
+  margin-top: 0;
+}
+
+.pm-sync-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pm-sync-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: #f8fbfc;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.pm-sync-row.pm-status-error {
+  background: #fdf2f2;
+  border-left: 2px solid #c53030;
+}
+
+.pm-sync-row.pm-status-ok {
+  border-left: 2px solid #38a169;
+}
+
+.pm-sync-row-status {
+  font-weight: 600;
+  color: #2d4e5e;
+  min-width: 56px;
+}
+
+.pm-sync-row-kind {
+  font-weight: 500;
+  color: #4e6d7c;
+  min-width: 48px;
+}
+
+.pm-sync-row-id {
+  font-family: monospace;
+  font-size: 11px;
+  color: #3a5e70;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pm-copy-id-btn--compact {
+  margin-left: 4px;
+  padding: 1px 4px;
+  font-size: 10px;
+}
+
+.pm-sync-row-version {
+  font-size: 11px;
+  color: #7a8e98;
+}
+
+.pm-sync-row-time {
+  font-size: 11px;
+  color: #7a8e98;
+  margin-left: auto;
+}
+
+.pm-sync-row-error {
+  font-size: 11px;
+  color: #c53030;
+  font-weight: 500;
+}
+
+.pm-sync-row-warn {
+  font-size: 11px;
+  color: #b7791c;
+}
+
+.pm-sync-row-stats {
+  font-size: 11px;
+  color: #4e6d7c;
+  font-weight: 500;
+}
+
 .pm-modal-backdrop {
   position: fixed;
   inset: 0;

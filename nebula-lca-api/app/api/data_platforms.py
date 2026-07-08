@@ -30,10 +30,12 @@ from ..schemas import (
     DataPlatformSearchResponse,
     DataPlatformSyncFlowRequest,
     DataPlatformSyncFlowResponse,
+    DataPlatformSyncJobOut,
     DataPlatformSyncModelRequest,
     DataPlatformSyncModelResponse,
     DataPlatformSyncProcessRequest,
     DataPlatformSyncProcessResponse,
+    DataPlatformSyncRecordOut,
     RemoteFlowItem,
     RemoteModelItem,
     RemoteProcessItem,
@@ -909,7 +911,7 @@ def sync_remote_flow(account_id: str, payload: DataPlatformSyncFlowRequest, db: 
 @api_router.post("/accounts/{account_id}/processes/sync", response_model=DataPlatformSyncProcessResponse)
 def sync_remote_process(account_id: str, payload: DataPlatformSyncProcessRequest, db: Session = Depends(get_db)) -> DataPlatformSyncProcessResponse:
     account = _account_or_404(db, account_id)
-    job = DataPlatformSyncJob(account_id=account.id, platform=account.platform, remote_process_id=payload.remote_process_id, status="running", phase="fetch")
+    job = DataPlatformSyncJob(account_id=account.id, platform=account.platform, remote_process_id=payload.remote_process_id, status="running", phase="fetch", stats_json={"remote_kind": "process"})
     db.add(job)
     db.flush()
     warnings: list[str] = []
@@ -980,7 +982,7 @@ def sync_remote_process(account_id: str, payload: DataPlatformSyncProcessRequest
         job.phase = "done"
         job.finished_at = datetime.utcnow()
         report_summary = _tidas_report_summary(process_report)
-        job.stats_json = {"flow_count": len(flows_by_uuid), "warnings": warnings, "synced_count": len(synced), "tidas_import": report_summary}
+        job.stats_json = {"remote_kind": "process", "flow_count": len(flows_by_uuid), "warnings": warnings, "synced_count": len(synced), "tidas_import": report_summary}
         invalidate_management_caches(flows=True, reference_processes=True, stats=True)
         db.commit()
         return DataPlatformSyncProcessResponse(
@@ -1110,3 +1112,95 @@ def sync_remote_model(account_id: str, payload: DataPlatformSyncModelRequest, db
         failed_job.stats_json = {"remote_kind": "model", "lineage": {"remote_id": payload.remote_model_id, "remote_version": payload.remote_version}}
         db.commit()
         raise HTTPException(status_code=400, detail={"code": "DATA_PLATFORM_MODEL_SYNC_FAILED", "message": str(exc), "job_id": failed_job.id}) from exc
+
+
+# ======================================================================
+# Sync History Endpoints
+# ======================================================================
+
+
+def _sync_job_out(job: DataPlatformSyncJob) -> DataPlatformSyncJobOut:
+    return DataPlatformSyncJobOut(
+        id=job.id,
+        account_id=job.account_id,
+        platform=job.platform,
+        remote_process_id=job.remote_process_id,
+        status=job.status,
+        phase=job.phase,
+        stats=job.stats_json,
+        error_summary=job.error_summary,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+        finished_at=job.finished_at,
+    )
+
+
+def _sync_record_out(record: ExternalDataSyncRecord) -> DataPlatformSyncRecordOut:
+    return DataPlatformSyncRecordOut(
+        id=record.id,
+        account_id=record.account_id,
+        platform=record.platform,
+        local_kind=record.local_kind,
+        local_uuid=record.local_uuid,
+        remote_id=record.remote_id,
+        remote_version=record.remote_version,
+        metadata=record.metadata_json,
+        synced_at=record.synced_at,
+    )
+
+
+@api_router.get(
+    "/accounts/{account_id}/sync-jobs",
+    response_model=list[DataPlatformSyncJobOut],
+)
+def list_sync_jobs(
+    account_id: str,
+    platform: str | None = Query(default=None, description="Filter by platform name"),
+    status: str | None = Query(default=None, description="Filter by job status"),
+    remote_kind: str | None = Query(default=None, description="Filter by stats.remote_kind (e.g. flow, process, model)"),
+    limit: int = Query(default=50, ge=1, le=200, description="Max number of jobs to return (default 50, max 200)"),
+    db: Session = Depends(get_db),
+) -> list[DataPlatformSyncJobOut]:
+    account = _account_or_404(db, account_id)
+
+    query = db.query(DataPlatformSyncJob).filter(DataPlatformSyncJob.account_id == account.id)
+
+    if platform is not None:
+        query = query.filter(DataPlatformSyncJob.platform == platform)
+    if status is not None:
+        query = query.filter(DataPlatformSyncJob.status == status)
+    if remote_kind is not None:
+        query = query.filter(DataPlatformSyncJob.stats_json["remote_kind"].as_string() == remote_kind)
+
+    jobs = query.order_by(DataPlatformSyncJob.created_at.desc()).limit(limit).all()
+    return [_sync_job_out(job) for job in jobs]
+
+
+@api_router.get(
+    "/accounts/{account_id}/sync-records",
+    response_model=list[DataPlatformSyncRecordOut],
+)
+def list_sync_records(
+    account_id: str,
+    local_kind: str | None = Query(default=None, description="Filter by local kind (e.g. flow, process, vector)"),
+    platform: str | None = Query(default=None, description="Filter by platform name"),
+    remote_id: str | None = Query(default=None, description="Filter by remote ID"),
+    local_uuid: str | None = Query(default=None, description="Filter by local UUID"),
+    limit: int = Query(default=50, ge=1, le=200, description="Max number of records to return (default 50, max 200)"),
+    db: Session = Depends(get_db),
+) -> list[DataPlatformSyncRecordOut]:
+    account = _account_or_404(db, account_id)
+
+    query = db.query(ExternalDataSyncRecord).filter(ExternalDataSyncRecord.account_id == account.id)
+
+    if platform is not None:
+        query = query.filter(ExternalDataSyncRecord.platform == platform)
+    if local_kind is not None:
+        query = query.filter(ExternalDataSyncRecord.local_kind == local_kind)
+    if remote_id is not None:
+        query = query.filter(ExternalDataSyncRecord.remote_id == remote_id)
+    if local_uuid is not None:
+        query = query.filter(ExternalDataSyncRecord.local_uuid == local_uuid)
+
+    records = query.order_by(ExternalDataSyncRecord.synced_at.desc()).limit(limit).all()
+    return [_sync_record_out(record) for record in records]
