@@ -207,10 +207,16 @@ def _extract_tidas_flow_record(row: dict) -> tuple[dict | None, str | None]:
         flow_type = "Elementary flow" if compartment else "Product flow"
     default_unit = _safe_str(row.get("default_unit"))
     unit_group = _safe_str(row.get("unit_group"))
+    inferred_unit, inferred_group = _infer_unit_defaults_from_flow_dataset(flow_dataset)
     if not default_unit or not unit_group:
-        inferred_unit, inferred_group = _infer_unit_defaults_from_flow_dataset(flow_dataset)
         default_unit = default_unit or inferred_unit
         unit_group = unit_group or inferred_group
+    elif (
+        default_unit == "kg"
+        and unit_group == "Units of mass"
+        and (inferred_unit, inferred_group) != ("kg", "Units of mass")
+    ):
+        default_unit, unit_group = inferred_unit, inferred_group
     props = flow_dataset.get("flowProperties") if isinstance(flow_dataset.get("flowProperties"), dict) else {}
     flow_property_uuid = ""
     for prop in _as_list(props.get("flowProperty") if isinstance(props, dict) else None):
@@ -242,18 +248,39 @@ def _extract_tidas_flow_record(row: dict) -> tuple[dict | None, str | None]:
 def _normalize_exchange(row: dict) -> dict:
     ref = row.get("referenceToFlowDataSet") if isinstance(row.get("referenceToFlowDataSet"), dict) else {}
     flow_uuid = _safe_str(row.get("flow_uuid") or row.get("flowUuid") or ref.get("@refObjectId") or ref.get("refObjectId"))
-    flow_name = _safe_str(row.get("flow_name") or row.get("flowName") or row.get("name") or ref.get("common:shortDescription"))
+
+    # Resolve flow_name: support localized dict/list structures (e.g. common:shortDescription with #text/@xml:lang)
+    raw_name = row.get("flow_name") or row.get("flowName") or row.get("name")
+    if not raw_name and isinstance(ref, dict):
+        raw_name = ref.get("common:shortDescription")
+    flow_name = _pick_localized_text(raw_name, preferred_langs=("zh", "en")) or _safe_str(raw_name)
+
     direction = _safe_str(row.get("direction") or row.get("exchangeDirection")).lower() or "input"
     if direction in {"outputs", "output"}:
         direction = "output"
     else:
         direction = "input"
+
+    # Resolve amount: prefer amount, then meanAmount, then resultingAmount, then meanValue
+    amount = row.get("amount")
+    if amount is None:
+        amount = row.get("meanAmount")
+    if amount is None:
+        amount = row.get("resultingAmount")
+    if amount is None:
+        amount = row.get("meanValue", 0)
+    # Ensure amount is numeric
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
+        amount = 0.0
+
     return {
         "exchange_internal_id": _safe_str(row.get("exchange_internal_id") or row.get("@dataSetInternalID") or row.get("dataSetInternalID")),
         "flow_uuid": flow_uuid,
         "flow_name": flow_name,
         "direction": direction,
-        "amount": row.get("amount") if row.get("amount") is not None else row.get("meanValue", 0),
+        "amount": amount,
         "unit": _safe_str(row.get("unit") or row.get("referenceToUnit") or "kg"),
         "is_allocated_product": bool(row.get("is_allocated_product") or row.get("is_product")),
     }
@@ -621,7 +648,8 @@ def _upsert_flow_record(db: Session, flow_record: dict, report: dict, *, dry_run
     if existing is not None and upsert_mode == "skip":
         report["skipped"] += 1
         return flow_uuid
-    if existing is not None and _is_protected_builtin_flow(existing):
+    incoming_source = _safe_str(flow_record.get("source"))
+    if existing is not None and _is_protected_builtin_flow(existing) and incoming_source != _safe_str(existing.source):
         report["skipped"] += 1
         report["warnings"].append(f"{flow_uuid}: built-in flow source={existing.source}; skipped overwrite from TIDAS flow import")
         return flow_uuid

@@ -5367,6 +5367,60 @@ body,
   color: #203743;
 }
 
+/* Page-local refresh result strip (replaces sticky import toast). */
+.pm-refresh-result-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 14px;
+  margin: 12px 0 0 0;
+  border: 1px solid #c9dfef;
+  border-radius: 6px;
+  background: #f7fbff;
+  color: #31536a;
+  font-size: 13px;
+  padding: 10px 14px;
+  width: 100%;
+}
+
+.pm-refresh-result-content {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  align-items: center;
+}
+
+.pm-refresh-result-content strong {
+  color: #203743;
+}
+
+.pm-refresh-result-error {
+  color: #c53030;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+}
+
+.pm-refresh-result-close {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: #6c8490;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  height: auto;
+}
+
+.pm-refresh-result-close:hover {
+  background: #e8f0f4;
+  color: #0f1f26;
+}
+
 .pm-sync-history-panel {
   margin-top: 12px;
   border: 1px solid #d7e2e8;

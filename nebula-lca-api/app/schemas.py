@@ -1735,6 +1735,49 @@ class DataPlatformSyncRecordOut(BaseModel):
 
 
 # ======================================================================
+# Refresh Imports Schemas
+# ======================================================================
+
+class DataPlatformRefreshImportsRequest(BaseModel):
+    """Request to refresh previously synced local_kind records for this account."""
+    overwrite: bool = True
+    kinds: list[str] = Field(default=["flow", "process"])
+
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_kinds(cls, values: object) -> object:
+        if isinstance(values, dict):
+            kinds = values.get("kinds")
+            if kinds is None:
+                values["kinds"] = ["flow", "process"]
+            elif isinstance(kinds, list):
+                supported = {"flow", "process"}
+                for k in kinds:
+                    if k not in supported:
+                        raise ValueError(f"Unsupported refresh kind: {k!r}. Supported: flow, process")
+                values["kinds"] = kinds
+        return values
+
+
+class DataPlatformRefreshImportItem(BaseModel):
+    local_kind: str
+    remote_id: str
+    remote_version: str | None = None
+    status: str
+    error: str | None = None
+
+
+class DataPlatformRefreshImportsResponse(BaseModel):
+    account_id: str
+    platform: str
+    total: int = 0
+    refreshed: int = 0
+    failed: int = 0
+    skipped: int = 0
+    items: list[DataPlatformRefreshImportItem] = Field(default_factory=list)
+
+
+# ======================================================================
 # Import Job Schemas
 # ======================================================================
 
