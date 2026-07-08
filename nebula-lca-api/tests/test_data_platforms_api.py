@@ -253,6 +253,9 @@ def _install_fake_tiangong_http(monkeypatch, *, invalid_model: bool = False, ref
             return _FakeSupabaseResponse({"access_token": _jwt("user-2"), "refresh_token": "refresh-token-2", "expires_in": 3600, "token_type": "bearer"})
         if "/auth/v1/token?grant_type=password" in url:
             return _FakeSupabaseResponse({"access_token": _jwt(), "refresh_token": "refresh-token-1", "expires_in": 3600, "token_type": "bearer"})
+        if "/functions/v1/app_dataset_create" in url:
+            body = json.loads(req.data.decode("utf-8")) if req.data else {}
+            return _FakeSupabaseResponse({"id": body.get("id"), "version": "01.01.000", "table": body.get("table"), "state_code": 0, "rule_verification": body.get("ruleVerification")})
         if "/rest/v1/rpc/get_latest_flow_versions" in url:
             return _FakeSupabaseResponse([{"id": "flow-1", "name": "Remote flow", "version": "1", "total_count": 1}])
         if "/rest/v1/rpc/get_latest_process_versions" in url:
@@ -1289,6 +1292,146 @@ def test_process_sync_stores_plain_string_exchange_names(client, monkeypatch):
         ex2 = exchanges[1]
         assert ex2["direction"] == "output"
         assert ex2["amount"] == 1.0
+    finally:
+        db.close()
+
+
+def test_publish_local_flow_invokes_tiangong_create_dataset(client, monkeypatch):
+    calls = _install_fake_tiangong_http(monkeypatch)
+    account_id = _create_tiangong_account(client)
+    db = _db_module.SessionLocal()
+    try:
+        db.add(
+            FlowRecord(
+                flow_uuid="local-flow-1",
+                flow_name="Electricity",
+                flow_name_en="Electricity",
+                flow_type="Product flow",
+                default_unit="MJ",
+                unit_group="Units of energy",
+                source="custom",
+                is_custom=True,
+                tidas_compatible=True,
+                tidas_flow_property_uuid="flowproperty-energy",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        f"/api/data-platforms/accounts/{account_id}/flows/local-flow-1/publish",
+        json={"ruleVerification": False},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["status"] == "published"
+    assert payload["local_kind"] == "flow"
+    function_call = next(call for call in calls if "/functions/v1/app_dataset_create" in call["url"])
+    body = json.loads(function_call["body"])
+    assert body["id"] == "local-flow-1"
+    assert body["table"] == "flows"
+    assert body["jsonOrdered"]["flowDataSet"]["flowInformation"]["referenceUnit"] == "MJ"
+    assert body["jsonOrdered"]["flowDataSet"]["flowInformation"]["unitGroup"] == "Units of energy"
+    db = _db_module.SessionLocal()
+    try:
+        record = db.query(ExternalDataSyncRecord).filter(ExternalDataSyncRecord.local_kind == "flow", ExternalDataSyncRecord.local_uuid == "local-flow-1").first()
+        assert record is not None
+        assert record.remote_id == "local-flow-1"
+    finally:
+        db.close()
+
+
+def test_publish_local_process_requires_published_flow_dependencies(client, monkeypatch):
+    _install_fake_tiangong_http(monkeypatch)
+    account_id = _create_tiangong_account(client)
+    db = _db_module.SessionLocal()
+    try:
+        db.add(
+            ReferenceProcess(
+                process_uuid="local-process-1",
+                process_name="Local process",
+                process_type="unit_process",
+                reference_flow_uuid="local-flow-1",
+                process_json={
+                    "process_uuid": "local-process-1",
+                    "process_name": "Local process",
+                    "reference_flow_uuid": "local-flow-1",
+                    "exchanges": [{"flow_uuid": "local-flow-1", "flow_name": "Electricity", "direction": "output", "amount": 1, "unit": "MJ", "isProduct": True}],
+                },
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        f"/api/data-platforms/accounts/{account_id}/processes/local-process-1/publish",
+        json={},
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "DATA_PLATFORM_PROCESS_DEPENDENCIES_NOT_PUBLISHED"
+    assert detail["missing_flow_uuids"] == ["local-flow-1"]
+
+
+def test_publish_local_process_invokes_tiangong_create_dataset_after_dependencies(client, monkeypatch):
+    calls = _install_fake_tiangong_http(monkeypatch)
+    account_id = _create_tiangong_account(client)
+    db = _db_module.SessionLocal()
+    try:
+        db.add(FlowRecord(flow_uuid="local-flow-1", flow_name="Electricity", flow_type="Product flow", default_unit="MJ", unit_group="Units of energy"))
+        db.add(
+            ExternalDataSyncRecord(
+                account_id=account_id,
+                platform="tiangong",
+                local_kind="flow",
+                local_uuid="local-flow-1",
+                remote_id="local-flow-1",
+                remote_version="01.01.000",
+            )
+        )
+        db.add(
+            ReferenceProcess(
+                process_uuid="local-process-1",
+                process_name="Local process",
+                process_type="unit_process",
+                reference_flow_uuid="local-flow-1",
+                reference_flow_internal_id="1",
+                process_json={
+                    "process_uuid": "local-process-1",
+                    "process_name": "Local process",
+                    "reference_flow_uuid": "local-flow-1",
+                    "reference_flow_internal_id": "1",
+                    "exchanges": [{"exchange_internal_id": "1", "flow_uuid": "local-flow-1", "flow_name": "Electricity", "direction": "output", "amount": 1, "unit": "MJ", "isProduct": True}],
+                },
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        f"/api/data-platforms/accounts/{account_id}/processes/local-process-1/publish",
+        json={"overwrite": True},
+    )
+
+    assert response.status_code == 200, response.text
+    function_call = [call for call in calls if "/functions/v1/app_dataset_create" in call["url"]][-1]
+    body = json.loads(function_call["body"])
+    assert body["id"] == "local-process-1"
+    assert body["table"] == "processes"
+    assert body["overwrite"] is True
+    exchange = body["jsonOrdered"]["processDataSet"]["exchanges"]["exchange"][0]
+    assert exchange["referenceToFlowDataSet"]["@refObjectId"] == "local-flow-1"
+    assert exchange["unit"] == "MJ"
+    db = _db_module.SessionLocal()
+    try:
+        record = db.query(ExternalDataSyncRecord).filter(ExternalDataSyncRecord.local_kind == "process", ExternalDataSyncRecord.local_uuid == "local-process-1").first()
+        assert record is not None
+        assert record.remote_id == "local-process-1"
     finally:
         db.close()
 

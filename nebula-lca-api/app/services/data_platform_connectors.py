@@ -250,6 +250,12 @@ class BaseDataPlatformConnector:
     def get_flow_dependency_unit_groups(self, flow: RemoteFlowDTO) -> list[RemoteUnitGroupDTO]:
         return []
 
+    def publish_flow(self, *, flow_uuid: str, json_ordered: dict[str, Any], rule_verification: bool = False, overwrite: bool = False) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def publish_process(self, *, process_uuid: str, json_ordered: dict[str, Any], rule_verification: bool = False, overwrite: bool = False, model_id: str | None = None) -> dict[str, Any]:
+        raise NotImplementedError
+
 
 class MockDataPlatformConnector(BaseDataPlatformConnector):
     def test_connection(self) -> tuple[bool, str]:
@@ -357,6 +363,29 @@ class MockDataPlatformConnector(BaseDataPlatformConnector):
             "metadata": {"source_platform": "mock", "remote_model_id": remote_id},
         }
         return RemoteModelDetailDTO(model=model, model_json={"hybrid_graph": graph}, lineage={"source": "mock", "remote_model_id": remote_id})
+
+    def publish_flow(self, *, flow_uuid: str, json_ordered: dict[str, Any], rule_verification: bool = False, overwrite: bool = False) -> dict[str, Any]:
+        return {
+            "id": flow_uuid,
+            "version": "01.01.000",
+            "table": "flows",
+            "state_code": 0,
+            "rule_verification": rule_verification,
+            "json_ordered": json_ordered,
+            "overwrite": overwrite,
+        }
+
+    def publish_process(self, *, process_uuid: str, json_ordered: dict[str, Any], rule_verification: bool = False, overwrite: bool = False, model_id: str | None = None) -> dict[str, Any]:
+        return {
+            "id": process_uuid,
+            "version": "01.01.000",
+            "table": "processes",
+            "state_code": 0,
+            "rule_verification": rule_verification,
+            "json_ordered": json_ordered,
+            "overwrite": overwrite,
+            "model_id": model_id,
+        }
 
 
 class CustomHttpDataPlatformConnector(BaseDataPlatformConnector):
@@ -597,6 +626,12 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
     def _rpc(self, name: str, payload: dict[str, Any]) -> Any:
         return self._request_json("POST", f"/rest/v1/rpc/{url_parse.quote(name, safe='')}", headers=self._headers(), body=payload)
 
+    def _invoke_function(self, name: str, body: dict[str, Any]) -> dict[str, Any]:
+        payload = self._request_json("POST", f"/functions/v1/{url_parse.quote(name, safe='')}", headers=self._headers(), body=body)
+        if isinstance(payload, dict):
+            return payload
+        return {"data": payload}
+
     def _table_one(self, table: str, remote_id: str, remote_version: str | None = None) -> dict[str, Any]:
         params = {"select": "*", "id": f"eq.{remote_id}"}
         if remote_version:
@@ -743,6 +778,30 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
         parsed = _unit_group_from_payload(unit_group) if isinstance(unit_group, dict) else None
         return [parsed] if parsed is not None else []
 
+    def publish_flow(self, *, flow_uuid: str, json_ordered: dict[str, Any], rule_verification: bool = False, overwrite: bool = False) -> dict[str, Any]:
+        body = {
+            "id": flow_uuid,
+            "table": "flows",
+            "jsonOrdered": json_ordered,
+            "ruleVerification": rule_verification,
+        }
+        if overwrite:
+            body["overwrite"] = True
+        return self._invoke_function("app_dataset_create", body)
+
+    def publish_process(self, *, process_uuid: str, json_ordered: dict[str, Any], rule_verification: bool = False, overwrite: bool = False, model_id: str | None = None) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "id": process_uuid,
+            "table": "processes",
+            "jsonOrdered": json_ordered,
+            "ruleVerification": rule_verification,
+        }
+        if model_id:
+            body["modelId"] = model_id
+        if overwrite:
+            body["overwrite"] = True
+        return self._invoke_function("app_dataset_create", body)
+
     def _resolve_flow_dependencies(self, flow: RemoteFlowDTO) -> RemoteFlowDTO:
         flow_property_ref = _extract_flow_property_reference(flow.metadata.get("row") if isinstance(flow.metadata, dict) else {})
         if not flow_property_ref:
@@ -801,6 +860,12 @@ class SkeletonDataPlatformConnector(BaseDataPlatformConnector):
 
     def get_model_detail(self, remote_model_id: str, remote_version: str | None = None) -> RemoteModelDetailDTO:
         raise ConnectorError(f"{self.account.platform} live model sync is not implemented yet")
+
+    def publish_flow(self, *, flow_uuid: str, json_ordered: dict[str, Any], rule_verification: bool = False, overwrite: bool = False) -> dict[str, Any]:
+        raise ConnectorError(f"{self.account.platform} live flow publish is not implemented yet")
+
+    def publish_process(self, *, process_uuid: str, json_ordered: dict[str, Any], rule_verification: bool = False, overwrite: bool = False, model_id: str | None = None) -> dict[str, Any]:
+        raise ConnectorError(f"{self.account.platform} live process publish is not implemented yet")
 
 
 def _nested_text(value: Any, *path: str) -> str:
@@ -1170,12 +1235,22 @@ def _tiangong_process_from_row(row: dict[str, Any]) -> RemoteProcessDTO:
         "modified_at": row.get("modified_at"),
         "state_code": row.get("state_code"),
     }
+    quant = payload.get("processDataSet", {}).get("processInformation", {}).get("quantitativeReference", {}) if isinstance(payload.get("processDataSet"), dict) else {}
+    reference_flow_uuid = str(row.get("reference_flow_uuid") or row.get("referenceFlowUuid") or "").strip()
+    if not reference_flow_uuid and isinstance(quant, dict):
+        ref_internal_id = str(quant.get("referenceToReferenceFlow") or "").strip()
+        exchanges = _extract_process_exchanges(row)
+        for exchange in exchanges:
+            if str(exchange.get("@dataSetInternalID") or exchange.get("dataSetInternalID") or "").strip() == ref_internal_id:
+                ref = exchange.get("referenceToFlowDataSet") if isinstance(exchange.get("referenceToFlowDataSet"), dict) else {}
+                reference_flow_uuid = str(ref.get("@refObjectId") or ref.get("refObjectId") or exchange.get("flow_uuid") or exchange.get("flowUuid") or "").strip()
+                break
     return RemoteProcessDTO(
         remote_id=str(row.get("id") or process_uuid).strip(),
         process_uuid=process_uuid,
         process_name=name,
         process_type=process_type,
-        reference_flow_uuid=str(row.get("reference_flow_uuid") or row.get("referenceFlowUuid") or "").strip() or None,
+        reference_flow_uuid=reference_flow_uuid or None,
         source="tiangong",
         remote_version=_row_version(row),
         metadata=metadata,
@@ -1202,26 +1277,41 @@ def _tiangong_model_from_row(row: dict[str, Any]) -> RemoteModelDTO:
 
 def _extract_process_exchanges(row: dict[str, Any]) -> list[dict[str, Any]]:
     payload = _extract_json_payload(row)
-    candidates = [payload.get("exchanges"), payload.get("exchange"), payload.get("process_json", {}).get("exchanges") if isinstance(payload.get("process_json"), dict) else None]
+    process_dataset = payload.get("processDataSet") if isinstance(payload.get("processDataSet"), dict) else {}
+    exchange_root = process_dataset.get("exchanges") if isinstance(process_dataset.get("exchanges"), dict) else {}
+    candidates = [
+        payload.get("exchanges"),
+        payload.get("exchange"),
+        exchange_root.get("exchange") if isinstance(exchange_root, dict) else None,
+        payload.get("process_json", {}).get("exchanges") if isinstance(payload.get("process_json"), dict) else None,
+    ]
     for candidate in candidates:
         if isinstance(candidate, list):
             return [item for item in candidate if isinstance(item, dict)]
+        if isinstance(candidate, dict):
+            return [candidate]
     return []
 
 
 def _tiangong_flow_from_exchange(exchange: dict[str, Any]) -> RemoteFlowDTO | None:
-    flow_uuid = str(exchange.get("flow_uuid") or exchange.get("flowUuid") or exchange.get("flow_id") or exchange.get("flowId") or "").strip()
+    ref = exchange.get("referenceToFlowDataSet") if isinstance(exchange.get("referenceToFlowDataSet"), dict) else {}
+    flow_uuid = str(exchange.get("flow_uuid") or exchange.get("flowUuid") or exchange.get("flow_id") or exchange.get("flowId") or ref.get("@refObjectId") or ref.get("refObjectId") or "").strip()
     if not flow_uuid:
         return None
+    flow_name = (
+        _localized_name(exchange.get("flow_name") or exchange.get("flowName") or exchange.get("name"))
+        or _localized_name(ref.get("common:shortDescription") or ref.get("shortDescription"))
+        or flow_uuid
+    )
     return RemoteFlowDTO(
         remote_id=flow_uuid,
         flow_uuid=flow_uuid,
-        flow_name=str(exchange.get("flow_name") or exchange.get("flowName") or flow_uuid).strip(),
+        flow_name=flow_name,
         flow_type=str(exchange.get("flow_type") or exchange.get("flowType") or "Product flow").strip(),
         default_unit=str(exchange.get("unit") or exchange.get("default_unit") or "kg").strip(),
         unit_group=str(exchange.get("unit_group") or exchange.get("unitGroup") or "Units of mass").strip(),
         source="tiangong",
-        remote_version=str(exchange.get("flow_version") or "").strip() or None,
+        remote_version=str(exchange.get("flow_version") or ref.get("@version") or ref.get("version") or "").strip() or None,
         metadata={"exchange": exchange},
     )
 

@@ -5552,6 +5552,27 @@ body,
   font-weight: 500;
 }
 
+.pm-sync-row-action {
+  border: 1px solid #9fc9df;
+  border-radius: 4px;
+  background: #fff;
+  color: #126aa3;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 3px 8px;
+  min-height: 24px;
+}
+
+.pm-sync-row-action:hover:not(:disabled) {
+  background: #edf7fc;
+}
+
+.pm-sync-row-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .pm-modal-backdrop {
   position: fixed;
   inset: 0;
