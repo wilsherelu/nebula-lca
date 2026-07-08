@@ -754,12 +754,23 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
     def get_process_detail(self, remote_process_id: str, remote_version: str | None = None) -> RemoteProcessDetailDTO:
         row = self._table_one("processes", remote_process_id, remote_version)
         process = _tiangong_process_from_row(row)
-        flows = [_tiangong_flow_from_exchange(exchange) for exchange in _extract_process_exchanges(row) if _tiangong_flow_from_exchange(exchange) is not None]
+        flow_stubs = [_tiangong_flow_from_exchange(exchange) for exchange in _extract_process_exchanges(row)]
+        flows: list[RemoteFlowDTO] = []
+        flow_warnings: list[str] = []
+        for flow_stub in flow_stubs:
+            if flow_stub is None:
+                continue
+            try:
+                flows.append(self.get_flow_detail(flow_stub.flow_uuid, flow_stub.remote_version))
+            except ConnectorError as exc:
+                flow_warnings.append(f"could not resolve flow {flow_stub.flow_uuid}: {exc}")
+                flows.append(flow_stub)
+        process_json = _tiangong_process_json_from_row(row, process, flows)
         return RemoteProcessDetailDTO(
             process=process,
             flows=flows,
-            process_json=_extract_json_payload(row),
-            import_report={"source": "tiangong", "remote_id": process.remote_id, "remote_version": process.remote_version},
+            process_json=process_json,
+            import_report={"source": "tiangong", "remote_id": process.remote_id, "remote_version": process.remote_version, "warnings": flow_warnings},
             vector=_extract_process_vector(row),
         )
 
@@ -814,7 +825,9 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
                 return replace(flow, metadata=metadata)
             unit_group_row = self._table_one("unitgroups", unit_group_ref["id"], unit_group_ref.get("version"))
             unit_group = _tiangong_unit_group_from_row(unit_group_row)
-            default_unit = unit_group.reference_unit or flow.default_unit
+            explicit_unit_fields = bool(flow.metadata.get("explicit_unit_fields")) if isinstance(flow.metadata, dict) else False
+            default_unit = flow.default_unit if explicit_unit_fields else (unit_group.reference_unit or flow.default_unit)
+            unit_group_name = flow.unit_group if explicit_unit_fields else (unit_group.name or flow.unit_group)
             metadata = {
                 **flow.metadata,
                 "flow_property_id": flow_property_ref["id"],
@@ -831,7 +844,7 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
             return replace(
                 flow,
                 default_unit=default_unit,
-                unit_group=unit_group.name or flow.unit_group,
+                unit_group=unit_group_name,
                 metadata=metadata,
             )
         except ConnectorError as exc:
@@ -1186,10 +1199,10 @@ def _tiangong_flow_from_row(row: dict[str, Any]) -> RemoteFlowDTO:
     # then fall back to flowDataSet.flowInformation paths under ILCD payload.
     unit = str(row.get("default_unit") or row.get("unit") or "").strip()
     unit_group = str(row.get("unit_group") or row.get("unitGroup") or "").strip()
+    flow_info = payload.get("flowDataSet", {}).get("flowInformation", {}) if isinstance(payload.get("flowDataSet"), dict) else {}
+    if not isinstance(flow_info, dict):
+        flow_info = {}
     if not unit or not unit_group:
-        flow_info = payload.get("flowDataSet", {}).get("flowInformation", {}) if isinstance(payload.get("flowDataSet"), dict) else {}
-        if not isinstance(flow_info, dict):
-            flow_info = {}
         if not unit:
             unit = str(flow_info.get("referenceUnit") or row.get("default_unit") or row.get("unit") or "kg").strip()
         if not unit_group:
@@ -1200,6 +1213,7 @@ def _tiangong_flow_from_row(row: dict[str, Any]) -> RemoteFlowDTO:
         "classification": _classification_text(payload, "flow"),
         "modified_at": row.get("modified_at"),
         "state_code": row.get("state_code"),
+        "explicit_unit_fields": bool(flow_info.get("referenceUnit") or flow_info.get("unitGroup")),
     }
     return RemoteFlowDTO(
         remote_id=str(row.get("id") or flow_uuid).strip(),
@@ -1293,16 +1307,125 @@ def _extract_process_exchanges(row: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
-def _tiangong_flow_from_exchange(exchange: dict[str, Any]) -> RemoteFlowDTO | None:
+def _float_value(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _flow_uuid_from_exchange(exchange: dict[str, Any]) -> str:
     ref = exchange.get("referenceToFlowDataSet") if isinstance(exchange.get("referenceToFlowDataSet"), dict) else {}
-    flow_uuid = str(exchange.get("flow_uuid") or exchange.get("flowUuid") or exchange.get("flow_id") or exchange.get("flowId") or ref.get("@refObjectId") or ref.get("refObjectId") or "").strip()
-    if not flow_uuid:
-        return None
-    flow_name = (
+    return str(exchange.get("flow_uuid") or exchange.get("flowUuid") or exchange.get("flow_id") or exchange.get("flowId") or ref.get("@refObjectId") or ref.get("refObjectId") or "").strip()
+
+
+def _exchange_flow_name(exchange: dict[str, Any]) -> str:
+    ref = exchange.get("referenceToFlowDataSet") if isinstance(exchange.get("referenceToFlowDataSet"), dict) else {}
+    return (
         _localized_name(exchange.get("flow_name") or exchange.get("flowName") or exchange.get("name"))
         or _localized_name(ref.get("common:shortDescription") or ref.get("shortDescription"))
-        or flow_uuid
+        or _flow_uuid_from_exchange(exchange)
     )
+
+
+def _exchange_direction(exchange: dict[str, Any]) -> str:
+    direction = str(exchange.get("direction") or exchange.get("exchangeDirection") or "").strip().lower()
+    if direction in {"output", "outputs"}:
+        return "output"
+    return "input"
+
+
+def _exchange_amount(exchange: dict[str, Any]) -> float:
+    for key in ("amount", "meanAmount", "resultingAmount", "meanValue"):
+        if exchange.get(key) is not None:
+            return _float_value(exchange.get(key))
+    return 0.0
+
+
+def _exchange_unit(exchange: dict[str, Any], flow: RemoteFlowDTO | None) -> str:
+    for key in ("unit", "referenceToUnit"):
+        value = exchange.get(key)
+        if isinstance(value, dict):
+            text = _localized_name(value.get("common:shortDescription") or value.get("shortDescription") or value.get("name") or value.get("common:name"))
+            if text:
+                return text
+            ref_id = str(value.get("@refObjectId") or value.get("refObjectId") or value.get("@dataSetInternalID") or value.get("dataSetInternalID") or "").strip()
+            if ref_id and not ref_id.isdigit():
+                return ref_id
+        elif value is not None:
+            text = str(value).strip()
+            if text and not text.isdigit():
+                return text
+    return flow.default_unit if flow is not None and flow.default_unit else "kg"
+
+
+def _exchange_is_allocated_product(exchange: dict[str, Any]) -> bool:
+    allocated = _float_value(exchange.get("allocatedFraction"), 0.0)
+    return bool(exchange.get("is_allocated_product") or exchange.get("is_product") or exchange.get("isProduct") or exchange.get("productOutput") or allocated > 0)
+
+
+def _tiangong_process_json_from_row(row: dict[str, Any], process: RemoteProcessDTO, flows: list[RemoteFlowDTO]) -> dict[str, Any]:
+    payload = _extract_json_payload(row)
+    process_dataset = payload.get("processDataSet") if isinstance(payload.get("processDataSet"), dict) else {}
+    info = process_dataset.get("processInformation") if isinstance(process_dataset.get("processInformation"), dict) else {}
+    quant = info.get("quantitativeReference") if isinstance(info.get("quantitativeReference"), dict) else {}
+    geography = info.get("geography") if isinstance(info.get("geography"), dict) else {}
+    reference_internal_id = str(quant.get("referenceToReferenceFlow") or row.get("reference_flow_internal_id") or "").strip()
+    flow_by_uuid = {flow.flow_uuid: flow for flow in flows if flow.flow_uuid}
+    exchanges: list[dict[str, Any]] = []
+    reference_flow_uuid = process.reference_flow_uuid or ""
+    reference_flow_name = ""
+    for index, exchange in enumerate(_extract_process_exchanges(row), start=1):
+        flow_uuid = _flow_uuid_from_exchange(exchange)
+        flow = flow_by_uuid.get(flow_uuid)
+        internal_id = str(exchange.get("@dataSetInternalID") or exchange.get("dataSetInternalID") or exchange.get("exchange_internal_id") or index).strip()
+        flow_name = _exchange_flow_name(exchange) or (flow.flow_name if flow is not None and flow.flow_name else "")
+        is_reference = bool(reference_internal_id and internal_id == reference_internal_id)
+        if is_reference:
+            reference_flow_uuid = flow_uuid
+            reference_flow_name = flow_name
+        exchanges.append(
+            {
+                "exchange_internal_id": internal_id,
+                "flow_uuid": flow_uuid,
+                "flow_name": flow_name,
+                "direction": _exchange_direction(exchange),
+                "amount": _exchange_amount(exchange),
+                "unit": _exchange_unit(exchange, flow),
+                "unit_group": flow.unit_group if flow is not None else "",
+                "flow_version": flow.remote_version if flow is not None else None,
+                "is_allocated_product": _exchange_is_allocated_product(exchange),
+                "is_reference_flow": is_reference,
+                "isProduct": bool(is_reference or _exchange_is_allocated_product(exchange)),
+            }
+        )
+    if not reference_flow_uuid:
+        allocated_outputs = [item for item in exchanges if item.get("direction") == "output" and item.get("is_allocated_product")]
+        if len(allocated_outputs) == 1:
+            reference_flow_uuid = str(allocated_outputs[0].get("flow_uuid") or "")
+            reference_flow_name = str(allocated_outputs[0].get("flow_name") or "")
+    return {
+        "process_uuid": process.process_uuid,
+        "process_name": process.process_name,
+        "process_name_zh": process.process_name,
+        "process_name_en": process.process_name,
+        "process_type": process.process_type,
+        "location": str(geography.get("locationOfOperationSupplyOrProduction") or row.get("location") or "").strip(),
+        "reference_flow_internal_id": reference_internal_id,
+        "reference_flow_uuid": reference_flow_uuid or process.reference_flow_uuid,
+        "reference_flow_source_uuid": reference_flow_uuid or process.reference_flow_uuid,
+        "reference_flow_source_name": reference_flow_name,
+        "exchanges": exchanges,
+        "source": "tiangong",
+    }
+
+
+def _tiangong_flow_from_exchange(exchange: dict[str, Any]) -> RemoteFlowDTO | None:
+    ref = exchange.get("referenceToFlowDataSet") if isinstance(exchange.get("referenceToFlowDataSet"), dict) else {}
+    flow_uuid = _flow_uuid_from_exchange(exchange)
+    if not flow_uuid:
+        return None
+    flow_name = _exchange_flow_name(exchange)
     return RemoteFlowDTO(
         remote_id=flow_uuid,
         flow_uuid=flow_uuid,

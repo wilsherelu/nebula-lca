@@ -1296,6 +1296,142 @@ def test_process_sync_stores_plain_string_exchange_names(client, monkeypatch):
         db.close()
 
 
+def _flow_row_with_unit(flow_id: str, name: str, unit: str = "MJ", unit_group: str = "Units of energy"):
+    return {
+        "id": flow_id,
+        "name": name,
+        "version": "1",
+        "json": {
+            "flowDataSet": {
+                "flowInformation": {
+                    "dataSetInformation": {
+                        "common:UUID": flow_id,
+                        "common:name": name,
+                    },
+                    "referenceUnit": unit,
+                    "unitGroup": unit_group,
+                }
+            }
+        },
+    }
+
+
+def _process_row_with_reference(ref_internal_id: str = "2"):
+    return {
+        "id": "tg-process-ref",
+        "name": "Electricity process",
+        "version": "1",
+        "json": {
+            "processDataSet": {
+                "processInformation": {
+                    "dataSetInformation": {
+                        "common:UUID": "tg-process-ref",
+                        "name": {"baseName": [{"#text": "电力过程", "@xml:lang": "zh"}, {"#text": "Electricity process", "@xml:lang": "en"}]},
+                    },
+                    "quantitativeReference": {"referenceToReferenceFlow": ref_internal_id},
+                },
+                "exchanges": {
+                    "exchange": [
+                        {
+                            "@dataSetInternalID": "1",
+                            "exchangeDirection": "input",
+                            "referenceToFlowDataSet": {
+                                "@refObjectId": "flow-input-energy",
+                                "common:shortDescription": [{"#text": "输入电力", "@xml:lang": "zh"}, {"#text": "Input electricity", "@xml:lang": "en"}],
+                            },
+                            "meanAmount": 2,
+                            "referenceToUnit": {"common:shortDescription": "MJ"},
+                        },
+                        {
+                            "@dataSetInternalID": "2",
+                            "exchangeDirection": "output",
+                            "referenceToFlowDataSet": {
+                                "@refObjectId": "flow-product-energy",
+                                "common:shortDescription": [{"#text": "输出电力", "@xml:lang": "zh"}, {"#text": "Output electricity", "@xml:lang": "en"}],
+                            },
+                            "meanAmount": 1,
+                            "referenceToUnit": "0",
+                            "productOutput": True,
+                        },
+                    ]
+                },
+            }
+        },
+    }
+
+
+def test_tiangong_process_sync_preserves_quantitative_reference_and_units(client, monkeypatch):
+    def fake_urlopen(req, timeout):  # noqa: ARG001
+        url = req.full_url
+        if "/auth/v1/token?grant_type=password" in url:
+            return _FakeSupabaseResponse({"access_token": _jwt(), "refresh_token": "rt", "expires_in": 3600, "token_type": "bearer"})
+        if "/rest/v1/processes" in url and "tg-process-ref" in url:
+            return _FakeSupabaseResponse([_process_row_with_reference("2")])
+        if "/rest/v1/flows" in url and "flow-product-energy" in url:
+            return _FakeSupabaseResponse([_flow_row_with_unit("flow-product-energy", "Output electricity", "kWh", "Units of energy")])
+        if "/rest/v1/flows" in url and "flow-input-energy" in url:
+            return _FakeSupabaseResponse([_flow_row_with_unit("flow-input-energy", "Input electricity", "MJ", "Units of energy")])
+        raise AssertionError(f"Unexpected URL {url}")
+
+    monkeypatch.setattr("app.services.data_platform_connectors.url_request.urlopen", fake_urlopen)
+    account_id = _create_tiangong_account(client)
+
+    response = client.post(
+        f"/api/data-platforms/accounts/{account_id}/processes/sync",
+        json={"remote_process_id": "tg-process-ref", "overwrite": True},
+    )
+    assert response.status_code == 200, response.text
+    db = _db_module.SessionLocal()
+    try:
+        process = db.get(ReferenceProcess, "tg-process-ref")
+        assert process is not None
+        assert process.reference_flow_internal_id == "2"
+        assert process.reference_flow_uuid == "flow-product-energy"
+        exchanges = process.process_json["exchanges"]
+        assert isinstance(exchanges[0]["flow_name"], str)
+        assert "{" not in exchanges[0]["flow_name"]
+        assert exchanges[0]["unit"] == "MJ"
+        assert exchanges[1]["is_reference_flow"] is True
+        assert exchanges[1]["isProduct"] is True
+        assert exchanges[1]["unit"] == "kWh"
+    finally:
+        db.close()
+
+
+def test_tiangong_process_sync_warns_when_reference_points_to_input(client, monkeypatch):
+    def fake_urlopen(req, timeout):  # noqa: ARG001
+        url = req.full_url
+        if "/auth/v1/token?grant_type=password" in url:
+            return _FakeSupabaseResponse({"access_token": _jwt(), "refresh_token": "rt", "expires_in": 3600, "token_type": "bearer"})
+        if "/rest/v1/processes" in url and "tg-process-ref" in url:
+            return _FakeSupabaseResponse([_process_row_with_reference("1")])
+        if "/rest/v1/flows" in url and "flow-product-energy" in url:
+            return _FakeSupabaseResponse([_flow_row_with_unit("flow-product-energy", "Output electricity", "kWh", "Units of energy")])
+        if "/rest/v1/flows" in url and "flow-input-energy" in url:
+            return _FakeSupabaseResponse([_flow_row_with_unit("flow-input-energy", "Input electricity", "MJ", "Units of energy")])
+        raise AssertionError(f"Unexpected URL {url}")
+
+    monkeypatch.setattr("app.services.data_platform_connectors.url_request.urlopen", fake_urlopen)
+    account_id = _create_tiangong_account(client)
+
+    response = client.post(
+        f"/api/data-platforms/accounts/{account_id}/processes/sync",
+        json={"remote_process_id": "tg-process-ref", "overwrite": True},
+    )
+    assert response.status_code == 200, response.text
+    report = response.json()["tidas_import_report"]
+    assert report["warning_count"] >= 1
+    assert any("matched non-output exchange" in item for item in report["warnings"])
+    db = _db_module.SessionLocal()
+    try:
+        process = db.get(ReferenceProcess, "tg-process-ref")
+        assert process is not None
+        assert process.reference_flow_uuid is None
+        assert process.reference_flow_internal_id == "1"
+    finally:
+        db.close()
+
+
 def test_publish_local_flow_invokes_tiangong_create_dataset(client, monkeypatch):
     calls = _install_fake_tiangong_http(monkeypatch)
     account_id = _create_tiangong_account(client)

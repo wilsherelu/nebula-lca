@@ -594,6 +594,21 @@ export function ExternalPlatformAccounts(props: Props) {
     const raw = typeof item.metadata?.modified_at === "string" ? item.metadata.modified_at : "";
     return raw ? formatTime(raw) : "-";
   };
+  const previewFieldLabel = (key: string): string => key.replace(/_/g, " ");
+  const previewValue = (value: unknown): string => {
+    if (value === null || value === undefined || value === "") return "-";
+    if (typeof value === "boolean") return value ? (zh ? "是" : "Yes") : (zh ? "否" : "No");
+    if (typeof value === "object") return JSON.stringify(value);
+    return String(value);
+  };
+  const previewRelatedText = (item: Record<string, unknown>): string => {
+    const name = previewValue(item.name ?? item.flow_id ?? item.process_id);
+    const direction = previewValue(item.direction);
+    const amount = previewValue(item.amount);
+    const unit = previewValue(item.unit);
+    const ref = item.is_reference_flow ? (zh ? "参考" : "reference") : "";
+    return [direction, name, amount !== "-" ? amount : "", unit !== "-" ? unit : "", ref].filter(Boolean).join(" · ");
+  };
   const copyText = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -999,14 +1014,14 @@ export function ExternalPlatformAccounts(props: Props) {
           {remotePreview.description && <p>{remotePreview.description}</p>}
           <dl>
             {Object.entries(remotePreview.summary ?? {}).slice(0, 10).map(([key, value]) => (
-              value ? <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div> : null
+              value ? <div key={key}><dt>{previewFieldLabel(key)}</dt><dd>{previewValue(value)}</dd></div> : null
             ))}
           </dl>
           {(remotePreview.related ?? []).length > 0 && (
             <div className="pm-preview-related">
-              <strong>{zh ? "关联项" : "Related"}</strong>
+              <strong>{remotePreview.remote_kind === "process" ? (zh ? "交换流" : "Exchanges") : (zh ? "关联项" : "Related")}</strong>
               {(remotePreview.related ?? []).slice(0, 5).map((item, index) => (
-                <span key={index}>{String(item.name ?? item.flow_id ?? item.process_id ?? "")}</span>
+                <span key={index} title={previewRelatedText(item)}>{previewRelatedText(item)}</span>
               ))}
             </div>
           )}

@@ -179,6 +179,46 @@ def _infer_unit_defaults_from_flow_dataset(flow_dataset: dict) -> tuple[str, str
     return "kg", "Units of mass"
 
 
+def _numeric_value(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _exchange_unit_text(row: dict) -> str:
+    for key in ("unit", "referenceToUnit"):
+        value = row.get(key)
+        if isinstance(value, dict):
+            text = _pick_localized_text(
+                value.get("common:shortDescription")
+                or value.get("shortDescription")
+                or value.get("name")
+                or value.get("common:name"),
+                preferred_langs=("en", "zh"),
+            )
+            if text:
+                return text
+            ref = _safe_str(value.get("@refObjectId") or value.get("refObjectId") or value.get("@dataSetInternalID") or value.get("dataSetInternalID"))
+            if ref and not ref.isdigit():
+                return ref
+        else:
+            text = _safe_str(value)
+            if text and not text.isdigit():
+                return text
+    return "kg"
+
+
+def _exchange_is_allocated_product(row: dict) -> bool:
+    return bool(
+        row.get("is_allocated_product")
+        or row.get("is_product")
+        or row.get("isProduct")
+        or row.get("productOutput")
+        or _numeric_value(row.get("allocatedFraction"), 0.0) > 0
+    )
+
+
 def _is_protected_builtin_flow(row: FlowRecord) -> bool:
     return not bool(row.is_custom) and _safe_str(row.source) in PROTECTED_BUILTIN_FLOW_SOURCES
 
@@ -253,7 +293,7 @@ def _normalize_exchange(row: dict) -> dict:
     raw_name = row.get("flow_name") or row.get("flowName") or row.get("name")
     if not raw_name and isinstance(ref, dict):
         raw_name = ref.get("common:shortDescription")
-    flow_name = _pick_localized_text(raw_name, preferred_langs=("zh", "en")) or _safe_str(raw_name)
+    flow_name = _pick_localized_text(raw_name, preferred_langs=("zh", "en")) or flow_uuid
 
     direction = _safe_str(row.get("direction") or row.get("exchangeDirection")).lower() or "input"
     if direction in {"outputs", "output"}:
@@ -270,10 +310,7 @@ def _normalize_exchange(row: dict) -> dict:
     if amount is None:
         amount = row.get("meanValue", 0)
     # Ensure amount is numeric
-    try:
-        amount = float(amount)
-    except (TypeError, ValueError):
-        amount = 0.0
+    amount = _numeric_value(amount)
 
     return {
         "exchange_internal_id": _safe_str(row.get("exchange_internal_id") or row.get("@dataSetInternalID") or row.get("dataSetInternalID")),
@@ -281,8 +318,10 @@ def _normalize_exchange(row: dict) -> dict:
         "flow_name": flow_name,
         "direction": direction,
         "amount": amount,
-        "unit": _safe_str(row.get("unit") or row.get("referenceToUnit") or "kg"),
-        "is_allocated_product": bool(row.get("is_allocated_product") or row.get("is_product")),
+        "unit": _exchange_unit_text(row),
+        "is_allocated_product": _exchange_is_allocated_product(row),
+        "is_reference_flow": bool(row.get("is_reference_flow")),
+        "isProduct": bool(row.get("isProduct") or row.get("is_reference_flow") or _exchange_is_allocated_product(row)),
     }
 
 

@@ -262,6 +262,24 @@ def _process_exchanges_from_payload(payload: dict[str, Any]) -> list[dict[str, A
     return [item for item in _as_list(raw) if isinstance(item, dict)]
 
 
+def _preview_exchange_direction(item: dict[str, Any]) -> str:
+    return _safe_str(item.get("direction") or item.get("exchangeDirection")).lower()
+
+
+def _preview_exchange_amount(item: dict[str, Any]) -> Any:
+    for key in ("amount", "meanAmount", "resultingAmount", "meanValue"):
+        if item.get(key) is not None:
+            return item.get(key)
+    return None
+
+
+def _preview_exchange_unit(item: dict[str, Any]) -> str:
+    value = item.get("unit") or item.get("referenceToUnit")
+    if isinstance(value, dict):
+        return _localized_text(value.get("common:shortDescription") or value.get("shortDescription") or value.get("name") or value.get("common:name")) or _safe_str(value.get("@refObjectId") or value.get("refObjectId"))
+    return _safe_str(value)
+
+
 def _model_process_instances(payload: dict[str, Any]) -> list[dict[str, Any]]:
     dataset = payload.get("lifeCycleModelDataSet") if isinstance(payload.get("lifeCycleModelDataSet"), dict) else payload
     info = dataset.get("lifeCycleModelInformation") if isinstance(dataset, dict) else None
@@ -275,6 +293,9 @@ def _preview_from_flow(account: DataPlatformAccount, flow: RemoteFlowDTO) -> Dat
     row = flow.metadata.get("row") if isinstance(flow.metadata, dict) and isinstance(flow.metadata.get("row"), dict) else {}
     payload = _remote_raw_row(flow.metadata, row)
     data_info = _dataset_info(payload, "flowDataSet", "flowInformation")
+    deps = flow.metadata.get("dependencies") if isinstance(flow.metadata, dict) and isinstance(flow.metadata.get("dependencies"), dict) else {}
+    flow_property = deps.get("flow_property") if isinstance(deps, dict) and isinstance(deps.get("flow_property"), dict) else {}
+    unit_group_ref = deps.get("unit_group_ref") if isinstance(deps, dict) and isinstance(deps.get("unit_group_ref"), dict) else {}
     return DataPlatformRemotePreviewResponse(
         account_id=account.id,
         platform=account.platform,
@@ -288,6 +309,8 @@ def _preview_from_flow(account: DataPlatformAccount, flow: RemoteFlowDTO) -> Dat
             "flow_type": flow.flow_type,
             "default_unit": flow.default_unit,
             "unit_group": flow.unit_group,
+            "flow_property_uuid": flow.metadata.get("flow_property_id") or flow_property.get("id") or "",
+            "unit_group_uuid": flow.metadata.get("unit_group_id") or unit_group_ref.get("id") or "",
             "classification": _classification_path(data_info),
         },
     )
@@ -298,16 +321,20 @@ def _preview_from_process(account: DataPlatformAccount, detail: Any) -> DataPlat
     payload = detail.process_json if isinstance(detail.process_json, dict) else {}
     data_info = _dataset_info(payload, "processDataSet", "processInformation")
     exchanges = _process_exchanges_from_payload(payload)
-    input_count = sum(1 for item in exchanges if _safe_str(item.get("exchangeDirection")).lower() == "input")
-    output_count = sum(1 for item in exchanges if _safe_str(item.get("exchangeDirection")).lower() == "output")
+    input_count = sum(1 for item in exchanges if _preview_exchange_direction(item) == "input")
+    output_count = sum(1 for item in exchanges if _preview_exchange_direction(item) == "output")
+    reference_internal_id = _safe_str(payload.get("reference_flow_internal_id"))
+    reference_flow_name = _safe_str(payload.get("reference_flow_source_name") or payload.get("reference_flow_name"))
     samples = []
     for exchange in exchanges[:5]:
         ref = exchange.get("referenceToFlowDataSet") if isinstance(exchange.get("referenceToFlowDataSet"), dict) else {}
         samples.append({
-            "direction": exchange.get("exchangeDirection"),
+            "direction": exchange.get("direction") or exchange.get("exchangeDirection"),
             "flow_id": ref.get("@refObjectId") or ref.get("refObjectId") or exchange.get("flow_uuid") or exchange.get("flowUuid"),
             "name": _localized_text(ref.get("common:shortDescription") or ref.get("shortDescription")) or _safe_str(exchange.get("flow_name") or exchange.get("flowName")),
-            "amount": exchange.get("meanAmount") or exchange.get("resultingAmount"),
+            "amount": _preview_exchange_amount(exchange),
+            "unit": _preview_exchange_unit(exchange),
+            "is_reference_flow": bool(exchange.get("is_reference_flow")),
         })
     return DataPlatformRemotePreviewResponse(
         account_id=account.id,
@@ -321,6 +348,8 @@ def _preview_from_process(account: DataPlatformAccount, detail: Any) -> DataPlat
             "uuid": process.process_uuid,
             "process_type": process.process_type,
             "reference_flow_uuid": process.reference_flow_uuid,
+            "reference_flow_internal_id": reference_internal_id,
+            "reference_flow_name": reference_flow_name,
             "classification": _classification_path(data_info),
             "exchange_count": len(exchanges),
             "input_count": input_count,
@@ -1169,15 +1198,12 @@ def sync_remote_process(account_id: str, payload: DataPlatformSyncProcessRequest
         process = detail.process
         if not process.process_uuid:
             raise ConnectorError("Remote process is missing process_uuid")
-        process_row = _remote_raw_row(
-            process.metadata,
-            detail.process_json or {
-                "process_uuid": process.process_uuid,
-                "process_name": process.process_name,
-                "reference_flow_uuid": process.reference_flow_uuid,
-                "exchanges": [],
-            },
-        )
+        process_row = detail.process_json or {
+            "process_uuid": process.process_uuid,
+            "process_name": process.process_name,
+            "reference_flow_uuid": process.reference_flow_uuid,
+            "exchanges": [],
+        }
         process_report = import_tidas_process_rows(
             db,
             [process_row],
@@ -1612,15 +1638,12 @@ def refresh_account_imports(
                 if flow_report.failed:
                     pass  # process still proceeds
             # Sync the process itself
-            process_row = _remote_raw_row(
-                process.metadata,
-                detail.process_json or {
-                    "process_uuid": process.process_uuid,
-                    "process_name": process.process_name,
-                    "reference_flow_uuid": process.reference_flow_uuid,
-                    "exchanges": [],
-                },
-            )
+            process_row = detail.process_json or {
+                "process_uuid": process.process_uuid,
+                "process_name": process.process_name,
+                "reference_flow_uuid": process.reference_flow_uuid,
+                "exchanges": [],
+            }
             process_report = import_tidas_process_rows(
                 db,
                 [process_row],
