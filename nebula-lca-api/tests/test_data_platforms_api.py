@@ -1,6 +1,7 @@
 """API tests for external LCA data platform integration."""
 
 import base64
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -30,7 +31,7 @@ from app.models import (
     UnitDefinition,
     UnitGroup,
 )
-from app.services.data_platform_connectors import encrypt_credential
+from app.services.data_platform_connectors import ConnectorError, PlatformAccountContext, TianGongSupabaseConnector, encrypt_credential
 
 
 @pytest.fixture(autouse=True)
@@ -375,6 +376,74 @@ def test_account_create_returns_safe_error_when_credential_key_missing(client, m
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "DATA_PLATFORM_CREDENTIAL_KEY_REQUIRED"
     assert "secret-password" not in str(response.json())
+
+
+def test_tiangong_auth_http_400_surfaces_login_failure(monkeypatch):
+    def fake_urlopen(req, timeout):
+        raise HTTPError(
+            req.full_url,
+            400,
+            "Bad Request",
+            hdrs=None,
+            fp=io.BytesIO(b'{"error_description":"Invalid login credentials"}'),
+        )
+
+    monkeypatch.setattr("app.services.data_platform_connectors.url_request.urlopen", fake_urlopen)
+    connector = TianGongSupabaseConnector(
+        PlatformAccountContext(
+            account_id="tg-1",
+            platform="tiangong",
+            alias="TianGong",
+            base_url="https://tg.example",
+            auth_type="basic",
+            credential={"username": "user@example.com", "password": "wrong-password"},
+            metadata={"publishable_key": "pub-key"},
+        )
+    )
+
+    with pytest.raises(ConnectorError) as exc_info:
+        connector.test_connection()
+
+    assert exc_info.value.status_code == 400
+    assert "username or password" in str(exc_info.value)
+    assert "wrong-password" not in str(exc_info.value)
+
+
+def test_account_update_with_new_credential_clears_old_validation(client):
+    account_id = _create_tiangong_login_account(client)
+    db = _db_module.SessionLocal()
+    try:
+        row = db.get(DataPlatformAccount, account_id)
+        assert row is not None
+        row.last_validated_at = datetime.utcnow()
+        row.last_validation_status = "failed"
+        row.last_validation_message = "Credential ciphertext failed integrity check."
+        db.add(
+            DataPlatformAccountSession(
+                account_id=account_id,
+                session_ciphertext=encrypt_credential({"access_token": "old-token"}),
+                expires_at=datetime.utcnow() + timedelta(hours=1),
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.patch(
+        f"/api/data-platforms/accounts/{account_id}",
+        json={"credential": {"username": "new-user@example.com", "password": "new-password"}},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["last_validated_at"] is None
+    assert payload["last_validation_status"] is None
+    assert payload["last_validation_message"] is None
+    db = _db_module.SessionLocal()
+    try:
+        assert db.query(DataPlatformAccountSession).filter(DataPlatformAccountSession.account_id == account_id).count() == 0
+    finally:
+        db.close()
 
 
 def test_mock_connector_connection_success_and_failure(client):
