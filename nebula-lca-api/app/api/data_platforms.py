@@ -16,8 +16,10 @@ from ..models import (
     DataPlatformRemoteCache,
     DataPlatformSyncJob,
     ExternalDataSyncRecord,
+    FlowRecord,
     LciBiosphereFlowKey,
     LciProcessVector,
+    ReferenceProcess,
     UnitDefinition,
     UnitGroup,
 )
@@ -26,6 +28,8 @@ from ..schemas import (
     DataPlatformAccountOut,
     DataPlatformAccountUpdateRequest,
     DataPlatformConnectionTestResponse,
+    DataPlatformPublishRequest,
+    DataPlatformPublishResponse,
     DataPlatformRefreshImportItem,
     DataPlatformRefreshImportsRequest,
     DataPlatformRefreshImportsResponse,
@@ -485,6 +489,166 @@ def _upsert_flow_dependencies(db: Session, *, account: DataPlatformAccount, conn
             )
         )
     return synced
+
+
+def _tiangong_lang_text(text: str, lang: str = "zh") -> dict[str, str]:
+    return {"#text": text, "@xml:lang": lang}
+
+
+def _tiangong_dataset_version() -> str:
+    return "01.01.000"
+
+
+def _flow_json_ordered(flow: FlowRecord) -> dict[str, Any]:
+    version = _tiangong_dataset_version()
+    name = _safe_str(flow.flow_name) or flow.flow_uuid
+    name_en = _safe_str(flow.flow_name_en)
+    name_node: dict[str, Any] = {"baseName": _tiangong_lang_text(name, "zh")}
+    if name_en and name_en != name:
+        name_node["common:baseName"] = [_tiangong_lang_text(name, "zh"), _tiangong_lang_text(name_en, "en")]
+    flow_property_uuid = _safe_str(flow.tidas_flow_property_uuid)
+    flow_properties: dict[str, Any] = {}
+    if flow_property_uuid:
+        flow_properties["flowProperty"] = {
+            "@dataSetInternalID": "0",
+            "referenceToFlowPropertyDataSet": {
+                "@refObjectId": flow_property_uuid,
+                "@version": "01.01.000",
+                "common:shortDescription": _tiangong_lang_text(flow.unit_group or flow.default_unit, "en"),
+            },
+            "meanValue": 1,
+        }
+    return {
+        "flowDataSet": {
+            "flowInformation": {
+                "dataSetInformation": {
+                    "common:UUID": flow.flow_uuid,
+                    "UUID": flow.flow_uuid,
+                    "name": name_node,
+                    "classificationInformation": {
+                        "common:classification": {
+                            "common:class": _safe_str(flow.compartment) or _safe_str(flow.flow_type)
+                        }
+                    },
+                },
+                "quantitativeReference": {
+                    "referenceToReferenceFlowProperty": "0" if flow_property_uuid else None,
+                },
+                "referenceUnit": flow.default_unit,
+                "unitGroup": flow.unit_group,
+            },
+            "modellingAndValidation": {
+                "LCIMethod": {
+                    "typeOfDataSet": flow.flow_type,
+                }
+            },
+            "flowProperties": flow_properties,
+            "administrativeInformation": {
+                "publicationAndOwnership": {
+                    "common:dataSetVersion": version,
+                    "common:permanentDataSetURI": f"nebula-lca://flows/{flow.flow_uuid}?version={version}",
+                }
+            },
+        }
+    }
+
+
+def _process_exchange_json(exchange: dict[str, Any], index: int) -> dict[str, Any]:
+    flow_uuid = _safe_str(exchange.get("flow_uuid") or exchange.get("flowUuid"))
+    flow_name = _safe_str(exchange.get("flow_name") or exchange.get("flowName") or flow_uuid)
+    direction = _safe_str(exchange.get("direction") or exchange.get("exchangeDirection")).lower()
+    if direction not in {"input", "output"}:
+        direction = "output" if bool(exchange.get("isProduct") or exchange.get("is_product") or exchange.get("is_reference_flow")) else "input"
+    try:
+        amount = float(exchange.get("amount") if exchange.get("amount") is not None else exchange.get("meanAmount") if exchange.get("meanAmount") is not None else exchange.get("resultingAmount") or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    return {
+        "@dataSetInternalID": _safe_str(exchange.get("exchange_internal_id")) or str(index),
+        "exchangeDirection": direction,
+        "meanAmount": amount,
+        "resultingAmount": amount,
+        "unit": _safe_str(exchange.get("unit")) or "kg",
+        "referenceToFlowDataSet": {
+            "@refObjectId": flow_uuid,
+            "@version": _safe_str(exchange.get("flow_version")) or _tiangong_dataset_version(),
+            "common:shortDescription": _tiangong_lang_text(flow_name, "zh"),
+        },
+        "productOutput": bool(exchange.get("isProduct") or exchange.get("is_product") or exchange.get("is_reference_flow")),
+    }
+
+
+def _process_json_ordered(process: ReferenceProcess) -> dict[str, Any]:
+    version = _tiangong_dataset_version()
+    source = process.process_json if isinstance(process.process_json, dict) else {}
+    name = _safe_str(process.process_name_zh or process.process_name) or process.process_uuid
+    name_en = _safe_str(process.process_name_en)
+    name_node: dict[str, Any] = {"baseName": _tiangong_lang_text(name, "zh")}
+    if name_en and name_en != name:
+        name_node["common:baseName"] = [_tiangong_lang_text(name, "zh"), _tiangong_lang_text(name_en, "en")]
+    exchanges = [
+        _process_exchange_json(item, idx)
+        for idx, item in enumerate(_as_list(source.get("exchanges")), start=1)
+        if isinstance(item, dict)
+    ]
+    ref_internal_id = _safe_str(process.reference_flow_internal_id or source.get("reference_flow_internal_id"))
+    if not ref_internal_id and exchanges:
+        ref_internal_id = _safe_str(exchanges[0].get("@dataSetInternalID"))
+    return {
+        "processDataSet": {
+            "processInformation": {
+                "dataSetInformation": {
+                    "common:UUID": process.process_uuid,
+                    "UUID": process.process_uuid,
+                    "name": name_node,
+                },
+                "quantitativeReference": {
+                    "referenceToReferenceFlow": ref_internal_id or None,
+                },
+                "geography": {
+                    "locationOfOperationSupplyOrProduction": _safe_str(source.get("location")) or None,
+                },
+            },
+            "modellingAndValidation": {
+                "LCIMethodAndAllocation": {
+                    "typeOfDataSet": process.process_type,
+                }
+            },
+            "exchanges": {"exchange": exchanges},
+            "administrativeInformation": {
+                "publicationAndOwnership": {
+                    "common:dataSetVersion": version,
+                    "common:permanentDataSetURI": f"nebula-lca://processes/{process.process_uuid}?version={version}",
+                }
+            },
+        }
+    }
+
+
+def _process_flow_uuids(process: ReferenceProcess) -> set[str]:
+    source = process.process_json if isinstance(process.process_json, dict) else {}
+    flow_uuids = {_safe_str(process.reference_flow_uuid)}
+    for item in _as_list(source.get("exchanges")):
+        if isinstance(item, dict):
+            flow_uuids.add(_safe_str(item.get("flow_uuid") or item.get("flowUuid")))
+    return {item for item in flow_uuids if item}
+
+
+def _missing_published_flow_uuids(db: Session, *, account: DataPlatformAccount, process: ReferenceProcess) -> list[str]:
+    missing: list[str] = []
+    for flow_uuid in sorted(_process_flow_uuids(process)):
+        record = (
+            db.query(ExternalDataSyncRecord)
+            .filter(
+                ExternalDataSyncRecord.account_id == account.id,
+                ExternalDataSyncRecord.local_kind == "flow",
+                ExternalDataSyncRecord.local_uuid == flow_uuid,
+            )
+            .first()
+        )
+        if record is None:
+            missing.append(flow_uuid)
+    return missing
 
 
 def _upsert_lci_vector(db: Session, *, account: DataPlatformAccount, process_uuid: str, vector_payload: dict[str, Any], warnings: list[str]) -> bool:
@@ -1159,6 +1323,112 @@ def sync_remote_model(account_id: str, payload: DataPlatformSyncModelRequest, db
         failed_job.stats_json = {"remote_kind": "model", "lineage": {"remote_id": payload.remote_model_id, "remote_version": payload.remote_version}}
         db.commit()
         raise HTTPException(status_code=400, detail={"code": "DATA_PLATFORM_MODEL_SYNC_FAILED", "message": str(exc), "job_id": failed_job.id}) from exc
+
+
+@api_router.post("/accounts/{account_id}/flows/{flow_uuid}/publish", response_model=DataPlatformPublishResponse)
+def publish_local_flow(
+    account_id: str,
+    flow_uuid: str,
+    payload: DataPlatformPublishRequest,
+    db: Session = Depends(get_db),
+) -> DataPlatformPublishResponse:
+    account = _account_or_404(db, account_id)
+    flow = db.get(FlowRecord, flow_uuid)
+    if flow is None:
+        raise HTTPException(status_code=404, detail={"code": "FLOW_NOT_FOUND", "message": f"Flow not found: {flow_uuid}"})
+    try:
+        connector = connector_for_account(_account_context(account, db))
+        json_ordered = _flow_json_ordered(flow)
+        remote = connector.publish_flow(
+            flow_uuid=flow.flow_uuid,
+            json_ordered=json_ordered,
+            rule_verification=payload.rule_verification,
+            overwrite=payload.overwrite,
+        )
+        remote_version = _safe_str(remote.get("version") if isinstance(remote, dict) else None) or _tiangong_dataset_version()
+        synced = _upsert_sync_record(
+            db,
+            account=account,
+            local_kind="flow",
+            local_uuid=flow.flow_uuid,
+            remote_id=flow.flow_uuid,
+            remote_version=remote_version,
+            metadata={"direction": "publish", "scope": "personal_draft", "published_at": datetime.utcnow().isoformat()},
+        )
+        db.commit()
+        invalidate_management_caches(flows=True, stats=True)
+        return DataPlatformPublishResponse(
+            account_id=account.id,
+            platform=account.platform,
+            local_kind="flow",
+            local_uuid=flow.flow_uuid,
+            remote_id=flow.flow_uuid,
+            remote_version=remote_version,
+            status="published",
+            remote_response=remote if isinstance(remote, dict) else {"data": remote},
+            synced_record=synced,
+        )
+    except ConnectorError as exc:
+        db.rollback()
+        raise _connector_error(exc) from exc
+
+
+@api_router.post("/accounts/{account_id}/processes/{process_uuid}/publish", response_model=DataPlatformPublishResponse)
+def publish_local_process(
+    account_id: str,
+    process_uuid: str,
+    payload: DataPlatformPublishRequest,
+    db: Session = Depends(get_db),
+) -> DataPlatformPublishResponse:
+    account = _account_or_404(db, account_id)
+    process = db.get(ReferenceProcess, process_uuid)
+    if process is None:
+        raise HTTPException(status_code=404, detail={"code": "PROCESS_NOT_FOUND", "message": f"Process not found: {process_uuid}"})
+    missing = _missing_published_flow_uuids(db, account=account, process=process)
+    if missing:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "DATA_PLATFORM_PROCESS_DEPENDENCIES_NOT_PUBLISHED",
+                "message": "Process has flow dependencies that have not been published or synced for this TianGong account.",
+                "missing_flow_uuids": missing,
+            },
+        )
+    try:
+        connector = connector_for_account(_account_context(account, db))
+        json_ordered = _process_json_ordered(process)
+        remote = connector.publish_process(
+            process_uuid=process.process_uuid,
+            json_ordered=json_ordered,
+            rule_verification=payload.rule_verification,
+            overwrite=payload.overwrite,
+        )
+        remote_version = _safe_str(remote.get("version") if isinstance(remote, dict) else None) or _tiangong_dataset_version()
+        synced = _upsert_sync_record(
+            db,
+            account=account,
+            local_kind="process",
+            local_uuid=process.process_uuid,
+            remote_id=process.process_uuid,
+            remote_version=remote_version,
+            metadata={"direction": "publish", "scope": "personal_draft", "published_at": datetime.utcnow().isoformat()},
+        )
+        db.commit()
+        invalidate_management_caches(reference_processes=True, stats=True)
+        return DataPlatformPublishResponse(
+            account_id=account.id,
+            platform=account.platform,
+            local_kind="process",
+            local_uuid=process.process_uuid,
+            remote_id=process.process_uuid,
+            remote_version=remote_version,
+            status="published",
+            remote_response=remote if isinstance(remote, dict) else {"data": remote},
+            synced_record=synced,
+        )
+    except ConnectorError as exc:
+        db.rollback()
+        raise _connector_error(exc) from exc
 
 
 # ======================================================================

@@ -119,6 +119,17 @@ type RefreshResult = {
   items: RefreshItem[];
 };
 
+type PublishResult = {
+  account_id: string;
+  platform: string;
+  local_kind: string;
+  local_uuid: string;
+  remote_id: string;
+  remote_version: string | null;
+  status: string;
+  warnings: string[];
+};
+
 type Props = {
   uiLanguage: UiLanguage;
   onStatus?: (text: string) => void;
@@ -199,6 +210,8 @@ export function ExternalPlatformAccounts(props: Props) {
   const [syncHistoryError, setSyncHistoryError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [refreshResult, setRefreshResult] = useState<RefreshResult | null>(null);
+  const [publishingKey, setPublishingKey] = useState("");
+  const [publishResult, setPublishResult] = useState<PublishResult | null>(null);
 
   const tiangongAccounts = useMemo(
     () => accounts.filter((account) => account.platform === "tiangong"),
@@ -411,6 +424,7 @@ export function ExternalPlatformAccounts(props: Props) {
         },
       );
       setRefreshResult(result);
+      setPublishResult(null);
       const failed = result.failed;
       onStatus?.(
         zh
@@ -516,6 +530,7 @@ export function ExternalPlatformAccounts(props: Props) {
       });
       setLastSync(result);
       setRefreshResult(null);
+      setPublishResult(null);
       const report = result.tidas_import_report;
       const failed = Number(report?.failed ?? 0);
       const warnings = Number(report?.warning_count ?? 0) + Number(report?.unresolved_count ?? 0);
@@ -530,6 +545,39 @@ export function ExternalPlatformAccounts(props: Props) {
       setErrorText(zh ? `导入失败：${message}` : `Import failed: ${message}`);
     } finally {
       setSyncingKey("");
+    }
+  };
+
+  const publishLocalRecord = async (record: SyncRecord) => {
+    if (!selectedAccount) return;
+    if (record.local_kind !== "flow" && record.local_kind !== "process") return;
+    const pluralKind = record.local_kind === "flow" ? "flows" : "processes";
+    const key = `${record.local_kind}:${record.local_uuid}`;
+    setPublishingKey(key);
+    setErrorText("");
+    try {
+      const result = await requestJson<PublishResult>(
+        `${API_BASE}/data-platforms/accounts/${encodeURIComponent(selectedAccount.id)}/${pluralKind}/${encodeURIComponent(record.local_uuid)}/publish`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ overwrite: true, ruleVerification: false }),
+        },
+      );
+      setPublishResult(result);
+      setRefreshResult(null);
+      setLastSync(null);
+      onStatus?.(
+        zh
+          ? `已发布 ${record.local_kind}：${result.remote_id}。`
+          : `${record.local_kind} published: ${result.remote_id}.`,
+      );
+      await loadSyncHistory();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "publish failed";
+      setErrorText(zh ? `发布失败：${message}` : `Publish failed: ${message}`);
+    } finally {
+      setPublishingKey("");
     }
   };
 
@@ -706,7 +754,7 @@ export function ExternalPlatformAccounts(props: Props) {
         </div>
       </div>
 
-      {(refreshResult || lastSync?.tidas_import_report) && (
+      {(refreshResult || lastSync?.tidas_import_report || publishResult) && (
         <div className="pm-refresh-result-strip">
           <div className="pm-refresh-result-content">
             {refreshResult ? (
@@ -721,7 +769,7 @@ export function ExternalPlatformAccounts(props: Props) {
                   </span>
                 )}
               </>
-            ) : (
+            ) : lastSync?.tidas_import_report ? (
               <>
                 <strong>{zh ? "最近导入" : "Last Import"}</strong>
                 <span>{zh ? `新增 ${lastSync?.tidas_import_report?.inserted ?? 0}` : `${lastSync?.tidas_import_report?.inserted ?? 0} inserted`}</span>
@@ -733,6 +781,19 @@ export function ExternalPlatformAccounts(props: Props) {
                     : `${Number(lastSync?.tidas_import_report?.warning_count ?? 0) + Number(lastSync?.tidas_import_report?.unresolved_count ?? 0)} warnings`}
                 </span>
               </>
+            ) : (
+              <>
+                <strong>{zh ? "最近发布" : "Last Publish"}</strong>
+                <span>{publishResult?.local_kind}</span>
+                <span title={publishResult?.local_uuid}>{publishResult?.local_uuid}</span>
+                <span>{publishResult?.status}</span>
+                <span>{publishResult?.remote_version ?? "-"}</span>
+                {publishResult && publishResult.warnings.length > 0 && (
+                  <span className="pm-refresh-result-error" title={publishResult.warnings.join("; ")}>
+                    {zh ? `警告 ${publishResult.warnings.length}` : `${publishResult.warnings.length} warnings`}
+                  </span>
+                )}
+              </>
             )}
           </div>
           <button
@@ -741,6 +802,7 @@ export function ExternalPlatformAccounts(props: Props) {
             onClick={() => {
               setRefreshResult(null);
               setLastSync(null);
+              setPublishResult(null);
             }}
             title={zh ? "关闭" : "Close"}
           >
@@ -815,6 +877,8 @@ export function ExternalPlatformAccounts(props: Props) {
                 <h4>{zh ? "同步记录" : "Sync Records"}</h4>
                 <div className="pm-sync-history-list">
                   {syncRecords.map((record) => {
+                    const canPublish = record.local_kind === "flow" || record.local_kind === "process";
+                    const publishKey = `${record.local_kind}:${record.local_uuid}`;
                     return (
                       <div key={record.id} className={`pm-sync-row pm-sync-record pm-status-ok`}>
                         <span className="pm-sync-row-kind">{record.local_kind}</span>
@@ -828,6 +892,16 @@ export function ExternalPlatformAccounts(props: Props) {
                         </span>
                         {record.remote_version && <span className="pm-sync-row-version">{record.remote_version}</span>}
                         <span className="pm-sync-row-time">{formatTime(record.synced_at)}</span>
+                        {canPublish && (
+                          <button
+                            type="button"
+                            className="pm-sync-row-action"
+                            onClick={() => void publishLocalRecord(record)}
+                            disabled={Boolean(publishingKey) || !selectedAccount}
+                          >
+                            {publishingKey === publishKey ? (zh ? "发布中" : "Publishing") : (zh ? "发布" : "Publish")}
+                          </button>
+                        )}
                       </div>
                     );
                   })}

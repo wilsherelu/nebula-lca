@@ -1702,6 +1702,26 @@ class DataPlatformSyncModelResponse(BaseModel):
     synced_records: list[dict] = Field(default_factory=list)
 
 
+class DataPlatformPublishRequest(BaseModel):
+    overwrite: bool = False
+    rule_verification: bool = Field(default=False, alias="ruleVerification")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class DataPlatformPublishResponse(BaseModel):
+    account_id: str
+    platform: str
+    local_kind: Literal["flow", "process"]
+    local_uuid: str
+    remote_id: str
+    remote_version: str | None = None
+    status: str
+    remote_response: dict = Field(default_factory=dict)
+    synced_record: dict | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
 # ======================================================================
 # Sync History Schemas
 # ======================================================================
