@@ -103,6 +103,18 @@ const formatTime = (value?: string | null): string => {
   return date.toLocaleString("zh-CN", { hour12: false });
 };
 
+const needsCredentialRebind = (account: PlatformAccount): boolean => {
+  const message = (account.last_validation_message ?? "").toLowerCase();
+  return message.includes("ciphertext") || message.includes("integrity check");
+};
+
+const accountValidationLabel = (account: PlatformAccount, zh: boolean): string => {
+  if (account.last_validation_status === "ok") return zh ? "已连接" : "Connected";
+  if (needsCredentialRebind(account)) return zh ? "需重新绑定" : "Rebind required";
+  if (account.last_validation_status === "failed") return zh ? "校验失败" : "Check failed";
+  return zh ? "待校验" : "Check required";
+};
+
 const requestJson = async <T,>(url: string, init?: RequestInit): Promise<T> => {
   const resp = await fetch(url, init);
   if (!resp.ok) {
@@ -205,7 +217,7 @@ export function ExternalPlatformAccounts(props: Props) {
       return;
     }
     if (!editingId && form.authType === "basic" && (!form.email.trim() || !form.password)) {
-      setErrorText(zh ? "首次绑定需要填写天工邮箱和密码。" : "TianGong email and password are required for first binding.");
+      setErrorText(zh ? "首次绑定需要填写天工平台用户名（邮箱）和密码。" : "TianGong platform username (email) and password are required for first binding.");
       return;
     }
     if (!editingId && form.authType === "bearer" && !form.secret.trim()) {
@@ -428,7 +440,7 @@ export function ExternalPlatformAccounts(props: Props) {
         <div className="pm-head-actions">
           <span className={`pm-connection-pill ${selectedAccount?.last_validation_status === "ok" ? "connected" : ""}`}>
             {selectedAccount
-              ? `${selectedAccount.alias} · ${selectedAccount.last_validation_status === "ok" ? (zh ? "已连接" : "Connected") : (zh ? "未校验" : "Unchecked")}`
+              ? `${selectedAccount.alias} · ${accountValidationLabel(selectedAccount, zh)}`
               : (zh ? "未绑定" : "Not bound")}
           </span>
           {selectedAccount && (
@@ -599,7 +611,7 @@ export function ExternalPlatformAccounts(props: Props) {
               </label>
               {form.authType === "basic" ? (
                 <>
-                  <label><span>{zh ? "天工邮箱" : "TianGong Email"}</span><input type="email" autoComplete="username" placeholder={editingId ? (zh ? "留空则保留原凭据" : "Leave blank to keep existing credential") : ""} value={form.email} onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))} /></label>
+                  <label><span>{zh ? "天工平台用户名（邮箱）" : "TianGong platform username (email)"}</span><input type="text" autoComplete="username" placeholder={editingId ? (zh ? "留空则保留原凭据" : "Leave blank to keep existing credential") : ""} value={form.email} onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))} /></label>
                   <label><span>{zh ? "天工密码" : "TianGong Password"}</span><input type="password" autoComplete="current-password" placeholder={editingId ? (zh ? "留空则保留原凭据" : "Leave blank to keep existing credential") : ""} value={form.password} onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))} /></label>
                 </>
               ) : (

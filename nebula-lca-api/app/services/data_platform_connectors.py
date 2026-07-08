@@ -29,6 +29,33 @@ class ConnectorError(RuntimeError):
         self.status_code = status_code
 
 
+def _safe_supabase_error_message(raw: str) -> str:
+    text = raw.strip()
+    if not text:
+        return ""
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return text[:240]
+    if not isinstance(payload, dict):
+        return text[:240]
+    for key in ("error_description", "msg", "message", "error"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:240]
+    return ""
+
+
+def _tiangong_http_error_message(status_code: int, raw_body: str) -> str:
+    detail = _safe_supabase_error_message(raw_body)
+    normalized = detail.lower()
+    if status_code == 400 and ("invalid login" in normalized or "invalid credentials" in normalized):
+        return "TianGong login failed: platform username or password was rejected."
+    if detail:
+        return f"TianGong Supabase request failed with HTTP {status_code}: {detail}"
+    return f"TianGong Supabase request failed with HTTP {status_code}."
+
+
 def _credential_key() -> bytes:
     key = settings.data_platform_credential_key or settings.admin_token or ""
     if key:
@@ -454,7 +481,7 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
             email = str(self.account.credential.get("username") or "").strip()
             password = str(self.account.credential.get("password") or "")
             if not email or not password:
-                raise CredentialError("TianGong account login requires email and password.")
+                raise CredentialError("TianGong account login requires platform username and password.")
             return {"email": email, "password": password}
         return self._decode_api_key()
 
@@ -467,7 +494,8 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
                 raw = resp.read().decode("utf-8")
                 return json.loads(raw) if raw else None
         except url_error.HTTPError as exc:
-            raise ConnectorError(f"TianGong Supabase request failed with HTTP {exc.code}.", status_code=exc.code) from exc
+            raw_body = exc.read().decode("utf-8", errors="replace") if exc.fp is not None else ""
+            raise ConnectorError(_tiangong_http_error_message(exc.code, raw_body), status_code=exc.code) from exc
         except url_error.URLError as exc:
             reason = str(getattr(exc, "reason", "") or "").strip()
             message = f"TianGong Supabase request failed: {reason}" if reason else "TianGong Supabase request failed."

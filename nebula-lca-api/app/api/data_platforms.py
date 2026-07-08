@@ -661,6 +661,9 @@ def update_data_platform_account(account_id: str, payload: DataPlatformAccountUp
             row.credential_ciphertext = encrypt_credential(payload.credential.model_dump(mode="python"))
         except CredentialError as exc:
             raise _credential_config_error(exc) from exc
+        row.last_validated_at = None
+        row.last_validation_status = None
+        row.last_validation_message = None
         reset_session = True
     if payload.status is not None:
         row.status = payload.status
