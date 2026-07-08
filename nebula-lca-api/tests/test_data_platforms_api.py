@@ -857,3 +857,265 @@ def test_tiangong_model_sync_invalid_graph_fails_without_partial_project(client,
         assert db.query(DataPlatformSyncJob).first().status == "failed"
     finally:
         db.close()
+
+
+# ======================================================================
+# Sync History Endpoints
+# ======================================================================
+
+
+def test_list_sync_jobs_empty_result(client):
+    account_id = _create_mock_account(client)
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/sync-jobs")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_list_sync_jobs_returns_created_jobs(client):
+    account_id = _create_mock_account(client)
+
+    first_sync = client.post(
+        f"/api/data-platforms/accounts/{account_id}/processes/sync",
+        json={"remote_process_id": "mock-process-sync", "overwrite": True},
+    )
+    second_sync = client.post(
+        f"/api/data-platforms/accounts/{account_id}/processes/sync",
+        json={"remote_process_id": "mock-process-sync", "overwrite": True},
+    )
+
+    assert first_sync.status_code == 200
+    assert second_sync.status_code == 200
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/sync-jobs")
+
+    assert response.status_code == 200
+    jobs = response.json()
+    assert len(jobs) == 2
+    # Should be ordered by created_at descending (newest first)
+    assert jobs[0]["id"] == second_sync.json()["job_id"]
+    assert jobs[1]["id"] == first_sync.json()["job_id"]
+    for job in jobs:
+        assert job["account_id"] == account_id
+        assert job["platform"] == "mock"
+        assert job["status"] in ("completed", "failed")
+        assert "job_id" not in job  # credential privacy: no sensitive data
+
+
+def test_list_sync_jobs_filter_by_status(client):
+    account_id = _create_mock_account(client)
+
+    client.post(
+        f"/api/data-platforms/accounts/{account_id}/processes/sync",
+        json={"remote_process_id": "mock-process-sync", "overwrite": True},
+    )
+
+    completed_response = client.get(f"/api/data-platforms/accounts/{account_id}/sync-jobs?status=completed")
+    assert completed_response.status_code == 200
+    assert len(completed_response.json()) >= 1
+    assert all(job["status"] == "completed" for job in completed_response.json())
+
+    empty_response = client.get(f"/api/data-platforms/accounts/{account_id}/sync-jobs?status=running")
+    assert empty_response.status_code == 200
+    assert empty_response.json() == []
+
+
+def test_list_sync_jobs_filter_by_platform(client):
+    account_id = _create_mock_account(client)
+
+    client.post(
+        f"/api/data-platforms/accounts/{account_id}/processes/sync",
+        json={"remote_process_id": "mock-process-sync", "overwrite": True},
+    )
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/sync-jobs?platform=mock")
+    assert response.status_code == 200
+    jobs = response.json()
+    assert len(jobs) >= 1
+    assert all(job["platform"] == "mock" for job in jobs)
+
+    response_filtered = client.get(f"/api/data-platforms/accounts/{account_id}/sync-jobs?platform=tiangong")
+    assert response_filtered.status_code == 200
+    assert response_filtered.json() == []
+
+
+def test_list_sync_jobs_filter_by_remote_kind(client):
+    account_id = _create_mock_account(client)
+
+    client.post(
+        f"/api/data-platforms/accounts/{account_id}/processes/sync",
+        json={"remote_process_id": "mock-process-sync", "overwrite": True},
+    )
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/sync-jobs?remote_kind=process")
+    assert response.status_code == 200
+    jobs = response.json()
+    assert len(jobs) >= 1
+    assert all(job["status"] in ("completed", "failed") for job in jobs)
+
+    response_no_match = client.get(f"/api/data-platforms/accounts/{account_id}/sync-jobs?remote_kind=model")
+    assert response_no_match.status_code == 200
+    assert response_no_match.json() == []
+
+
+def test_list_sync_records_empty_result(client):
+    account_id = _create_mock_account(client)
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/sync-records")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_list_sync_records_returns_created_records(client):
+    account_id = _create_mock_account(client)
+
+    client.post(
+        f"/api/data-platforms/accounts/{account_id}/processes/sync",
+        json={"remote_process_id": "mock-process-sync", "overwrite": True},
+    )
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/sync-records")
+
+    assert response.status_code == 200
+    records = response.json()
+    assert len(records) >= 3
+    for record in records:
+        assert record["account_id"] == account_id
+        assert record["platform"] == "mock"
+        assert record["local_kind"] in ("flow", "process", "unit_group", "unit_definition", "vector")
+        assert record["remote_id"]
+
+
+def test_list_sync_records_filter_by_local_kind(client):
+    account_id = _create_mock_account(client)
+
+    client.post(
+        f"/api/data-platforms/accounts/{account_id}/processes/sync",
+        json={"remote_process_id": "mock-process-sync", "overwrite": True},
+    )
+
+    process_records = client.get(f"/api/data-platforms/accounts/{account_id}/sync-records?local_kind=process")
+    assert process_records.status_code == 200
+    assert all(r["local_kind"] == "process" for r in process_records.json())
+
+    flow_records = client.get(f"/api/data-platforms/accounts/{account_id}/sync-records?local_kind=flow")
+    assert flow_records.status_code == 200
+    assert all(r["local_kind"] == "flow" for r in flow_records.json())
+
+
+def test_list_sync_records_filter_by_platform(client):
+    account_id = _create_mock_account(client)
+
+    client.post(
+        f"/api/data-platforms/accounts/{account_id}/processes/sync",
+        json={"remote_process_id": "mock-process-sync", "overwrite": True},
+    )
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/sync-records?platform=mock")
+    assert response.status_code == 200
+    assert all(r["platform"] == "mock" for r in response.json())
+
+    response_filtered = client.get(f"/api/data-platforms/accounts/{account_id}/sync-records?platform=tiangong")
+    assert response_filtered.status_code == 200
+    assert response_filtered.json() == []
+
+
+def test_sync_jobs_account_not_found(client):
+    response = client.get("/api/data-platforms/accounts/nonexistent-id/sync-jobs")
+
+    assert response.status_code == 404
+    data = response.json()
+    assert data["detail"]["code"] == "DATA_PLATFORM_ACCOUNT_NOT_FOUND"
+
+
+def test_sync_records_account_not_found(client):
+    response = client.get("/api/data-platforms/accounts/nonexistent-id/sync-records")
+
+    assert response.status_code == 404
+    data = response.json()
+    assert data["detail"]["code"] == "DATA_PLATFORM_ACCOUNT_NOT_FOUND"
+
+
+def test_list_sync_records_filter_by_remote_id(client):
+    account_id = _create_mock_account(client)
+
+    client.post(
+        f"/api/data-platforms/accounts/{account_id}/processes/sync",
+        json={"remote_process_id": "mock-process-sync", "overwrite": True},
+    )
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/sync-records?remote_id=mock-process-sync")
+    assert response.status_code == 200
+    records = response.json()
+    assert len(records) >= 1
+    assert all(r["remote_id"] == "mock-process-sync" for r in records)
+
+    response_no_match = client.get(f"/api/data-platforms/accounts/{account_id}/sync-records?remote_id=nonexistent-remote")
+    assert response_no_match.status_code == 200
+    assert response_no_match.json() == []
+
+
+def test_list_sync_records_filter_by_local_uuid(client):
+    account_id = _create_mock_account(client)
+
+    client.post(
+        f"/api/data-platforms/accounts/{account_id}/processes/sync",
+        json={"remote_process_id": "mock-process-sync", "overwrite": True},
+    )
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/sync-records?local_uuid=mock-process-sync")
+    assert response.status_code == 200
+    records = response.json()
+    assert len(records) >= 1
+    assert all(r["local_uuid"] == "mock-process-sync" for r in records)
+
+
+def test_list_sync_records_limit_param(client):
+    account_id = _create_mock_account(client)
+
+    for i in range(5):
+        client.post(
+            f"/api/data-platforms/accounts/{account_id}/processes/sync",
+            json={"remote_process_id": f"mock-process-{i}", "overwrite": True},
+        )
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/sync-records?limit=3")
+    assert response.status_code == 200
+    assert len(response.json()) <= 3
+
+    response_max = client.get(f"/api/data-platforms/accounts/{account_id}/sync-records?limit=200")
+    assert response_max.status_code == 200
+    assert len(response_max.json()) >= 1
+
+
+def test_list_sync_jobs_limit_param(client):
+    account_id = _create_mock_account(client)
+
+    for i in range(5):
+        client.post(
+            f"/api/data-platforms/accounts/{account_id}/processes/sync",
+            json={"remote_process_id": f"mock-process-{i}", "overwrite": True},
+        )
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/sync-jobs?limit=2")
+    assert response.status_code == 200
+    assert len(response.json()) <= 2
+
+
+def test_list_sync_jobs_filter_by_remote_kind_process(client):
+    account_id = _create_mock_account(client)
+
+    client.post(
+        f"/api/data-platforms/accounts/{account_id}/processes/sync",
+        json={"remote_process_id": "mock-process-sync", "overwrite": True},
+    )
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/sync-jobs?remote_kind=process")
+    assert response.status_code == 200
+    jobs = response.json()
+    assert len(jobs) >= 1
+    for job in jobs:
+        stats = job.get("stats") or {}
+        assert stats.get("remote_kind") == "process"

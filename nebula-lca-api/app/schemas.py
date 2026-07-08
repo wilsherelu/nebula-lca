@@ -1703,6 +1703,38 @@ class DataPlatformSyncModelResponse(BaseModel):
 
 
 # ======================================================================
+# Sync History Schemas
+# ======================================================================
+
+class DataPlatformSyncJobOut(BaseModel):
+    """Read-only representation of a DataPlatformSyncJob row."""
+    id: str
+    account_id: str
+    platform: str
+    remote_process_id: str | None = None
+    status: str
+    phase: str
+    stats: dict | None = None
+    error_summary: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    finished_at: datetime | None = None
+
+
+class DataPlatformSyncRecordOut(BaseModel):
+    """Read-only representation of an ExternalDataSyncRecord row."""
+    id: str
+    account_id: str
+    platform: str
+    local_kind: str
+    local_uuid: str
+    remote_id: str
+    remote_version: str | None = None
+    metadata: dict | None = None
+    synced_at: datetime
+
+
+# ======================================================================
 # Import Job Schemas
 # ======================================================================
 
