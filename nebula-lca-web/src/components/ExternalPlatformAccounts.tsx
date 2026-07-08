@@ -101,6 +101,24 @@ type SyncRecord = {
   synced_at: string;
 };
 
+type RefreshItem = {
+  local_kind: string;
+  remote_id: string;
+  remote_version: string | null;
+  status: string;
+  error: string | null;
+};
+
+type RefreshResult = {
+  account_id: string;
+  platform: string;
+  total: number;
+  refreshed: number;
+  failed: number;
+  skipped: number;
+  items: RefreshItem[];
+};
+
 type Props = {
   uiLanguage: UiLanguage;
   onStatus?: (text: string) => void;
@@ -179,6 +197,8 @@ export function ExternalPlatformAccounts(props: Props) {
   const [syncRecords, setSyncRecords] = useState<SyncRecord[]>([]);
   const [syncHistoryLoading, setSyncHistoryLoading] = useState(false);
   const [syncHistoryError, setSyncHistoryError] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshResult, setRefreshResult] = useState<RefreshResult | null>(null);
 
   const tiangongAccounts = useMemo(
     () => accounts.filter((account) => account.platform === "tiangong"),
@@ -373,6 +393,49 @@ export function ExternalPlatformAccounts(props: Props) {
     }
   };
 
+  const refreshImports = async () => {
+    if (!selectedAccount) {
+      setErrorText(zh ? "请先绑定天工账号。" : "Bind a TianGong account first.");
+      return;
+    }
+    setRefreshing(true);
+    setRefreshResult(null);
+    setErrorText("");
+    try {
+      const result = await requestJson<RefreshResult>(
+        `${API_BASE}/data-platforms/accounts/${encodeURIComponent(selectedAccount.id)}/refresh-imports`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kinds: ["flow", "process"], overwrite: true }),
+        },
+      );
+      setRefreshResult(result);
+      const failed = result.failed;
+      onStatus?.(
+        zh
+          ? `已更新已导入：成功 ${result.refreshed}，失败 ${failed}，跳过 ${result.skipped}。`
+          : `Imports refreshed: ${result.refreshed} succeeded, ${failed} failed, ${result.skipped} skipped.`,
+      );
+      await loadSyncHistory();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "refresh failed";
+      const truncated = message.length > 120 ? message.slice(0, 120) + "…" : message;
+      setErrorText(zh ? `更新已导入失败：${message}` : `Refresh imports failed: ${message}`);
+      setRefreshResult({
+        account_id: selectedAccount.id,
+        platform: selectedAccount.platform,
+        total: 0,
+        refreshed: 0,
+        failed: 1,
+        skipped: 0,
+        items: [{ local_kind: "-", remote_id: "-", remote_version: null, status: "failed", error: truncated }],
+      });
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const searchRemote = async (nextPage = remotePage) => {
     if (!selectedAccount) {
       setErrorText(zh ? "请先绑定天工账号。" : "Bind a TianGong account first.");
@@ -452,6 +515,7 @@ export function ExternalPlatformAccounts(props: Props) {
         body: JSON.stringify(body),
       });
       setLastSync(result);
+      setRefreshResult(null);
       const report = result.tidas_import_report;
       const failed = Number(report?.failed ?? 0);
       const warnings = Number(report?.warning_count ?? 0) + Number(report?.unresolved_count ?? 0);
@@ -506,6 +570,11 @@ export function ExternalPlatformAccounts(props: Props) {
           {selectedAccount && (
             <button type="button" className="pm-ghost-btn" onClick={() => void testAccount(selectedAccount.id)} disabled={testingId === selectedAccount.id}>
               {testingId === selectedAccount.id ? (zh ? "校验中" : "Checking") : (zh ? "校验" : "Check")}
+            </button>
+          )}
+          {selectedAccount && selectedAccount.last_validation_status === "ok" && (
+            <button type="button" className="pm-primary-btn" onClick={() => void refreshImports()} disabled={refreshing || !selectedAccount}>
+              {refreshing ? (zh ? "更新中..." : "Refreshing...") : (zh ? "更新已导入" : "Refresh Imports")}
             </button>
           )}
           <button type="button" className="pm-ghost-btn" onClick={() => selectedAccount ? editAccount(selectedAccount) : openNewAccountDialog()}>
@@ -637,13 +706,46 @@ export function ExternalPlatformAccounts(props: Props) {
         </div>
       </div>
 
-      {lastSync?.tidas_import_report && (
-        <div className="pm-import-toast">
-          <strong>{zh ? "最近导入" : "Last Import"}</strong>
-          <span>{zh ? `新增 ${lastSync.tidas_import_report.inserted ?? 0}` : `${lastSync.tidas_import_report.inserted ?? 0} inserted`}</span>
-          <span>{zh ? `更新 ${lastSync.tidas_import_report.updated ?? 0}` : `${lastSync.tidas_import_report.updated ?? 0} updated`}</span>
-          <span>{zh ? `失败 ${lastSync.tidas_import_report.failed ?? 0}` : `${lastSync.tidas_import_report.failed ?? 0} failed`}</span>
-          <span>{zh ? `警告 ${Number(lastSync.tidas_import_report.warning_count ?? 0) + Number(lastSync.tidas_import_report.unresolved_count ?? 0)}` : `${Number(lastSync.tidas_import_report.warning_count ?? 0) + Number(lastSync.tidas_import_report.unresolved_count ?? 0)} warnings`}</span>
+      {(refreshResult || lastSync?.tidas_import_report) && (
+        <div className="pm-refresh-result-strip">
+          <div className="pm-refresh-result-content">
+            {refreshResult ? (
+              <>
+                <strong>{zh ? "最近更新" : "Last Refresh"}</strong>
+                <span>{zh ? `成功 ${refreshResult.refreshed}` : `${refreshResult.refreshed} refreshed`}</span>
+                <span>{zh ? `失败 ${refreshResult.failed}` : `${refreshResult.failed} failed`}</span>
+                <span>{zh ? `跳过 ${refreshResult.skipped}` : `${refreshResult.skipped} skipped`}</span>
+                {(refreshResult.items ?? []).some((item) => item.error) && (
+                  <span className="pm-refresh-result-error" title={(refreshResult.items ?? []).filter((i) => i.error).map((i) => i.error).join("; ")}>
+                    {zh ? "含错误" : "Has errors"}
+                  </span>
+                )}
+              </>
+            ) : (
+              <>
+                <strong>{zh ? "最近导入" : "Last Import"}</strong>
+                <span>{zh ? `新增 ${lastSync?.tidas_import_report?.inserted ?? 0}` : `${lastSync?.tidas_import_report?.inserted ?? 0} inserted`}</span>
+                <span>{zh ? `更新 ${lastSync?.tidas_import_report?.updated ?? 0}` : `${lastSync?.tidas_import_report?.updated ?? 0} updated`}</span>
+                <span>{zh ? `失败 ${lastSync?.tidas_import_report?.failed ?? 0}` : `${lastSync?.tidas_import_report?.failed ?? 0} failed`}</span>
+                <span>
+                  {zh
+                    ? `警告 ${Number(lastSync?.tidas_import_report?.warning_count ?? 0) + Number(lastSync?.tidas_import_report?.unresolved_count ?? 0)}`
+                    : `${Number(lastSync?.tidas_import_report?.warning_count ?? 0) + Number(lastSync?.tidas_import_report?.unresolved_count ?? 0)} warnings`}
+                </span>
+              </>
+            )}
+          </div>
+          <button
+            type="button"
+            className="pm-refresh-result-close"
+            onClick={() => {
+              setRefreshResult(null);
+              setLastSync(null);
+            }}
+            title={zh ? "关闭" : "Close"}
+          >
+            ×
+          </button>
         </div>
       )}
 

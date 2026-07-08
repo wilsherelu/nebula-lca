@@ -1116,8 +1116,20 @@ def _tiangong_flow_from_row(row: dict[str, Any]) -> RemoteFlowDTO:
         or flow_uuid
     )
     flow_type = str(row.get("flow_type") or row.get("type") or _nested_text(payload, "flowDataSet", "modellingAndValidation", "LCIMethod", "typeOfDataSet") or "Product flow").strip()
-    unit = str(row.get("default_unit") or row.get("unit") or "kg").strip()
-    unit_group = str(row.get("unit_group") or row.get("unitGroup") or "Units of mass").strip()
+
+    # Extract default unit and unit group from top-level row fields first,
+    # then fall back to flowDataSet.flowInformation paths under ILCD payload.
+    unit = str(row.get("default_unit") or row.get("unit") or "").strip()
+    unit_group = str(row.get("unit_group") or row.get("unitGroup") or "").strip()
+    if not unit or not unit_group:
+        flow_info = payload.get("flowDataSet", {}).get("flowInformation", {}) if isinstance(payload.get("flowDataSet"), dict) else {}
+        if not isinstance(flow_info, dict):
+            flow_info = {}
+        if not unit:
+            unit = str(flow_info.get("referenceUnit") or row.get("default_unit") or row.get("unit") or "kg").strip()
+        if not unit_group:
+            unit_group = str(flow_info.get("unitGroup") or row.get("unit_group") or row.get("unitGroup") or "Units of mass").strip()
+
     metadata = {
         "row": row,
         "classification": _classification_text(payload, "flow"),

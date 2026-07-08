@@ -26,6 +26,9 @@ from ..schemas import (
     DataPlatformAccountOut,
     DataPlatformAccountUpdateRequest,
     DataPlatformConnectionTestResponse,
+    DataPlatformRefreshImportItem,
+    DataPlatformRefreshImportsRequest,
+    DataPlatformRefreshImportsResponse,
     DataPlatformRemotePreviewResponse,
     DataPlatformSearchResponse,
     DataPlatformSyncFlowRequest,
@@ -595,11 +598,55 @@ def _graph_flow_uuids(graph_json: dict[str, Any]) -> list[str]:
 
 
 def _remote_raw_row(metadata: dict[str, Any] | None, fallback: dict[str, Any] | None = None) -> dict[str, Any]:
+    raw: dict[str, Any]
     if isinstance(metadata, dict):
         row = metadata.get("row")
         if isinstance(row, dict):
-            return row
-    return fallback if isinstance(fallback, dict) else {}
+            raw = dict(row)
+        else:
+            raw = {}
+    else:
+        raw = {}
+
+    # Detect whether raw carries a binary JSON payload (json/json_tg/json_ordered keys).
+    # When present, preserve the payload as the base, but still merge missing or empty
+    # scalar fields from the fallback so that default_unit / unit_group / flow_type / name
+    # are never left blank.
+    has_json_payload = any(key in raw for key in ("json", "json_tg", "json_ordered"))
+
+    if not isinstance(fallback, dict):
+        return raw
+
+    merged: dict[str, Any] = {}
+    # Copy raw values first, but skip empty/None placeholders
+    for key, value in raw.items():
+        if value is not None and value != "":
+            merged[key] = value
+        elif key not in merged:
+            merged[key] = value
+
+    # Fill missing or empty raw scalar fields from fallback
+    for key, value in fallback.items():
+        if key not in merged:
+            merged[key] = value
+        elif (merged[key] is None or merged[key] == "") and value is not None and value != "":
+            merged[key] = value
+
+    # If the row carries a binary JSON payload and the fallback has scalar fields that
+    # the raw row is missing, attach them under the same JSON payload key.
+    if has_json_payload:
+        for key in ("json", "json_tg", "json_ordered"):
+            if key in raw and isinstance(raw[key], dict):
+                payload = raw[key]
+                for fk, fv in merged.items():
+                    # Only write into the nested payload when:
+                    #  - the fallback key is a known scalar field, AND
+                    #  - the payload does not already have a non-empty value for it
+                    if isinstance(fv, str) and fv and fk not in payload:
+                        payload[fk] = fv
+                break
+
+    return merged
 
 
 def _tidas_report_summary(report: Any) -> dict[str, Any]:
@@ -1112,6 +1159,254 @@ def sync_remote_model(account_id: str, payload: DataPlatformSyncModelRequest, db
         failed_job.stats_json = {"remote_kind": "model", "lineage": {"remote_id": payload.remote_model_id, "remote_version": payload.remote_version}}
         db.commit()
         raise HTTPException(status_code=400, detail={"code": "DATA_PLATFORM_MODEL_SYNC_FAILED", "message": str(exc), "job_id": failed_job.id}) from exc
+
+
+# ======================================================================
+# Refresh Imports Endpoint
+# ======================================================================
+
+
+@api_router.post("/accounts/{account_id}/refresh-imports", response_model=DataPlatformRefreshImportsResponse)
+def refresh_account_imports(
+    account_id: str,
+    payload: DataPlatformRefreshImportsRequest,
+    db: Session = Depends(get_db),
+) -> DataPlatformRefreshImportsResponse:
+    """Refresh previously synced local_kind (flow/process) records for this account.
+
+    Uses ExternalDataSyncRecord as the source of remote_id and remote_version,
+    deduplicates by (local_kind, remote_id, remote_version), refreshes flows
+    before processes, and returns a structured summary.
+    """
+    account = _account_or_404(db, account_id)
+    connector = connector_for_account(_account_context(account, db))
+
+    # Determine which kinds to refresh
+    allowed_kinds = set(payload.kinds)
+    upsert_mode = "update" if payload.overwrite else "skip"
+
+    # Fetch all sync records for this account
+    records = (
+        db.query(ExternalDataSyncRecord)
+        .filter(ExternalDataSyncRecord.account_id == account.id)
+        .order_by(ExternalDataSyncRecord.local_kind, ExternalDataSyncRecord.remote_id)
+        .all()
+    )
+
+    # Deduplicate by (local_kind, remote_id, remote_version), keeping latest synced_at
+    seen: dict[tuple[str, str, str | None], ExternalDataSyncRecord] = {}
+    for rec in records:
+        # Skip records for kinds not requested
+        if rec.local_kind not in allowed_kinds:
+            continue
+        key = (rec.local_kind, rec.remote_id, rec.remote_version)
+        existing = seen.get(key)
+        if existing is None or (rec.synced_at and existing.synced_at and rec.synced_at > existing.synced_at):
+            seen[key] = rec
+
+    deduped = list(seen.values())
+
+    # Separate flows and processes; flows go first
+    flow_records: list[ExternalDataSyncRecord] = []
+    process_records: list[ExternalDataSyncRecord] = []
+    for rec in deduped:
+        if rec.local_kind == "flow":
+            flow_records.append(rec)
+        elif rec.local_kind == "process":
+            process_records.append(rec)
+
+    items: list[dict[str, Any]] = []
+    total = len(flow_records) + len(process_records)
+    refreshed = 0
+    failed = 0
+    skipped = 0
+
+    # --- Refresh flows first ---
+    for rec in flow_records:
+        try:
+            if not rec.remote_id:
+                skipped += 1
+                items.append({
+                    "local_kind": rec.local_kind,
+                    "remote_id": rec.remote_id or "",
+                    "remote_version": rec.remote_version,
+                    "status": "skipped",
+                    "error": "missing remote_id",
+                })
+                continue
+            flow_dto = connector.get_flow_detail(rec.remote_id, rec.remote_version)
+            flow_row = _remote_raw_row(
+                flow_dto.metadata,
+                {
+                    "id": flow_dto.flow_uuid or flow_dto.remote_id,
+                    "name": flow_dto.flow_name,
+                    "version": flow_dto.remote_version,
+                    "default_unit": flow_dto.default_unit,
+                    "unit_group": flow_dto.unit_group,
+                    "flow_type": flow_dto.flow_type,
+                    "source": account.platform,
+                },
+            )
+            flow_report = import_tidas_flow_rows(
+                db,
+                [flow_row],
+                source_path=f"{account.platform}://flows/{rec.remote_id}",
+                upsert_mode=upsert_mode,
+                source_label=account.platform,
+            )
+            if flow_report.failed:
+                failed += 1
+                items.append({
+                    "local_kind": rec.local_kind,
+                    "remote_id": rec.remote_id,
+                    "remote_version": rec.remote_version,
+                    "status": "failed",
+                    "error": "; ".join(list(flow_report.errors or [])[:3]),
+                })
+            else:
+                refreshed += 1
+                # Update sync record metadata after successful refresh
+                _upsert_sync_record(
+                    db,
+                    account=account,
+                    local_kind="flow",
+                    local_uuid=rec.local_uuid or flow_dto.flow_uuid or rec.remote_id,
+                    remote_id=rec.remote_id,
+                    remote_version=flow_dto.remote_version,
+                    metadata={"last_refreshed_at": datetime.utcnow().isoformat(), "upsert_mode": upsert_mode},
+                )
+                items.append({
+                    "local_kind": rec.local_kind,
+                    "remote_id": rec.remote_id,
+                    "remote_version": rec.remote_version,
+                    "status": "refreshed",
+                })
+        except Exception as exc:  # noqa: BLE001
+            failed += 1
+            items.append({
+                "local_kind": rec.local_kind,
+                "remote_id": rec.remote_id or "",
+                "remote_version": rec.remote_version,
+                "status": "failed",
+                "error": str(exc),
+            })
+
+    # --- Refresh processes ---
+    for rec in process_records:
+        try:
+            if not rec.remote_id:
+                skipped += 1
+                items.append({
+                    "local_kind": rec.local_kind,
+                    "remote_id": rec.remote_id or "",
+                    "remote_version": rec.remote_version,
+                    "status": "skipped",
+                    "error": "missing remote_id",
+                })
+                continue
+            detail = connector.get_process_detail(rec.remote_id, rec.remote_version)
+            process = detail.process
+            # Sync referenced flows first
+            flows_by_uuid: dict[str, RemoteFlowDTO] = {}
+            for exchange in (detail.process_json or {}).get("exchanges", []):
+                if not isinstance(exchange, dict):
+                    continue
+                flow_uuid = _safe_str(exchange.get("flow_uuid") or exchange.get("flowUuid"))
+                if flow_uuid and flow_uuid not in flows_by_uuid:
+                    try:
+                        fetched = connector.get_flow_detail(flow_uuid)
+                        flows_by_uuid[fetched.flow_uuid] = fetched
+                    except Exception:  # noqa: BLE001
+                        pass
+
+            for flow_dto in flows_by_uuid.values():
+                flow_row = _remote_raw_row(
+                    flow_dto.metadata,
+                    {
+                        "id": flow_dto.flow_uuid or flow_dto.remote_id,
+                        "name": flow_dto.flow_name,
+                        "version": flow_dto.remote_version,
+                        "default_unit": flow_dto.default_unit,
+                        "unit_group": flow_dto.unit_group,
+                        "flow_type": flow_dto.flow_type,
+                        "source": account.platform,
+                    },
+                )
+                flow_report = import_tidas_flow_rows(
+                    db,
+                    [flow_row],
+                    source_path=f"{account.platform}://flows/{flow_dto.remote_id}",
+                    upsert_mode=upsert_mode,
+                    source_label=account.platform,
+                )
+                if flow_report.failed:
+                    pass  # process still proceeds
+            # Sync the process itself
+            process_row = _remote_raw_row(
+                process.metadata,
+                detail.process_json or {
+                    "process_uuid": process.process_uuid,
+                    "process_name": process.process_name,
+                    "reference_flow_uuid": process.reference_flow_uuid,
+                    "exchanges": [],
+                },
+            )
+            process_report = import_tidas_process_rows(
+                db,
+                [process_row],
+                source_path=f"{account.platform}://processes/{process.remote_id}",
+                upsert_mode=upsert_mode,
+            )
+            if process_report.failed:
+                failed += 1
+                items.append({
+                    "local_kind": rec.local_kind,
+                    "remote_id": rec.remote_id,
+                    "remote_version": rec.remote_version,
+                    "status": "failed",
+                    "error": "; ".join(list(process_report.errors or [])[:3]),
+                })
+            else:
+                refreshed += 1
+                # Update sync record metadata after successful refresh
+                _upsert_sync_record(
+                    db,
+                    account=account,
+                    local_kind="process",
+                    local_uuid=rec.local_uuid or process.process_uuid or rec.remote_id,
+                    remote_id=rec.remote_id,
+                    remote_version=process.remote_version,
+                    metadata={"last_refreshed_at": datetime.utcnow().isoformat(), "upsert_mode": upsert_mode},
+                )
+                items.append({
+                    "local_kind": rec.local_kind,
+                    "remote_id": rec.remote_id,
+                    "remote_version": rec.remote_version,
+                    "status": "refreshed",
+                })
+        except Exception as exc:  # noqa: BLE001
+            failed += 1
+            items.append({
+                "local_kind": rec.local_kind,
+                "remote_id": rec.remote_id or "",
+                "remote_version": rec.remote_version,
+                "status": "failed",
+                "error": str(exc),
+            })
+
+    # Commit all changes at once
+    db.commit()
+    invalidate_management_caches(flows=True, reference_processes=True, stats=True)
+
+    return DataPlatformRefreshImportsResponse(
+        account_id=account.id,
+        platform=account.platform,
+        total=total,
+        refreshed=refreshed,
+        failed=failed,
+        skipped=skipped,
+        items=[DataPlatformRefreshImportItem(**item) for item in items],
+    )
 
 
 # ======================================================================
