@@ -434,6 +434,15 @@ type TidasImportResult = {
   jobId?: string;
   createdProjects: ImportedProjectSummary[];
 };
+type TianGongRefreshKind = "flow" | "process";
+type TianGongRefreshResult = {
+  kind: TianGongRefreshKind;
+  total: number;
+  refreshed: number;
+  failed: number;
+  skipped: number;
+  items?: Array<{ error?: string | null }>;
+};
 const inferFlowBusinessType = (
   type: "intermediate_flow" | "elementary_flow" | "product_flow" | "waste_flow" | string,
   category?: string,
@@ -1540,6 +1549,8 @@ export function ProjectManagement(props: Props) {
   const [forceProcessRefresh, setForceProcessRefresh] = useState(false);
   const [forceFlowRefresh, setForceFlowRefresh] = useState(false);
   const [forceStatsRefresh, setForceStatsRefresh] = useState(false);
+  const [tiangongRefreshBusy, setTiangongRefreshBusy] = useState<TianGongRefreshKind | null>(null);
+  const [tiangongRefreshResult, setTiangongRefreshResult] = useState<TianGongRefreshResult | null>(null);
   const [createFlowDialogOpen, setCreateFlowDialogOpen] = useState(false);
   const [tidasCompatibilityFlow, setTidasCompatibilityFlow] = useState<FlowRow | null>(null);
   const [allocationPropertiesFlow, setAllocationPropertiesFlow] = useState<FlowRow | null>(null);
@@ -1585,6 +1596,89 @@ export function ProjectManagement(props: Props) {
     if (createdProject?.projectId) {
       onOpenProject(createdProject.projectId, createdProject.name);
     }
+  };
+
+  const refreshTianGongImports = async (kind: TianGongRefreshKind) => {
+    setTiangongRefreshBusy(kind);
+    setTiangongRefreshResult(null);
+    try {
+      const resp = await fetch(`${API_BASE}/data-platforms/tiangong/refresh-imports`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ overwrite: true, kinds: [kind] }),
+      });
+      if (!resp.ok) {
+        const err = (await resp.json().catch(() => ({}))) as { detail?: { message?: string } | string; message?: string };
+        const detail = typeof err.detail === "string" ? err.detail : err.detail?.message;
+        throw new Error(detail ?? err.message ?? `HTTP ${resp.status}`);
+      }
+      const result = (await resp.json()) as Omit<TianGongRefreshResult, "kind">;
+      const next = { ...result, kind };
+      setTiangongRefreshResult(next);
+      if (kind === "process") {
+        clearPmCacheByPrefix("pm:processes:");
+        clearPmCacheByPrefix("pm:flows:");
+        setForceProcessRefresh(true);
+        setForceFlowRefresh(true);
+      } else {
+        clearPmCacheByPrefix("pm:flows:");
+        setForceFlowRefresh(true);
+      }
+      clearPmCacheByPrefix("pm:stats");
+      setForceStatsRefresh(true);
+      setImportRefreshTick((prev) => prev + 1);
+      onStatus?.(
+        zh
+          ? `已更新天工导入：成功 ${next.refreshed}，失败 ${next.failed}，跳过 ${next.skipped}。`
+          : `Refreshed TianGong imports: ${next.refreshed} refreshed, ${next.failed} failed, ${next.skipped} skipped.`,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : (zh ? "更新失败" : "Refresh failed");
+      setTiangongRefreshResult({
+        kind,
+        total: 0,
+        refreshed: 0,
+        failed: 1,
+        skipped: 0,
+        items: [{ error: message }],
+      });
+      onStatus?.(zh ? `更新天工导入失败：${message}` : `Failed to refresh TianGong imports: ${message}`);
+    } finally {
+      setTiangongRefreshBusy(null);
+    }
+  };
+
+  const renderTianGongRefreshResult = (kind: TianGongRefreshKind) => {
+    if (!tiangongRefreshResult || tiangongRefreshResult.kind !== kind) {
+      return null;
+    }
+    const errors = (tiangongRefreshResult.items ?? [])
+      .map((item) => item.error)
+      .filter((item): item is string => Boolean(item));
+    return (
+      <div className="pm-refresh-result-strip">
+        <div className="pm-refresh-result-content">
+          <strong>{zh ? "天工更新" : "TianGong Refresh"}</strong>
+          <span>{zh ? `总数 ${tiangongRefreshResult.total}` : `${tiangongRefreshResult.total} total`}</span>
+          <span>{zh ? `成功 ${tiangongRefreshResult.refreshed}` : `${tiangongRefreshResult.refreshed} refreshed`}</span>
+          <span>{zh ? `失败 ${tiangongRefreshResult.failed}` : `${tiangongRefreshResult.failed} failed`}</span>
+          <span>{zh ? `跳过 ${tiangongRefreshResult.skipped}` : `${tiangongRefreshResult.skipped} skipped`}</span>
+          {errors.length > 0 && (
+            <span className="pm-refresh-result-error" title={errors.join("; ")}>
+              {errors[0]}
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          className="pm-refresh-result-close"
+          aria-label={zh ? "关闭更新结果" : "Dismiss refresh result"}
+          onClick={() => setTiangongRefreshResult(null)}
+        >
+          x
+        </button>
+      </div>
+    );
   };
 
   const openProjectEdit = (row: ProjectRow) => {
@@ -2514,6 +2608,15 @@ export function ProjectManagement(props: Props) {
                   <button
                     type="button"
                     className="pm-ghost-btn"
+                    title={zh ? "只更新从天工导入过的过程" : "Refresh only processes previously imported from TianGong"}
+                    onClick={() => void refreshTianGongImports("process")}
+                    disabled={tiangongRefreshBusy !== null}
+                  >
+                    {tiangongRefreshBusy === "process" ? (zh ? "更新中..." : "Refreshing...") : (zh ? "更新天工导入" : "Refresh TianGong")}
+                  </button>
+                  <button
+                    type="button"
+                    className="pm-ghost-btn"
                     title={zh ? "导入天工格式过程" : "Import TIDAS process format"}
                     onClick={() => openTidasImport("processes")}
                   >
@@ -2540,6 +2643,7 @@ export function ProjectManagement(props: Props) {
                   }}
                 />
               </div>
+              {renderTianGongRefreshResult("process")}
               <div className="pm-table-wrap">
                 <table className="pm-table">
                   <thead>
@@ -2588,6 +2692,15 @@ export function ProjectManagement(props: Props) {
                   <h2>{zh ? "流" : "Flows"}</h2>
                 </div>
                 <div className="pm-head-actions pm-head-buttons">
+                  <button
+                    type="button"
+                    className="pm-ghost-btn"
+                    title={zh ? "只更新从天工导入过的流" : "Refresh only flows previously imported from TianGong"}
+                    onClick={() => void refreshTianGongImports("flow")}
+                    disabled={tiangongRefreshBusy !== null}
+                  >
+                    {tiangongRefreshBusy === "flow" ? (zh ? "更新中..." : "Refreshing...") : (zh ? "更新天工导入" : "Refresh TianGong")}
+                  </button>
                   <button
                     type="button"
                     className="pm-ghost-btn"
@@ -2645,6 +2758,7 @@ export function ProjectManagement(props: Props) {
                   ))}
                 </select>
               </div>
+              {renderTianGongRefreshResult("flow")}
               <div className="pm-table-wrap">
                 <table className="pm-table">
                   <thead>

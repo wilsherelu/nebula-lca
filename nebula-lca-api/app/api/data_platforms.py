@@ -1462,6 +1462,39 @@ def publish_local_process(
 # ======================================================================
 
 
+def _preferred_tiangong_account(db: Session) -> DataPlatformAccount:
+    accounts = (
+        db.query(DataPlatformAccount)
+        .filter(
+            DataPlatformAccount.platform == "tiangong",
+            DataPlatformAccount.status == "active",
+        )
+        .order_by(DataPlatformAccount.updated_at.desc())
+        .all()
+    )
+    account = next((item for item in accounts if item.last_validation_status == "ok"), None)
+    account = account or (accounts[0] if accounts else None)
+    if account is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "DATA_PLATFORM_TIANGONG_ACCOUNT_NOT_FOUND",
+                "message": "No active TianGong account is configured.",
+            },
+        )
+    return account
+
+
+@api_router.post("/tiangong/refresh-imports", response_model=DataPlatformRefreshImportsResponse)
+def refresh_tiangong_imports(
+    payload: DataPlatformRefreshImportsRequest,
+    db: Session = Depends(get_db),
+) -> DataPlatformRefreshImportsResponse:
+    """Refresh previously imported TianGong flow/process records using the active account."""
+    account = _preferred_tiangong_account(db)
+    return refresh_account_imports(account.id, payload, db)
+
+
 @api_router.post("/accounts/{account_id}/refresh-imports", response_model=DataPlatformRefreshImportsResponse)
 def refresh_account_imports(
     account_id: str,

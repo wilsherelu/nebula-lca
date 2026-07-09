@@ -1921,6 +1921,30 @@ def test_refresh_imports_kinds_filter(client):
     assert data["items"][0]["local_kind"] == "flow"
 
 
+def test_tiangong_refresh_imports_uses_active_account(client, monkeypatch):
+    """The TianGong convenience endpoint should use the active TianGong account."""
+    account_id = _create_tiangong_account(client)
+    db = _db_module.SessionLocal()
+    try:
+        account = db.get(DataPlatformAccount, account_id)
+        assert account is not None
+        account.last_validation_status = "ok"
+        db.commit()
+    finally:
+        db.close()
+
+    monkeypatch.setattr("app.api.data_platforms.connector_for_account", lambda _ctx: object())
+    response = client.post(
+        "/api/data-platforms/tiangong/refresh-imports",
+        json={"overwrite": True, "kinds": ["flow"]},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["account_id"] == account_id
+    assert data["platform"] == "tiangong"
+    assert data["total"] == 0
+
+
 def test_refresh_imports_unknown_kind_returns_400(client):
     """Refresh-imports with an unsupported kind should return 400."""
     account_id = _create_mock_account(client)
