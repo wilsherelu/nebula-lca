@@ -1319,7 +1319,7 @@ def _flow_row_with_unit(flow_id: str, name: str, unit: str = "MJ", unit_group: s
 def _process_row_with_reference(ref_internal_id: str = "2"):
     return {
         "id": "tg-process-ref",
-        "name": "Electricity process",
+        "name": {"baseName": [{"#text": "电力过程", "@xml:lang": "zh"}, {"#text": "Electricity process", "@xml:lang": "en"}]},
         "version": "1",
         "json": {
             "processDataSet": {
@@ -1385,6 +1385,8 @@ def test_tiangong_process_sync_preserves_quantitative_reference_and_units(client
     try:
         process = db.get(ReferenceProcess, "tg-process-ref")
         assert process is not None
+        assert process.process_name == "电力过程"
+        assert "{" not in process.process_name
         assert process.reference_flow_internal_id == "2"
         assert process.reference_flow_uuid == "flow-product-energy"
         exchanges = process.process_json["exchanges"]

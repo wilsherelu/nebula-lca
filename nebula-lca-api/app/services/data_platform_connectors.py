@@ -1189,7 +1189,7 @@ def _tiangong_flow_from_row(row: dict[str, Any]) -> RemoteFlowDTO:
     payload = _extract_json_payload(row)
     flow_uuid = str(row.get("id") or row.get("flow_uuid") or row.get("uuid") or _nested_text(payload, "flowDataSet", "flowInformation", "dataSetInformation", "common:UUID")).strip()
     name = (
-        str(row.get("name") or row.get("flow_name") or "").strip()
+        _localized_name(row.get("name") or row.get("flow_name"))
         or _nested_text(payload, "flowDataSet", "flowInformation", "dataSetInformation", "name")
         or flow_uuid
     )
@@ -1233,7 +1233,7 @@ def _tiangong_process_from_row(row: dict[str, Any]) -> RemoteProcessDTO:
     payload = _extract_json_payload(row)
     process_uuid = str(row.get("id") or row.get("process_uuid") or row.get("uuid") or _nested_text(payload, "processDataSet", "processInformation", "dataSetInformation", "common:UUID")).strip()
     name = (
-        str(row.get("name") or row.get("process_name") or "").strip()
+        _localized_name(row.get("name") or row.get("process_name"))
         or _nested_text(payload, "processDataSet", "processInformation", "dataSetInformation", "name")
         or process_uuid
     )
@@ -1275,7 +1275,7 @@ def _tiangong_model_from_row(row: dict[str, Any]) -> RemoteModelDTO:
     payload = _extract_json_payload(row)
     model_uuid = str(row.get("id") or row.get("model_uuid") or row.get("uuid") or payload.get("id") or _nested_text(payload, "lifeCycleModelDataSet", "lifeCycleModelInformation", "dataSetInformation", "common:UUID") or "").strip()
     name = (
-        str(row.get("name") or row.get("model_name") or payload.get("name") or payload.get("title") or "").strip()
+        _localized_name(row.get("name") or row.get("model_name") or payload.get("name") or payload.get("title"))
         or _nested_text(payload, "lifeCycleModelDataSet", "lifeCycleModelInformation", "dataSetInformation", "name")
         or model_uuid
     )
