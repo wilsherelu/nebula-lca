@@ -164,6 +164,7 @@ def import_ecoinvent_elementary_flows(
             item.default_unit = flow.default_unit or item.default_unit or "kg"
             item.unit_group = unit_group
             item.compartment = flow.compartment
+            item.subcompartment = flow.subcompartment
             if not protected_existing_elementary:
                 item.source = source
                 item.is_custom = False
@@ -183,6 +184,7 @@ def import_ecoinvent_elementary_flows(
                     default_unit=flow.default_unit or "kg",
                     unit_group=unit_group,
                     compartment=flow.compartment,
+                    subcompartment=flow.subcompartment,
                     source=source,
                 )
             )
@@ -532,7 +534,7 @@ def write_ecoinvent_process_vector(
     dataset_level: str = "linked_lci",
     unit_conversion_cache: dict[str, tuple[float, str]] | None = None,
     flow_key_cache: dict[tuple[str, str, str, str, str], int] | None = None,
-    flow_metadata_cache: dict[str, tuple[str, str]] | None = None,
+    flow_metadata_cache: dict[str, tuple[str, str, str]] | None = None,
     commit: bool = True,
 ) -> dict:
     """Write one compressed elementary inventory vector for a process.
@@ -681,10 +683,19 @@ def _build_lci_flow_key_cache(db: Session) -> dict[tuple[str, str, str, str, str
     }
 
 
-def _build_flow_metadata_cache(db: Session) -> dict[str, tuple[str, str]]:
+def _build_flow_metadata_cache(db: Session) -> dict[str, tuple[str, str, str]]:
     return {
-        row.flow_uuid: (row.compartment or "", row.flow_name or row.flow_uuid)
-        for row in db.query(FlowRecord.flow_uuid, FlowRecord.compartment, FlowRecord.flow_name).all()
+        row.flow_uuid: (
+            row.compartment or "",
+            row.subcompartment or "",
+            row.flow_name or row.flow_uuid,
+        )
+        for row in db.query(
+            FlowRecord.flow_uuid,
+            FlowRecord.compartment,
+            FlowRecord.subcompartment,
+            FlowRecord.flow_name,
+        ).all()
     }
 
 
@@ -696,10 +707,11 @@ def _get_or_create_lci_flow_key_cached(
     canonical_unit: str,
     package_version: str,
     flow_key_cache: dict[tuple[str, str, str, str, str], int],
-    flow_metadata_cache: dict[str, tuple[str, str]],
+    flow_metadata_cache: dict[str, tuple[str, str, str]],
 ) -> int:
-    compartment = flow_metadata_cache.get(flow_uuid, ("", ""))[0]
-    subcompartment = ""
+    metadata = flow_metadata_cache.get(flow_uuid, ("", "", ""))
+    compartment = metadata[0]
+    subcompartment = metadata[1]
     key = (flow_uuid, compartment, subcompartment, direction, canonical_unit)
     cached_id = flow_key_cache.get(key)
     if cached_id is not None:

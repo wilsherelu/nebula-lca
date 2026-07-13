@@ -8,6 +8,29 @@ from .models import LciBiosphereFlowKey, LciExchangeMatrix, LciProcessVector, Lc
 from .tidas_reference import load_tidas_reference_seed
 
 
+def ensure_flow_catalog_context_columns(engine: Engine) -> dict:
+    added_columns: list[str] = []
+    with engine.begin() as conn:
+        inspector = inspect(conn)
+        if not inspector.has_table("flow_catalog"):
+            return {"table": "flow_catalog", "added_columns": added_columns, "status": "skipped_table_missing"}
+        columns = {col["name"] for col in inspector.get_columns("flow_catalog")}
+        if "subcompartment" not in columns:
+            dialect_name = conn.engine.dialect.name
+            if dialect_name == "postgresql":
+                conn.execute(text("ALTER TABLE flow_catalog ADD COLUMN IF NOT EXISTS subcompartment VARCHAR(255)"))
+            elif dialect_name == "sqlite":
+                conn.execute(text("ALTER TABLE flow_catalog ADD COLUMN subcompartment VARCHAR(255)"))
+            else:
+                raise RuntimeError(f"Unsupported database dialect '{dialect_name}'")
+            added_columns.append("subcompartment")
+    return {
+        "table": "flow_catalog",
+        "added_columns": added_columns,
+        "status": "ok" if added_columns else "already_complete",
+    }
+
+
 def ensure_flow_catalog_tidas_columns(engine: Engine) -> dict:
     added_columns: list[str] = []
     with engine.begin() as conn:

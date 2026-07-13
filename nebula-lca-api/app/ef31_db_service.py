@@ -160,6 +160,8 @@ def _ensure_flow_exists(
             updates["unit_group"] = flow.unit_group
         if flow.compartment and not existing.compartment:
             updates["compartment"] = flow.compartment
+        if flow.subcompartment and not existing.subcompartment:
+            updates["subcompartment"] = flow.subcompartment
         if updates:
             db.query(FlowRecord).filter(FlowRecord.flow_uuid == flow.flow_uuid).update(updates)
         return flow.flow_uuid, False
@@ -172,6 +174,7 @@ def _ensure_flow_exists(
         default_unit=flow.default_unit,
         unit_group=flow.unit_group,
         compartment=flow.compartment,
+        subcompartment=flow.subcompartment,
         source=flow.source,
         is_custom=False,
     )
