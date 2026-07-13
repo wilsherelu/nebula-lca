@@ -160,7 +160,7 @@ def _ecoinvent_elementary_flows_for_lcia(db: Session) -> list[dict]:
             "flow_uuid": row.flow_uuid,
             "flow_name": row.flow_name,
             "compartment": row.compartment or "",
-            "subcompartment": "",
+            "subcompartment": row.subcompartment or "",
         }
         for row in rows
     ]

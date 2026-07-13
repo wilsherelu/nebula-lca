@@ -121,7 +121,10 @@ def sample_elementary_xml(tmp_path: Path) -> Path:
         <flowType>Elementary flow</flowType>
         <unit>kg</unit>
         <unitGroup>mass</unitGroup>
-        <compartment>air</compartment>
+        <compartment>
+          <compartment>air</compartment>
+          <subcompartment>non-urban air</subcompartment>
+        </compartment>
         <formula>CO2</formula>
       </ElementaryFlow>
       <ElementaryFlow>
@@ -360,6 +363,7 @@ class TestElementaryFlowImport:
         co2 = db_session.query(FlowRecord).filter_by(flow_uuid="flow-co2-air-001").first()
         assert co2 is not None
         assert co2.compartment == "air"
+        assert co2.subcompartment == "non-urban air"
 
     def test_duplicate_import_skips(self, db_session, sample_units_xml, sample_elementary_xml):
         import_ecoinvent_elementary_flows(
@@ -1017,6 +1021,38 @@ class TestExchangeMatrixWrite:
         key = db_session.get(LciBiosphereFlowKey, flow_key_ids[0])
         assert key is not None
         assert key.canonical_unit == "kg"
+
+    def test_process_vector_uses_catalog_subcompartment(self, db_session):
+        db_session.add(
+            FlowRecord(
+                flow_uuid="flow-context-001",
+                flow_name="Context flow",
+                flow_type="Elementary flow",
+                default_unit="kg",
+                unit_group="mass",
+                compartment="air",
+                subcompartment="unspecified",
+                source="ecoinvent_3.11",
+            )
+        )
+        db_session.commit()
+        write_ecoinvent_process_vector(
+            db_session,
+            process_uuid="proc-context-001",
+            exchanges=[
+                LciExchangeMatrix(
+                    process_uuid="proc-context-001",
+                    flow_uuid="flow-context-001",
+                    amount=1.0,
+                    unit="kg",
+                    direction="output",
+                )
+            ],
+        )
+
+        key = db_session.query(LciBiosphereFlowKey).filter_by(flow_uuid="flow-context-001").one()
+        assert key.compartment == "air"
+        assert key.subcompartment == "unspecified"
 
     def test_process_vector_preserves_unknown_units_with_warning(self, db_session):
         exchanges = [

@@ -145,6 +145,7 @@ from .solver_adapter import run_tiangong_lcia, _resolve_embedded_ef31_dirs
 from .schema_maintenance import (
     backfill_ecoinvent_unit_group_sources,
     backfill_tidas_unit_group_sources,
+    ensure_flow_catalog_context_columns,
     ensure_flow_catalog_tidas_columns,
     ensure_unit_group_source_columns,
     ensure_lci_exchange_matrix_table,
@@ -1571,6 +1572,7 @@ def _repair_builtin_elementary_flow_sources(*, db: Session) -> dict:
 def _ensure_source_compliance_schema_on_startup() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_custom_flow_columns()
+    ensure_flow_catalog_context_columns(engine)
     _ensure_unit_group_source_columns()
     ensure_lci_exchange_matrix_table(engine)
     ensure_import_tables(engine)

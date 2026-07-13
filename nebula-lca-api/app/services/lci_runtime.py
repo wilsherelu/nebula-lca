@@ -254,11 +254,17 @@ def inventory_with_flow_metadata(db: Session, inventory: dict[int, float]) -> li
         return []
     rows = db.query(LciBiosphereFlowKey).filter(LciBiosphereFlowKey.flow_key_id.in_(sorted(inventory))).all()
     by_id = {int(row.flow_key_id): row for row in rows}
+    flow_uuids = sorted({row.flow_uuid for row in rows if row.flow_uuid})
+    flow_rows = {
+        row.flow_uuid: row
+        for row in db.query(FlowRecord).filter(FlowRecord.flow_uuid.in_(flow_uuids)).all()
+    } if flow_uuids else {}
     result: list[dict[str, Any]] = []
     for flow_key_id in sorted(inventory):
         row = by_id.get(flow_key_id)
         if row is None:
             continue
+        flow = flow_rows.get(row.flow_uuid)
         result.append(
             {
                 "flow_key_id": flow_key_id,
@@ -266,8 +272,8 @@ def inventory_with_flow_metadata(db: Session, inventory: dict[int, float]) -> li
                 "direction": row.direction,
                 "unit": row.canonical_unit,
                 "amount": inventory[flow_key_id],
-                "compartment": row.compartment,
-                "subcompartment": row.subcompartment,
+                "compartment": row.compartment or (flow.compartment if flow is not None else None),
+                "subcompartment": row.subcompartment or (flow.subcompartment if flow is not None else None),
             }
         )
     return result
@@ -327,8 +333,14 @@ def top_process_vector_exchanges(
                     flow.flow_name if flow is not None else None,
                     getattr(flow, "flow_name_en", None) if flow is not None else None,
                     flow_key.flow_uuid if flow_key is not None else None,
-                    flow_key.compartment if flow_key is not None else None,
-                    flow_key.subcompartment if flow_key is not None else None,
+                    (
+                        flow_key.compartment
+                        or (flow.compartment if flow is not None else None)
+                    ) if flow_key is not None else None,
+                    (
+                        flow_key.subcompartment
+                        or (flow.subcompartment if flow is not None else None)
+                    ) if flow_key is not None else None,
                 )
             )
             if search_text in name_haystack:
@@ -352,8 +364,8 @@ def top_process_vector_exchanges(
                 "direction": row_direction,
                 "unit": flow_key.canonical_unit,
                 "amount": amount,
-                "compartment": flow_key.compartment,
-                "subcompartment": flow_key.subcompartment,
+                "compartment": flow_key.compartment or (flow.compartment if flow is not None else None),
+                "subcompartment": flow_key.subcompartment or (flow.subcompartment if flow is not None else None),
             }
         )
     return len(candidates), items

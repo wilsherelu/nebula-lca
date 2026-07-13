@@ -505,6 +505,7 @@ class FlowListItem(BaseModel):
     type: str
     unit: str | None = None
     category: str | None = None
+    subcompartment: str | None = None
     source: str | None = None
     is_custom: bool = False
     tidas_compatible: bool = False
@@ -617,6 +618,7 @@ class FlowOut(BaseModel):
     default_unit: str
     unit_group: str
     compartment: str | None = None
+    subcompartment: str | None = None
     source: str | None = None
     is_custom: bool = False
     tidas_compatible: bool = False

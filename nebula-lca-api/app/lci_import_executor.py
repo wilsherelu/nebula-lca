@@ -271,7 +271,7 @@ class LciImportJobExecutor:
         # Performance caches (built once per job, shared across workers)
         self._unit_conversion_cache: dict[str, tuple[float, str]] = {}
         self._flow_key_cache: dict[tuple[str, str, str, str, str], int] = {}
-        self._flow_metadata_cache: dict[str, tuple[str, str]] = {}
+        self._flow_metadata_cache: dict[str, tuple[str, str, str]] = {}
 
         # Statistics (protected by lock)
         self._lock = threading.Lock()
@@ -1098,8 +1098,9 @@ class LciImportJobExecutor:
                 compartment = getattr(ef, 'compartment', '') or ''
                 subcompartment = getattr(ef, 'subcompartment', '') or ''
             elif exc_id in meta_cache:
-                meta = meta_cache.get(exc_id, ("", ""))
+                meta = meta_cache.get(exc_id, ("", "", ""))
                 compartment = meta[0]
+                subcompartment = meta[1]
             else:
                 missing_flow_uuids.add(exc_id)
 
@@ -2883,6 +2884,7 @@ class LciImportJobExecutor:
                 default_unit=getattr(flow, "default_unit", "kg"),
                 unit_group=getattr(flow, "unit_group", None),
                 compartment=getattr(flow, "compartment", None),
+                subcompartment=getattr(flow, "subcompartment", None),
                 source="ef3.1",
                 is_custom=False,
             )
