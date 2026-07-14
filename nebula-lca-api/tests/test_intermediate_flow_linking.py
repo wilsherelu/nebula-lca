@@ -12,7 +12,7 @@ from app.database import Base
 from app.database import SessionLocal, engine as app_engine
 from app.main import app
 from app.models import FlowRecord, LciProcessVector, Model, ModelVersion, ReferenceProcess
-from app.schemas import HybridGraph
+from app.schemas import HybridGraph, IntermediateFlowLink
 from app.services.graph_contract import analyze_handle_consistency, validate_graph_contract
 from app.services.intermediate_flow_linking_service import (
     DEFAULT_PACKAGE_PATH,
@@ -21,6 +21,7 @@ from app.services.intermediate_flow_linking_service import (
     list_provider_candidates,
     resolve_intermediate_flow,
     validate_graph_intermediate_flow_links,
+    validate_intermediate_flow_link,
 )
 from app.tidas_export import build_tidas_readiness
 
@@ -38,7 +39,15 @@ def db():
 
 def _seed_first_l1_pair(db):
     package = json.loads(DEFAULT_PACKAGE_PATH.read_text(encoding="utf-8"))
-    row = package["rules"][0]
+    rows = package.get("rules") or package.get("mappings") or []
+    row = dict(next(item for item in rows if item["mapping_level"] == "L1"))
+    dimension = row.get("unit_dimension") or "mass"
+    source_groups = {"mass": "Units of mass", "energy": "Units of energy", "volume": "Units of volume"}
+    target_groups = {"mass": "mass", "energy": "energy", "volume": "volume"}
+    row.setdefault("source_name", f"source-{row['source_flow_uuid']}")
+    row.setdefault("target_name", f"target-{row['target_flow_uuid']}")
+    row.setdefault("source_unit_group", source_groups.get(dimension, dimension))
+    row.setdefault("target_unit_group", target_groups.get(dimension, dimension))
     db.add_all([
         FlowRecord(
             flow_uuid=row["source_flow_uuid"],
@@ -63,8 +72,37 @@ def _seed_first_l1_pair(db):
     return row
 
 
+def _seed_first_compatible_pair(db):
+    package = json.loads(DEFAULT_PACKAGE_PATH.read_text(encoding="utf-8"))
+    row = dict(next(item for item in package["mappings"] if item["application_mode"] == "auto_compatible"))
+    dimension = row["unit_dimension"]
+    source_groups = {"mass": "Units of mass", "energy": "Units of energy", "volume": "Units of volume"}
+    target_groups = {"mass": "mass", "energy": "energy", "volume": "volume"}
+    row.update({
+        "source_name": f"source-{row['source_flow_uuid']}",
+        "target_name": f"target-{row['target_flow_uuid']}",
+        "source_unit_group": source_groups.get(dimension, dimension),
+        "target_unit_group": target_groups.get(dimension, dimension),
+    })
+    db.add_all([
+        FlowRecord(
+            flow_uuid=row["source_flow_uuid"], flow_name=row["source_name"],
+            flow_type=row["source_flow_type"], default_unit=row["source_unit"],
+            unit_group=row["source_unit_group"], source="Tiangong",
+        ),
+        FlowRecord(
+            flow_uuid=row["target_flow_uuid"], flow_name=row["target_name"],
+            flow_type=row["target_flow_type"], default_unit=row["target_unit"],
+            unit_group=row["target_unit_group"], source="ecoinvent_3.11",
+        ),
+    ])
+    db.commit()
+    return row
+
+
 def _graph(row, *, package_hash: str | None = None) -> HybridGraph:
     registry = get_intermediate_flow_link_registry()
+    mapping_level = row.get("mapping_level", "L1")
     return HybridGraph.model_validate({
         "functionalUnit": "1 kg",
         "nodes": [
@@ -112,14 +150,20 @@ def _graph(row, *, package_hash: str | None = None) -> HybridGraph:
                         "amountFactor": row["amount_factor"],
                         "sourceUnit": row["source_unit"],
                         "targetUnit": row["target_unit"],
-                        "mappingLevel": "L1",
-                        "mappingReason": "approved_one_way_reference_product_link",
+                        "mappingLevel": mapping_level,
+                        "mappingReason": (
+                            "approved_one_way_reference_product_link"
+                            if mapping_level == "L1"
+                            else "approved_one_way_compatible_reference_product_link"
+                        ),
                         "ruleId": row["rule_id"],
                         "ruleOrigin": "builtin",
                         "status": "auto",
                         "packageId": registry.package_id,
                         "packageVersion": registry.package_version,
                         "packageHash": package_hash or registry.package_hash,
+                        "applicationMode": row.get("application_mode", "strict_identity"),
+                        "warnings": row.get("warnings", []),
                     },
                 }],
                 "outputs": [{
@@ -163,6 +207,30 @@ def test_l1_resolution_is_one_way_and_validated_against_catalog(db):
     assert resolution is not None
     assert resolution.target_flow_uuid == row["target_flow_uuid"]
     assert resolution.to_dict()["link_direction"] == "tiangong_to_ecoinvent"
+
+
+def test_warned_l2_resolution_is_auto_applicable_and_evidence_checked(db):
+    row = _seed_first_compatible_pair(db)
+    resolution, issue = resolve_intermediate_flow(db, row["source_flow_uuid"])
+    assert issue is None
+    assert resolution is not None
+    assert resolution.mapping_level == "L2"
+    assert resolution.application_mode == "auto_compatible"
+    assert resolution.warnings
+
+    payload = {
+        **resolution.to_dict(),
+        "rule_origin": "builtin",
+        "status": "auto",
+    }
+    link = IntermediateFlowLink.model_validate(payload)
+    assert validate_intermediate_flow_link(db, row["source_flow_uuid"], link) is None
+    stale = link.model_copy(update={"warnings": ["stale"]})
+    assert validate_intermediate_flow_link(db, row["source_flow_uuid"], stale) == "L2_EVIDENCE_MISMATCH"
+
+    graph = _graph(row)
+    validate_graph_contract(graph)
+    validate_graph_intermediate_flow_links(db, graph)
 
 
 def test_alias_edge_preserves_consumer_uuid_and_requires_current_l1_evidence(db):

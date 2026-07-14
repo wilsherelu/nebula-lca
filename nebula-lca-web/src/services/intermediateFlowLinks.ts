@@ -9,13 +9,15 @@ type RawResolution = {
   amount_factor: number;
   source_unit: string;
   target_unit: string;
-  mapping_level: "L1" | "L3";
+  mapping_level: "L1" | "L2" | "L3";
   mapping_reason: string;
   rule_id: string;
   rule_origin: "builtin" | "user";
   package_id?: string;
   package_version?: string;
   package_hash?: string;
+  application_mode?: "strict_identity" | "auto_compatible";
+  warnings?: string[];
 };
 
 export type LinkCandidate = {
@@ -59,10 +61,12 @@ export const toIntermediateFlowLink = (raw: RawResolution): IntermediateFlowLink
   mappingReason: raw.mapping_reason,
   ruleId: raw.rule_id,
   ruleOrigin: raw.rule_origin,
-  status: raw.mapping_level === "L1" ? "auto" : "user_confirmed",
+  status: raw.mapping_level === "L3" ? "user_confirmed" : "auto",
   packageId: raw.package_id,
   packageVersion: raw.package_version,
   packageHash: raw.package_hash,
+  applicationMode: raw.application_mode,
+  warnings: raw.warnings ?? [],
 });
 
 export async function resolveIntermediateFlowPorts(ports: FlowPort[]): Promise<{
