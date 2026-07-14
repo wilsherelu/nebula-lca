@@ -24,9 +24,10 @@ class CredentialError(ValueError):
 
 
 class ConnectorError(RuntimeError):
-    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+    def __init__(self, message: str, *, status_code: int | None = None, retry_after: int | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.retry_after = retry_after
 
 
 def _safe_supabase_error_message(raw: str) -> str:
@@ -54,6 +55,19 @@ def _tiangong_http_error_message(status_code: int, raw_body: str) -> str:
     if detail:
         return f"TianGong Supabase request failed with HTTP {status_code}: {detail}"
     return f"TianGong Supabase request failed with HTTP {status_code}."
+
+
+def _parse_retry_after_header(headers: Any) -> int | None:
+    """Parse Retry-After header value as integer seconds."""
+    if headers is None:
+        return None
+    value = headers.get("Retry-After") if hasattr(headers, "get") else None
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _credential_key() -> bytes:
@@ -524,7 +538,8 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
                 return json.loads(raw) if raw else None
         except url_error.HTTPError as exc:
             raw_body = exc.read().decode("utf-8", errors="replace") if exc.fp is not None else ""
-            raise ConnectorError(_tiangong_http_error_message(exc.code, raw_body), status_code=exc.code) from exc
+            retry_after = _parse_retry_after_header(exc.headers) if hasattr(exc, "headers") else None
+            raise ConnectorError(_tiangong_http_error_message(exc.code, raw_body), status_code=exc.code, retry_after=retry_after) from exc
         except url_error.URLError as exc:
             reason = str(getattr(exc, "reason", "") or "").strip()
             message = f"TianGong Supabase request failed: {reason}" if reason else "TianGong Supabase request failed."
@@ -757,6 +772,7 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
         flow_stubs = [_tiangong_flow_from_exchange(exchange) for exchange in _extract_process_exchanges(row)]
         flows: list[RemoteFlowDTO] = []
         flow_warnings: list[str] = []
+        failed_flow_uuids: list[str] = []
         for flow_stub in flow_stubs:
             if flow_stub is None:
                 continue
@@ -764,13 +780,20 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
                 flows.append(self.get_flow_detail(flow_stub.flow_uuid, flow_stub.remote_version))
             except ConnectorError as exc:
                 flow_warnings.append(f"could not resolve flow {flow_stub.flow_uuid}: {exc}")
+                failed_flow_uuids.append(flow_stub.flow_uuid)
                 flows.append(flow_stub)
         process_json = _tiangong_process_json_from_row(row, process, flows)
         return RemoteProcessDetailDTO(
             process=process,
             flows=flows,
             process_json=process_json,
-            import_report={"source": "tiangong", "remote_id": process.remote_id, "remote_version": process.remote_version, "warnings": flow_warnings},
+            import_report={
+                "source": "tiangong",
+                "remote_id": process.remote_id,
+                "remote_version": process.remote_version,
+                "warnings": flow_warnings,
+                "failed_flow_uuids": failed_flow_uuids,
+            },
             vector=_extract_process_vector(row),
         )
 

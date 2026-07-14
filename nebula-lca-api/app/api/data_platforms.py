@@ -46,6 +46,7 @@ from ..schemas import (
     RemoteFlowItem,
     RemoteModelItem,
     RemoteProcessItem,
+    TianGongFlowRefreshResponse,
 )
 from ..services.catalog_cache import invalidate_management_caches
 from ..services.data_platform_connectors import (
@@ -1092,42 +1093,20 @@ def sync_remote_flow(account_id: str, payload: DataPlatformSyncFlowRequest, db: 
     job = DataPlatformSyncJob(account_id=account.id, platform=account.platform, remote_process_id=payload.remote_flow_id, status="running", phase="fetch", stats_json={"remote_kind": "flow"})
     db.add(job)
     db.flush()
-    warnings: list[str] = []
-    synced: list[dict[str, Any]] = []
+    job_id = job.id
     try:
         connector = connector_for_account(_account_context(account, db))
         flow = connector.get_flow_detail(payload.remote_flow_id, payload.remote_version)
-        job.phase = "upsert"
-        synced.extend(_upsert_flow_dependencies(db, account=account, connector=connector, flow=flow, warnings=warnings))
-        flow_row = _remote_raw_row(
-            flow.metadata,
-            {
-                "id": flow.flow_uuid or flow.remote_id,
-                "name": flow.flow_name,
-                "version": flow.remote_version,
-                "default_unit": flow.default_unit,
-                "unit_group": flow.unit_group,
-                "flow_type": flow.flow_type,
-                "source": account.platform,
-            },
+        synced, warnings, tidas_report = _import_single_flow(
+            db, connector, account, flow, upsert_mode="update" if payload.overwrite else "skip", source_label=account.platform,
         )
-        tidas_report = import_tidas_flow_rows(
-            db,
-            [flow_row],
-            source_path=f"{account.platform}://flows/{flow.remote_id}",
-            upsert_mode="update" if payload.overwrite else "skip",
-            source_label=account.platform,
-        )
-        if tidas_report.failed:
-            raise ConnectorError(f"TIDAS flow import failed: {tidas_report.errors[:3]}")
-        synced.append(_upsert_sync_record(db, account=account, local_kind="flow", local_uuid=flow.flow_uuid, remote_id=flow.remote_id, remote_version=flow.remote_version, metadata=flow.metadata))
         job.status = "completed"
         job.phase = "done"
         job.finished_at = datetime.utcnow()
         report_summary = _tidas_report_summary(tidas_report)
         job.stats_json = {"remote_kind": "flow", "warnings": warnings, "synced_count": len(synced), "tidas_import": report_summary}
-        invalidate_management_caches(flows=True, stats=True)
         db.commit()
+        invalidate_management_caches(flows=True, stats=True)
         return DataPlatformSyncFlowResponse(
             job_id=job.id,
             account_id=account.id,
@@ -1140,12 +1119,16 @@ def sync_remote_flow(account_id: str, payload: DataPlatformSyncFlowRequest, db: 
             synced_records=synced,
         )
     except Exception as exc:  # noqa: BLE001
-        job.status = "failed"
-        job.phase = "failed"
-        job.error_summary = str(exc)
-        job.finished_at = datetime.utcnow()
-        db.commit()
-        raise HTTPException(status_code=400, detail={"code": "DATA_PLATFORM_SYNC_FAILED", "message": str(exc), "job_id": job.id}) from exc
+        db.rollback()
+        failed_job = _persist_failed_sync_job(
+            db,
+            job_id=job_id,
+            account=account,
+            remote_id=payload.remote_flow_id,
+            remote_kind="flow",
+            error=exc,
+        )
+        raise _sync_http_exception(exc, job_id=failed_job.id, default_code="DATA_PLATFORM_SYNC_FAILED") from exc
 
 
 @api_router.post("/accounts/{account_id}/processes/sync", response_model=DataPlatformSyncProcessResponse)
@@ -1154,47 +1137,52 @@ def sync_remote_process(account_id: str, payload: DataPlatformSyncProcessRequest
     job = DataPlatformSyncJob(account_id=account.id, platform=account.platform, remote_process_id=payload.remote_process_id, status="running", phase="fetch", stats_json={"remote_kind": "process"})
     db.add(job)
     db.flush()
-    warnings: list[str] = []
-    synced: list[dict[str, Any]] = []
+    job_id = job.id
+    dependency_flow_uuid: str | None = None
     try:
         connector = connector_for_account(_account_context(account, db))
         detail = connector.get_process_detail(payload.remote_process_id, payload.remote_version)
-        job.phase = "upsert"
-        flows_by_uuid = {flow.flow_uuid: flow for flow in detail.flows if flow.flow_uuid}
+        job.phase = "dependencies"
+        failed_flow_uuids = (
+            detail.import_report.get("failed_flow_uuids", [])
+            if isinstance(detail.import_report, dict)
+            else []
+        )
+        if failed_flow_uuids:
+            dependency_flow_uuid = _safe_str(failed_flow_uuids[0])
+            raise ConnectorError(f"Could not fetch referenced flow: {dependency_flow_uuid}")
+        # Collect unique flow UUIDs from flows-by-reference and process exchanges
+        flows_by_uuid: dict[str, RemoteFlowDTO] = {}
+        for flow in detail.flows:
+            if flow.flow_uuid:
+                flows_by_uuid[flow.flow_uuid] = flow
         for exchange in (detail.process_json or {}).get("exchanges", []):
             if not isinstance(exchange, dict):
                 continue
             flow_uuid = _safe_str(exchange.get("flow_uuid") or exchange.get("flowUuid"))
             if flow_uuid and flow_uuid not in flows_by_uuid:
-                try:
-                    fetched = connector.get_flow_detail(flow_uuid)
-                    flows_by_uuid[fetched.flow_uuid] = fetched
-                except Exception as exc:  # noqa: BLE001
-                    warnings.append(f"could not fetch referenced flow {flow_uuid}: {exc}")
-        for flow in flows_by_uuid.values():
-            synced.extend(_upsert_flow_dependencies(db, account=account, connector=connector, flow=flow, warnings=warnings))
-            flow_row = _remote_raw_row(
-                flow.metadata,
-                {
-                    "id": flow.flow_uuid or flow.remote_id,
-                    "name": flow.flow_name,
-                    "version": flow.remote_version,
-                    "default_unit": flow.default_unit,
-                    "unit_group": flow.unit_group,
-                    "flow_type": flow.flow_type,
-                    "source": account.platform,
-                },
-            )
-            flow_report = import_tidas_flow_rows(
+                # Fetch sequentially, fail immediately on any error
+                dependency_flow_uuid = flow_uuid
+                fetched = connector.get_flow_detail(flow_uuid)
+                flows_by_uuid[flow_uuid] = fetched
+        # Import all flows atomically (no commit)
+        warnings: list[str] = []
+        synced: list[dict[str, Any]] = []
+        for expected_flow_uuid, flow_dto in flows_by_uuid.items():
+            dependency_flow_uuid = expected_flow_uuid
+            flow_synced, flow_warnings, flow_report = _import_single_flow(
                 db,
-                [flow_row],
-                source_path=f"{account.platform}://flows/{flow.remote_id}",
+                connector,
+                account,
+                flow_dto,
                 upsert_mode="update" if payload.overwrite else "skip",
                 source_label=account.platform,
+                expected_uuid=expected_flow_uuid,
             )
-            if flow_report.failed:
-                warnings.append(f"flow {flow.flow_uuid} TIDAS import warnings/errors: {flow_report.errors[:3]}")
-            synced.append(_upsert_sync_record(db, account=account, local_kind="flow", local_uuid=flow.flow_uuid, remote_id=flow.remote_id, remote_version=flow.remote_version, metadata=flow.metadata))
+            synced.extend(flow_synced)
+            warnings.extend(flow_warnings)
+        dependency_flow_uuid = None
+        # Import process atomically (no commit)
         process = detail.process
         if not process.process_uuid:
             raise ConnectorError("Remote process is missing process_uuid")
@@ -1209,19 +1197,23 @@ def sync_remote_process(account_id: str, payload: DataPlatformSyncProcessRequest
             [process_row],
             source_path=f"{account.platform}://processes/{process.remote_id}",
             upsert_mode="update" if payload.overwrite else "skip",
+            valid_flow_uuids=set(flows_by_uuid),
+            with_transaction=True,
         )
         if process_report.failed:
             raise ConnectorError(f"TIDAS process import failed: {process_report.errors[:3]}")
+        # Upsert process and vector lineage
         synced.append(_upsert_sync_record(db, account=account, local_kind="process", local_uuid=process.process_uuid, remote_id=process.remote_id, remote_version=process.remote_version, metadata=process.metadata))
         if detail.vector and _upsert_lci_vector(db, account=account, process_uuid=process.process_uuid, vector_payload=detail.vector, warnings=warnings):
             synced.append(_upsert_sync_record(db, account=account, local_kind="vector", local_uuid=process.process_uuid, remote_id=process.remote_id, remote_version=process.remote_version, metadata={"vector": True}))
+        # Commit all at once
         job.status = "completed"
         job.phase = "done"
         job.finished_at = datetime.utcnow()
         report_summary = _tidas_report_summary(process_report)
         job.stats_json = {"remote_kind": "process", "flow_count": len(flows_by_uuid), "warnings": warnings, "synced_count": len(synced), "tidas_import": report_summary}
-        invalidate_management_caches(flows=True, reference_processes=True, stats=True)
         db.commit()
+        invalidate_management_caches(flows=True, reference_processes=True, stats=True)
         return DataPlatformSyncProcessResponse(
             job_id=job.id,
             account_id=account.id,
@@ -1235,12 +1227,22 @@ def sync_remote_process(account_id: str, payload: DataPlatformSyncProcessRequest
             synced_records=synced,
         )
     except Exception as exc:  # noqa: BLE001
-        job.status = "failed"
-        job.phase = "failed"
-        job.error_summary = str(exc)
-        job.finished_at = datetime.utcnow()
-        db.commit()
-        raise HTTPException(status_code=400, detail={"code": "DATA_PLATFORM_SYNC_FAILED", "message": str(exc), "job_id": job.id}) from exc
+        db.rollback()
+        failed_job = _persist_failed_sync_job(
+            db,
+            job_id=job_id,
+            account=account,
+            remote_id=payload.remote_process_id,
+            remote_kind="process",
+            error=exc,
+        )
+        raise _sync_http_exception(
+            exc,
+            job_id=failed_job.id,
+            default_code="DATA_PLATFORM_SYNC_FAILED",
+            failed_flow_uuid=dependency_flow_uuid,
+            rolled_back=True,
+        ) from exc
 
 
 @api_router.post("/accounts/{account_id}/models/sync", response_model=DataPlatformSyncModelResponse)
@@ -1252,6 +1254,7 @@ def sync_remote_model(account_id: str, payload: DataPlatformSyncModelRequest, db
     job_id = job.id
     warnings: list[str] = []
     synced: list[dict[str, Any]] = []
+    dependency_flow_uuid: str | None = None
     try:
         connector = connector_for_account(_account_context(account, db))
         detail = connector.get_model_detail(payload.remote_model_id, payload.remote_version)
@@ -1264,33 +1267,21 @@ def sync_remote_model(account_id: str, payload: DataPlatformSyncModelRequest, db
         job.phase = "dependencies"
         if graph_json is not None:
             for flow_uuid in _graph_flow_uuids(graph_json):
-                try:
-                    flow = connector.get_flow_detail(flow_uuid)
-                    synced.extend(_upsert_flow_dependencies(db, account=account, connector=connector, flow=flow, warnings=warnings))
-                    flow_row = _remote_raw_row(
-                        flow.metadata,
-                        {
-                            "id": flow.flow_uuid or flow.remote_id,
-                            "name": flow.flow_name,
-                            "version": flow.remote_version,
-                            "default_unit": flow.default_unit,
-                            "unit_group": flow.unit_group,
-                            "flow_type": flow.flow_type,
-                            "source": account.platform,
-                        },
-                    )
-                    flow_report = import_tidas_flow_rows(
-                        db,
-                        [flow_row],
-                        source_path=f"{account.platform}://flows/{flow.remote_id}",
-                        upsert_mode="update",
-                        source_label=account.platform,
-                    )
-                    if flow_report.failed:
-                        warnings.append(f"model dependency flow {flow_uuid} TIDAS import failed: {flow_report.errors[:3]}")
-                    synced.append(_upsert_sync_record(db, account=account, local_kind="flow", local_uuid=flow.flow_uuid, remote_id=flow.remote_id, remote_version=flow.remote_version, metadata=flow.metadata))
-                except Exception as exc:  # noqa: BLE001
-                    warnings.append(f"could not sync model dependency flow {flow_uuid}: {exc}")
+                # Fetch sequentially, fail immediately on any error
+                dependency_flow_uuid = flow_uuid
+                flow = connector.get_flow_detail(flow_uuid)
+                flow_synced, flow_warnings, flow_report = _import_single_flow(
+                    db,
+                    connector,
+                    account,
+                    flow,
+                    upsert_mode="update",
+                    source_label=account.platform,
+                    expected_uuid=flow_uuid,
+                )
+                synced.extend(flow_synced)
+                warnings.extend(flow_warnings)
+        dependency_flow_uuid = None
         job.phase = "upsert"
         model_row = _remote_raw_row(detail.lineage, detail.model_json or {"id": detail.model.model_uuid, "name": detail.model.model_name})
         model_report = import_tidas_model_rows(
@@ -1298,6 +1289,7 @@ def sync_remote_model(account_id: str, payload: DataPlatformSyncModelRequest, db
             [model_row],
             source_path=f"{account.platform}://models/{detail.model.remote_id}",
             project_name=(payload.project_name or detail.model.model_name or detail.model.model_uuid).strip(),
+            with_transaction=True,
         )
         if model_report.failed:
             raise ConnectorError(f"TIDAS model import failed: {model_report.errors[:3]}")
@@ -1321,7 +1313,8 @@ def sync_remote_model(account_id: str, payload: DataPlatformSyncModelRequest, db
         job.phase = "done"
         job.finished_at = datetime.utcnow()
         report_summary = _tidas_report_summary(model_report)
-        job.stats_json = {"remote_kind": "model", "project_id": project_id, "version": version_value, "warnings": warnings, "synced_count": len(synced), "tidas_import": report_summary}
+        flow_count = len(_graph_flow_uuids(graph_json)) if graph_json is not None else 0
+        job.stats_json = {"remote_kind": "model", "project_id": project_id, "version": version_value, "flow_count": flow_count, "warnings": warnings, "synced_count": len(synced), "tidas_import": report_summary}
         db.commit()
         return DataPlatformSyncModelResponse(
             job_id=job.id,
@@ -1330,6 +1323,7 @@ def sync_remote_model(account_id: str, payload: DataPlatformSyncModelRequest, db
             status=job.status,
             project_id=project_id,
             version=version_value,
+            flow_count=flow_count,
             tidas_import_job_id=model_report.job_id,
             tidas_import_report=report_summary,
             warnings=warnings,
@@ -1337,18 +1331,22 @@ def sync_remote_model(account_id: str, payload: DataPlatformSyncModelRequest, db
         )
     except Exception as exc:  # noqa: BLE001
         db.rollback()
-        failed_job = db.get(DataPlatformSyncJob, job_id)
-        if failed_job is None:
-            failed_job = DataPlatformSyncJob(account_id=account.id, platform=account.platform, remote_process_id=payload.remote_model_id)
-            db.add(failed_job)
-            db.flush()
-        failed_job.status = "failed"
-        failed_job.phase = "failed"
-        failed_job.error_summary = str(exc)
-        failed_job.finished_at = datetime.utcnow()
-        failed_job.stats_json = {"remote_kind": "model", "lineage": {"remote_id": payload.remote_model_id, "remote_version": payload.remote_version}}
-        db.commit()
-        raise HTTPException(status_code=400, detail={"code": "DATA_PLATFORM_MODEL_SYNC_FAILED", "message": str(exc), "job_id": failed_job.id}) from exc
+        failed_job = _persist_failed_sync_job(
+            db,
+            job_id=job_id,
+            account=account,
+            remote_id=payload.remote_model_id,
+            remote_kind="model",
+            error=exc,
+            metadata={"remote_version": payload.remote_version},
+        )
+        raise _sync_http_exception(
+            exc,
+            job_id=failed_job.id,
+            default_code="DATA_PLATFORM_MODEL_SYNC_FAILED",
+            failed_flow_uuid=dependency_flow_uuid,
+            rolled_back=True,
+        ) from exc
 
 
 @api_router.post("/accounts/{account_id}/flows/{flow_uuid}/publish", response_model=DataPlatformPublishResponse)
@@ -1493,6 +1491,264 @@ def refresh_tiangong_imports(
     """Refresh previously imported TianGong flow/process records using the active account."""
     account = _preferred_tiangong_account(db)
     return refresh_account_imports(account.id, payload, db)
+
+
+@api_router.post("/tiangong/flows/{flow_uuid}/refresh", response_model=TianGongFlowRefreshResponse)
+def refresh_tiangong_flow(
+    flow_uuid: str,
+    db: Session = Depends(get_db),
+) -> TianGongFlowRefreshResponse:
+    """Refresh a single TianGong flow by local flow UUID.
+
+    - Selects the preferred validated TianGong account.
+    - Accepts only an existing local flow whose exact source is `tiangong`.
+    - Resolves the remote id from flow sync lineage when present, otherwise uses the local UUID.
+    - Fetches the current remote version without name guessing.
+    - Rejects a remote UUID that differs from the requested local UUID.
+    - Uses shared single-flow synchronization helper.
+    - Propagates HTTP 429 as `TIANGONG_RATE_LIMITED` with `retry_after_seconds` when provided.
+    """
+    account = _preferred_tiangong_account(db)
+    connector = connector_for_account(_account_context(account, db))
+
+    flow_row = db.get(FlowRecord, flow_uuid)
+    if flow_row is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "FLOW_NOT_FOUND",
+                "message": f"Flow not found: {flow_uuid}",
+            },
+        )
+
+    if flow_row.source != "tiangong":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "TIANGONG_REFRESH_INVALID_SOURCE",
+                "message": f"Flow source is '{flow_row.source}', expected 'tiangong'. Only flows with source='tiangong' can be refreshed via this endpoint.",
+            },
+        )
+
+    sync_record = (
+        db.query(ExternalDataSyncRecord)
+        .filter(
+            ExternalDataSyncRecord.account_id == account.id,
+            ExternalDataSyncRecord.local_kind == "flow",
+            ExternalDataSyncRecord.local_uuid == flow_uuid,
+        )
+        .first()
+    )
+
+    remote_id = sync_record.remote_id if sync_record and sync_record.remote_id else flow_uuid
+
+    try:
+        remote_flow = connector.get_flow_detail(remote_id, None)
+    except ConnectorError as exc:
+        if exc.status_code == 429:
+            retry_after = _parse_retry_after(exc)
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "code": "TIANGONG_RATE_LIMITED",
+                    "message": str(exc),
+                    "retry_after_seconds": retry_after,
+                },
+            ) from exc
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "TIANGONG_REMOTE_FETCH_FAILED",
+                "message": str(exc),
+            },
+        ) from exc
+
+    if remote_flow.flow_uuid != flow_uuid:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "TIANGONG_UUID_MISMATCH",
+                "message": f"Remote flow UUID '{remote_flow.flow_uuid}' does not match requested local UUID '{flow_uuid}'.",
+            },
+        )
+
+    try:
+        synced, warnings, tidas_report = _import_single_flow(
+            db,
+            connector,
+            account,
+            remote_flow,
+            upsert_mode="update",
+            source_label=account.platform,
+            expected_uuid=flow_uuid,
+            lineage_remote_id=remote_id,
+        )
+    except ConnectorError as exc:
+        db.rollback()
+        if exc.status_code == 429:
+            retry_after = _parse_retry_after(exc)
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "code": "TIANGONG_RATE_LIMITED",
+                    "message": str(exc),
+                    "retry_after_seconds": retry_after,
+                },
+            ) from exc
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "TIANGONG_IMPORT_FAILED",
+                "message": str(exc),
+            },
+        ) from exc
+
+    db.commit()
+    invalidate_management_caches(flows=True, stats=True)
+
+    return TianGongFlowRefreshResponse(
+        account_id=account.id,
+        platform=account.platform,
+        flow_uuid=remote_flow.flow_uuid,
+        remote_id=remote_id,
+        remote_version=remote_flow.remote_version,
+        status="refreshed",
+        tidas_import_job_id=tidas_report.job_id,
+        tidas_import_report=_tidas_report_summary(tidas_report),
+        warnings=warnings,
+        synced_record=synced[-1] if synced else None,
+    )
+
+
+def _parse_retry_after(exc: ConnectorError) -> int | None:
+    """Extract retry_after_seconds from ConnectorError if available."""
+    if exc.status_code != 429:
+        return None
+    return exc.retry_after
+
+
+def _import_single_flow(
+    db: Session,
+    connector: Any,
+    account: DataPlatformAccount,
+    flow: RemoteFlowDTO,
+    *,
+    upsert_mode: str = "update",
+    source_label: str = "tiangong",
+    expected_uuid: str | None = None,
+    lineage_remote_id: str | None = None,
+) -> tuple[list[dict[str, Any]], list[str], TidasImportReportResponse]:
+    """Upsert dependencies, import flow via TIDAS (no commit), upsert lineage.
+
+    Returns (synced_records, warnings, tidas_report).
+    The caller is responsible for committing or rolling back.
+    Raises ConnectorError on import failure.
+    """
+    warnings: list[str] = []
+    synced: list[dict[str, Any]] = []
+    if expected_uuid and flow.flow_uuid != expected_uuid:
+        raise ConnectorError(
+            f"Remote flow UUID '{flow.flow_uuid}' does not match expected UUID '{expected_uuid}'."
+        )
+    synced.extend(_upsert_flow_dependencies(db, account=account, connector=connector, flow=flow, warnings=warnings))
+
+    flow_json_row = _remote_raw_row(
+        flow.metadata,
+        {
+            "id": flow.flow_uuid or flow.remote_id,
+            "name": flow.flow_name,
+            "version": flow.remote_version,
+            "default_unit": flow.default_unit,
+            "unit_group": flow.unit_group,
+            "flow_type": flow.flow_type,
+            "source": account.platform,
+        },
+    )
+
+    tidas_report = import_tidas_flow_rows(
+        db,
+        [flow_json_row],
+        source_path=f"{account.platform}://flows/{flow.remote_id}",
+        upsert_mode=upsert_mode,
+        source_label=source_label,
+        with_transaction=True,
+    )
+
+    if tidas_report.failed:
+        raise ConnectorError(f"TIDAS flow import failed: {tidas_report.errors[:3]}")
+
+    synced.append(
+        _upsert_sync_record(
+            db,
+            account=account,
+            local_kind="flow",
+            local_uuid=flow.flow_uuid,
+            remote_id=lineage_remote_id or flow.remote_id,
+            remote_version=flow.remote_version,
+            metadata=flow.metadata,
+        )
+    )
+    return synced, warnings, tidas_report
+
+
+def _persist_failed_sync_job(
+    db: Session,
+    *,
+    job_id: str,
+    account: DataPlatformAccount,
+    remote_id: str,
+    remote_kind: str,
+    error: Exception,
+    metadata: dict[str, Any] | None = None,
+) -> DataPlatformSyncJob:
+    failed_job = db.get(DataPlatformSyncJob, job_id)
+    if failed_job is None:
+        failed_job = DataPlatformSyncJob(
+            id=job_id,
+            account_id=account.id,
+            platform=account.platform,
+            remote_process_id=remote_id,
+        )
+        db.add(failed_job)
+    failed_job.status = "failed"
+    failed_job.phase = "failed"
+    failed_job.error_summary = str(error)
+    failed_job.finished_at = datetime.utcnow()
+    failed_job.stats_json = {
+        "remote_kind": remote_kind,
+        "lineage": {"remote_id": remote_id, **(metadata or {})},
+    }
+    db.commit()
+    return failed_job
+
+
+def _sync_http_exception(
+    exc: Exception,
+    *,
+    job_id: str,
+    default_code: str,
+    failed_flow_uuid: str | None = None,
+    rolled_back: bool = False,
+) -> HTTPException:
+    extra = {
+        "failed_flow_uuid": failed_flow_uuid,
+        "rolled_back": rolled_back,
+    }
+    if isinstance(exc, ConnectorError) and exc.status_code == 429:
+        return HTTPException(
+            status_code=429,
+            detail={
+                "code": "TIANGONG_RATE_LIMITED",
+                "message": str(exc),
+                "retry_after_seconds": exc.retry_after,
+                "job_id": job_id,
+                **extra,
+            },
+        )
+    return HTTPException(
+        status_code=400,
+        detail={"code": default_code, "message": str(exc), "job_id": job_id, **extra},
+    )
 
 
 @api_router.post("/accounts/{account_id}/refresh-imports", response_model=DataPlatformRefreshImportsResponse)

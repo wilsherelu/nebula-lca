@@ -649,7 +649,12 @@ def _finalize_tidas_report(report: dict) -> dict:
     return report
 
 
-def _persist_tidas_import_report(db: Session, report_payload: dict) -> TidasImportReportResponse:
+def _persist_tidas_import_report(
+    db: Session,
+    report_payload: dict,
+    *,
+    commit: bool = True,
+) -> TidasImportReportResponse:
     report_payload = _finalize_tidas_report(report_payload)
     report_model = TidasImportReportResponse.model_validate(report_payload)
     report_json = report_model.model_dump(mode="json")
@@ -673,7 +678,8 @@ def _persist_tidas_import_report(db: Session, report_payload: dict) -> TidasImpo
     else:
         row.diagnostic_type = TIDAS_IMPORT_DIAGNOSTIC_TYPE
         row.result_json = report_json
-    db.commit()
+    if commit:
+        db.commit()
     return report_model
 
 
@@ -734,7 +740,25 @@ def import_tidas_flow_rows(
     strict_mode: bool = False,
     source_label: str = TIDAS_FLOW_IMPORT_SOURCE,
     persist_report: bool = True,
+    with_transaction: bool = False,
 ) -> TidasImportReportResponse:
+    """Import flow rows from TIDAS/ILCD format.
+
+    Args:
+        db: Database session.
+        rows: List of flow record dicts.
+        source_path: Source identifier for reporting.
+        dry_run: If True, rollback all changes.
+        upsert_mode: "update" or "skip" for existing records.
+        strict_mode: If True, rollback on any failure.
+        source_label: Source label for imported flows.
+        persist_report: If True, persist diagnostic report to DB.
+        with_transaction: If True, caller manages transaction (no internal commit/rollback).
+                         Caller must commit or rollback after calling.
+
+    Returns:
+        TidasImportReportResponse with import statistics.
+    """
     payload = type("Payload", (), {"dry_run": dry_run, "upsert_mode": upsert_mode, "strict_mode": strict_mode})()
     report = _build_tidas_base_report(import_type="flows", payload=payload, source_path=source_path)
     report["total_files"] = 1
@@ -747,6 +771,12 @@ def import_tidas_flow_rows(
             continue
         _label_imported_elementary_flow_source(flow_record, source_label)
         _upsert_flow_record(db, flow_record, report, dry_run=dry_run, upsert_mode=upsert_mode)
+    if with_transaction:
+        return (
+            _persist_tidas_import_report(db, report, commit=False)
+            if persist_report
+            else TidasImportReportResponse.model_validate(_finalize_tidas_report(report))
+        )
     if strict_mode and report["failed"] > 0:
         db.rollback()
     elif dry_run:
@@ -767,7 +797,24 @@ def import_tidas_process_rows(
     strict_mode: bool = False,
     valid_flow_uuids: set[str] | None = None,
     persist_report: bool = True,
+    with_transaction: bool = False,
 ) -> TidasImportReportResponse:
+    """Import process rows from TIDAS/ILCD format.
+
+    Args:
+        db: Database session.
+        rows: List of process record dicts.
+        source_path: Source identifier for reporting.
+        dry_run: If True, rollback all changes.
+        upsert_mode: "update" or "skip" for existing records.
+        strict_mode: If True, rollback on any failure.
+        valid_flow_uuids: Pre-computed set of valid flow UUIDs for exchange filtering.
+        persist_report: If True, persist diagnostic report to DB.
+        with_transaction: If True, caller manages transaction (no internal commit/rollback).
+
+    Returns:
+        TidasImportReportResponse with import statistics.
+    """
     payload = type("Payload", (), {"dry_run": dry_run, "upsert_mode": upsert_mode, "strict_mode": strict_mode})()
     report = _build_tidas_base_report(import_type="processes", payload=payload, source_path=source_path)
     report["total_files"] = 1
@@ -858,6 +905,12 @@ def import_tidas_process_rows(
             existing.import_report_json = process_report.model_dump(mode="json")
     filtered_models = [FilteredExchangeEvidence.model_validate(item) for item in report["filtered_exchanges"]]
     report["top_missing_flow_uuids"] = _top_missing_flow_uuids(filtered_models, top_n=10)
+    if with_transaction:
+        return (
+            _persist_tidas_import_report(db, report, commit=False)
+            if persist_report
+            else TidasImportReportResponse.model_validate(_finalize_tidas_report(report))
+        )
     if strict_mode and report["failed"] > 0:
         db.rollback()
     elif dry_run:
@@ -879,7 +932,25 @@ def import_tidas_model_rows(
     process_json_by_uuid: dict[str, dict] | None = None,
     project_name: str | None = None,
     persist_report: bool = True,
+    with_transaction: bool = False,
 ) -> TidasImportReportResponse:
+    """Import model rows from TIDAS/ILCD format.
+
+    Args:
+        db: Database session.
+        rows: List of model record dicts.
+        source_path: Source identifier for reporting.
+        dry_run: If True, rollback all changes.
+        strict_mode: If True, rollback on any failure.
+        display_lang: Language for model names (default "zh").
+        process_json_by_uuid: Pre-loaded process JSON for graph building.
+        project_name: Override project name.
+        persist_report: If True, persist diagnostic report to DB.
+        with_transaction: If True, caller manages transaction (no internal commit/rollback).
+
+    Returns:
+        TidasImportReportResponse with import statistics.
+    """
     payload = type("Payload", (), {"dry_run": dry_run, "upsert_mode": "update", "strict_mode": strict_mode})()
     report = _build_tidas_base_report(import_type="models", payload=payload, source_path=source_path)
     report["total_files"] = 1
@@ -939,6 +1010,12 @@ def import_tidas_model_rows(
         version = _create_project_version_from_graph_json(db=db, project_id=model_row.id, graph_json=graph.model_dump(mode="python"))
         report["created_projects"].append({"project_id": str(model_row.id), "name": str(model_row.name), "version": version.version})
     report["unresolved_count"] = len(report["unresolved_items"])
+    if with_transaction:
+        return (
+            _persist_tidas_import_report(db, report, commit=False)
+            if persist_report
+            else TidasImportReportResponse.model_validate(_finalize_tidas_report(report))
+        )
     if strict_mode and report["failed"] > 0:
         db.rollback()
     elif dry_run:
