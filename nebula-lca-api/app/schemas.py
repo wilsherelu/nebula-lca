@@ -1730,6 +1730,7 @@ class DataPlatformSyncModelResponse(BaseModel):
     status: str
     project_id: str | None = None
     version: int | None = None
+    flow_count: int = 0
     tidas_import_job_id: str | None = None
     tidas_import_report: dict | None = None
     warnings: list[str] = Field(default_factory=list)
@@ -1829,6 +1830,25 @@ class DataPlatformRefreshImportsResponse(BaseModel):
     failed: int = 0
     skipped: int = 0
     items: list[DataPlatformRefreshImportItem] = Field(default_factory=list)
+
+
+# ======================================================================
+# TianGong On-Demand Flow Refresh Schemas
+# ======================================================================
+
+class TianGongFlowRefreshResponse(BaseModel):
+    """Response from on-demand TianGong flow refresh."""
+    account_id: str
+    platform: str
+    flow_uuid: str
+    remote_id: str
+    remote_version: str | None = None
+    status: Literal["refreshed", "skipped", "failed"]
+    tidas_import_job_id: str | None = None
+    tidas_import_report: dict | None = None
+    warnings: list[str] = Field(default_factory=list)
+    synced_record: dict | None = None
+    error: str | None = None
 
 
 # ======================================================================

@@ -60,6 +60,7 @@ type RemotePreviewResponse = {
 type RemoteSyncResponse = {
   job_id: string;
   status: string;
+  flow_count?: number;
   tidas_import_job_id?: string | null;
   tidas_import_report?: {
     import_type?: string;
@@ -73,6 +74,11 @@ type RemoteSyncResponse = {
     errors?: string[];
     warnings?: string[];
   } | null;
+};
+
+type RemoteSyncError = Error & {
+  failedFlowUuid?: string | null;
+  rolledBack?: boolean;
 };
 
 type SyncJob = {
@@ -99,24 +105,6 @@ type SyncRecord = {
   remote_version: string | null;
   metadata: Record<string, unknown> | null;
   synced_at: string;
-};
-
-type RefreshItem = {
-  local_kind: string;
-  remote_id: string;
-  remote_version: string | null;
-  status: string;
-  error: string | null;
-};
-
-type RefreshResult = {
-  account_id: string;
-  platform: string;
-  total: number;
-  refreshed: number;
-  failed: number;
-  skipped: number;
-  items: RefreshItem[];
 };
 
 type PublishResult = {
@@ -173,9 +161,17 @@ const accountValidationLabel = (account: PlatformAccount, zh: boolean): string =
 const requestJson = async <T,>(url: string, init?: RequestInit): Promise<T> => {
   const resp = await fetch(url, init);
   if (!resp.ok) {
-    const payload = (await resp.json().catch(() => ({}))) as { detail?: { message?: string } | string; message?: string };
+    const payload = (await resp.json().catch(() => ({}))) as {
+      detail?: { message?: string; failed_flow_uuid?: string | null; rolled_back?: boolean } | string;
+      message?: string;
+    };
     const detail = typeof payload.detail === "string" ? payload.detail : payload.detail?.message;
-    throw new Error(detail ?? payload.message ?? `HTTP ${resp.status}`);
+    const error = new Error(detail ?? payload.message ?? `HTTP ${resp.status}`) as RemoteSyncError;
+    if (typeof payload.detail === "object" && payload.detail !== null) {
+      error.failedFlowUuid = payload.detail.failed_flow_uuid;
+      error.rolledBack = payload.detail.rolled_back;
+    }
+    throw error;
   }
   return (await resp.json()) as T;
 };
@@ -208,11 +204,9 @@ export function ExternalPlatformAccounts(props: Props) {
   const [syncRecords, setSyncRecords] = useState<SyncRecord[]>([]);
   const [syncHistoryLoading, setSyncHistoryLoading] = useState(false);
   const [syncHistoryError, setSyncHistoryError] = useState("");
-  const [refreshing, setRefreshing] = useState(false);
-  const [refreshResult, setRefreshResult] = useState<RefreshResult | null>(null);
   const [publishingKey, setPublishingKey] = useState("");
   const [publishResult, setPublishResult] = useState<PublishResult | null>(null);
-
+  const [modelSyncConfirm, setModelSyncConfirm] = useState<{ open: boolean; item: RemoteItem | null }>({ open: false, item: null });
   const tiangongAccounts = useMemo(
     () => accounts.filter((account) => account.platform === "tiangong"),
     [accounts],
@@ -406,50 +400,6 @@ export function ExternalPlatformAccounts(props: Props) {
     }
   };
 
-  const refreshImports = async () => {
-    if (!selectedAccount) {
-      setErrorText(zh ? "请先绑定天工账号。" : "Bind a TianGong account first.");
-      return;
-    }
-    setRefreshing(true);
-    setRefreshResult(null);
-    setErrorText("");
-    try {
-      const result = await requestJson<RefreshResult>(
-        `${API_BASE}/data-platforms/accounts/${encodeURIComponent(selectedAccount.id)}/refresh-imports`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ kinds: ["flow", "process"], overwrite: true }),
-        },
-      );
-      setRefreshResult(result);
-      setPublishResult(null);
-      const failed = result.failed;
-      onStatus?.(
-        zh
-          ? `已更新已导入：成功 ${result.refreshed}，失败 ${failed}，跳过 ${result.skipped}。`
-          : `Imports refreshed: ${result.refreshed} succeeded, ${failed} failed, ${result.skipped} skipped.`,
-      );
-      await loadSyncHistory();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "refresh failed";
-      const truncated = message.length > 120 ? message.slice(0, 120) + "…" : message;
-      setErrorText(zh ? `更新已导入失败：${message}` : `Refresh imports failed: ${message}`);
-      setRefreshResult({
-        account_id: selectedAccount.id,
-        platform: selectedAccount.platform,
-        total: 0,
-        refreshed: 0,
-        failed: 1,
-        skipped: 0,
-        items: [{ local_kind: "-", remote_id: "-", remote_version: null, status: "failed", error: truncated }],
-      });
-    } finally {
-      setRefreshing(false);
-    }
-  };
-
   const searchRemote = async (nextPage = remotePage) => {
     if (!selectedAccount) {
       setErrorText(zh ? "请先绑定天工账号。" : "Bind a TianGong account first.");
@@ -510,7 +460,7 @@ export function ExternalPlatformAccounts(props: Props) {
     }
   };
 
-  const syncRemoteItem = async (item: RemoteItem) => {
+  const performRemoteSync = async (item: RemoteItem) => {
     if (!selectedAccount) return;
     const remoteId = item.remote_id;
     const key = `${remoteKind}:${remoteId}`;
@@ -529,7 +479,6 @@ export function ExternalPlatformAccounts(props: Props) {
         body: JSON.stringify(body),
       });
       setLastSync(result);
-      setRefreshResult(null);
       setPublishResult(null);
       const report = result.tidas_import_report;
       const failed = Number(report?.failed ?? 0);
@@ -541,11 +490,41 @@ export function ExternalPlatformAccounts(props: Props) {
       );
       await loadSyncHistory();
     } catch (error) {
+      const syncError = error as RemoteSyncError;
       const message = error instanceof Error ? error.message : "sync failed";
-      setErrorText(zh ? `导入失败：${message}` : `Import failed: ${message}`);
+      const failedFlow = syncError.failedFlowUuid
+        ? (zh ? `；失败 Flow：${syncError.failedFlowUuid}` : `; failed flow: ${syncError.failedFlowUuid}`)
+        : "";
+      const rollback = syncError.rolledBack
+        ? (zh ? "；本次范围已回滚" : "; scoped changes rolled back")
+        : "";
+      setErrorText(zh ? `导入失败：${message}${failedFlow}${rollback}` : `Import failed: ${message}${failedFlow}${rollback}`);
     } finally {
       setSyncingKey("");
     }
+  };
+
+  const syncRemoteItem = async (item: RemoteItem) => {
+    if (remoteKind !== "models") {
+      await performRemoteSync(item);
+      return;
+    }
+    const previewMatches = remotePreview
+      && remotePreview.remote_id === item.remote_id
+      && (remotePreview.remote_version ?? null) === (item.remote_version ?? null);
+    if (!previewMatches) {
+      setErrorText(zh ? "模型导入前需要先预览当前版本。" : "Preview the current model version before importing.");
+      onStatus?.(zh ? "请先预览该模型的当前版本。" : "Preview this model version first.");
+      return;
+    }
+    setModelSyncConfirm({ open: true, item });
+  };
+
+  const confirmModelSync = async () => {
+    const item = modelSyncConfirm.item;
+    setModelSyncConfirm({ open: false, item: null });
+    if (!item || !selectedAccount) return;
+    await performRemoteSync(item);
   };
 
   const publishLocalRecord = async (record: SyncRecord) => {
@@ -565,7 +544,6 @@ export function ExternalPlatformAccounts(props: Props) {
         },
       );
       setPublishResult(result);
-      setRefreshResult(null);
       setLastSync(null);
       onStatus?.(
         zh
@@ -633,11 +611,6 @@ export function ExternalPlatformAccounts(props: Props) {
           {selectedAccount && (
             <button type="button" className="pm-ghost-btn" onClick={() => void testAccount(selectedAccount.id)} disabled={testingId === selectedAccount.id}>
               {testingId === selectedAccount.id ? (zh ? "校验中" : "Checking") : (zh ? "校验" : "Check")}
-            </button>
-          )}
-          {selectedAccount && selectedAccount.last_validation_status === "ok" && (
-            <button type="button" className="pm-primary-btn" onClick={() => void refreshImports()} disabled={refreshing || !selectedAccount}>
-              {refreshing ? (zh ? "更新中..." : "Refreshing...") : (zh ? "更新已导入" : "Refresh Imports")}
             </button>
           )}
           <button type="button" className="pm-ghost-btn" onClick={() => selectedAccount ? editAccount(selectedAccount) : openNewAccountDialog()}>
@@ -739,7 +712,7 @@ export function ExternalPlatformAccounts(props: Props) {
                           {previewLoadingKey === key ? (zh ? "预览中" : "Previewing") : (zh ? "预览" : "Preview")}
                         </button>
                         <button type="button" className="pm-link-btn primary" onClick={() => void syncRemoteItem(item)} disabled={syncingKey === key}>
-                          {syncingKey === key ? (zh ? "导入中" : "Importing") : (zh ? "导入" : "Import")}
+                          {syncingKey === key ? (zh ? "导入中" : "Importing") : (zh ? "导入/更新" : "Import/Update")}
                         </button>
                       </div>
                     </td>
@@ -769,27 +742,18 @@ export function ExternalPlatformAccounts(props: Props) {
         </div>
       </div>
 
-      {(refreshResult || lastSync?.tidas_import_report || publishResult) && (
+      {(lastSync?.tidas_import_report || publishResult) && (
         <div className="pm-refresh-result-strip">
           <div className="pm-refresh-result-content">
-            {refreshResult ? (
-              <>
-                <strong>{zh ? "最近更新" : "Last Refresh"}</strong>
-                <span>{zh ? `成功 ${refreshResult.refreshed}` : `${refreshResult.refreshed} refreshed`}</span>
-                <span>{zh ? `失败 ${refreshResult.failed}` : `${refreshResult.failed} failed`}</span>
-                <span>{zh ? `跳过 ${refreshResult.skipped}` : `${refreshResult.skipped} skipped`}</span>
-                {(refreshResult.items ?? []).some((item) => item.error) && (
-                  <span className="pm-refresh-result-error" title={(refreshResult.items ?? []).filter((i) => i.error).map((i) => i.error).join("; ")}>
-                    {zh ? "含错误" : "Has errors"}
-                  </span>
-                )}
-              </>
-            ) : lastSync?.tidas_import_report ? (
+            {lastSync?.tidas_import_report ? (
               <>
                 <strong>{zh ? "最近导入" : "Last Import"}</strong>
                 <span>{zh ? `新增 ${lastSync?.tidas_import_report?.inserted ?? 0}` : `${lastSync?.tidas_import_report?.inserted ?? 0} inserted`}</span>
                 <span>{zh ? `更新 ${lastSync?.tidas_import_report?.updated ?? 0}` : `${lastSync?.tidas_import_report?.updated ?? 0} updated`}</span>
                 <span>{zh ? `失败 ${lastSync?.tidas_import_report?.failed ?? 0}` : `${lastSync?.tidas_import_report?.failed ?? 0} failed`}</span>
+                {lastSync.flow_count !== undefined && (
+                  <span>{zh ? `引用 Flow ${lastSync.flow_count}` : `${lastSync.flow_count} referenced flows`}</span>
+                )}
                 <span>
                   {zh
                     ? `警告 ${Number(lastSync?.tidas_import_report?.warning_count ?? 0) + Number(lastSync?.tidas_import_report?.unresolved_count ?? 0)}`
@@ -815,7 +779,6 @@ export function ExternalPlatformAccounts(props: Props) {
             type="button"
             className="pm-refresh-result-close"
             onClick={() => {
-              setRefreshResult(null);
               setLastSync(null);
               setPublishResult(null);
             }}
@@ -1026,6 +989,59 @@ export function ExternalPlatformAccounts(props: Props) {
             </div>
           )}
         </aside>
+      )}
+
+      {modelSyncConfirm.open && modelSyncConfirm.item && (
+        <div className="pm-modal-mask" onClick={() => setModelSyncConfirm({ open: false, item: null })}>
+          <div className="pm-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="pm-modal-head">
+              <strong>{zh ? "确认导入模型" : "Confirm Model Import"}</strong>
+              <button type="button" className="pm-link-btn" onClick={() => setModelSyncConfirm({ open: false, item: null })}>
+                {zh ? "关闭" : "Close"}
+              </button>
+            </div>
+            <p>
+              {zh
+                ? `即将导入模型：${modelSyncConfirm.item.model_name ?? modelSyncConfirm.item.remote_id}`
+                : `About to import model: ${modelSyncConfirm.item.model_name ?? modelSyncConfirm.item.remote_id}`}
+            </p>
+            {(() => {
+              const relatedCount = Array.isArray(remotePreview?.related) ? remotePreview.related.length : 0;
+              if (relatedCount > 0) {
+                return (
+                  <p>
+                    {zh
+                      ? `此模型依赖 ${relatedCount} 个关联项（交换流 / 上下游数据）。导入时将一并处理这些依赖。`
+                      : `This model depends on ${relatedCount} related item(s) (exchanges / upstream-downstream data). Dependencies will be processed during import.`}
+                  </p>
+                );
+              }
+              return (
+                <p>
+                  {zh ? "此模型当前没有已知的依赖项。" : "This model has no known dependencies from the preview."}
+                </p>
+              );
+            })()}
+            {remotePreview?.warnings && remotePreview.warnings.length > 0 && (
+              <div className="pm-warning" style={{ marginTop: "8px" }}>
+                <strong>{zh ? "警告" : "Warnings"}:</strong>
+                <ul style={{ margin: "4px 0 0 0", paddingLeft: "20px" }}>
+                  {remotePreview.warnings.map((w, idx) => (
+                    <li key={idx}>{w}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <div className="pm-modal-actions">
+              <button type="button" className="pm-ghost-btn" onClick={() => setModelSyncConfirm({ open: false, item: null })}>
+                {zh ? "取消" : "Cancel"}
+              </button>
+              <button type="button" className="pm-primary-btn" onClick={() => void confirmModelSync()} disabled={Boolean(syncingKey)}>
+                {syncingKey ? (zh ? "导入中" : "Importing") : (zh ? "确认导入" : "Confirm Import")}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </section>
   );

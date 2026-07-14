@@ -10,6 +10,7 @@ import { TidasLocationCascade, normalizeTidasLocationValue } from "../TidasLocat
 import { MultiProductAllocationModal } from "./MultiProductAllocationModal";
 import { IntermediateFlowLinkPanel } from "./IntermediateFlowLinkPanel";
 import type { SourcePolicy } from "../ProjectManagement/ProjectManagement";
+import { useTianGongFlowRefresh } from "../../services/tiangongFlowRefresh";
 
 const DEV_NODE_DEBUG = Boolean(import.meta.env.DEV);
 const debugNode = (scope: string, payload?: unknown) => {
@@ -571,6 +572,18 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
   });
 
   const uiLanguage = useLcaGraphStore((state) => state.uiLanguage);
+  const zh = uiLanguage === "zh";
+  const tiangongFlowRefresh = useTianGongFlowRefresh({
+    language: uiLanguage,
+    onSuccess: (result) => {
+      setCatalogFlows((current) => current.map((flow) => (
+        flow.flow_uuid === result.flow_uuid
+          ? { ...flow, ...result.flow }
+          : flow
+      )));
+    },
+    onStatus,
+  });
   const updateNode = useLcaGraphStore((state) => state.updateNode);
   const setNodeMode = useLcaGraphStore((state) => state.setNodeMode);
   const setMarketAllowMixedFlows = useLcaGraphStore((state) => state.setMarketAllowMixedFlows);
@@ -2730,6 +2743,23 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                           {flow.source || "unknown"}
                         </td>
                         <td className="flow-picker-action-cell">
+                          {flow.source === "tiangong" && (
+                            <button
+                              type="button"
+                              className="pm-link-btn"
+                              title={zh ? "从天工平台刷新该 Flow" : "Refresh this flow from TianGong platform"}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void tiangongFlowRefresh.refresh(flow.flow_uuid);
+                              }}
+                              disabled={tiangongFlowRefresh.busyFlowUuid !== ""}
+                              aria-label={zh ? "刷新 Flow" : "Refresh flow"}
+                            >
+                              {tiangongFlowRefresh.busyFlowUuid === flow.flow_uuid
+                                ? (zh ? "刷新中" : "Refreshing")
+                                : (zh ? "刷新" : "Refresh")}
+                            </button>
+                          )}
                           <button type="button" className="flow-picker-use-btn" onClick={() => addCatalogFlow(flow)}>
                             {t("引用", "Use")}
                           </button>

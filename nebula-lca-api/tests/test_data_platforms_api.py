@@ -437,7 +437,7 @@ def test_account_update_with_new_credential_clears_old_validation(client):
         json={"credential": {"username": "new-user@example.com", "password": "new-password"}},
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["last_validated_at"] is None
     assert payload["last_validation_status"] is None
@@ -2064,3 +2064,461 @@ def test_refresh_imports_overwrite_false_uses_skip_mode(client):
     # At minimum the previously-synced flow is present; skip means it won't be re-updated
     # We just verify the call succeeds — exact skip count depends on connector behavior
     assert "total" in data
+
+
+# ======================================================================
+# TianGong On-Demand Flow Refresh Tests
+# ======================================================================
+
+
+def test_tiangong_flow_refresh_success(client, monkeypatch):
+    """Successful refresh of a TianGong flow by local UUID."""
+    account_id = _create_tiangong_account(client)
+    flow_uuid = "test-flow-uuid"
+
+    # Create local flow with source=tiangong
+    db = _db_module.SessionLocal()
+    try:
+        db.add(FlowRecord(
+            flow_uuid=flow_uuid,
+            flow_name="Test Flow",
+            flow_type="Product flow",
+            default_unit="kg",
+            unit_group="Units of mass",
+            source="tiangong",
+            is_custom=False,
+        ))
+        db.add(ExternalDataSyncRecord(
+            account_id=account_id,
+            platform="tiangong",
+            local_kind="flow",
+            local_uuid=flow_uuid,
+            remote_id=flow_uuid,  # remote_id equals local UUID for simple case
+            remote_version="1",
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    def fake_urlopen(req, timeout):  # noqa: ARG001
+        url = req.full_url
+        if "/auth/v1/token?grant_type=password" in url:
+            return _FakeSupabaseResponse({"access_token": _jwt(), "refresh_token": "rt", "expires_in": 3600, "token_type": "bearer"})
+        if "/rest/v1/flows" in url and flow_uuid in url:
+            # Top-level row id becomes flow_uuid via _tiangong_flow_from_row
+            return _FakeSupabaseResponse([{
+                "id": flow_uuid,
+                "name": "Updated Test Flow",
+                "version": "2",
+                "json": {"flowDataSet": {"flowInformation": {"dataSetInformation": {"common:name": "Updated Test Flow"}}}},
+            }])
+        if "/rest/v1/flowproperties" in url:
+            return _FakeSupabaseResponse([_flowproperty_row()])
+        if "/rest/v1/unitgroups" in url:
+            return _FakeSupabaseResponse([_unitgroup_row()])
+        raise AssertionError(f"Unexpected URL {url}")
+
+    monkeypatch.setattr("app.services.data_platform_connectors.url_request.urlopen", fake_urlopen)
+
+    response = client.post(f"/api/data-platforms/tiangong/flows/{flow_uuid}/refresh", json={})
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["flow_uuid"] == flow_uuid
+    assert data["remote_id"] == flow_uuid
+    assert data["status"] == "refreshed"
+
+
+def test_tiangong_flow_refresh_with_different_lineage_remote_id(client, monkeypatch):
+    """When lineage remote_id differs from local UUID, use lineage remote_id to fetch,
+    but the RemoteFlowDTO.flow_uuid must still match local UUID."""
+    account_id = _create_tiangong_account(client)
+    flow_uuid = "local-flow-uuid"
+    lineage_remote_id = "remote-lineage-456"
+
+    db = _db_module.SessionLocal()
+    try:
+        db.add(FlowRecord(
+            flow_uuid=flow_uuid,
+            flow_name="Test Flow",
+            flow_type="Product flow",
+            default_unit="kg",
+            unit_group="Units of mass",
+            source="tiangong",
+            is_custom=False,
+        ))
+        db.add(ExternalDataSyncRecord(
+            account_id=account_id,
+            platform="tiangong",
+            local_kind="flow",
+            local_uuid=flow_uuid,
+            remote_id=lineage_remote_id,  # lineage remote_id differs from local UUID
+            remote_version="1",
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    # Monkeypatch connector_for_account to return a fake connector
+    def fake_connector_for_account(ctx):
+        class FakeConnector:
+            def get_flow_detail(self, remote_id, remote_version=None):
+                assert remote_id == lineage_remote_id  # Receives the lineage remote_id
+                # Returns RemoteFlowDTO with flow_uuid matching local UUID
+                from app.services.data_platform_connectors import RemoteFlowDTO
+                return RemoteFlowDTO(
+                    remote_id=lineage_remote_id,
+                    flow_uuid=flow_uuid,  # Must match local UUID
+                    flow_name="Synced Flow",
+                    source="tiangong",
+                    remote_version="2",
+                )
+            def get_flow_dependency_unit_groups(self, flow):
+                return []
+        return FakeConnector()
+
+    monkeypatch.setattr("app.api.data_platforms.connector_for_account", fake_connector_for_account)
+
+    response = client.post(f"/api/data-platforms/tiangong/flows/{flow_uuid}/refresh", json={})
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["flow_uuid"] == flow_uuid
+    assert data["remote_id"] == lineage_remote_id
+    assert data["status"] == "refreshed"
+
+
+def test_tiangong_flow_refresh_flow_not_found(client, monkeypatch):
+    """Refresh should return 404 when local flow does not exist."""
+    _create_tiangong_account(client)
+    flow_uuid = "nonexistent-flow"
+
+    response = client.post(f"/api/data-platforms/tiangong/flows/{flow_uuid}/refresh", json={})
+    assert response.status_code == 404
+    data = response.json()
+    assert data["detail"]["code"] == "FLOW_NOT_FOUND"
+
+
+def test_tiangong_flow_refresh_invalid_source(client, monkeypatch):
+    """Refresh should reject flows with source != tiangong."""
+    account_id = _create_tiangong_account(client)
+    flow_uuid = "local-flow-wrong-source"
+
+    db = _db_module.SessionLocal()
+    try:
+        db.add(FlowRecord(
+            flow_uuid=flow_uuid,
+            flow_name="Local Flow",
+            flow_type="Product flow",
+            default_unit="kg",
+            unit_group="Units of mass",
+            source="local",  # Not tiangong
+            is_custom=True,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(f"/api/data-platforms/tiangong/flows/{flow_uuid}/refresh", json={})
+    assert response.status_code == 400
+    data = response.json()
+    assert data["detail"]["code"] == "TIANGONG_REFRESH_INVALID_SOURCE"
+    assert "tiangong" in data["detail"]["message"]
+
+
+def test_tiangong_flow_refresh_uuid_mismatch(client, monkeypatch):
+    """Refresh should reject when remote UUID differs from local UUID."""
+    account_id = _create_tiangong_account(client)
+    flow_uuid = "local-flow-uuid"
+
+    db = _db_module.SessionLocal()
+    try:
+        db.add(FlowRecord(
+            flow_uuid=flow_uuid,
+            flow_name="Test Flow",
+            flow_type="Product flow",
+            default_unit="kg",
+            unit_group="Units of mass",
+            source="tiangong",
+            is_custom=False,
+        ))
+        db.add(ExternalDataSyncRecord(
+            account_id=account_id,
+            platform="tiangong",
+            local_kind="flow",
+            local_uuid=flow_uuid,
+            remote_id="different-remote-uuid",
+            remote_version="1",
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    def fake_urlopen(req, timeout):  # noqa: ARG001
+        url = req.full_url
+        if "/auth/v1/token?grant_type=password" in url:
+            return _FakeSupabaseResponse({"access_token": _jwt(), "refresh_token": "rt", "expires_in": 3600, "token_type": "bearer"})
+        if "/rest/v1/flows" in url:
+            # Return a flow with different UUID
+            return _FakeSupabaseResponse([{
+                "id": "different-remote-uuid",
+                "name": "Different Flow",
+                "version": "1",
+                "json": {"flowDataSet": {"flowInformation": {"dataSetInformation": {"common:UUID": "different-uuid"}}}},
+            }])
+        raise AssertionError(f"Unexpected URL {url}")
+
+    monkeypatch.setattr("app.services.data_platform_connectors.url_request.urlopen", fake_urlopen)
+
+    response = client.post(f"/api/data-platforms/tiangong/flows/{flow_uuid}/refresh", json={})
+    assert response.status_code == 409
+    data = response.json()
+    assert data["detail"]["code"] == "TIANGONG_UUID_MISMATCH"
+
+
+def test_tiangong_flow_refresh_rate_limit_429(client, monkeypatch):
+    """Refresh should propagate HTTP 429 as TIANGONG_RATE_LIMITED."""
+    from urllib.error import HTTPError
+    import io
+
+    account_id = _create_tiangong_account(client)
+    flow_uuid = "rate-limited-flow"
+
+    db = _db_module.SessionLocal()
+    try:
+        db.add(FlowRecord(
+            flow_uuid=flow_uuid,
+            flow_name="Rate Limited Flow",
+            flow_type="Product flow",
+            default_unit="kg",
+            unit_group="Units of mass",
+            source="tiangong",
+            is_custom=False,
+        ))
+        db.add(ExternalDataSyncRecord(
+            account_id=account_id,
+            platform="tiangong",
+            local_kind="flow",
+            local_uuid=flow_uuid,
+            remote_id="remote-flow",
+            remote_version="1",
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    def fake_urlopen(req, timeout):  # noqa: ARG001
+        url = req.full_url
+        if "/auth/v1/token?grant_type=password" in url:
+            return _FakeSupabaseResponse({"access_token": _jwt(), "refresh_token": "rt", "expires_in": 3600, "token_type": "bearer"})
+        if "/rest/v1/flows" in url:
+            raise HTTPError(url, 429, "Too Many Requests", hdrs=None, fp=io.BytesIO(b'{"error_description": "Rate limit exceeded"}'))
+        raise AssertionError(f"Unexpected URL {url}")
+
+    monkeypatch.setattr("app.services.data_platform_connectors.url_request.urlopen", fake_urlopen)
+
+    response = client.post(f"/api/data-platforms/tiangong/flows/{flow_uuid}/refresh", json={})
+    assert response.status_code == 429
+    data = response.json()
+    assert data["detail"]["code"] == "TIANGONG_RATE_LIMITED"
+
+
+def test_tiangong_flow_refresh_falls_back_to_local_uuid(client, monkeypatch):
+    """When no sync record exists, refresh should use local UUID as remote_id."""
+    account_id = _create_tiangong_account(client)
+    flow_uuid = "fallback-flow-uuid"
+
+    db = _db_module.SessionLocal()
+    try:
+        db.add(FlowRecord(
+            flow_uuid=flow_uuid,
+            flow_name="Fallback Flow",
+            flow_type="Product flow",
+            default_unit="kg",
+            unit_group="Units of mass",
+            source="tiangong",
+            is_custom=False,
+        ))
+        # No ExternalDataSyncRecord
+        db.commit()
+    finally:
+        db.close()
+
+    def fake_urlopen(req, timeout):  # noqa: ARG001
+        url = req.full_url
+        if "/auth/v1/token?grant_type=password" in url:
+            return _FakeSupabaseResponse({"access_token": _jwt(), "refresh_token": "rt", "expires_in": 3600, "token_type": "bearer"})
+        if "/rest/v1/flows" in url and flow_uuid in url:
+            return _FakeSupabaseResponse([{
+                "id": flow_uuid,
+                "name": "Fallback Flow",
+                "version": "1",
+                "json": {"flowDataSet": {"flowInformation": {"dataSetInformation": {"common:name": "Fallback Flow"}}}},
+            }])
+        if "/rest/v1/flowproperties" in url:
+            return _FakeSupabaseResponse([_flowproperty_row()])
+        if "/rest/v1/unitgroups" in url:
+            return _FakeSupabaseResponse([_unitgroup_row()])
+        raise AssertionError(f"Unexpected URL {url}")
+
+    monkeypatch.setattr("app.services.data_platform_connectors.url_request.urlopen", fake_urlopen)
+
+    response = client.post(f"/api/data-platforms/tiangong/flows/{flow_uuid}/refresh", json={})
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["flow_uuid"] == flow_uuid
+    assert data["remote_id"] == flow_uuid
+
+
+# ======================================================================
+# Process/Model Dependency Atomic Sync Regression Tests
+# ======================================================================
+
+
+def test_process_sync_dependency_failure_rolls_back(client, monkeypatch):
+    """Process sync with a failing dependency flow must rollback all scoped writes."""
+    account_id = _create_mock_account(client)
+
+    def fake_connector_get_process_detail(remote_id, remote_version=None):
+        from app.services.data_platform_connectors import (
+            RemoteFlowDTO, RemoteProcessDTO, RemoteProcessDetailDTO,
+        )
+        process = RemoteProcessDTO(
+            remote_id=remote_id, process_uuid="proc-dep-fail",
+            process_name="Dep Fail Process", process_type="unit_process",
+            reference_flow_uuid="flow-main", source="mock",
+            remote_version=remote_version,
+        )
+        flows = [
+            RemoteFlowDTO(remote_id="flow-main", flow_uuid="flow-main", flow_name="Main", source="mock", remote_version="1"),
+            RemoteFlowDTO(remote_id="flow-missing-dep", flow_uuid="flow-missing-dep", flow_name="Missing", source="mock", remote_version="1"),
+        ]
+        process_json = {
+            "process_uuid": "proc-dep-fail", "process_name": "Dep Fail Process",
+            "reference_flow_uuid": "flow-main",
+            "exchanges": [
+                {"flow_uuid": "flow-main", "flow_name": "Main", "direction": "output", "amount": 1, "unit": "kg"},
+                {"flow_uuid": "flow-missing-dep", "flow_name": "Missing", "direction": "input", "amount": 0.5, "unit": "kg"},
+            ],
+        }
+        return RemoteProcessDetailDTO(
+            process=process,
+            flows=flows,
+            process_json=process_json,
+            import_report={"failed_flow_uuids": ["flow-missing-dep"]},
+        )
+
+    def fake_connector_for_account(ctx):
+        class FC:
+            def get_process_detail(self, remote_id, remote_version=None):
+                return fake_connector_get_process_detail(remote_id, remote_version)
+            def get_flow_detail(self, flow_uuid, remote_version=None):
+                raise ConnectorError(f"Flow not found: {flow_uuid}", status_code=404)
+            def get_flow_dependency_unit_groups(self, flow):
+                return []
+        return FC()
+
+    monkeypatch.setattr("app.api.data_platforms.connector_for_account", fake_connector_for_account)
+
+    response = client.post(
+        f"/api/data-platforms/accounts/{account_id}/processes/sync",
+        json={"remote_process_id": "proc-dep-fail", "overwrite": True},
+    )
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert detail["code"] == "DATA_PLATFORM_SYNC_FAILED"
+    assert detail["failed_flow_uuid"] == "flow-missing-dep"
+    assert detail["rolled_back"] is True
+
+    db = _db_module.SessionLocal()
+    try:
+        assert db.query(FlowRecord).count() == 0
+        assert db.query(ReferenceProcess).count() == 0
+    finally:
+        db.close()
+
+
+def test_model_sync_dependency_failure_rolls_back(client, monkeypatch):
+    """Model sync with a failing dependency flow must rollback all scoped writes."""
+    account_id = _create_mock_account(client)
+    model_json = {"hybrid_graph": _graph_payload()}
+
+    def fake_connector_get_model_detail(remote_id, remote_version=None):
+        from app.services.data_platform_connectors import RemoteModelDTO, RemoteModelDetailDTO
+        model = RemoteModelDTO(remote_id=remote_id, model_uuid=remote_id, model_name="Test Model", source="mock", remote_version=remote_version)
+        return RemoteModelDetailDTO(model=model, model_json=model_json, lineage={"source": "mock"})
+
+    def fake_connector_for_account(ctx):
+        class FC:
+            def get_model_detail(self, remote_id, remote_version=None):
+                return fake_connector_get_model_detail(remote_id, remote_version)
+            def get_flow_detail(self, flow_uuid, remote_version=None):
+                raise ConnectorError(f"Flow not found: {flow_uuid}", status_code=404)
+            def get_flow_dependency_unit_groups(self, flow):
+                return []
+        return FC()
+
+    monkeypatch.setattr("app.api.data_platforms.connector_for_account", fake_connector_for_account)
+
+    response = client.post(
+        f"/api/data-platforms/accounts/{account_id}/models/sync",
+        json={"remote_model_id": "model-dep-fail", "remote_version": "1"},
+    )
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "DATA_PLATFORM_MODEL_SYNC_FAILED" in detail["code"]
+    assert detail["failed_flow_uuid"] is not None
+    assert detail["rolled_back"] is True
+
+    db = _db_module.SessionLocal()
+    try:
+        assert db.query(Model).count() == 0
+        assert db.query(ModelVersion).count() == 0
+    finally:
+        db.close()
+
+
+def test_process_sync_fetched_once(client, monkeypatch):
+    """Process sync: duplicate exchange flow UUIDs must fetch each flow once."""
+    account_id = _create_mock_account(client)
+    fetch_calls = []
+
+    def fake_connector_get_process_detail(remote_id, remote_version=None):
+        from app.services.data_platform_connectors import (
+            RemoteFlowDTO, RemoteProcessDTO, RemoteProcessDetailDTO,
+        )
+        process = RemoteProcessDTO(
+            remote_id=remote_id, process_uuid="proc-dup-1",
+            process_name="Dup Process", process_type="unit_process",
+            reference_flow_uuid="flow-dup", source="mock",
+            remote_version=remote_version,
+        )
+        flows = [RemoteFlowDTO(remote_id="flow-dup", flow_uuid="flow-dup", flow_name="Dup Flow", source="mock", remote_version="1")]
+        process_json = {
+            "process_uuid": "proc-dup-1", "process_name": "Dup Process",
+            "reference_flow_uuid": "flow-dup",
+            "exchanges": [
+                {"flow_uuid": "flow-dup", "flow_name": "Dup Flow", "direction": "output", "amount": 1, "unit": "kg"},
+                {"flow_uuid": "flow-dup", "flow_name": "Dup Flow", "direction": "input", "amount": 0.5, "unit": "kg"},
+            ],
+        }
+        return RemoteProcessDetailDTO(process=process, flows=flows, process_json=process_json)
+
+    def fake_connector_for_account(ctx):
+        class FC:
+            def get_process_detail(self, remote_id, remote_version=None):
+                return fake_connector_get_process_detail(remote_id, remote_version)
+            def get_flow_detail(self, flow_uuid, remote_version=None):
+                fetch_calls.append(flow_uuid)
+                from app.services.data_platform_connectors import RemoteFlowDTO
+                return RemoteFlowDTO(remote_id=flow_uuid, flow_uuid=flow_uuid, flow_name="Dup Flow", source="mock", remote_version="1")
+            def get_flow_dependency_unit_groups(self, flow):
+                return []
+        return FC()
+
+    monkeypatch.setattr("app.api.data_platforms.connector_for_account", fake_connector_for_account)
+
+    response = client.post(
+        f"/api/data-platforms/accounts/{account_id}/processes/sync",
+        json={"remote_process_id": "proc-dup-1", "overwrite": True},
+    )
+    assert response.status_code == 200, response.text
+    assert fetch_calls == [], f"Expected no additional fetches, got: {fetch_calls}"
