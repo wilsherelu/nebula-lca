@@ -515,6 +515,10 @@ class FlowListItem(BaseModel):
     allocation_properties: list[dict] = Field(default_factory=list)
     used_in_processes: int = 0
     last_modified: str | None = None
+    conversion_compatible: bool | None = None
+    conversion_mode: Literal["bidirectional", "canonical", "one_way_canonicalization"] | None = None
+    conversion_target_flow_uuid: str | None = None
+    conversion_package_version: str | None = None
 
 
 class PaginatedFlowsResponse(BaseModel):
@@ -1424,6 +1428,10 @@ class TidasExportReadinessResponse(BaseModel):
     reference_flow_by_process: dict[str, str] = Field(default_factory=dict, description="Reference flow by process UUID")
     missing_flows: list[str] = Field(default_factory=list, description="List of missing flow UUIDs")
     missing_processes: list[str] = Field(default_factory=list, description="List of missing process UUIDs")
+    elementary_flow_conversion: dict = Field(
+        default_factory=dict,
+        description="Certified elementary-flow conversion summary for the EF shadow export view",
+    )
 
     model_config = ConfigDict(protected_namespaces=())
 

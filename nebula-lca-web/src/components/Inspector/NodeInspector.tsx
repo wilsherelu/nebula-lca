@@ -44,6 +44,10 @@ type CatalogFlow = {
   compartment?: string | null;
   source?: string | null;
   is_custom?: boolean;
+  conversion_compatible?: boolean | null;
+  conversion_mode?: "bidirectional" | "canonical" | "one_way_canonicalization" | null;
+  conversion_target_flow_uuid?: string | null;
+  conversion_package_version?: string | null;
 };
 
 type UnitDefinition = {
@@ -511,6 +515,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
   const [flowSearchQuery, setFlowSearchQuery] = useState("");
   const [flowCategoryLevel1, setFlowCategoryLevel1] = useState("");
   const [flowSourceFilter, setFlowSourceFilter] = useState("");
+  const [flowConversionCompatibleOnly, setFlowConversionCompatibleOnly] = useState(false);
   const [flowCategoryOptions, setFlowCategoryOptions] = useState<Array<{ category: string; count: number }>>([]);
   const [catalogFlows, setCatalogFlows] = useState<CatalogFlow[]>([]);
   const [allocationPropertyPort, setAllocationPropertyPort] = useState<FlowPort | null>(null);
@@ -1487,6 +1492,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     setFlowSearchInput("");
     setFlowSearchQuery("");
     setFlowSourceFilter("");
+    setFlowConversionCompatibleOnly(false);
     setFlowLoadError("");
     setFlowPage(1);
     setFlowTotal(0);
@@ -1522,6 +1528,9 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     const sourceSpace = flowSourceSpaceForRequest(flowSourceFilter, sourcePolicy, isElementaryTarget);
     if (sourceSpace) {
       params.set("source_space", sourceSpace);
+    }
+    if (isElementaryTarget && flowConversionCompatibleOnly) {
+      params.set("conversion_target", "ef_tidas");
     }
     params.set("_ts", String(Date.now()));
     const endpoint = `${API_BASE}/flows?${params.toString()}`;
@@ -1571,6 +1580,10 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                 null,
               source: (row.source as string | null | undefined) ?? null,
               is_custom: Boolean(row.is_custom),
+              conversion_compatible: Boolean(row.conversion_compatible),
+              conversion_mode: (row.conversion_mode as CatalogFlow["conversion_mode"]) ?? null,
+              conversion_target_flow_uuid: (row.conversion_target_flow_uuid as string | null | undefined) ?? null,
+              conversion_package_version: (row.conversion_package_version as string | null | undefined) ?? null,
             };
           });
           setCatalogFlows(rows);
@@ -1592,7 +1605,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     return () => {
       canceled = true;
     };
-  }, [flowCategoryLevel1, flowPage, flowPicker.open, flowPicker.target, flowSearchQuery, flowPageSize, flowSourceFilter, sourcePolicy]);
+  }, [flowCategoryLevel1, flowConversionCompatibleOnly, flowPage, flowPicker.open, flowPicker.target, flowSearchQuery, flowPageSize, flowSourceFilter, sourcePolicy]);
 
   useEffect(() => {
     if (!flowPicker.open) {
@@ -1609,6 +1622,9 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     const sourceSpace = flowSourceSpaceForRequest(flowSourceFilter, sourcePolicy, isElementaryTarget);
     if (sourceSpace) {
       params.set("source_space", sourceSpace);
+    }
+    if (isElementaryTarget && flowConversionCompatibleOnly) {
+      params.set("conversion_target", "ef_tidas");
     }
     params.set("_ts", String(Date.now()));
     fetch(`${API_BASE}/flows/categories?${params.toString()}`, { cache: "no-store" })
@@ -1639,7 +1655,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     return () => {
       canceled = true;
     };
-  }, [flowPicker.open, flowPicker.target, flowSourceFilter, sourcePolicy]);
+  }, [flowConversionCompatibleOnly, flowPicker.open, flowPicker.target, flowSourceFilter, sourcePolicy]);
 
   useEffect(() => {
     let canceled = false;
@@ -2637,6 +2653,20 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                   <option value="tiangong">TIDAS/EF</option>
                   <option value="custom">custom</option>
                 </select>
+                {flowPicker.target?.includes("elementary") && (
+                  <label className="flow-picker-compatible-toggle">
+                    <input
+                      type="checkbox"
+                      checked={flowConversionCompatibleOnly}
+                      onChange={(event) => {
+                        setFlowConversionCompatibleOnly(event.target.checked);
+                        setFlowCategoryLevel1("");
+                        setFlowPage(1);
+                      }}
+                    />
+                    <span>{t("仅显示 EF/ecoinvent 可转换流", "Convertible EF/ecoinvent only")}</span>
+                  </label>
+                )}
                 <button type="button" className="search-btn" onClick={applyFlowSearch}>
                   {t("检索", "Search")}
                 </button>
@@ -2674,7 +2704,19 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                       <tr key={flow.flow_uuid}>
                         <td className="flow-picker-type-cell">{displayFlowType(flow.flow_type)}</td>
                         <td className="flow-picker-name-cell" title={getCatalogFlowDisplayName(flow, uiLanguage)}>
-                          {getCatalogFlowDisplayName(flow, uiLanguage)}
+                          <span>{getCatalogFlowDisplayName(flow, uiLanguage)}</span>
+                          {flow.conversion_compatible && (
+                            <span
+                              className={`flow-conversion-badge flow-conversion-badge-${flow.conversion_mode ?? "canonical"}`}
+                              title={`${t("EF 目标", "EF target")}: ${flow.conversion_target_flow_uuid ?? flow.flow_uuid}`}
+                            >
+                              {flow.conversion_mode === "bidirectional"
+                                ? t("双向", "Bidirectional")
+                                : flow.conversion_mode === "one_way_canonicalization"
+                                  ? t("单向规范化", "One-way")
+                                  : t("EF 规范流", "Canonical EF")}
+                            </span>
+                          )}
                         </td>
                         <td>{flow.default_unit}</td>
                         <td className="flow-picker-category-cell" title={flow.compartment || "-"}>

@@ -2466,8 +2466,27 @@ body,
 }
 
 .flow-picker-search-row {
-  grid-template-columns: minmax(260px, 1fr) minmax(220px, 320px) 104px auto;
+  grid-template-columns: minmax(240px, 1fr) minmax(190px, 280px) 104px auto auto;
   gap: 10px;
+}
+
+.flow-picker-compatible-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  color: #31536a;
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.flow-picker-compatible-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #0876df;
 }
 
 .flow-picker-create-btn {
@@ -2507,6 +2526,27 @@ body,
 .flow-picker-name-col,
 .flow-picker-name-cell {
   width: 280px;
+}
+
+.flow-conversion-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  margin-top: 5px;
+  padding: 2px 7px;
+  border: 1px solid #b8d5ef;
+  border-radius: 999px;
+  background: #f1f8ff;
+  color: #0876df;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.flow-conversion-badge-one_way_canonicalization {
+  border-color: #e5ca8c;
+  background: #fff8e8;
+  color: #8a5a00;
 }
 
 .flow-picker-unit-col {

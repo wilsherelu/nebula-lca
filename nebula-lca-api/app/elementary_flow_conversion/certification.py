@@ -117,6 +117,7 @@ def _package_hash(
     scope: MethodScope,
     forward: Sequence[DirectionalMapping],
     reverse: Sequence[DirectionalMapping],
+    one_way: Sequence[DirectionalMapping],
     cf_registry: CfRegistry,
 ) -> str:
     def flow_row(flow: FlowIdentity) -> dict[str, object]:
@@ -138,8 +139,8 @@ def _package_hash(
         }
 
     relevant_flow_keys = sorted(
-        {edge.source.key for edge in (*forward, *reverse)}
-        | {edge.target.key for edge in (*forward, *reverse)}
+        {edge.source.key for edge in (*forward, *reverse, *one_way)}
+        | {edge.target.key for edge in (*forward, *reverse, *one_way)}
     )
     cf_rows = {
         flow_key: {
@@ -166,6 +167,7 @@ def _package_hash(
         "absolute_tolerance": scope.absolute_tolerance,
         "forward": [edge_row(edge) for edge in sorted(forward, key=lambda item: item.source.key)],
         "reverse": [edge_row(edge) for edge in sorted(reverse, key=lambda item: item.source.key)],
+        "one_way": [edge_row(edge) for edge in sorted(one_way, key=lambda item: item.source.key)],
         "characterization_factors": cf_rows,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -179,6 +181,7 @@ def compile_bidirectional_core(
     method_scope: MethodScope,
     forward_candidates: Sequence[DirectionalMapping],
     reverse_candidates: Sequence[DirectionalMapping],
+    one_way_candidates: Sequence[DirectionalMapping] = (),
     cf_registry: CfRegistry,
 ) -> CompilationResult:
     """Publish only reviewed, bijective and method-invariant flow pairs.
@@ -196,6 +199,7 @@ def compile_bidirectional_core(
     }
     accepted_forward: list[DirectionalMapping] = []
     accepted_reverse: list[DirectionalMapping] = []
+    accepted_one_way: list[DirectionalMapping] = []
     rejected: list[RejectedMapping] = []
 
     for mapping in forward_candidates:
@@ -219,14 +223,51 @@ def compile_bidirectional_core(
         accepted_forward.append(mapping)
         accepted_reverse.append(reverse)
 
+    one_way_source_degree = Counter(edge.source.key for edge in one_way_candidates)
+    bidirectional_source_keys = {
+        edge.source.key for edge in (*accepted_forward, *accepted_reverse)
+    }
+    for mapping in one_way_candidates:
+        codes: list[str] = []
+        if mapping.grade != MappingGrade.S1 or mapping.semantic_status != SemanticStatus.EXACT:
+            codes.append("NOT_S1_EXACT")
+        if mapping.review_status != "approved":
+            codes.append("NOT_APPROVED")
+        if not mapping.evidence_ids:
+            codes.append("MISSING_EVIDENCE")
+        if mapping.source.semantic_key != mapping.target.semantic_key:
+            codes.append("SEMANTIC_KEY_MISMATCH")
+        if one_way_source_degree[mapping.source.key] != 1:
+            codes.append("AMBIGUOUS_ONE_WAY_SOURCE")
+        if mapping.source.key in bidirectional_source_keys:
+            codes.append("SOURCE_ALREADY_BIDIRECTIONAL")
+        codes.extend(
+            _cf_codes(
+                mapping.source.key,
+                mapping.target.key,
+                mapping.amount_factor,
+                cf_registry,
+                method_scope,
+            )
+        )
+        codes = list(dict.fromkeys(codes))
+        if codes:
+            rejected.append(
+                RejectedMapping(mapping.source.key, mapping.target.key, tuple(codes))
+            )
+        else:
+            accepted_one_way.append(mapping)
+
     accepted_forward.sort(key=lambda item: item.source.key)
     accepted_reverse.sort(key=lambda item: item.source.key)
+    accepted_one_way.sort(key=lambda item: item.source.key)
     package_hash = _package_hash(
         package_id,
         package_version,
         method_scope,
         accepted_forward,
         accepted_reverse,
+        accepted_one_way,
         cf_registry,
     )
     package = ConversionPackage(
@@ -236,5 +277,6 @@ def compile_bidirectional_core(
         forward_mappings=tuple(accepted_forward),
         reverse_mappings=tuple(accepted_reverse),
         package_hash=package_hash,
+        one_way_mappings=tuple(accepted_one_way),
     )
     return CompilationResult(package=package, rejected=tuple(rejected))

@@ -442,7 +442,7 @@ class TestPreviewExport:
         assert found, f"Expected PTS error in: {result['errors']}"
 
     def test_preview_ecoinvent_block(self):
-        """ecoinvent elementary → can_export=False, source-space error."""
+        """Unmapped ecoinvent elementary → mapping blocker."""
         flows = {
             "ec-1": _make_flow_mock("ec-1", "Elementary flow", "ecoinvent 3.10"),
             "prod-1": _make_flow_mock("prod-1", "Product flow", "TianGong 1.0"),
@@ -451,10 +451,8 @@ class TestPreviewExport:
         db = _build_fake_db("proj-ec", flows, graph)
         result = preview_export(db, "proj-ec")
         assert result["can_export"] is False
-        found = any(SOURCE_SPACE_TIDAS_BLOCKED_CODE in e for e in result["errors"])
-        assert found, f"Expected source-space error in: {result['errors']}"
-        assert len(result["warnings"]) > 0
-        assert any(w["category"] == "unsupported_source_space" for w in result["warnings"])
+        found = any("ELEMENTARY_FLOW_MAPPING_MISSING" in e for e in result["errors"])
+        assert found, f"Expected mapping error in: {result['errors']}"
 
     def test_preview_unknown_source_block(self):
         """Unknown-source elementary → can_export=False."""
@@ -482,7 +480,7 @@ class TestExportBundle:
         db = _build_fake_db("proj-ec", flows, graph, has_ref_process=True)
 
         from app.tidas_export import ExportError
-        with pytest.raises(ExportError, match=SOURCE_SPACE_TIDAS_BLOCKED_CODE):
+        with pytest.raises(ExportError, match="ELEMENTARY_FLOW_MAPPING_MISSING"):
             export_bundle(db, "proj-ec")
 
     def test_export_pts_raises(self):

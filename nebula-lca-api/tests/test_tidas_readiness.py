@@ -435,7 +435,7 @@ def test_readiness_missing_flows():
 
 
 def test_readiness_ecoinvent_elementary_flow():
-    """Project with ecoinvent elementary flow returns blocking source-space issue."""
+    """Unmapped ecoinvent elementary flow returns the mapping-specific blocker."""
     project_id = "proj-eco"
     flows = {
         "ec-1": _make_flow_mock("ec-1", "Elementary flow", "ecoinvent 3.10",
@@ -452,7 +452,7 @@ def test_readiness_ecoinvent_elementary_flow():
 
     assert result["can_export"] is False
     blocking_codes = [b["code"] for b in result["blocking"]]
-    assert any("BLOCK" in c or "SOURCE" in c or "ECOSPREAD" in c for c in blocking_codes)
+    assert "ELEMENTARY_FLOW_MAPPING_MISSING" in blocking_codes
 
 
 def test_readiness_tidas_compliant_unsupported_unit_group():
