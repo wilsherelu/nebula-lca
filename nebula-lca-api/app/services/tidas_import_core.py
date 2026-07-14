@@ -251,6 +251,10 @@ def _extract_tidas_flow_record(row: dict) -> tuple[dict | None, str | None]:
     if not default_unit or not unit_group:
         default_unit = default_unit or inferred_unit
         unit_group = unit_group or inferred_group
+    elif default_unit == inferred_unit and unit_group != inferred_group:
+        # TianGong may localize a dimension label while the ILCD payload still
+        # provides enough evidence for the runtime's canonical unit group.
+        unit_group = inferred_group
     elif (
         default_unit == "kg"
         and unit_group == "Units of mass"
@@ -275,7 +279,7 @@ def _extract_tidas_flow_record(row: dict) -> tuple[dict | None, str | None]:
         "default_unit": default_unit or "kg",
         "unit_group": unit_group or "Units of mass",
         "compartment": compartment,
-        "source_updated_at": _safe_str(row.get("updated_at") or row.get("version")),
+        "source_updated_at": _safe_str(row.get("modified_at") or row.get("updated_at") or row.get("version")),
         "source": _safe_str(row.get("source")) or TIDAS_FLOW_IMPORT_SOURCE,
         "is_custom": False,
         "tidas_compatible": True,
@@ -699,17 +703,22 @@ def _upsert_flow_record(db: Session, flow_record: dict, report: dict, *, dry_run
         return flow_uuid
     report["updated"] += 1
     if not dry_run:
+        previous_unit = existing.default_unit
+        previous_unit_group = existing.unit_group
         existing.flow_name = str(flow_record.get("flow_name") or existing.flow_name)
         existing.flow_name_en = _safe_str(flow_record.get("flow_name_en")) or None
         existing.flow_type = str(flow_record.get("flow_type") or existing.flow_type)
-        existing.default_unit = str(flow_record.get("default_unit") or existing.default_unit)
-        existing.unit_group = str(flow_record.get("unit_group") or existing.unit_group)
+        incoming_unit = str(flow_record.get("default_unit") or existing.default_unit)
+        incoming_unit_group = str(flow_record.get("unit_group") or existing.unit_group)
+        existing.default_unit = incoming_unit
+        existing.unit_group = previous_unit_group if incoming_unit == previous_unit and previous_unit_group else incoming_unit_group
         compartment = _safe_str(flow_record.get("compartment"))
         if compartment and compartment != "[]":
             existing.compartment = compartment
         existing.source_updated_at = _safe_str(flow_record.get("source_updated_at")) or None
         existing.source = _safe_str(flow_record.get("source")) or existing.source
-        existing.tidas_unit_group = _safe_str(flow_record.get("tidas_unit_group")) or existing.tidas_unit_group
+        existing.tidas_compatible = bool(flow_record.get("tidas_compatible"))
+        existing.tidas_unit_group = existing.unit_group or _safe_str(flow_record.get("tidas_unit_group")) or existing.tidas_unit_group
         existing.tidas_flow_property_uuid = _safe_str(flow_record.get("tidas_flow_property_uuid")) or existing.tidas_flow_property_uuid
         existing.tidas_reference_source = _safe_str(flow_record.get("tidas_reference_source")) or existing.tidas_reference_source
     return flow_uuid

@@ -1878,6 +1878,7 @@ def test_refresh_imports_energy_flow_has_correct_units(client, monkeypatch):
         assert flow is not None
         assert flow.default_unit == "MJ", f"Expected MJ, got: {flow.default_unit}"
         assert flow.unit_group == "Units of energy", f"Expected Units of energy, got: {flow.unit_group}"
+        assert flow.tidas_compatible is True
         # Verify sync record was updated
         sync_rec = (
             db.query(ExternalDataSyncRecord)
@@ -1890,6 +1891,91 @@ def test_refresh_imports_energy_flow_has_correct_units(client, monkeypatch):
         assert sync_rec is not None
         assert sync_rec.metadata_json is not None
         assert "last_refreshed_at" in sync_rec.metadata_json
+    finally:
+        db.close()
+
+
+def test_tidas_flow_extract_canonicalizes_localized_unit_group_and_uses_modified_at():
+    from app.services.tidas_import_core import _extract_tidas_flow_record
+
+    row = {
+        "id": "localized-mass-flow",
+        "default_unit": "kg",
+        "unit_group": "\u8d28\u91cf",
+        "version": "01.01.000",
+        "modified_at": "2026-07-14T09:30:00+08:00",
+        "json": {
+            "flowDataSet": {
+                "flowInformation": {
+                    "dataSetInformation": {
+                        "common:UUID": "localized-mass-flow",
+                        "common:name": "Mass flow",
+                    }
+                },
+                "flowProperties": {
+                    "flowProperty": {
+                        "referenceToFlowPropertyDataSet": {
+                            "common:shortDescription": {
+                                "#text": "Mass",
+                                "@xml:lang": "en",
+                            }
+                        }
+                    }
+                },
+            }
+        },
+    }
+
+    flow, error = _extract_tidas_flow_record(row)
+
+    assert error is None
+    assert flow is not None
+    assert flow["unit_group"] == "Units of mass"
+    assert flow["tidas_unit_group"] == "Units of mass"
+    assert flow["source_updated_at"] == "2026-07-14T09:30:00+08:00"
+
+
+def test_tidas_flow_refresh_preserves_existing_unit_group_when_unit_is_unchanged(client, monkeypatch):
+    row = _energy_flow_row_without_top_level_units()
+    row["unit_group"] = "\u80fd\u91cf"
+    row["modified_at"] = "2026-07-14T09:30:00+08:00"
+
+    def fake_urlopen(req, timeout):  # noqa: ARG001
+        url = req.full_url
+        if "/auth/v1/token?grant_type=password" in url:
+            return _FakeSupabaseResponse({"access_token": _jwt(), "refresh_token": "rt", "expires_in": 3600, "token_type": "bearer"})
+        if "/rest/v1/flows" in url and "energy-flow-1" in url:
+            return _FakeSupabaseResponse([row])
+        if "/rest/v1/flowproperties" in url:
+            return _FakeSupabaseResponse([_flowproperty_row()])
+        if "/rest/v1/unitgroups" in url:
+            return _FakeSupabaseResponse([_unitgroup_row()])
+        raise AssertionError(f"Unexpected URL {url}")
+
+    monkeypatch.setattr("app.services.data_platform_connectors.url_request.urlopen", fake_urlopen)
+    account_id = _create_tiangong_account(client)
+    flow_uuid = "e5a8c120-7f45-4b21-a3e6-d89c10ef2b41"
+    db = _db_module.SessionLocal()
+    try:
+        db.add(FlowRecord(flow_uuid=flow_uuid, flow_name="Electricity", flow_type="Product flow", default_unit="MJ", unit_group="Units of energy", source="tiangong", is_custom=False))
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        f"/api/data-platforms/accounts/{account_id}/flows/sync",
+        json={"remote_flow_id": "energy-flow-1", "remote_version": "2"},
+    )
+    assert response.status_code == 200
+
+    db = _db_module.SessionLocal()
+    try:
+        flow = db.get(FlowRecord, flow_uuid)
+        assert flow is not None
+        assert flow.unit_group == "Units of energy"
+        assert flow.tidas_unit_group == "Units of energy"
+        assert flow.tidas_compatible is True
+        assert flow.source_updated_at == "2026-07-14T09:30:00+08:00"
     finally:
         db.close()
 
