@@ -1813,7 +1813,11 @@ class LciImportJobExecutor:
                 process_name=wp.process_json.get("process_name", ""),
                 process_name_en=wp.process_json.get("process_name_en", ""),
                 process_type="lci_dataset",
-                reference_flow_uuid=None,
+                reference_flow_uuid=str(
+                    wp.process_json.get("reference_product_id")
+                    or wp.process_json.get("reference_flow_uuid")
+                    or ""
+                ).strip() or None,
                 process_json=wp.process_json,
                 source_file=wp.spold_path,
                 import_mode="debug_replay",

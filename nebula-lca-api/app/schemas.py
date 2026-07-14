@@ -66,6 +66,24 @@ def flow_semantic_to_exchange_type(value: object) -> ExchangeType:
     return "technosphere"
 
 
+class IntermediateFlowLink(BaseModel):
+    source_flow_uuid: str = Field(alias="sourceFlowUuid")
+    target_flow_uuid: str = Field(alias="targetFlowUuid")
+    amount_factor: float = Field(default=1.0, gt=0, alias="amountFactor")
+    source_unit: str = Field(alias="sourceUnit")
+    target_unit: str = Field(alias="targetUnit")
+    mapping_level: Literal["L1", "L3"] = Field(alias="mappingLevel")
+    mapping_reason: str = Field(alias="mappingReason")
+    rule_id: str = Field(alias="ruleId")
+    rule_origin: Literal["builtin", "user", "explicit"] = Field(alias="ruleOrigin")
+    status: Literal["auto", "user_confirmed", "inactive"]
+    package_id: str | None = Field(default=None, alias="packageId")
+    package_version: str | None = Field(default=None, alias="packageVersion")
+    package_hash: str | None = Field(default=None, alias="packageHash")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class FlowPort(BaseModel):
     id: str
     legacy_port_id: str | None = Field(default=None, alias="legacyPortId")
@@ -97,6 +115,7 @@ class FlowPort(BaseModel):
     product_name: str | None = None
     product_name_en: str | None = None
     sourceSystem: str | None = None
+    intermediate_flow_link: IntermediateFlowLink | None = Field(default=None, alias="intermediateFlowLink")
     model_config = ConfigDict(populate_by_name=True)
 
     @field_validator("isProduct", mode="before")
@@ -198,6 +217,11 @@ class HybridEdge(BaseModel):
     type: ExchangeType
     allocation: Literal["physical", "economic", "none"] = "none"
     dbMapping: str | None = None
+    consumer_flow_uuid: str | None = Field(default=None, alias="consumerFlowUuid")
+    provider_unit: str | None = Field(default=None, alias="providerUnit")
+    consumer_unit: str | None = Field(default=None, alias="consumerUnit")
+    intermediate_flow_link_rule_id: str | None = Field(default=None, alias="intermediateFlowLinkRuleId")
+    intermediate_flow_link_factor: float | None = Field(default=None, gt=0, alias="intermediateFlowLinkFactor")
     model_config = ConfigDict(populate_by_name=True)
 
     @model_validator(mode="after")

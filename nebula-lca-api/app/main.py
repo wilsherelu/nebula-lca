@@ -166,6 +166,7 @@ from .api.export_tidas import _base_router as _export_tidas_base_router, _api_ro
 from .api.ef31_import import _base_router as _ef31_import_base_router, _api_router as _ef31_import_api_router
 from .api.tidas_import import _base_router as _tidas_import_base_router, _api_router as _tidas_import_api_router
 from .api.reference_catalog import _base_router as _ref_catalog_base_router, _api_router as _ref_catalog_api_router
+from .api.intermediate_flow_links import api_router as _intermediate_flow_links_router
 
 # Re-export graph contract functions (authoritative implementations live in
 # ``app.services.graph_contract``; keep aliases so the rest of main.py and
@@ -263,6 +264,7 @@ from .services.graph_contract import (
     analyze_handle_consistency,
     analyze_handle_consistency_from_graph_json,
 )
+from .services.intermediate_flow_linking_service import validate_graph_intermediate_flow_links
 
 # Re-export project/version helpers from services
 from .services.project_versions import (
@@ -309,6 +311,7 @@ app.include_router(_reference_data_api_router)
 app.include_router(_pts_base_router)
 app.include_router(_pts_api_router)
 app.include_router(_data_platforms_router)
+app.include_router(_intermediate_flow_links_router)
 
 
 @app.get("/health")
@@ -907,10 +910,12 @@ def _graph_with_solver_unit_defaults(
         target_amount = normalized_amount_by_node_and_port.get((str(edge.get("toNode") or ""), str(target_port_id or "")))
         source_amount = normalized_amount_by_node_and_port.get((str(edge.get("fromNode") or ""), str(source_port_id or "")))
         if target_amount is not None:
-            edge["amount"] = float(target_amount)
-            edge["consumerAmount"] = float(target_amount)
+            link_factor = float(edge.get("intermediateFlowLinkFactor") or edge.get("intermediate_flow_link_factor") or 1.0)
+            effective_consumer_amount = float(target_amount) * link_factor
+            edge["amount"] = effective_consumer_amount
+            edge["consumerAmount"] = effective_consumer_amount
             if str(edge.get("quantityMode") or "") == "single":
-                edge["providerAmount"] = float(target_amount)
+                edge["providerAmount"] = effective_consumer_amount
         if source_amount is not None and str(edge.get("quantityMode") or "") == "dual":
             edge["providerAmount"] = float(source_amount)
 
@@ -3596,6 +3601,7 @@ def create_model(payload: ModelCreateRequest, db: Session = Depends(get_db)) -> 
 
     _canonicalize_pts_nodes_for_main_graph_save(db=db, project_id=model.id, graph=payload.graph)
     validate_graph_contract(payload.graph, require_non_empty=True, allow_pts_nodes=True)
+    validate_graph_intermediate_flow_links(db, payload.graph)
     validate_graph_flow_type_contract(payload.graph, db=db, stage="save_model")
     validate_graph_port_names_against_flow_catalog(payload.graph, db=db, stage="save_model")
     normalize_graph_flow_unit_switches(payload.graph, db)
@@ -4248,6 +4254,26 @@ def run_solver_and_persist(
             reference_unit_by_group[group.name] = group.reference_unit
 
     display_process_unit_map = _build_process_unit_map_from_graph(payload.graph)
+    intermediate_flow_link_trace = []
+    for node in payload.graph.nodes:
+        for port in node.inputs:
+            link = port.intermediate_flow_link
+            if link is None or link.status not in {"auto", "user_confirmed"}:
+                continue
+            intermediate_flow_link_trace.append({
+                "node_id": node.id,
+                "process_uuid": node.process_uuid,
+                "port_id": port.id,
+                "source_flow_uuid": port.flowUuid,
+                "target_flow_uuid": link.target_flow_uuid,
+                "amount_factor": link.amount_factor,
+                "source_unit": link.source_unit,
+                "target_unit": link.target_unit,
+                "mapping_level": link.mapping_level,
+                "mapping_reason": link.mapping_reason,
+                "rule_id": link.rule_id,
+                "rule_origin": link.rule_origin,
+            })
     flow_type_by_uuid = _solver_flow_type_by_uuid_cached(db)
     flow_source_by_uuid = _solver_flow_source_by_uuid_cached(db)
 
@@ -4290,6 +4316,7 @@ def run_solver_and_persist(
                 "product_result_index": product_result_index,
                 "product_values": product_values,
                 "product_unit_map": product_unit_map,
+                "intermediate_flow_links": intermediate_flow_link_trace,
             },
         }
         request_json = _build_run_job_request_json(payload)
@@ -4394,6 +4421,7 @@ def run_solver_and_persist(
             "product_result_index": product_result_index,
             "product_values": product_values,
             "product_unit_map": product_unit_map,
+            "intermediate_flow_links": intermediate_flow_link_trace,
         },
     }
     tiangong_like = adapter_result["tiangong_like_input"]
@@ -4424,6 +4452,7 @@ def run_model(payload: RunRequest, db: Session = Depends(get_db)) -> RunResponse
         allow_pts_nodes=True,
         require_balanced_conservation=True,
     )
+    validate_graph_intermediate_flow_links(db, payload.graph)
     validate_graph_flow_type_contract(payload.graph, db=db, stage="run_model")
     validate_graph_port_names_against_flow_catalog(payload.graph, db=db, stage="run_model")
     flow_default_unit_violations = collect_flow_default_unit_conversion_violations(payload.graph, db)

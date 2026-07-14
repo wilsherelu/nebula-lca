@@ -6017,3 +6017,26 @@ body,
     grid-template-columns: 1fr;
   }
 }
+.intermediate-flow-link-panel {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--border-color, #dfe4ea);
+  border-radius: 8px;
+  background: var(--panel-subtle-bg, #f8fafc);
+}
+
+.intermediate-flow-link-row {
+  display: grid;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-color, #dfe4ea);
+}
+
+.provider-candidate-btn {
+  width: 100%;
+  padding: 7px 9px;
+  text-align: left;
+  white-space: normal;
+}

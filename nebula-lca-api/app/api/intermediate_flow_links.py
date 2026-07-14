@@ -1,0 +1,226 @@
+"""Intermediate-flow linking APIs for Tiangong foreground inputs."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+from typing import Any, Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+
+from ..database import get_db
+from ..flow_unit_semantics import _unit_group_key
+from ..models import FlowRecord, IntermediateFlowLinkRule
+from ..schemas import IntermediateFlowLink
+from ..services.intermediate_flow_linking_service import (
+    get_intermediate_flow_link_registry,
+    deterministic_default_unit_factor,
+    list_l2_candidates,
+    list_provider_candidates,
+    resolve_intermediate_flow,
+    validate_intermediate_flow_link,
+)
+
+
+api_router = APIRouter(prefix="/api/intermediate-flow-links", tags=["intermediate-flow-links"])
+
+
+class ResolvePortRequest(BaseModel):
+    node_id: str | None = None
+    port_id: str | None = None
+    flow_uuid: str
+    direction: Literal["input", "output"] = "input"
+    exchange_type: Literal["technosphere", "biosphere"] = "technosphere"
+    unit: str | None = None
+    intermediate_flow_link: dict[str, Any] | None = None
+
+
+class ResolveBatchRequest(BaseModel):
+    items: list[ResolvePortRequest] = Field(default_factory=list, max_length=1000)
+    l2_limit: int = Field(default=5, ge=1, le=20)
+
+
+class UserRuleCreateRequest(BaseModel):
+    source_flow_uuid: str
+    target_flow_uuid: str
+    amount_factor: float | None = Field(default=None, gt=0)
+    mapping_reason: str = Field(min_length=3, max_length=1024)
+
+
+def _flow_or_404(db: Session, flow_uuid: str) -> FlowRecord:
+    row = db.get(FlowRecord, str(flow_uuid or "").strip())
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "FLOW_NOT_FOUND", "message": f"Flow not found: {flow_uuid}"},
+        )
+    return row
+
+
+def _rule_payload(row: IntermediateFlowLinkRule) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "source_flow_uuid": row.source_flow_uuid,
+        "target_flow_uuid": row.target_flow_uuid,
+        "amount_factor": row.amount_factor,
+        "source_unit": row.source_unit,
+        "target_unit": row.target_unit,
+        "mapping_level": row.mapping_level,
+        "mapping_reason": row.mapping_reason,
+        "rule_origin": row.rule_origin,
+        "status": row.status,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }
+
+
+@api_router.post("/resolve-batch")
+def resolve_batch(payload: ResolveBatchRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
+    try:
+        registry = get_intermediate_flow_link_registry()
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "INTERMEDIATE_FLOW_PACKAGE_UNAVAILABLE", "message": str(exc)},
+        ) from exc
+    results: list[dict[str, Any]] = []
+    counts = {"explicit": 0, "L1": 0, "L2": 0, "unmatched": 0, "blocked": 0}
+    for item in payload.items:
+        base = {"node_id": item.node_id, "port_id": item.port_id, "source_flow_uuid": item.flow_uuid}
+        if item.direction != "input" or item.exchange_type != "technosphere":
+            results.append({**base, "status": "skipped", "reason": "only technosphere inputs are linkable"})
+            continue
+        explicit = item.intermediate_flow_link if isinstance(item.intermediate_flow_link, dict) else None
+        if explicit and explicit.get("status") in {"auto", "user_confirmed"}:
+            try:
+                parsed_link = IntermediateFlowLink.model_validate(explicit)
+                issue = validate_intermediate_flow_link(db, item.flow_uuid, parsed_link)
+            except (TypeError, ValueError) as exc:
+                issue = f"INVALID_EXPLICIT_LINK: {exc}"
+            if issue:
+                results.append({**base, "status": "blocked", "reason": issue})
+                counts["blocked"] += 1
+            else:
+                results.append({**base, "status": "explicit", "resolution": explicit, "l2_candidates": []})
+                counts["explicit"] += 1
+            continue
+        source = db.get(FlowRecord, item.flow_uuid)
+        if source is None:
+            results.append({**base, "status": "blocked", "reason": "SOURCE_FLOW_NOT_FOUND"})
+            counts["blocked"] += 1
+            continue
+        resolution, issue = resolve_intermediate_flow(db, item.flow_uuid)
+        if issue:
+            results.append({**base, "status": "blocked", "reason": issue})
+            counts["blocked"] += 1
+            continue
+        if resolution is not None:
+            results.append({**base, "status": resolution.mapping_level, "resolution": resolution.to_dict(), "l2_candidates": []})
+            counts[resolution.mapping_level] += 1
+            continue
+        candidates = list_l2_candidates(db, source, payload.l2_limit)
+        status = "L2" if candidates else "unmatched"
+        results.append({**base, "status": status, "resolution": None, "l2_candidates": candidates})
+        counts[status] += 1
+    return {
+        "package_id": registry.package_id,
+        "package_version": registry.package_version,
+        "package_hash": registry.package_hash,
+        "link_direction": "tiangong_to_ecoinvent",
+        "counts": counts,
+        "items": results,
+    }
+
+
+@api_router.get("/providers")
+def get_providers(
+    target_flow_uuid: str = Query(min_length=1),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    target = _flow_or_404(db, target_flow_uuid)
+    if "ecoinvent" not in str(target.source or "").casefold():
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "TARGET_FLOW_NOT_ECOINVENT", "message": "Provider lookup requires an ecoinvent flow"},
+        )
+    providers = list_provider_candidates(db, target.flow_uuid)
+    return {
+        "target_flow_uuid": target.flow_uuid,
+        "target_flow_name": target.flow_name,
+        "target_unit": target.default_unit,
+        "providers": providers,
+        "total": len(providers),
+        "auto_selected": False,
+    }
+
+
+@api_router.get("/user-rules")
+def list_user_rules(
+    include_inactive: bool = Query(default=False),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    query = db.query(IntermediateFlowLinkRule)
+    if not include_inactive:
+        query = query.filter(IntermediateFlowLinkRule.status == "active")
+    rows = query.order_by(IntermediateFlowLinkRule.updated_at.desc()).all()
+    return {"items": [_rule_payload(row) for row in rows], "total": len(rows)}
+
+
+@api_router.post("/user-rules", status_code=201)
+def create_user_rule(payload: UserRuleCreateRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
+    source = _flow_or_404(db, payload.source_flow_uuid)
+    target = _flow_or_404(db, payload.target_flow_uuid)
+    if "tiangong" not in str(source.source or "").casefold():
+        raise HTTPException(status_code=422, detail={"code": "SOURCE_FLOW_NOT_TIANGONG"})
+    if "ecoinvent" not in str(target.source or "").casefold():
+        raise HTTPException(status_code=422, detail={"code": "TARGET_FLOW_NOT_ECOINVENT"})
+    source_type = "waste" if "waste" in source.flow_type.casefold() else "product"
+    target_type = "waste" if "waste" in target.flow_type.casefold() else "product"
+    if source_type != target_type:
+        raise HTTPException(status_code=422, detail={"code": "FLOW_TYPE_MISMATCH"})
+    if _unit_group_key(source.unit_group) != _unit_group_key(target.unit_group):
+        raise HTTPException(status_code=422, detail={"code": "UNIT_GROUP_MISMATCH"})
+    amount_factor = deterministic_default_unit_factor(db, source, target)
+    if amount_factor is None:
+        raise HTTPException(status_code=422, detail={"code": "UNIT_CONVERSION_NOT_DETERMINISTIC"})
+    if payload.amount_factor is not None and abs(payload.amount_factor - amount_factor) > 1e-12:
+        raise HTTPException(status_code=422, detail={"code": "UNIT_FACTOR_MISMATCH", "expected": amount_factor})
+    existing = (
+        db.query(IntermediateFlowLinkRule)
+        .filter(
+            IntermediateFlowLinkRule.source_flow_uuid == source.flow_uuid,
+            IntermediateFlowLinkRule.target_flow_uuid == target.flow_uuid,
+        )
+        .first()
+    )
+    if existing is None:
+        existing = IntermediateFlowLinkRule(
+            id=str(uuid.uuid4()),
+            source_flow_uuid=source.flow_uuid,
+            target_flow_uuid=target.flow_uuid,
+            source_unit=source.default_unit,
+            target_unit=target.default_unit,
+        )
+        db.add(existing)
+    existing.amount_factor = amount_factor
+    existing.mapping_level = "L3"
+    existing.mapping_reason = payload.mapping_reason.strip()
+    existing.rule_origin = "user"
+    existing.status = "active"
+    existing.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(existing)
+    return _rule_payload(existing)
+
+
+@api_router.delete("/user-rules/{rule_id}")
+def deactivate_user_rule(rule_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    row = db.get(IntermediateFlowLinkRule, rule_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail={"code": "RULE_NOT_FOUND"})
+    row.status = "inactive"
+    row.updated_at = datetime.utcnow()
+    db.commit()
+    return {"id": row.id, "status": row.status}

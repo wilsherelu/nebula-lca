@@ -13,6 +13,11 @@ export type LcaEdgeData = {
   type: ExchangeType;
   allocation: "physical" | "economic" | "none";
   dbMapping?: string;
+  consumerFlowUuid?: string;
+  providerUnit?: string;
+  consumerUnit?: string;
+  intermediateFlowLinkRuleId?: string;
+  intermediateFlowLinkFactor?: number;
 };
 
 export type LcaExchange = {
@@ -34,6 +39,11 @@ export type LcaExchange = {
   type: ExchangeType;
   allocation: "physical" | "economic" | "none";
   dbMapping?: string;
+  consumerFlowUuid?: string;
+  providerUnit?: string;
+  consumerUnit?: string;
+  intermediateFlowLinkRuleId?: string;
+  intermediateFlowLinkFactor?: number;
 };
 
 export type LcaGraphPayload = {

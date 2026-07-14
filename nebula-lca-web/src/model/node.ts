@@ -35,6 +35,22 @@ export type UnitGroupSwitchSnapshot = {
   note?: string;
 };
 
+export type IntermediateFlowLink = {
+  sourceFlowUuid: string;
+  targetFlowUuid: string;
+  amountFactor: number;
+  sourceUnit: string;
+  targetUnit: string;
+  mappingLevel: "L1" | "L3";
+  mappingReason: string;
+  ruleId: string;
+  ruleOrigin: "builtin" | "user" | "explicit";
+  status: "auto" | "user_confirmed" | "inactive";
+  packageId?: string;
+  packageVersion?: string;
+  packageHash?: string;
+};
+
 export type FlowPort = {
   id: string;
   legacyPortId?: string;
@@ -63,6 +79,7 @@ export type FlowPort = {
   exposureMode?: "boundary_only" | "force_product_expose";
   dbMapping?: string;
   sourceSystem?: string;
+  intermediateFlowLink?: IntermediateFlowLink;
 };
 
 export type LcaNodeData = {
