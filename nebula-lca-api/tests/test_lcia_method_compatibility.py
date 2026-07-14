@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -202,6 +203,51 @@ def test_flows_api_exposes_source_and_custom_flags(client):
     assert item["flow_id"] == "flow-co2-legacy"
     assert item["source"] == "ecoinvent"
     assert item["is_custom"] is False
+
+
+def test_flows_api_filters_and_annotates_ef_tidas_conversion_rows(client):
+    package_path = Path(__file__).resolve().parents[1] / "data" / "flow_mappings" / "ghg_ef31_v1.json"
+    package = json.loads(package_path.read_text(encoding="utf-8"))
+    mapped = package["mappings"][0]
+    db = _db_module.SessionLocal()
+    try:
+        db.merge(UnitGroup(name="Units of mass", reference_unit="kg"))
+        db.add(UnitDefinition(unit_group="Units of mass", unit_name="kg", factor_to_reference=1.0, is_reference=True))
+        for flow_uuid, name, source, context in (
+            (mapped["ecoinvent_flow_uuid"], mapped["ecoinvent_flow_name"], "ecoinvent_3.11", mapped["ecoinvent_context"]),
+            (mapped["ef_flow_uuid"], mapped["ef_flow_name"], "EF3.1", mapped["ef_context"]),
+            ("unmapped-ecoinvent", "Unmapped GHG", "ecoinvent_3.11", {"compartment": "air", "subcompartment": "unspecified"}),
+        ):
+            db.add(FlowRecord(
+                flow_uuid=flow_uuid,
+                flow_name=name,
+                flow_type="Elementary flow",
+                default_unit="kg",
+                unit_group="Units of mass",
+                compartment=context.get("catalog_compartment", context.get("compartment")),
+                subcompartment=context.get("catalog_subcompartment", context.get("subcompartment")),
+                source=source,
+                is_custom=False,
+            ))
+        db.commit()
+    finally:
+        db.close()
+    invalidate_management_caches(flows=True)
+
+    unfiltered = client.get("/api/flows?type=elementary_flow&page_size=10")
+    filtered = client.get("/api/flows?type=elementary_flow&conversion_target=ef_tidas&page_size=10")
+    categories = client.get("/api/flows/categories?type=elementary_flow&conversion_target=ef_tidas")
+
+    assert unfiltered.status_code == 200
+    assert unfiltered.json()["total"] == 3
+    assert filtered.status_code == 200
+    assert filtered.json()["total"] == 2
+    items = {item["flow_id"]: item for item in filtered.json()["items"]}
+    assert items[mapped["ecoinvent_flow_uuid"]]["conversion_mode"] == "bidirectional"
+    assert items[mapped["ef_flow_uuid"]]["conversion_mode"] == "canonical"
+    assert all(item["conversion_target_flow_uuid"] == mapped["ef_flow_uuid"] for item in items.values())
+    assert categories.status_code == 200
+    assert sum(item["count"] for item in categories.json()["items"]) == 2
 
 
 def test_flows_api_filters_source_space_before_pagination(client):

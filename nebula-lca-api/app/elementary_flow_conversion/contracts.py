@@ -138,6 +138,7 @@ class ConversionPackage:
     forward_mappings: tuple[DirectionalMapping, ...]
     reverse_mappings: tuple[DirectionalMapping, ...]
     package_hash: str
+    one_way_mappings: tuple[DirectionalMapping, ...] = ()
 
 
 @dataclass(frozen=True)

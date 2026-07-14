@@ -48,6 +48,10 @@ from ..services.catalog_cache import (
     is_if_none_match_hit,
 )
 from ..services.catalog_cache import fts5_flow_search_query as _fts5_flow_search_query
+from ..services.elementary_flow_conversion_service import (
+    ElementaryFlowMappingRegistry,
+    get_elementary_flow_mapping_registry,
+)
 
 api_router = APIRouter()
 
@@ -55,6 +59,38 @@ api_router = APIRouter()
 _CACHE_TTL_SECONDS: float = 30.0
 _CACHE_TTL_FLOWS_SECONDS: float = 3600.0
 _CACHE_TTL_FLOW_CATEGORIES_SECONDS: float = 3600.0
+
+
+def _conversion_registry_or_503(
+    conversion_target: str | None,
+    flow_type: str | None,
+) -> ElementaryFlowMappingRegistry | None:
+    target = str(conversion_target or "").strip().lower()
+    if not target:
+        return None
+    if target != "ef_tidas":
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_CONVERSION_TARGET", "message": "Only ef_tidas is supported"},
+        )
+    if flow_type != "elementary_flow":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "INVALID_CONVERSION_FILTER",
+                "message": "conversion_target is available only for elementary flows",
+            },
+        )
+    try:
+        return get_elementary_flow_mapping_registry()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "ELEMENTARY_FLOW_MAPPING_PACKAGE_UNAVAILABLE",
+                "message": str(exc),
+            },
+        ) from exc
 
 
 def _apply_source_space_filter(query, source_space: str | None):
@@ -392,16 +428,19 @@ def list_flows_api(
     source_space: str | None = Query(default=None),
     category: str | None = Query(default=None),
     category_level_1: str | None = Query(default=None),
+    conversion_target: str | None = Query(default=None),
     if_none_match: str | None = Header(default=None, alias="If-None-Match"),
     db: Session = Depends(get_db),
 ) -> PaginatedFlowsResponse:
+    conversion_registry = _conversion_registry_or_503(conversion_target, type)
     search_key = (search or "").strip().lower()
     category_key = (category or "").strip().lower()
     level1_key = (category_level_1 or "").strip().lower()
     cache_key = (
         f"flows:v2:rev={cache_revision('flows')}:search={search_key}:page={page}:"
         f"page_size={page_size}:type={type or ''}:source_space={source_space or ''}:"
-        f"category={category_key}:level1={level1_key}"
+        f"category={category_key}:level1={level1_key}:conversion_target={conversion_target or ''}:"
+        f"mapping_hash={conversion_registry.package_hash if conversion_registry else ''}"
     )
     cached = cache_get(cache_key, ttl_seconds=_CACHE_TTL_FLOWS_SECONDS)
     if isinstance(cached, dict):
@@ -442,6 +481,8 @@ def list_flows_api(
     if type:
         query = query.filter(FlowRecord.flow_type.in_(sorted(type_map[type])))
     query = _apply_source_space_filter(query, source_space)
+    if conversion_registry is not None:
+        query = query.filter(FlowRecord.flow_uuid.in_(conversion_registry.compatible_flow_uuids))
 
     if category and category.strip():
         category_token = f"%{category.strip().lower()}%"
@@ -518,6 +559,7 @@ def list_flows_api(
         normalized_type = normalize_flow_semantic(row.flow_type) or "intermediate_flow"
         if normalized_type not in {"elementary_flow", "product_flow", "waste_flow"}:
             normalized_type = "intermediate_flow"
+        compatibility = conversion_registry.compatibility(row.flow_uuid) if conversion_registry else None
         items.append(
             FlowListItem(
                 flow_id=row.flow_uuid,
@@ -536,6 +578,7 @@ def list_flows_api(
                 allocation_properties=list(getattr(row, "allocation_properties", None) or []),
                 used_in_processes=int(used_in_processes.get(row.flow_uuid, 0)),
                 last_modified=row.source_updated_at,
+                **(compatibility or {}),
             )
         )
 
@@ -557,8 +600,10 @@ def list_flow_categories_api(
     source_space: str | None = Query(default=None),
     search: str | None = Query(default=None),
     level: int = Query(default=1, ge=1, le=3),
+    conversion_target: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> FlowCategoriesResponse:
+    conversion_registry = _conversion_registry_or_503(conversion_target, type)
     type_map: dict[str, set[str]] = {
         "intermediate_flow": {"Product flow", "Waste flow"},
         "elementary_flow": {"Elementary flow"},
@@ -575,7 +620,9 @@ def list_flow_categories_api(
 
     cache_key = (
         f"flow_categories:v1:rev={cache_revision('flow_categories')}:"
-        f"type={type or ''}:source_space={source_space or ''}:level={level}:search={search or ''}"
+        f"type={type or ''}:source_space={source_space or ''}:level={level}:search={search or ''}:"
+        f"conversion_target={conversion_target or ''}:"
+        f"mapping_hash={conversion_registry.package_hash if conversion_registry else ''}"
     )
     cached = cache_get(cache_key, ttl_seconds=_CACHE_TTL_FLOW_CATEGORIES_SECONDS)
     if isinstance(cached, FlowCategoriesResponse):
@@ -585,6 +632,8 @@ def list_flow_categories_api(
     if type:
         query = query.filter(FlowRecord.flow_type.in_(sorted(type_map[type])))
     query = _apply_source_space_filter(query, source_space)
+    if conversion_registry is not None:
+        query = query.filter(FlowRecord.flow_uuid.in_(conversion_registry.compatible_flow_uuids))
     if search and search.strip():
         token = f"%{search.strip().lower()}%"
         query = query.filter(sqla_func.lower(sqla_func.coalesce(FlowRecord.compartment, "")).like(token))

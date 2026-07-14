@@ -18,6 +18,8 @@ from .contracts import (
     SemanticStatus,
 )
 from .converter import convert_inventory
+from .context_crosswalk import ContextMapping, ContextMappingMode, load_context_crosswalk
+from .package_loader import load_mapping_package
 
 __all__ = [
     "CfPresence",
@@ -26,6 +28,8 @@ __all__ = [
     "ConversionPackage",
     "ConversionResult",
     "ConversionTrace",
+    "ContextMapping",
+    "ContextMappingMode",
     "DirectionalMapping",
     "FlowIdentity",
     "InventoryExchange",
@@ -36,4 +40,6 @@ __all__ = [
     "SemanticStatus",
     "compile_bidirectional_core",
     "convert_inventory",
+    "load_mapping_package",
+    "load_context_crosswalk",
 ]

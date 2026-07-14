@@ -20,15 +20,24 @@ def _select_mappings(
     source_namespace: str,
     target_namespace: str,
 ) -> tuple[DirectionalMapping, ...]:
+    selected: tuple[DirectionalMapping, ...] = ()
     if package.forward_mappings:
         first = package.forward_mappings[0]
         if first.source.namespace == source_namespace and first.target.namespace == target_namespace:
-            return package.forward_mappings
+            selected = package.forward_mappings
     if package.reverse_mappings:
         first = package.reverse_mappings[0]
         if first.source.namespace == source_namespace and first.target.namespace == target_namespace:
-            return package.reverse_mappings
-    raise ValueError("package does not contain the requested conversion direction")
+            selected = package.reverse_mappings
+    one_way = tuple(
+        mapping
+        for mapping in package.one_way_mappings
+        if mapping.source.namespace == source_namespace
+        and mapping.target.namespace == target_namespace
+    )
+    if not selected and not one_way:
+        raise ValueError("package does not contain the requested conversion direction")
+    return (*selected, *one_way)
 
 
 def convert_inventory(
@@ -69,6 +78,9 @@ def convert_inventory(
                 status=MappingStatus.MAPPED,
                 target=converted_exchange,
                 mapping_evidence_ids=mapping.evidence_ids,
+                warning_codes=("ONE_WAY_CANONICALIZATION",)
+                if mapping in package.one_way_mappings
+                else (),
             )
         )
 

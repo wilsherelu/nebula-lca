@@ -41,6 +41,7 @@ from .source_policy import (
     _collect_biosphere_flow_uuids,
     _batch_lookup_flow_sources,
 )
+from .services.elementary_flow_conversion_service import build_ef_shadow_export_view
 
 TIDAS_DEFAULT_DATASET_VERSION = "01.01.000"
 TIDAS_BUNDLE_MODE_REFERENCE_HYBRID = "tiangong_reference_hybrid"
@@ -171,6 +172,7 @@ class ExportReport:
         self.allocation_warnings: list[ExportWarning] = []
         self.manual_allocation_required_processes: list[str] = []
         self.reference_flow_by_process: dict[str, str] = {}
+        self.elementary_flow_conversion: dict[str, Any] = {}
 
     def add_warning(self, category: str, message: str, context: dict | None = None):
         self.warnings.append(ExportWarning(category, message, context))
@@ -195,6 +197,7 @@ class ExportReport:
             "reference_flow_by_process": self.reference_flow_by_process,
             "warnings": [w.to_dict() for w in self.warnings],
             "errors": self.errors,
+            "elementary_flow_conversion": self.elementary_flow_conversion,
         }
 
 
@@ -1395,7 +1398,13 @@ def _build_flow_data(db: Session, flow_uuid: str, report: ExportReport) -> dict 
 
 
 def _build_process_data(
-    db: Session, process_uuid: str, graph_json: dict, report: ExportReport, model: Model | None = None, flow_type_map: dict[str, str] | None = None
+    db: Session,
+    process_uuid: str,
+    graph_json: dict,
+    report: ExportReport,
+    model: Model | None = None,
+    flow_type_map: dict[str, str] | None = None,
+    process_exchange_overrides: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict | None:
     """Build a TIDAS/ILCD-style processDataSet for a single process."""
     ref_process = db.get(ReferenceProcess, process_uuid)
@@ -1419,7 +1428,10 @@ def _build_process_data(
         technology_description = pi.get("technology_description") or TIDAS_GENERATED_COMMENT
         process_reference_product = pi.get("reference_product")
         process_reference_product_flow_uuid = pi.get("reference_product_flow_uuid")
-        exchanges = pi.get("exchanges") if isinstance(pi.get("exchanges"), list) else []
+        override = (process_exchange_overrides or {}).get(process_uuid)
+        exchanges = override if override is not None else (
+            pi.get("exchanges") if isinstance(pi.get("exchanges"), list) else []
+        )
         ref_internal_id = str(pi.get("reference_flow_internal_id") or "")
         ref_flow_uuid = pi.get("reference_flow_source_uuid")
         allocation_source_ports = [
@@ -2011,8 +2023,8 @@ def build_tidas_readiness(
         return _readiness_result(blocking, warnings, info, model, mode)
 
     # ── Empty graph check ──────────────────────────────────────────────
-    graph_json = model_version.hybrid_graph_json
-    if not graph_json:
+    source_graph_json = model_version.hybrid_graph_json
+    if not source_graph_json:
         blocking.append({
             "code": "EMPTY_GRAPH",
             "message": f"Empty graph for project {project_id}",
@@ -2020,7 +2032,7 @@ def build_tidas_readiness(
         return _readiness_result(blocking, warnings, info, model, mode)
 
     # ── PTS node check ─────────────────────────────────────────────────
-    pts_nodes = _find_pts_nodes(graph_json)
+    pts_nodes = _find_pts_nodes(source_graph_json)
     if pts_nodes:
         pts_refs = [
             str(n.get("process_uuid") or n.get("pts_uuid") or n.get("id") or "").strip()
@@ -2033,6 +2045,21 @@ def build_tidas_readiness(
             "details": {"pts_nodes": pts_refs},
         })
         return _readiness_result(blocking, warnings, info, model, mode)
+
+    shadow_view = build_ef_shadow_export_view(db, source_graph_json)
+    conversion_summary = shadow_view.summary()
+    if shadow_view.blocking:
+        blocking.extend(shadow_view.blocking)
+        _enrich_readiness_issue_targets(source_graph_json, blocking)
+        return _readiness_result(
+            blocking,
+            warnings,
+            info,
+            model,
+            mode,
+            elementary_flow_conversion=conversion_summary,
+        )
+    graph_json = shadow_view.graph
 
     # ── Extract graph data ─────────────────────────────────────────────
     flow_uuids, process_uuids = _extract_graph_data(graph_json)
@@ -2090,9 +2117,9 @@ def build_tidas_readiness(
         })
 
     # ── Source-policy validation ───────────────────────────────────────
-    policy_result = _validate_project_source_policy_readiness(model, graph_json, source_policy, db)
-    _enrich_readiness_issue_targets(graph_json, policy_result.errors)
-    _enrich_readiness_issue_targets(graph_json, policy_result.warnings)
+    policy_result = _validate_project_source_policy_readiness(model, source_graph_json, source_policy, db)
+    _enrich_readiness_issue_targets(source_graph_json, policy_result.errors)
+    _enrich_readiness_issue_targets(source_graph_json, policy_result.warnings)
     for err in policy_result.errors:
         blocking.append(err)
     for warn in policy_result.warnings:
@@ -2107,7 +2134,15 @@ def build_tidas_readiness(
     for flow_uuid in sorted(bundle_plan.included_flow_uuids):
         _build_flow_data(db, flow_uuid, export_report)
     for process_uuid in sorted(bundle_plan.included_process_uuids):
-        _build_process_data(db, process_uuid, graph_json, export_report, model, flow_type_map)
+        _build_process_data(
+            db,
+            process_uuid,
+            graph_json,
+            export_report,
+            model,
+            flow_type_map,
+            shadow_view.process_exchanges,
+        )
     _build_model_data(db, model, graph_json, export_report)
 
     # Merge structural warnings
@@ -2196,6 +2231,7 @@ def build_tidas_readiness(
         "reference_flow_by_process": export_report.reference_flow_by_process,
         "missing_flows": missing_flows,
         "missing_processes": missing_processes,
+        "elementary_flow_conversion": conversion_summary,
     }
 
 
@@ -2205,6 +2241,7 @@ def _readiness_result(
     info: list[dict],
     model: Model | None,
     bundle_mode: str = TIDAS_BUNDLE_MODE_REFERENCE_HYBRID,
+    elementary_flow_conversion: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a minimal readiness result when an early block occurs."""
     return {
@@ -2231,6 +2268,7 @@ def _readiness_result(
         "reference_flow_by_process": {},
         "missing_flows": [],
         "missing_processes": [],
+        "elementary_flow_conversion": elementary_flow_conversion or {},
     }
 
 
@@ -2382,9 +2420,14 @@ def export_bundle(
         version_info = f" version {version}" if version else ""
         raise ExportError(f"No model version found for project {project_id}{version_info}")
 
-    graph_json = model_version.hybrid_graph_json
-    if not graph_json:
+    source_graph_json = model_version.hybrid_graph_json
+    if not source_graph_json:
         raise ExportError(f"Empty graph for project {project_id}")
+    shadow_view = build_ef_shadow_export_view(db, source_graph_json)
+    if shadow_view.blocking:
+        raise ExportError(shadow_view.blocking[0]["message"])
+    graph_json = shadow_view.graph
+    report.elementary_flow_conversion = shadow_view.summary()
 
     # ── Extract graph data ─────────────────────────────────────────────
     flow_uuids, process_uuids = _extract_graph_data(graph_json)
@@ -2449,7 +2492,15 @@ def export_bundle(
         # Build and write process data as one dataset file per process.
         process_uuid_list: list[str] = []
         for process_uuid in sorted(bundle_plan.included_process_uuids):
-            process_data = _build_process_data(db, process_uuid, graph_json, report, model, flow_type_map)
+            process_data = _build_process_data(
+                db,
+                process_uuid,
+                graph_json,
+                report,
+                model,
+                flow_type_map,
+                shadow_view.process_exchanges,
+            )
             if process_data:
                 process_uuid_list.append(process_uuid)
                 zf.writestr(
@@ -2520,6 +2571,11 @@ def export_bundle(
         )
         zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
 
+        zf.writestr(
+            "elementary_flow_conversion.json",
+            json.dumps(shadow_view.summary(), ensure_ascii=False, indent=2),
+        )
+
         # Write export report
         export_report_data = report.to_dict()
         export_report_data["project_id"] = project_id
@@ -2537,6 +2593,7 @@ def export_bundle(
         export_report_data["referenced_process_uuids"] = sorted(bundle_plan.referenced_process_uuids)
         export_report_data["reference_dataset_count"] = len(reference_files)
         export_report_data["reference_dataset_paths"] = reference_files
+        export_report_data["elementary_flow_conversion_path"] = "elementary_flow_conversion.json"
         zf.writestr("export_report.json", json.dumps(export_report_data, ensure_ascii=False, indent=2))
 
     zip_buffer.seek(0)

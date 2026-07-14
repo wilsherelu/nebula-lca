@@ -1,0 +1,94 @@
+{
+  "crosswalk_id": "ghg-air-context-ef31-ecoinvent311",
+  "crosswalk_version": "1.0.0",
+  "scope": "GHG emissions to air",
+  "review_status": "approved_with_provisional_canonicalizations",
+  "mappings": [
+    {
+      "ef_context": "Emissions;Emissions to air;Emissions to air, unspecified",
+      "ecoinvent_context": {"compartment": "air", "subcompartment": "unspecified"},
+      "mode": "bijective",
+      "review_status": "approved"
+    },
+    {
+      "ef_context": "Emissions;Emissions to air;Emissions to air, unspecified (long-term)",
+      "ecoinvent_context": {"compartment": "air", "subcompartment": "low population density, long-term"},
+      "mode": "bijective",
+      "review_status": "approved"
+    },
+    {
+      "ef_context": "Emissions;Emissions to air;Emissions to non-urban air or from high stacks",
+      "ecoinvent_context": {"compartment": "air", "subcompartment": "non-urban air or from high stacks"},
+      "mode": "bijective",
+      "review_status": "approved"
+    },
+    {
+      "ef_context": "Emissions;Emissions to air;Emissions to urban air close to ground",
+      "ecoinvent_context": {"compartment": "air", "subcompartment": "urban air close to ground"},
+      "mode": "bijective",
+      "review_status": "approved"
+    },
+    {
+      "ef_context": "Emissions;Emissions to air;Emissions to lower stratosphere and upper troposphere",
+      "ecoinvent_context": {"compartment": "air", "subcompartment": "lower stratosphere + upper troposphere"},
+      "mode": "bijective",
+      "review_status": "approved"
+    },
+    {
+      "ef_context": "Emissions;Emissions to air;Emissions to non-urban air close to ground",
+      "ecoinvent_context": {"compartment": "air", "subcompartment": "non-urban air or from high stacks"},
+      "canonical_ef_context": "Emissions;Emissions to air;Emissions to non-urban air or from high stacks",
+      "mode": "ef_to_ecoinvent_canonicalization",
+      "review_status": "provisional"
+    },
+    {
+      "ef_context": "Emissions;Emissions to air;Emissions to non-urban air high stack",
+      "ecoinvent_context": {"compartment": "air", "subcompartment": "non-urban air or from high stacks"},
+      "canonical_ef_context": "Emissions;Emissions to air;Emissions to non-urban air or from high stacks",
+      "mode": "ef_to_ecoinvent_canonicalization",
+      "review_status": "provisional"
+    },
+    {
+      "ef_context": "Emissions;Emissions to air;Emissions to non-urban air low stack",
+      "ecoinvent_context": {"compartment": "air", "subcompartment": "non-urban air or from high stacks"},
+      "canonical_ef_context": "Emissions;Emissions to air;Emissions to non-urban air or from high stacks",
+      "mode": "ef_to_ecoinvent_canonicalization",
+      "review_status": "provisional"
+    },
+    {
+      "ef_context": "Emissions;Emissions to air;Emissions to non-urban air very high stack",
+      "ecoinvent_context": {"compartment": "air", "subcompartment": "non-urban air or from high stacks"},
+      "canonical_ef_context": "Emissions;Emissions to air;Emissions to non-urban air or from high stacks",
+      "mode": "ef_to_ecoinvent_canonicalization",
+      "review_status": "provisional"
+    },
+    {
+      "ef_context": "Emissions;Emissions to air;Emissions to urban air high stack",
+      "ecoinvent_context": {"compartment": "air", "subcompartment": "urban air close to ground"},
+      "canonical_ef_context": "Emissions;Emissions to air;Emissions to urban air close to ground",
+      "mode": "ef_to_ecoinvent_canonicalization",
+      "review_status": "provisional"
+    },
+    {
+      "ef_context": "Emissions;Emissions to air;Emissions to urban air low stack",
+      "ecoinvent_context": {"compartment": "air", "subcompartment": "urban air close to ground"},
+      "canonical_ef_context": "Emissions;Emissions to air;Emissions to urban air close to ground",
+      "mode": "ef_to_ecoinvent_canonicalization",
+      "review_status": "provisional"
+    },
+    {
+      "ef_context": "Emissions;Emissions to air;Emissions to urban air very high stack",
+      "ecoinvent_context": {"compartment": "air", "subcompartment": "urban air close to ground"},
+      "canonical_ef_context": "Emissions;Emissions to air;Emissions to urban air close to ground",
+      "mode": "ef_to_ecoinvent_canonicalization",
+      "review_status": "provisional"
+    },
+    {
+      "ef_context": "Emissions;Emissions to air;Emissions to air, indoor",
+      "ecoinvent_context": null,
+      "mode": "rejected",
+      "review_status": "approved",
+      "reason": "No semantically equivalent ecoinvent air context; urban air close to ground is only a proxy."
+    }
+  ]
+}
