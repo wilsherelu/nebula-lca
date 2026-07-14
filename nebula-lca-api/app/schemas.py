@@ -72,7 +72,7 @@ class IntermediateFlowLink(BaseModel):
     amount_factor: float = Field(default=1.0, gt=0, alias="amountFactor")
     source_unit: str = Field(alias="sourceUnit")
     target_unit: str = Field(alias="targetUnit")
-    mapping_level: Literal["L1", "L3"] = Field(alias="mappingLevel")
+    mapping_level: Literal["L1", "L2", "L3"] = Field(alias="mappingLevel")
     mapping_reason: str = Field(alias="mappingReason")
     rule_id: str = Field(alias="ruleId")
     rule_origin: Literal["builtin", "user", "explicit"] = Field(alias="ruleOrigin")
@@ -80,6 +80,8 @@ class IntermediateFlowLink(BaseModel):
     package_id: str | None = Field(default=None, alias="packageId")
     package_version: str | None = Field(default=None, alias="packageVersion")
     package_hash: str | None = Field(default=None, alias="packageHash")
+    application_mode: Literal["strict_identity", "auto_compatible"] | None = Field(default=None, alias="applicationMode")
+    warnings: list[str] = Field(default_factory=list)
 
     model_config = ConfigDict(populate_by_name=True)
 

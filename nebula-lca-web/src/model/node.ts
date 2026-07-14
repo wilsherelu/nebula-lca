@@ -41,7 +41,7 @@ export type IntermediateFlowLink = {
   amountFactor: number;
   sourceUnit: string;
   targetUnit: string;
-  mappingLevel: "L1" | "L3";
+  mappingLevel: "L1" | "L2" | "L3";
   mappingReason: string;
   ruleId: string;
   ruleOrigin: "builtin" | "user" | "explicit";
@@ -49,6 +49,8 @@ export type IntermediateFlowLink = {
   packageId?: string;
   packageVersion?: string;
   packageHash?: string;
+  applicationMode?: "strict_identity" | "auto_compatible";
+  warnings?: string[];
 };
 
 export type FlowPort = {

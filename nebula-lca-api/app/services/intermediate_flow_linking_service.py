@@ -30,7 +30,7 @@ DEFAULT_PACKAGE_PATH = (
     Path(__file__).resolve().parents[2]
     / "data"
     / "flow_mappings"
-    / "intermediate_tiangong_to_ecoinvent_v1.json"
+    / "intermediate_tiangong_to_ecoinvent_v2.json"
 )
 
 
@@ -63,6 +63,8 @@ class IntermediateFlowResolution:
     package_id: str | None = None
     package_version: str | None = None
     package_hash: str | None = None
+    application_mode: str | None = None
+    warnings: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -78,6 +80,8 @@ class IntermediateFlowResolution:
             "package_id": self.package_id,
             "package_version": self.package_version,
             "package_hash": self.package_hash,
+            "application_mode": self.application_mode,
+            "warnings": list(self.warnings),
             "link_direction": "tiangong_to_ecoinvent",
         }
 
@@ -86,31 +90,43 @@ class IntermediateFlowLinkRegistry:
     def __init__(self, path: Path = DEFAULT_PACKAGE_PATH):
         raw = path.read_bytes()
         payload = json.loads(raw.decode("utf-8"))
-        if payload.get("review_status") != "approved":
-            raise ValueError("intermediate-flow package is not approved")
-        if payload.get("link_direction") != "tiangong_to_ecoinvent":
+        direction = payload.get("link_direction") or payload.get("direction")
+        if direction != "tiangong_to_ecoinvent":
             raise ValueError("intermediate-flow package has an unsupported direction")
-        rows = payload.get("rules")
+        rows = payload.get("rules") or payload.get("mappings")
         if not isinstance(rows, list) or not rows:
             raise ValueError("intermediate-flow package contains no rules")
         indexed: dict[str, dict[str, Any]] = {}
         for row in rows:
-            if not isinstance(row, dict) or row.get("review_status") != "approved":
+            if not isinstance(row, dict) or row.get("review_status") not in {"approved", "approved_with_warning"}:
                 raise ValueError("intermediate-flow package contains an unapproved rule")
-            if row.get("mapping_level") != "L1":
-                raise ValueError("built-in intermediate-flow rules must be L1")
+            mapping_level = str(row.get("mapping_level") or "")
+            application_mode = str(row.get("application_mode") or "strict_identity")
+            if mapping_level == "L1" and application_mode != "strict_identity":
+                raise ValueError("L1 intermediate-flow rules must use strict_identity")
+            if mapping_level == "L2" and application_mode != "auto_compatible":
+                raise ValueError("L2 intermediate-flow rules must use auto_compatible")
+            if mapping_level not in {"L1", "L2"}:
+                raise ValueError("built-in intermediate-flow rules must be L1 or L2")
+            if mapping_level == "L2" and not row.get("warnings"):
+                raise ValueError("auto-compatible intermediate-flow rules require warnings")
             source_uuid = str(row.get("source_flow_uuid") or "").strip()
             target_uuid = str(row.get("target_flow_uuid") or "").strip()
             if not source_uuid or not target_uuid or source_uuid in indexed:
                 raise ValueError("intermediate-flow package has invalid or duplicate UUIDs")
             if _flow_type_key(row.get("source_flow_type")) != _flow_type_key(row.get("target_flow_type")):
                 raise ValueError(f"flow type mismatch in rule {row.get('rule_id')}")
-            if _unit_group_key(row.get("source_unit_group")) != _unit_group_key(row.get("target_unit_group")):
-                raise ValueError(f"unit group mismatch in rule {row.get('rule_id')}")
+            if row.get("source_unit_group") or row.get("target_unit_group"):
+                if _unit_group_key(row.get("source_unit_group")) != _unit_group_key(row.get("target_unit_group")):
+                    raise ValueError(f"unit group mismatch in rule {row.get('rule_id')}")
+            elif not str(row.get("unit_dimension") or "").strip():
+                raise ValueError(f"unit dimension missing in rule {row.get('rule_id')}")
+            if float(row.get("amount_factor") or 0) <= 0:
+                raise ValueError(f"invalid amount factor in rule {row.get('rule_id')}")
             indexed[source_uuid] = row
         self.path = path
         self.package_id = str(payload["package_id"])
-        self.package_version = str(payload["package_version"])
+        self.package_version = str(payload.get("package_version") or payload.get("version"))
         self.package_hash = hashlib.sha256(raw).hexdigest()
         self.rules = indexed
 
@@ -124,13 +140,19 @@ class IntermediateFlowLinkRegistry:
             amount_factor=float(row["amount_factor"]),
             source_unit=str(row["source_unit"]),
             target_unit=str(row["target_unit"]),
-            mapping_level="L1",
-            mapping_reason="approved_one_way_reference_product_link",
+            mapping_level=str(row["mapping_level"]),
+            mapping_reason=(
+                "approved_one_way_reference_product_link"
+                if row["mapping_level"] == "L1"
+                else "approved_one_way_compatible_reference_product_link"
+            ),
             rule_id=str(row["rule_id"]),
             rule_origin="builtin",
             package_id=self.package_id,
             package_version=self.package_version,
             package_hash=self.package_hash,
+            application_mode=str(row.get("application_mode") or "strict_identity"),
+            warnings=tuple(str(item) for item in row.get("warnings") or []),
         )
 
 
@@ -247,12 +269,14 @@ def validate_intermediate_flow_link(
     if record_issue:
         return record_issue
 
-    if link.mapping_level == "L1":
+    if link.mapping_level in {"L1", "L2"}:
         expected = get_intermediate_flow_link_registry().resolve(source_flow_uuid)
         if expected is None:
-            return "L1_RULE_NOT_FOUND"
+            return f"{link.mapping_level}_RULE_NOT_FOUND"
+        if expected.mapping_level != link.mapping_level:
+            return f"{link.mapping_level}_EVIDENCE_MISMATCH"
         if link.status != "auto" or link.rule_origin != "builtin":
-            return "L1_STATUS_OR_ORIGIN_MISMATCH"
+            return f"{link.mapping_level}_STATUS_OR_ORIGIN_MISMATCH"
         expected_fields = (
             expected.target_flow_uuid,
             expected.rule_id,
@@ -268,7 +292,12 @@ def validate_intermediate_flow_link(
             link.package_hash,
         )
         if actual_fields != expected_fields or abs(link.amount_factor - expected.amount_factor) > 1e-12:
-            return "L1_EVIDENCE_MISMATCH"
+            return f"{link.mapping_level}_EVIDENCE_MISMATCH"
+        if link.mapping_level == "L2" and (
+            link.application_mode != expected.application_mode
+            or tuple(link.warnings) != expected.warnings
+        ):
+            return "L2_EVIDENCE_MISMATCH"
         return None
 
     if link.mapping_level == "L3":

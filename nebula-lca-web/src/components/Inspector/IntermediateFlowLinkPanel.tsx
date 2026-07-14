@@ -54,10 +54,10 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
       const links = new Map<string, ReturnType<typeof toIntermediateFlowLink>>();
       const nextL2: Record<string, LinkCandidate[]> = {};
       for (const item of payload.items) {
-        if (item.port_id && item.status === "L1" && item.resolution && "source_flow_uuid" in item.resolution) {
+        if (item.port_id && (item.status === "L1" || item.status === "L2") && item.resolution && "source_flow_uuid" in item.resolution) {
           links.set(item.port_id, toIntermediateFlowLink(item.resolution));
         }
-        if (item.port_id && item.status === "L2") {
+        if (item.port_id && item.status === "L2" && !item.resolution) {
           nextL2[item.port_id] = item.l2_candidates ?? [];
         }
       }
@@ -172,6 +172,11 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
             {link && link.status !== "inactive" ? (
               <>
                 <span>{link.mappingLevel} · {t("单向兼容", "one-way compatible")}</span>
+                {link.applicationMode === "auto_compatible" && (
+                  <span className="muted-text" title={(link.warnings ?? []).join(", ")}>
+                    {t("语义泛化，计算前请核对", "Semantic generalization; review before calculation")}
+                  </span>
+                )}
                 <button type="button" className="link-btn" disabled={busy} onClick={() => loadProviders(port)}>
                   {t("选择背景 LCI", "Choose background LCI")}
                 </button>
