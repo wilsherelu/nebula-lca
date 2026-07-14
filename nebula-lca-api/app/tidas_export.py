@@ -2046,6 +2046,31 @@ def build_tidas_readiness(
         })
         return _readiness_result(blocking, warnings, info, model, mode)
 
+    active_intermediate_links: list[dict[str, Any]] = []
+    for node in source_graph_json.get("nodes", []) or []:
+        if not isinstance(node, dict):
+            continue
+        for port in node.get("inputs", []) or []:
+            if not isinstance(port, dict):
+                continue
+            link = port.get("intermediateFlowLink") or port.get("intermediate_flow_link")
+            if not isinstance(link, dict) or link.get("status") not in {"auto", "user_confirmed"}:
+                continue
+            active_intermediate_links.append({
+                "node_id": node.get("id"),
+                "port_id": port.get("id"),
+                "source_flow_uuid": port.get("flowUuid") or port.get("flow_uuid"),
+                "target_flow_uuid": link.get("targetFlowUuid") or link.get("target_flow_uuid"),
+                "mapping_level": link.get("mappingLevel") or link.get("mapping_level"),
+            })
+    if active_intermediate_links:
+        blocking.append({
+            "code": "INTERMEDIATE_FLOW_ECO_PROVIDER_LINK_PRESENT",
+            "message": "Projects using ecoinvent intermediate-flow provider links are calculation-only and cannot be exported to TIDAS.",
+            "details": {"links": active_intermediate_links[:200], "link_count": len(active_intermediate_links)},
+        })
+        return _readiness_result(blocking, warnings, info, model, mode)
+
     shadow_view = build_ef_shadow_export_view(db, source_graph_json)
     conversion_summary = shadow_view.summary()
     if shadow_view.blocking:

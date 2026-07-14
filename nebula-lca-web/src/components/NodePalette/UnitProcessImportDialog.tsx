@@ -116,7 +116,7 @@ const parsePortRows = (raw: unknown, direction: "input" | "output"): FlowPort[] 
     .filter((port) => Boolean(port.flowUuid));
 };
 
-const parseImportedRows = (
+export const parseImportedRows = (
   payload: Record<string, unknown>,
   importMode: ProcessImportMode,
   uiLanguage: "zh" | "en",

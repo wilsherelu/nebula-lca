@@ -305,6 +305,11 @@ type LcaGraphState = {
   openUnitProcessImportDialog: (position?: XYPosition, targetKind?: NodeCreateKind) => void;
   closeUnitProcessImportDialog: () => void;
   addImportedUnitProcesses: (rows: ImportedUnitProcessPayload[], position?: XYPosition) => string[];
+  connectIntermediateProvider: (
+    consumerNodeId: string,
+    consumerPortId: string,
+    provider: ImportedUnitProcessPayload,
+  ) => string | undefined;
   autoConnectByUuid: (options?: { silentNoCandidate?: boolean; silentSuccess?: boolean }) => void;
   packageSelectionAsPts: () => void;
   unpackPtsNode: (nodeId?: string) => void;
@@ -676,7 +681,9 @@ const resolveEdgeBoundaryPort = (
   if (!node) {
     return undefined;
   }
-  const flowUuid = String(edge.data?.flowUuid ?? "").trim();
+  const flowUuid = String(
+    side === "target" ? edge.data?.consumerFlowUuid ?? edge.data?.flowUuid : edge.data?.flowUuid,
+  ).trim();
   const handleId = side === "source" ? edge.sourceHandle : edge.targetHandle;
   const portId =
     side === "source"
@@ -1157,6 +1164,33 @@ const buildImportedUnitProcessNode = (
       outputs: payload.outputs,
     },
   });
+
+const normalizeIntermediateFlowLinkPort = (port: FlowPort): FlowPort => {
+  const rawPort = port as FlowPort & { intermediate_flow_link?: Record<string, unknown> };
+  const rawLink = port.intermediateFlowLink ?? rawPort.intermediate_flow_link;
+  if (!rawLink) {
+    return port;
+  }
+  const value = rawLink as Record<string, unknown>;
+  return {
+    ...port,
+    intermediateFlowLink: {
+      sourceFlowUuid: String(value.sourceFlowUuid ?? value.source_flow_uuid ?? ""),
+      targetFlowUuid: String(value.targetFlowUuid ?? value.target_flow_uuid ?? ""),
+      amountFactor: Number(value.amountFactor ?? value.amount_factor ?? 1),
+      sourceUnit: String(value.sourceUnit ?? value.source_unit ?? ""),
+      targetUnit: String(value.targetUnit ?? value.target_unit ?? ""),
+      mappingLevel: String(value.mappingLevel ?? value.mapping_level) as "L1" | "L3",
+      mappingReason: String(value.mappingReason ?? value.mapping_reason ?? ""),
+      ruleId: String(value.ruleId ?? value.rule_id ?? ""),
+      ruleOrigin: String(value.ruleOrigin ?? value.rule_origin) as "builtin" | "user" | "explicit",
+      status: String(value.status) as "auto" | "user_confirmed" | "inactive",
+      packageId: String(value.packageId ?? value.package_id ?? "") || undefined,
+      packageVersion: String(value.packageVersion ?? value.package_version ?? "") || undefined,
+      packageHash: String(value.packageHash ?? value.package_hash ?? "") || undefined,
+    },
+  };
+};
 
 const sanitizeMarketNode = (node: Node<LcaNodeData>): Node<LcaNodeData> => {
   if (node.data.nodeKind === "pts_module") {
@@ -1682,6 +1716,11 @@ const resolveEdgeDataByNodes = (
       type: edge.data?.type ?? sourcePort?.type ?? targetPort?.type ?? "technosphere",
       allocation: edge.data?.allocation ?? "none",
       dbMapping: edge.data?.dbMapping,
+      consumerFlowUuid: edge.data?.consumerFlowUuid,
+      providerUnit: edge.data?.providerUnit,
+      consumerUnit: edge.data?.consumerUnit,
+      intermediateFlowLinkRuleId: edge.data?.intermediateFlowLinkRuleId,
+      intermediateFlowLinkFactor: edge.data?.intermediateFlowLinkFactor,
     },
   };
 };
@@ -4811,6 +4850,67 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
     });
     return createdIds;
   },
+  connectIntermediateProvider: (consumerNodeId, consumerPortId, provider) => {
+    let createdNodeId: string | undefined;
+    set((state) => {
+      const active = state.canvases[state.activeCanvasId];
+      const consumerNode = active.nodes.find((item) => item.id === consumerNodeId);
+      const consumerPort = consumerNode?.data.inputs.find((item) => item.id === consumerPortId);
+      const link = consumerPort?.intermediateFlowLink;
+      if (!consumerNode || !consumerPort || !link || !["auto", "user_confirmed"].includes(link.status)) {
+        return state;
+      }
+
+      const providerNode = buildImportedUnitProcessNode(provider, {
+        x: consumerNode.position.x - 360,
+        y: consumerNode.position.y,
+      });
+      const providerPort = providerNode.data.outputs.find((item) => item.flowUuid === link.targetFlowUuid);
+      if (!providerPort) {
+        return state;
+      }
+
+      createdNodeId = providerNode.id;
+      const targetHandle = `in:${consumerPort.id}`;
+      const remainingEdges = active.edges.filter(
+        (edge) => !(edge.target === consumerNodeId && edge.targetHandle === targetHandle),
+      );
+      const consumerAmount = consumerPort.amount * link.amountFactor;
+      const edge: Edge<LcaEdgeData> = {
+        id: `edge_${uid()}`,
+        source: providerNode.id,
+        target: consumerNodeId,
+        sourceHandle: `out:${providerPort.id}`,
+        targetHandle,
+        data: {
+          flowUuid: link.targetFlowUuid,
+          flowName: providerPort.name,
+          quantityMode: "dual",
+          amount: consumerAmount,
+          providerAmount: providerPort.amount,
+          consumerAmount,
+          unit: link.targetUnit,
+          type: "technosphere",
+          allocation: "none",
+          consumerFlowUuid: consumerPort.flowUuid,
+          providerUnit: providerPort.unit,
+          consumerUnit: consumerPort.unit,
+          intermediateFlowLinkRuleId: link.ruleId,
+          intermediateFlowLinkFactor: link.amountFactor,
+        },
+      };
+      return {
+        ...updateActiveCanvas(state, (canvas) => ({
+          ...canvas,
+          nodes: [...canvas.nodes, providerNode],
+          edges: [...remainingEdges, edge],
+        })),
+        selection: { nodeIds: [providerNode.id], edgeIds: [], nodeId: providerNode.id },
+        connectionHint: undefined,
+      };
+    });
+    return createdNodeId;
+  },
   autoConnectByUuid: (options) =>
     set((state) => {
       const silentNoCandidate = Boolean(options?.silentNoCandidate);
@@ -5977,8 +6077,8 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
           nodeKind: node.node_kind,
           referenceProductFlowUuid: node.reference_product_flow_uuid,
           referenceProductDirection: node.reference_product_direction,
-          inputs: node.inputs ?? [],
-          outputs: node.outputs ?? [],
+          inputs: (node.inputs ?? []).map(normalizeIntermediateFlowLinkPort),
+          outputs: (node.outputs ?? []).map(normalizeIntermediateFlowLinkPort),
         });
         const patchFlowNameEn = (ports: FlowPort[]) =>
           ports.map((port) => {
@@ -6049,6 +6149,11 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         type: LcaEdgeData["type"];
         allocation: "physical" | "economic" | "none";
         dbMapping?: string;
+        consumerFlowUuid?: string;
+        providerUnit?: string;
+        consumerUnit?: string;
+        intermediateFlowLinkRuleId?: string;
+        intermediateFlowLinkFactor?: number;
           }): Edge<LcaEdgeData> => {
             const rawEdge = edge as Record<string, unknown>;
             return {
@@ -6070,6 +6175,13 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
                 type: edge.type,
                 allocation: edge.allocation,
                 dbMapping: edge.dbMapping,
+                consumerFlowUuid: (edge.consumerFlowUuid ?? String(rawEdge.consumer_flow_uuid ?? "")) || undefined,
+                providerUnit: (edge.providerUnit ?? String(rawEdge.provider_unit ?? "")) || undefined,
+                consumerUnit: (edge.consumerUnit ?? String(rawEdge.consumer_unit ?? "")) || undefined,
+                intermediateFlowLinkRuleId:
+                  (edge.intermediateFlowLinkRuleId ?? String(rawEdge.intermediate_flow_link_rule_id ?? "")) || undefined,
+                intermediateFlowLinkFactor:
+                  (edge.intermediateFlowLinkFactor ?? Number(rawEdge.intermediate_flow_link_factor || 0)) || undefined,
               },
             };
           };
@@ -6283,6 +6395,11 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
       type: edge.data?.type ?? "technosphere",
       allocation: edge.data?.allocation ?? "none",
       dbMapping: edge.data?.dbMapping,
+      consumerFlowUuid: edge.data?.consumerFlowUuid,
+      providerUnit: edge.data?.providerUnit,
+      consumerUnit: edge.data?.consumerUnit,
+      intermediateFlowLinkRuleId: edge.data?.intermediateFlowLinkRuleId,
+      intermediateFlowLinkFactor: edge.data?.intermediateFlowLinkFactor,
     });
       const serializedRootNodes = active.nodes.map((node) => serializeNode(node));
       const rootExportEdges = normalizeCanvasEdgesForExport(active, serializedRootNodes);
@@ -6306,6 +6423,11 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
       type: edge.data?.type ?? "technosphere",
       allocation: edge.data?.allocation ?? "none",
       dbMapping: edge.data?.dbMapping,
+      consumerFlowUuid: edge.data?.consumerFlowUuid,
+      providerUnit: edge.data?.providerUnit,
+      consumerUnit: edge.data?.consumerUnit,
+      intermediateFlowLinkRuleId: edge.data?.intermediateFlowLinkRuleId,
+      intermediateFlowLinkFactor: edge.data?.intermediateFlowLinkFactor,
     }));
     const serializedCanvases = Object.values(state.canvases).map((canvas) => ({
       id: canvas.id,
@@ -6368,8 +6490,8 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
           nodeKind: node.node_kind,
           referenceProductFlowUuid: node.reference_product_flow_uuid,
           referenceProductDirection: node.reference_product_direction,
-          inputs: node.inputs ?? [],
-          outputs: node.outputs ?? [],
+          inputs: (node.inputs ?? []).map(normalizeIntermediateFlowLinkPort),
+          outputs: (node.outputs ?? []).map(normalizeIntermediateFlowLinkPort),
         });
         return sanitizeMarketNode({
           id: node.id,
@@ -6426,6 +6548,11 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         type: LcaEdgeData["type"];
         allocation: "physical" | "economic" | "none";
         dbMapping?: string;
+        consumerFlowUuid?: string;
+        providerUnit?: string;
+        consumerUnit?: string;
+        intermediateFlowLinkRuleId?: string;
+        intermediateFlowLinkFactor?: number;
           }): Edge<LcaEdgeData> => {
             const rawEdge = edge as Record<string, unknown>;
             return {
@@ -6447,6 +6574,13 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
                 type: edge.type,
                 allocation: edge.allocation,
                 dbMapping: edge.dbMapping,
+                consumerFlowUuid: (edge.consumerFlowUuid ?? String(rawEdge.consumer_flow_uuid ?? "")) || undefined,
+                providerUnit: (edge.providerUnit ?? String(rawEdge.provider_unit ?? "")) || undefined,
+                consumerUnit: (edge.consumerUnit ?? String(rawEdge.consumer_unit ?? "")) || undefined,
+                intermediateFlowLinkRuleId:
+                  (edge.intermediateFlowLinkRuleId ?? String(rawEdge.intermediate_flow_link_rule_id ?? "")) || undefined,
+                intermediateFlowLinkFactor:
+                  (edge.intermediateFlowLinkFactor ?? Number(rawEdge.intermediate_flow_link_factor || 0)) || undefined,
               },
             };
           };

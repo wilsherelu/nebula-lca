@@ -50,6 +50,30 @@ class FlowRecord(Base):
     allocation_properties: Mapped[list | None] = mapped_column(JsonType, nullable=True)
 
 
+class IntermediateFlowLinkRule(Base):
+    __tablename__ = "intermediate_flow_link_rules"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_flow_uuid",
+            "target_flow_uuid",
+            name="uq_intermediate_flow_link_source_target",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source_flow_uuid: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    target_flow_uuid: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    amount_factor: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    source_unit: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_unit: Mapped[str] = mapped_column(String(64), nullable=False)
+    mapping_level: Mapped[str] = mapped_column(String(8), nullable=False, default="L3")
+    mapping_reason: Mapped[str] = mapped_column(String(1024), nullable=False)
+    rule_origin: Mapped[str] = mapped_column(String(32), nullable=False, default="user")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class UnitGroup(Base):
     __tablename__ = "unit_groups"
 

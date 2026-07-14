@@ -335,11 +335,15 @@ def import_ecoinvent_processes(
             # Parse elementary exchanges
             elementary_exchanges = parse_spold_exchanges(spold_file)
 
-            # Find reference flow UUID from intermediate flows
-            ref_flow_uuid = _find_reference_flow_uuid(
-                db,
-                dataset.reference_product_name,
-                dataset.reference_product_unit,
+            # Reference products are linked by their MasterData UUID only.
+            reference_product_id = str(dataset.reference_product_id or "").strip()
+            reference_flow = db.get(FlowRecord, reference_product_id) if reference_product_id else None
+            ref_flow_uuid = (
+                reference_product_id
+                if reference_flow is not None
+                and reference_flow.flow_type in {"Product flow", "Waste flow"}
+                and "ecoinvent" in str(reference_flow.source or "").casefold()
+                else None
             )
 
             # Build lightweight process_json (NO full exchanges)

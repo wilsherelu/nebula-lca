@@ -316,11 +316,12 @@ def validate_edge_binding_and_uniqueness(graph: HybridGraph) -> None:
             flow_uuid=str(edge.flowUuid or ""),
             direction="output",
         )
+        target_lookup_flow_uuid = str(edge.consumer_flow_uuid or edge.flowUuid or "")
         target_port_id = _resolve_edge_port_id_for_node(
             node=target_node,
             raw_port_or_handle=edge.target_port_id or edge.targetHandle,
             prefix="in",
-            flow_uuid=str(edge.flowUuid or ""),
+            flow_uuid=target_lookup_flow_uuid,
             direction="input",
         )
 
@@ -358,7 +359,19 @@ def validate_edge_binding_and_uniqueness(graph: HybridGraph) -> None:
         if source_port is not None and str(source_port.flowUuid or "") != str(edge.flowUuid or ""):
             issues.append("edge.flowUuid does not match source port flowUuid")
         if target_port is not None and str(target_port.flowUuid or "") != str(edge.flowUuid or ""):
-            issues.append("edge.flowUuid does not match target port flowUuid")
+            link = target_port.intermediate_flow_link
+            link_ok = bool(
+                link is not None
+                and link.status in {"auto", "user_confirmed"}
+                and str(link.source_flow_uuid or "") == str(target_port.flowUuid or "")
+                and str(link.target_flow_uuid or "") == str(edge.flowUuid or "")
+                and str(edge.consumer_flow_uuid or "") == str(target_port.flowUuid or "")
+                and str(edge.intermediate_flow_link_rule_id or "") == str(link.rule_id or "")
+                and edge.intermediate_flow_link_factor is not None
+                and abs(float(edge.intermediate_flow_link_factor) - float(link.amount_factor)) <= 1e-12
+            )
+            if not link_ok:
+                issues.append("edge.flowUuid does not match target port flowUuid or an active intermediate-flow link")
 
         if issues:
             binding_issues.append({
@@ -950,7 +963,10 @@ def analyze_handle_consistency(graph: HybridGraph) -> dict:
             continue
 
         source_options = source_candidates.get((edge.fromNode, edge.flowUuid), [])
-        target_options = target_candidates.get((edge.toNode, edge.flowUuid), [])
+        target_options = target_candidates.get(
+            (edge.toNode, edge.consumer_flow_uuid or edge.flowUuid),
+            [],
+        )
         source_guess = source_options[0] if len(source_options) == 1 else None
         target_guess = target_options[0] if len(target_options) == 1 else None
 
