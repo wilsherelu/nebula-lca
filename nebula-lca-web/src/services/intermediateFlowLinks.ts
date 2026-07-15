@@ -41,7 +41,11 @@ export type ResolveItem = {
 export type ProviderCandidate = {
   process_uuid: string;
   process_name: string;
+  process_name_en?: string;
   location?: string;
+  reference_product_flow_uuid?: string;
+  reference_product_name?: string;
+  reference_product_unit?: string;
   has_lci_vector: boolean;
   vector_nnz: number;
 };

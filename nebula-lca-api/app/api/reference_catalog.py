@@ -20,7 +20,7 @@ from sqlalchemy import func as func_raw
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import FlowRecord, LciProcessVector, ReferenceProcess
+from ..models import ExternalDataSyncRecord, FlowRecord, LciProcessVector, ReferenceProcess
 from ..schemas import (
     FilteredExchangeEvidence,
     ImportedProcessDetail,
@@ -82,7 +82,7 @@ def list_reference_processes_catalog(
     effective_keyword = (keyword or q or search or "").strip()
     search_key = effective_keyword.lower()
     cache_key = (
-        f"reference_processes_catalog:v1:rev={_cache_revision('reference_processes_catalog')}:"
+        f"reference_processes_catalog:v2:rev={_cache_revision('reference_processes_catalog')}:"
         f"target_kind={normalized_target_kind or ''}:search={search_key}:page={page}:page_size={page_size}"
     )
     cached = _cache_get(cache_key, ttl_seconds=_CACHE_TTL_REFERENCE_PROCESS_CATALOG_SECONDS)
@@ -94,7 +94,10 @@ def list_reference_processes_catalog(
                 return Response(status_code=304, headers={"ETag": etag})
             return JSONResponse(content=payload, headers={"ETag": etag})
 
-    query = db.query(ReferenceProcess).filter(ReferenceProcess.process_json.is_not(None))
+    query = db.query(ReferenceProcess).filter(
+        ReferenceProcess.process_json.is_not(None),
+        (ReferenceProcess.import_mode.is_(None)) | (ReferenceProcess.import_mode != "editable_clone"),
+    )
     if normalized_target_kind == "unit_process":
         query = query.filter(
             (ReferenceProcess.process_type.is_(None))
@@ -190,6 +193,7 @@ def import_reference_processes(
     _filter_exchanges_with_evidence = _rc._filter_exchanges_with_evidence
     _mark_reference_product_exchange = _rc._mark_reference_product_exchange
     _build_imported_process_ports = _rc._build_imported_process_ports
+    _restore_exchange_amounts_from_lineage = _rc._restore_exchange_amounts_from_lineage
     _flow_meta_by_uuid_cached = _rc._flow_meta_by_uuid_cached
     _normalize_import_mode_value = _rc._normalize_import_mode_value
     invalidate_management_caches = _rc.invalidate_management_caches
@@ -233,6 +237,23 @@ def import_reference_processes(
         cloned_json = json.loads(json.dumps(source_json))
         raw_exchanges = cloned_json.get("exchanges")
         exchanges = [ex for ex in raw_exchanges if isinstance(ex, dict)] if isinstance(raw_exchanges, list) else []
+        lineage = (
+            db.query(ExternalDataSyncRecord)
+            .filter(
+                ExternalDataSyncRecord.local_kind == "process",
+                ExternalDataSyncRecord.local_uuid == source_process_uuid,
+            )
+            .order_by(ExternalDataSyncRecord.synced_at.desc())
+            .first()
+        )
+        restored_amount_count = _restore_exchange_amounts_from_lineage(
+            exchanges,
+            lineage.metadata_json if lineage is not None else None,
+        )
+        if restored_amount_count > 0:
+            repaired_source_json = json.loads(json.dumps(source_json))
+            repaired_source_json["exchanges"] = json.loads(json.dumps(exchanges))
+            source_row.process_json = repaired_source_json
         if target_kind == "lci_dataset":
             reference_flow_uuid = _safe_str(source_json.get("reference_flow_uuid")) or _safe_str(source_row.reference_flow_uuid)
             has_reference_flow = bool(

@@ -10,8 +10,10 @@ import { TidasLocationCascade, normalizeTidasLocationValue } from "../TidasLocat
 import { Checkbox } from "../ui/Checkbox";
 import { MultiProductAllocationModal } from "./MultiProductAllocationModal";
 import { IntermediateFlowLinkPanel } from "./IntermediateFlowLinkPanel";
+import { BackgroundLciAssociationSection } from "./BackgroundLciAssociationSection";
 import type { SourcePolicy } from "../ProjectManagement/ProjectManagement";
 import { useTianGongFlowRefresh } from "../../services/tiangongFlowRefresh";
+import { getLocalizedText } from "../../utils/localizedText";
 
 const DEV_NODE_DEBUG = Boolean(import.meta.env.DEV);
 const debugNode = (scope: string, payload?: unknown) => {
@@ -497,6 +499,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
   const [flowDefaultUnitByUuid, setFlowDefaultUnitByUuid] = useState<Record<string, string>>({});
   const [flowTypeByUuid, setFlowTypeByUuid] = useState<Record<string, string>>({});
   const [flowNameEnByUuid, setFlowNameEnByUuid] = useState<Record<string, string>>({});
+  const [flowNameZhByUuid, setFlowNameZhByUuid] = useState<Record<string, string>>({});
   const [loadingFlows, setLoadingFlows] = useState(false);
   const [flowLoadError, setFlowLoadError] = useState("");
   const [flowPage, setFlowPage] = useState(1);
@@ -549,10 +552,11 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
   const setConnectionHint = useLcaGraphStore((state) => state.setConnectionHint);
   const nodes = useLcaGraphStore((state) => state.nodes);
   const getPortDisplayName = (port: FlowPort): string => {
+    const localizedName = getLocalizedText(port.name, uiLanguage, port.name);
     if (uiLanguage !== "en") {
-      return port.name;
+      return String(flowNameZhByUuid[port.flowUuid] ?? "").trim() || localizedName;
     }
-    return String(port.flowNameEn ?? "").trim() || String(flowNameEnByUuid[port.flowUuid] ?? "").trim() || port.name;
+    return String(port.flowNameEn ?? "").trim() || String(flowNameEnByUuid[port.flowUuid] ?? "").trim() || localizedName;
   };
   const edges = useLcaGraphStore((state) => state.edges);
   const upsertOutputLink = useLcaGraphStore((state) => state.upsertOutputLink);
@@ -1338,7 +1342,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     Math.abs((marketOutput.amount ?? 0) - 1) <= 1e-9 &&
     marketOutput.isProduct,
   );
-  const settingCandidates = nodes.filter((candidate) => candidate.id !== node.id);
+  const settingCandidates = nodes.filter((candidate) => candidate.id !== node.id && !candidate.hidden);
   const canAutoNormalizeMarketInputs = marketProcess && externalInIntermediate.length > 0 && marketInputShareTotal > 0;
 
   const toRemotePort = (item: Record<string, unknown>, groupKey: RemoteInventoryGroupKey): FlowPort => {
@@ -1691,6 +1695,9 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
       if (uiLanguage === "en" && !hasInlineEnglish && !flowNameEnByUuid[uuid]) {
         return true;
       }
+      if (uiLanguage === "zh" && !flowNameZhByUuid[uuid]) {
+        return true;
+      }
       return false;
     });
     if (needFetch.length === 0) {
@@ -1715,6 +1722,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
         const defaultUnitPatch: Record<string, string> = {};
         const typePatch: Record<string, string> = {};
         const namePatch: Record<string, string> = {};
+        const zhNamePatch: Record<string, string> = {};
         rows.forEach((row) => {
           if (!row) {
             return;
@@ -1732,6 +1740,10 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
           if (englishName) {
             namePatch[row.flow_uuid] = englishName;
           }
+          const chineseName = String(row.flow_name ?? "").trim();
+          if (chineseName) {
+            zhNamePatch[row.flow_uuid] = chineseName;
+          }
         });
         if (Object.keys(unitPatch).length > 0) {
           setFlowUnitGroupByUuid((prev) => ({ ...prev, ...unitPatch }));
@@ -1745,6 +1757,9 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
         if (Object.keys(namePatch).length > 0) {
           setFlowNameEnByUuid((prev) => ({ ...prev, ...namePatch }));
         }
+        if (Object.keys(zhNamePatch).length > 0) {
+          setFlowNameZhByUuid((prev) => ({ ...prev, ...zhNamePatch }));
+        }
       })
       .catch(() => {
         // ignore
@@ -1752,7 +1767,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     return () => {
       canceled = true;
     };
-  }, [flowDefaultUnitByUuid, flowNameEnByUuid, flowTypeByUuid, flowUnitGroupByUuid, node.data.inputs, node.data.outputs, uiLanguage]);
+  }, [flowDefaultUnitByUuid, flowNameEnByUuid, flowNameZhByUuid, flowTypeByUuid, flowUnitGroupByUuid, node.data.inputs, node.data.outputs, uiLanguage]);
 
   const filteredFlows = useMemo(() => {
     const target = flowPicker.target;
@@ -2132,13 +2147,16 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
             </button>
           )}
           {!marketProcess && !ptsNode && !lciNode && (
-            <button
-              type="button"
-              className="text-btn inspector-toolbar-btn"
-              onClick={() => setAllocationModalOpen(true)}
-            >
-              {t("多产品分配", "Allocation")}
-            </button>
+            <>
+              {!importedLocked && <IntermediateFlowLinkPanel node={node} onStatus={onStatus} />}
+              <button
+                type="button"
+                className="text-btn inspector-toolbar-btn"
+                onClick={() => setAllocationModalOpen(true)}
+              >
+                {t("多产品分配", "Allocation")}
+              </button>
+            </>
           )}
           {marketProcess && (
             <label className="inline-checkbox">
@@ -2229,9 +2247,6 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
       )}
       {Array.isArray(node.data.importWarnings) && node.data.importWarnings.length > 0 && (
         <div className="mode-lock-hint">{t("导入提示：", "Import note: ")}{node.data.importWarnings[0]}</div>
-      )}
-      {tab === "external_in" && !lciNode && !ptsNode && !marketProcess && !importedLocked && (
-        <IntermediateFlowLinkPanel node={node} onStatus={onStatus} />
       )}
       {tab === "external_in" && (
         <>
@@ -2769,6 +2784,15 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                   </option>
                 ))}
               </select>
+              {assocDialog.direction === "input" && (
+                <BackgroundLciAssociationSection
+                  consumerNodeId={node.id}
+                  port={assocDialog.port}
+                  language={uiLanguage}
+                  onStatus={onStatus}
+                  onLinked={() => setAssocDialog({ open: false, direction: "output", port: null })}
+                />
+              )}
               <div className="assoc-actions">
                 <button type="button" className="ghost-btn" onClick={() => setAssocDialog({ open: false, direction: "output", port: null })}>
                   {t("取消", "Cancel")}

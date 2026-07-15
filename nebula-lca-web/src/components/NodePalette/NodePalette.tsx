@@ -28,7 +28,7 @@ export function NodePalette() {
     {
       key: "market",
       label: uiLanguage === "zh" ? "市场过程" : "Market Process",
-      items: nodes.filter((node) => node.data.nodeKind === "market_process" || node.data.processUuid.startsWith("market_")),
+      items: nodes.filter((node) => !node.hidden && (node.data.nodeKind === "market_process" || node.data.processUuid.startsWith("market_"))),
     },
     {
       key: "unit",
@@ -36,16 +36,17 @@ export function NodePalette() {
       items: nodes.filter(
         (node) =>
           node.data.nodeKind === "unit_process" &&
+          !node.hidden &&
           !node.data.processUuid.startsWith("market_"),
       ),
     },
     ...(activeCanvasKind === "root"
-      ? [{ key: "pts_module", label: uiLanguage === "zh" ? "PTS模块" : "PTS Module", items: nodes.filter((node) => node.data.nodeKind === "pts_module") }]
+      ? [{ key: "pts_module", label: uiLanguage === "zh" ? "PTS模块" : "PTS Module", items: nodes.filter((node) => !node.hidden && node.data.nodeKind === "pts_module") }]
       : []),
     {
       key: "lci",
       label: uiLanguage === "zh" ? "LCI数据集" : "LCI Dataset",
-      items: nodes.filter((node) => node.data.nodeKind === "lci_dataset"),
+      items: nodes.filter((node) => !node.hidden && node.data.nodeKind === "lci_dataset"),
     },
   ];
 

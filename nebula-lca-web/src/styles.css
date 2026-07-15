@@ -3038,6 +3038,8 @@ body,
   display: inline-flex;
   flex: 0 0 auto;
   width: 20px;
+  min-width: 20px;
+  max-width: 20px;
   height: 20px;
   align-items: center;
   justify-content: center;
@@ -3053,9 +3055,13 @@ body,
 }
 
 .app-checkbox-control {
+  display: block;
+  flex: 0 0 18px;
   position: relative;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  min-width: 18px;
+  max-width: 18px;
+  height: 18px;
   border: 1.5px solid #90a8b4;
   border-radius: 4px;
   background: #fff;
@@ -6065,27 +6071,83 @@ body,
     grid-template-columns: 1fr;
   }
 }
-.intermediate-flow-link-panel {
-  margin: 12px 0;
-  border: 1px solid #dce7ed;
-  border-radius: 10px;
-  background: #fff;
-  overflow: hidden;
+.intermediate-flow-link-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
 }
 
-.intermediate-flow-link-head {
+.intermediate-flow-link-trigger > span {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #e8f2f8;
+  color: #4f6f7e;
+  font-size: 11px;
+}
+
+.intermediate-flow-link-dialog {
+  width: min(1120px, 94vw);
+  height: min(82vh, 780px);
+}
+
+.intermediate-flow-link-dialog-head {
+  min-height: 58px;
+  flex: 0 0 auto;
+}
+
+.intermediate-flow-link-dialog-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 10px 12px;
+  padding: 10px 16px;
   background: #f7fafc;
+  border-bottom: 1px solid #e6eef2;
 }
 
-.intermediate-flow-link-head p {
-  margin: 3px 0 0;
+.intermediate-flow-link-dialog-toolbar p {
+  margin: 0;
   color: #6c808a;
   font-size: 12px;
+}
+
+.intermediate-flow-link-overview {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.intermediate-flow-link-counts,
+.intermediate-flow-link-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.intermediate-flow-link-counts > span {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #edf2f5;
+  color: #5f747e;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.intermediate-flow-link-counts > span.approved {
+  color: #247044;
+  background: #e7f6ed;
+}
+
+.intermediate-flow-link-counts > span.review {
+  color: #8a5a00;
+  background: #fff7d6;
+}
+
+.intermediate-flow-link-dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
 }
 
 .intermediate-flow-link-title {
@@ -6177,14 +6239,300 @@ body,
   white-space: normal;
 }
 
+.intermediate-flow-l2-review-overlay {
+  z-index: 90;
+}
+
+.intermediate-flow-l2-review-dialog {
+  width: min(980px, 92vw);
+  max-height: min(78vh, 720px);
+}
+
+.intermediate-flow-l2-review-note,
+.intermediate-flow-l2-review-select-all {
+  padding: 10px 16px;
+  border-bottom: 1px solid #e6eef2;
+  color: #5f747e;
+  font-size: 12px;
+}
+
+.intermediate-flow-l2-review-note {
+  background: #fffaf0;
+  color: #795a1a;
+}
+
+.intermediate-flow-l2-review-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.intermediate-flow-l2-review-row {
+  display: grid;
+  grid-template-columns: 28px minmax(150px, 0.8fr) 24px minmax(190px, 1fr) minmax(180px, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 11px 16px;
+  border-bottom: 1px solid #e8eef2;
+  cursor: pointer;
+}
+
+.intermediate-flow-l2-review-row:hover {
+  background: #f7fafc;
+}
+
+.intermediate-flow-l2-review-flow,
+.intermediate-flow-l2-review-target,
+.intermediate-flow-l2-review-row > .muted-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.intermediate-flow-l2-review-target {
+  display: grid;
+  gap: 2px;
+}
+
+.intermediate-flow-l2-review-target small {
+  color: #6c808a;
+  font-weight: 400;
+}
+
+.intermediate-flow-l2-review-arrow {
+  color: #8aa0aa;
+  text-align: center;
+}
+
+.intermediate-flow-l2-review-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid #e6eef2;
+  background: #f7fafc;
+}
+
+.background-lci-association-section {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid #dce7ec;
+  border-radius: 8px;
+  background: #f7fafc;
+}
+
+.background-lci-association-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: #243a44;
+}
+
+.background-lci-association-title > span {
+  color: #6c808a;
+  font-size: 11px;
+}
+
+.background-lci-association-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.background-lci-association-controls > div {
+  display: grid;
+  gap: 2px;
+  color: #314b57;
+  font-size: 12px;
+}
+
+.background-lci-association-controls > div > span {
+  color: #6c808a;
+  font-size: 11px;
+}
+
+.background-lci-picker-overlay {
+  z-index: 100;
+}
+
+.background-lci-picker-dialog {
+  width: min(1180px, 94vw);
+  height: min(82vh, 780px);
+}
+
+.background-lci-picker-head {
+  min-height: 58px;
+  flex: 0 0 auto;
+}
+
+.background-lci-picker-toolbar {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.5fr) minmax(170px, 0.8fr) minmax(150px, 0.7fr) auto;
+  gap: 12px;
+  align-items: end;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e6eef2;
+  background: #f7fafc;
+}
+
+.background-lci-picker-toolbar label {
+  display: grid;
+  gap: 5px;
+  color: #526b76;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.background-lci-picker-toolbar input,
+.background-lci-picker-toolbar select {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+}
+
+.background-lci-picker-reset {
+  min-height: 36px;
+}
+
+.background-lci-picker-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.background-lci-picker-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  color: #314b57;
+  font-size: 12px;
+}
+
+.background-lci-picker-table th,
+.background-lci-picker-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #e6eef2;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.background-lci-picker-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f2f6f8;
+  color: #526b76;
+  font-weight: 700;
+}
+
+.background-lci-picker-table th:nth-child(1) { width: 31%; }
+.background-lci-picker-table th:nth-child(2) { width: 19%; }
+.background-lci-picker-table th:nth-child(3) { width: 7%; }
+.background-lci-picker-table th:nth-child(4) { width: 14%; }
+.background-lci-picker-table th:nth-child(5) { width: 9%; }
+.background-lci-picker-table th:nth-child(6) { width: 8%; }
+.background-lci-picker-table th:nth-child(7) { width: 8%; }
+
+.background-lci-picker-table tbody tr:hover {
+  background: #f7fafc;
+}
+
+.background-lci-picker-table td:nth-child(1),
+.background-lci-picker-table td:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.background-lci-picker-table button {
+  border: 0;
+  background: transparent;
+  color: #1478d4;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.background-lci-picker-table button:disabled {
+  color: #9aabb3;
+  cursor: not-allowed;
+}
+
+.background-lci-vector-badge {
+  display: inline-flex;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #e7f6ed;
+  color: #247044;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.background-lci-picker-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-top: 1px solid #e6eef2;
+  background: #f7fafc;
+  color: #6c808a;
+  font-size: 12px;
+}
+
+.background-lci-picker-footer > div {
+  display: flex;
+  gap: 8px;
+}
+
 @media (max-width: 900px) {
+  .intermediate-flow-link-dialog-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .intermediate-flow-link-row,
-  .intermediate-flow-review-card {
+  .intermediate-flow-review-card,
+  .intermediate-flow-l2-review-row {
     grid-template-columns: 1fr;
   }
 
   .intermediate-flow-review-card,
   .provider-candidate-btn {
     grid-column: 1;
+  }
+
+  .intermediate-flow-l2-review-arrow {
+    display: none;
+  }
+
+  .background-lci-association-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .background-lci-picker-dialog {
+    width: 96vw;
+  }
+
+  .background-lci-picker-toolbar {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .background-lci-picker-table {
+    min-width: 900px;
+  }
+}
+
+@media (max-width: 620px) {
+  .background-lci-picker-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .background-lci-picker-footer {
+    align-items: stretch;
+    flex-direction: column;
   }
 }

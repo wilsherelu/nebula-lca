@@ -21,8 +21,35 @@ import app.database as _db_module
 from app.main import app
 from app.database import Base
 from app.lci_vector_codec import pack_lci_vector
-from app.models import DebugDiagnostic, FlowRecord, LciBiosphereFlowKey, LciProcessVector, ReferenceProcess
+from app.models import DebugDiagnostic, ExternalDataSyncRecord, FlowRecord, LciBiosphereFlowKey, LciProcessVector, ReferenceProcess
 from app.services.catalog_cache import invalidate_management_caches
+from app.services.reference_catalog import _localized_display_text, _restore_exchange_amounts_from_lineage
+
+
+def test_localized_display_text_handles_structured_and_legacy_values():
+    assert _localized_display_text({"#text": "Electricity", "@xml:lang": "en"}) == "Electricity"
+    assert _localized_display_text([
+        {"#text": "Electricity", "@xml:lang": "en"},
+        {"#text": "电力", "@xml:lang": "zh"},
+    ]) == "电力"
+    assert _localized_display_text("{'#text': 'waste wire', '@xml:lang': 'en'}") == "waste wire"
+
+
+def test_restore_exchange_amounts_from_sync_lineage():
+    exchanges = [{"exchange_internal_id": "4", "flow_uuid": "flow-1", "amount": 0}]
+    metadata = {
+        "row": {
+            "json": {
+                "processDataSet": {
+                    "exchanges": {
+                        "exchange": [{"@dataSetInternalID": "4", "meanAmount": "12.5"}],
+                    },
+                },
+            },
+        },
+    }
+    assert _restore_exchange_amounts_from_lineage(exchanges, metadata) == 1
+    assert exchanges[0]["amount"] == 12.5
 
 
 @pytest.fixture(autouse=True)
@@ -210,6 +237,101 @@ def test_reference_process_exchange_summary_missing_process_404(client):
     assert response.json()["detail"]["code"] == "PROCESS_NOT_FOUND"
 
 
+def test_reference_process_catalog_excludes_editable_clones(client):
+    db = _db_module.SessionLocal()
+    try:
+        db.add_all([
+            ReferenceProcess(
+                process_uuid="catalog-source-process",
+                process_name="Catalog source",
+                process_type="unit_process",
+                import_mode="locked",
+                process_json={"exchanges": []},
+            ),
+            ReferenceProcess(
+                process_uuid="catalog-editable-clone",
+                source_process_uuid="catalog-source-process",
+                process_name="Catalog source",
+                process_type="unit_process",
+                import_mode="editable_clone",
+                process_json={"exchanges": []},
+            ),
+        ])
+        db.commit()
+    finally:
+        db.close()
+    invalidate_management_caches(reference_processes=True)
+
+    response = client.get("/api/reference/processes/catalog", params={"search": "Catalog source"})
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert [item["process_uuid"] for item in items] == ["catalog-source-process"]
+
+
+def test_reference_process_import_repairs_amounts_from_sync_lineage(client):
+    db = _db_module.SessionLocal()
+    try:
+        db.add(FlowRecord(
+            flow_uuid="lineage-flow",
+            flow_name="Lineage flow",
+            flow_type="Product flow",
+            default_unit="kg",
+            unit_group="Units of mass",
+        ))
+        db.add(ReferenceProcess(
+            process_uuid="lineage-source-process",
+            process_name="Lineage source",
+            process_type="unit_process",
+            import_mode="locked",
+            process_json={
+                "exchanges": [{
+                    "exchange_internal_id": "1",
+                    "flow_uuid": "lineage-flow",
+                    "direction": "input",
+                    "amount": 0,
+                    "unit": "kg",
+                }],
+            },
+        ))
+        db.add(ExternalDataSyncRecord(
+            account_id="lineage-account",
+            platform="tiangong",
+            local_kind="process",
+            local_uuid="lineage-source-process",
+            remote_id="lineage-source-process",
+            metadata_json={
+                "row": {
+                    "json": {
+                        "processDataSet": {
+                            "exchanges": {
+                                "exchange": [{"@dataSetInternalID": "1", "meanAmount": "4302"}],
+                            },
+                        },
+                    },
+                },
+            },
+        ))
+        db.commit()
+    finally:
+        db.close()
+    invalidate_management_caches(flows=True, reference_processes=True)
+
+    response = client.post("/api/reference/processes/import", json={
+        "target_kind": "unit_process",
+        "import_mode": "editable_clone",
+        "process_uuids": ["lineage-source-process"],
+    })
+
+    assert response.status_code == 200, response.json()
+    assert response.json()["imported_processes"][0]["inputs"][0]["amount"] == 4302
+    db = _db_module.SessionLocal()
+    try:
+        assert db.get(ReferenceProcess, "lineage-source-process").process_json["exchanges"][0]["amount"] == 4302
+    finally:
+        db.close()
+
+
 def test_reference_process_import_accepts_lci_dataset_target(client):
     """Canvas import for ecoinvent LCI datasets should not be rejected as unimplemented."""
     source_uuid = "source-lci-process-001"
@@ -265,6 +387,7 @@ def test_reference_process_import_accepts_lci_dataset_target(client):
         db.commit()
     finally:
         db.close()
+    invalidate_management_caches(flows=True, reference_processes=True)
 
     try:
         resp = client.post(
