@@ -3,7 +3,7 @@ import type { FlowPort, IntermediateFlowLink } from "../model/node";
 
 const API_BASE = getApiBase();
 
-type RawResolution = {
+export type RawResolution = {
   source_flow_uuid: string;
   target_flow_uuid: string;
   amount_factor: number;
@@ -18,6 +18,9 @@ type RawResolution = {
   package_hash?: string;
   application_mode?: "strict_identity" | "auto_compatible";
   warnings?: string[];
+  status?: "auto" | "user_confirmed";
+  target_flow_name?: string;
+  target_flow_name_en?: string;
 };
 
 export type LinkCandidate = {
@@ -29,7 +32,7 @@ export type LinkCandidate = {
 
 export type ResolveItem = {
   port_id?: string;
-  status: "explicit" | "L1" | "L2" | "unmatched" | "blocked" | "skipped";
+  status: "explicit" | "L1" | "L2" | "L3" | "unmatched" | "blocked" | "skipped";
   reason?: string;
   resolution?: RawResolution | IntermediateFlowLink | null;
   l2_candidates?: LinkCandidate[];
@@ -61,13 +64,26 @@ export const toIntermediateFlowLink = (raw: RawResolution): IntermediateFlowLink
   mappingReason: raw.mapping_reason,
   ruleId: raw.rule_id,
   ruleOrigin: raw.rule_origin,
-  status: raw.mapping_level === "L3" ? "user_confirmed" : "auto",
+  status: raw.status ?? (raw.mapping_level === "L1" ? "auto" : "user_confirmed"),
   packageId: raw.package_id,
   packageVersion: raw.package_version,
   packageHash: raw.package_hash,
   applicationMode: raw.application_mode,
   warnings: raw.warnings ?? [],
 });
+
+export async function confirmL2IntermediateFlowLink(
+  sourceFlowUuid: string,
+  ruleId: string,
+): Promise<IntermediateFlowLink> {
+  const response = await fetch(`${API_BASE}/intermediate-flow-links/confirm-l2`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source_flow_uuid: sourceFlowUuid, rule_id: ruleId }),
+  });
+  if (!response.ok) throw new Error(`L2 confirmation failed (${response.status})`);
+  return toIntermediateFlowLink(await response.json() as RawResolution);
+}
 
 export async function resolveIntermediateFlowPorts(ports: FlowPort[]): Promise<{
   counts: Record<string, number>;

@@ -6034,6 +6034,25 @@ body,
   border-top: 1px solid var(--border-color, #dfe4ea);
 }
 
+.intermediate-flow-review-card {
+  display: grid;
+  gap: 6px;
+  padding: 9px;
+  border: 1px solid var(--border-color, #dfe4ea);
+  border-radius: 6px;
+  background: var(--panel-bg, #fff);
+}
+
+.intermediate-flow-level-badge {
+  width: fit-content;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: var(--warning-text, #8a5a00);
+  background: var(--warning-bg, #fff7d6);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .provider-candidate-btn {
   width: 100%;
   padding: 7px 9px;

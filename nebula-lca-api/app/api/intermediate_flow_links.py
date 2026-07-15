@@ -40,6 +40,7 @@ class ResolvePortRequest(BaseModel):
 class ResolveBatchRequest(BaseModel):
     items: list[ResolvePortRequest] = Field(default_factory=list, max_length=1000)
     l2_limit: int = Field(default=5, ge=1, le=20)
+    include_unreviewed_candidates: bool = False
 
 
 class UserRuleCreateRequest(BaseModel):
@@ -47,6 +48,11 @@ class UserRuleCreateRequest(BaseModel):
     target_flow_uuid: str
     amount_factor: float | None = Field(default=None, gt=0)
     mapping_reason: str = Field(min_length=3, max_length=1024)
+
+
+class ConfirmL2Request(BaseModel):
+    source_flow_uuid: str
+    rule_id: str
 
 
 def _flow_or_404(db: Session, flow_uuid: str) -> FlowRecord:
@@ -76,6 +82,14 @@ def _rule_payload(row: IntermediateFlowLinkRule) -> dict[str, Any]:
     }
 
 
+def _resolution_payload(db: Session, resolution: Any) -> dict[str, Any]:
+    payload = resolution.to_dict()
+    target = db.get(FlowRecord, resolution.target_flow_uuid)
+    payload["target_flow_name"] = target.flow_name if target is not None else ""
+    payload["target_flow_name_en"] = target.flow_name_en if target is not None else ""
+    return payload
+
+
 @api_router.post("/resolve-batch")
 def resolve_batch(payload: ResolveBatchRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
     try:
@@ -86,7 +100,7 @@ def resolve_batch(payload: ResolveBatchRequest, db: Session = Depends(get_db)) -
             detail={"code": "INTERMEDIATE_FLOW_PACKAGE_UNAVAILABLE", "message": str(exc)},
         ) from exc
     results: list[dict[str, Any]] = []
-    counts = {"explicit": 0, "L1": 0, "L2": 0, "unmatched": 0, "blocked": 0}
+    counts = {"explicit": 0, "L1": 0, "L2": 0, "L3": 0, "unmatched": 0, "blocked": 0}
     for item in payload.items:
         base = {"node_id": item.node_id, "port_id": item.port_id, "source_flow_uuid": item.flow_uuid}
         if item.direction != "input" or item.exchange_type != "technosphere":
@@ -117,10 +131,19 @@ def resolve_batch(payload: ResolveBatchRequest, db: Session = Depends(get_db)) -
             counts["blocked"] += 1
             continue
         if resolution is not None:
-            results.append({**base, "status": resolution.mapping_level, "resolution": resolution.to_dict(), "l2_candidates": []})
+            results.append({
+                **base,
+                "status": resolution.mapping_level,
+                "resolution": _resolution_payload(db, resolution),
+                "l2_candidates": [],
+            })
             counts[resolution.mapping_level] += 1
             continue
-        candidates = list_l2_candidates(db, source, payload.l2_limit)
+        candidates = (
+            list_l2_candidates(db, source, payload.l2_limit)
+            if payload.include_unreviewed_candidates
+            else []
+        )
         status = "L2" if candidates else "unmatched"
         results.append({**base, "status": status, "resolution": None, "l2_candidates": candidates})
         counts[status] += 1
@@ -132,6 +155,18 @@ def resolve_batch(payload: ResolveBatchRequest, db: Session = Depends(get_db)) -
         "counts": counts,
         "items": results,
     }
+
+
+@api_router.post("/confirm-l2")
+def confirm_l2(payload: ConfirmL2Request, db: Session = Depends(get_db)) -> dict[str, Any]:
+    resolution, issue = resolve_intermediate_flow(db, payload.source_flow_uuid)
+    if issue:
+        raise HTTPException(status_code=422, detail={"code": issue})
+    if resolution is None or resolution.mapping_level != "L2" or resolution.rule_origin != "builtin":
+        raise HTTPException(status_code=422, detail={"code": "L2_RULE_NOT_FOUND"})
+    if resolution.rule_id != payload.rule_id:
+        raise HTTPException(status_code=422, detail={"code": "L2_EVIDENCE_MISMATCH"})
+    return {**_resolution_payload(db, resolution), "status": "user_confirmed"}
 
 
 @api_router.get("/providers")

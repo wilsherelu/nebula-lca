@@ -2278,7 +2278,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
       {Array.isArray(node.data.importWarnings) && node.data.importWarnings.length > 0 && (
         <div className="mode-lock-hint">{t("导入提示：", "Import note: ")}{node.data.importWarnings[0]}</div>
       )}
-      {tab === "external_in" && !lciNode && !ptsNode && !marketProcess && (
+      {tab === "external_in" && !lciNode && !ptsNode && !marketProcess && !importedLocked && (
         <IntermediateFlowLinkPanel node={node} onStatus={onStatus} />
       )}
       {tab === "external_in" && (
