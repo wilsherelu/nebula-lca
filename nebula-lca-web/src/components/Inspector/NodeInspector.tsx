@@ -7,6 +7,7 @@ import { useLcaGraphStore } from "../../store/lcaGraphStore";
 import { CreateFlowDialog } from "../CreateFlowDialog";
 import { FlowAllocationPropertiesModal, type FlowAllocationProperty } from "../FlowAllocationPropertiesModal";
 import { TidasLocationCascade, normalizeTidasLocationValue } from "../TidasLocationCascade";
+import { Checkbox } from "../ui/Checkbox";
 import { MultiProductAllocationModal } from "./MultiProductAllocationModal";
 import { IntermediateFlowLinkPanel } from "./IntermediateFlowLinkPanel";
 import type { SourcePolicy } from "../ProjectManagement/ProjectManagement";
@@ -82,7 +83,6 @@ type RemoteInventoryGroupState = {
   items: FlowPort[];
   total: number;
   page: number;
-  query: string;
   loading: boolean;
   error: string;
 };
@@ -272,11 +272,9 @@ type FlowSectionProps = {
   headerAction?: ReactNode;
   remoteTotal?: number;
   remotePage?: number;
-  remoteQuery?: string;
   remoteLoading?: boolean;
   remoteError?: string;
   onRemotePageChange?: (page: number) => void;
-  onRemoteQueryChange?: (query: string) => void;
   onDelete?: (id: string) => void;
   extraHeader?: string;
   renderExtraCell?: (port: FlowPort, idx: number) => ReactNode;
@@ -303,11 +301,9 @@ function FlowSection({
   headerAction,
   remoteTotal,
   remotePage,
-  remoteQuery,
   remoteLoading = false,
   remoteError = "",
   onRemotePageChange,
-  onRemoteQueryChange,
   onDelete,
   extraHeader,
   renderExtraCell,
@@ -320,40 +316,15 @@ function FlowSection({
   const t = (zh: string, en: string) => (uiLanguage === "zh" ? zh : en);
   const pageSize = 10;
   const [page, setPage] = useState(1);
-  const [query, setQuery] = useState("");
-  const remoteMode = Boolean(onRemotePageChange || onRemoteQueryChange);
-  const activeQuery = remoteMode ? remoteQuery ?? "" : query;
+  const remoteMode = Boolean(onRemotePageChange);
   const showOnNodeLocked = readOnly || (lockFields && !allowShowOnNodeToggle);
   const hasExtra = Boolean(extraHeader && renderExtraCell);
   const hasExtra2 = Boolean(extraHeader2 && renderExtraCell2);
   const locked = readOnly || lockFields || plainReadOnly;
-  const filteredPorts = useMemo(() => {
-    if (remoteMode) {
-      return ports;
-    }
-    const needle = query.trim().toLowerCase();
-    if (!needle) {
-      return ports;
-    }
-    return ports.filter((port) => {
-      const label = getDisplayName ? getDisplayName(port) : port.name;
-      return [
-        label,
-        port.name,
-        port.flowNameEn,
-        port.flowUuid,
-        port.unit,
-        port.unitGroup,
-        port.type,
-        port.direction,
-        port.sourceSystem,
-      ].some((value) => String(value ?? "").toLowerCase().includes(needle));
-    });
-  }, [getDisplayName, ports, query, remoteMode]);
-  const totalItems = remoteMode ? Number(remoteTotal ?? filteredPorts.length) || 0 : filteredPorts.length;
+  const totalItems = remoteMode ? Number(remoteTotal ?? ports.length) || 0 : ports.length;
   const pageCount = Math.max(1, Math.ceil(totalItems / pageSize));
   const currentPage = remoteMode ? Math.min(remotePage ?? 1, pageCount) : Math.min(page, pageCount);
-  const visiblePorts = remoteMode ? filteredPorts : filteredPorts.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const visiblePorts = remoteMode ? ports : ports.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   return (
     <section className="inventory-section">
       <div className="inventory-section-head">
@@ -365,20 +336,8 @@ function FlowSection({
           </button>
         )}
       </div>
-      <div className="inventory-section-controls">
-        <input
-          value={activeQuery}
-          placeholder={t("搜索流名称或 UUID", "Search flow name or UUID")}
-          onChange={(event) => {
-            if (remoteMode) {
-              onRemoteQueryChange?.(event.target.value);
-            } else {
-              setQuery(event.target.value);
-              setPage(1);
-            }
-          }}
-        />
-        {totalItems > pageSize && (
+      {totalItems > pageSize && (
+        <div className="inventory-section-controls">
           <div className="inventory-section-pagination">
             <button
               type="button"
@@ -410,8 +369,8 @@ function FlowSection({
               {t("下一页", "Next")}
             </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
       {remoteLoading && <div className="table-empty">{t("加载中", "Loading")}</div>}
       {!remoteLoading && remoteError && <div className="table-empty">{remoteError}</div>}
       <div className="inventory-grid-header">
@@ -504,7 +463,7 @@ function FlowSection({
           ) : <div className="inventory-grid-spacer" aria-hidden="true" />}
         </div>
       ))}
-      {!remoteLoading && !remoteError && filteredPorts.length === 0 && <div className="table-empty">{t("暂无数据", "No data")}</div>}
+      {!remoteLoading && !remoteError && ports.length === 0 && <div className="table-empty">{t("暂无数据", "No data")}</div>}
     </section>
   );
 }
@@ -560,7 +519,6 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     items: [],
     total: 0,
     page: 1,
-    query: "",
     loading: false,
     error: "",
   });
@@ -1345,6 +1303,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     lciNode && node.data.processUuid && !node.data.processUuid.startsWith("lci_")
       ? node.data.processUuid
       : "";
+  const usesRemoteLciInventory = Boolean(lciNode && lciVectorProcessUuid);
   const ptsNode = node.data.nodeKind === "pts_module";
   const importedLocked = node.data.importMode === "locked";
   const marketAllowMixedFlows = Boolean(node.data.marketAllowMixedFlows);
@@ -1404,7 +1363,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
   };
 
   useEffect(() => {
-    if (!lciNode || !lciVectorProcessUuid) {
+    if (!usesRemoteLciInventory) {
       setLciInventoryGroups({
         in_intermediate: createEmptyRemoteGroup(),
         out_intermediate: createEmptyRemoteGroup(),
@@ -1428,9 +1387,6 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
         page: String(current.page),
         page_size: "10",
       });
-      if (current.query.trim()) {
-        params.set("q", current.query.trim());
-      }
       fetch(`${API_BASE}/reference/processes/${encodeURIComponent(lciVectorProcessUuid)}/exchange-summary?${params.toString()}`, {
         signal: controller.signal,
       })
@@ -1474,16 +1430,12 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
       controllers.forEach((controller) => controller.abort());
     };
   }, [
-    lciNode,
+    usesRemoteLciInventory,
     lciVectorProcessUuid,
     lciInventoryGroups.in_intermediate.page,
-    lciInventoryGroups.in_intermediate.query,
     lciInventoryGroups.out_intermediate.page,
-    lciInventoryGroups.out_intermediate.query,
     lciInventoryGroups.in_elementary.page,
-    lciInventoryGroups.in_elementary.query,
     lciInventoryGroups.out_elementary.page,
-    lciInventoryGroups.out_elementary.query,
   ]);
 
   useEffect(() => {
@@ -2304,7 +2256,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                 allowShowOnNodeToggle={importedLocked && !lciNode}
                 showNodeColumn={!lciNode}
                 showActionColumn={!lciNode}
-                ports={lciNode ? lciInventoryGroups.in_intermediate.items : externalInIntermediate}
+                ports={usesRemoteLciInventory ? lciInventoryGroups.in_intermediate.items : externalInIntermediate}
                 getDisplayName={getPortDisplayName}
                 unitOptionsByPort={marketInputUnitOptionsByPort}
                 onUnitChange={(port, nextUnit) => {
@@ -2327,23 +2279,19 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                   lciNode
                     ? undefined
                     : (port) => (
-                      <label className="inline-checkbox">
-                        <input
-                          type="checkbox"
-                          checked={isReferenceProductPort(port, "input")}
-                          disabled={importedLocked || marketProcess}
-                          onChange={(event) => applyProductToggle("input", port.id, event.target.checked)}
-                        />
-                      </label>
+                      <Checkbox
+                        checked={isReferenceProductPort(port, "input")}
+                        disabled={importedLocked || marketProcess}
+                        ariaLabel={t("定义为产品", "Define as product")}
+                        onCheckedChange={(checked) => applyProductToggle("input", port.id, checked)}
+                      />
                     )
                 }
-                remoteTotal={lciNode ? lciInventoryGroups.in_intermediate.total : undefined}
-                remotePage={lciNode ? lciInventoryGroups.in_intermediate.page : undefined}
-                remoteQuery={lciNode ? lciInventoryGroups.in_intermediate.query : undefined}
-                remoteLoading={lciNode ? lciInventoryGroups.in_intermediate.loading : undefined}
-                remoteError={lciNode ? lciInventoryGroups.in_intermediate.error : undefined}
-                onRemotePageChange={lciNode ? (page) => updateLciInventoryGroup("in_intermediate", { page }) : undefined}
-                onRemoteQueryChange={lciNode ? (query) => updateLciInventoryGroup("in_intermediate", { query, page: 1 }) : undefined}
+                remoteTotal={usesRemoteLciInventory ? lciInventoryGroups.in_intermediate.total : undefined}
+                remotePage={usesRemoteLciInventory ? lciInventoryGroups.in_intermediate.page : undefined}
+                remoteLoading={usesRemoteLciInventory ? lciInventoryGroups.in_intermediate.loading : undefined}
+                remoteError={usesRemoteLciInventory ? lciInventoryGroups.in_intermediate.error : undefined}
+                onRemotePageChange={usesRemoteLciInventory ? (page) => updateLciInventoryGroup("in_intermediate", { page }) : undefined}
                 onChange={(next) =>
                   updateNode(node.id, (current) => {
                     const marketUnit = marketProcess ? current.data.outputs[0]?.unit : undefined;
@@ -2389,16 +2337,14 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                   plainReadOnly={lciNode}
                   showNodeColumn={false}
                   showActionColumn={!lciNode}
-                  ports={lciNode ? lciInventoryGroups.in_elementary.items : externalInElementary}
+                  ports={usesRemoteLciInventory ? lciInventoryGroups.in_elementary.items : externalInElementary}
                   getDisplayName={getPortDisplayName}
                   unitOptionsByPort={unitOptionsByPort}
-                  remoteTotal={lciNode ? lciInventoryGroups.in_elementary.total : undefined}
-                  remotePage={lciNode ? lciInventoryGroups.in_elementary.page : undefined}
-                  remoteQuery={lciNode ? lciInventoryGroups.in_elementary.query : undefined}
-                  remoteLoading={lciNode ? lciInventoryGroups.in_elementary.loading : undefined}
-                  remoteError={lciNode ? lciInventoryGroups.in_elementary.error : undefined}
-                  onRemotePageChange={lciNode ? (page) => updateLciInventoryGroup("in_elementary", { page }) : undefined}
-                  onRemoteQueryChange={lciNode ? (query) => updateLciInventoryGroup("in_elementary", { query, page: 1 }) : undefined}
+                  remoteTotal={usesRemoteLciInventory ? lciInventoryGroups.in_elementary.total : undefined}
+                  remotePage={usesRemoteLciInventory ? lciInventoryGroups.in_elementary.page : undefined}
+                  remoteLoading={usesRemoteLciInventory ? lciInventoryGroups.in_elementary.loading : undefined}
+                  remoteError={usesRemoteLciInventory ? lciInventoryGroups.in_elementary.error : undefined}
+                  onRemotePageChange={usesRemoteLciInventory ? (page) => updateLciInventoryGroup("in_elementary", { page }) : undefined}
                   onUnitChange={(port, nextUnit) => {
                     void updatePortUnitWithConversion("inputs", port, nextUnit);
                   }}
@@ -2455,7 +2401,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                 allowShowOnNodeToggle={importedLocked && !lciNode}
                 showNodeColumn={!lciNode}
                 showActionColumn={!lciNode}
-                ports={lciNode ? lciInventoryGroups.out_intermediate.items : externalOutIntermediate}
+                ports={usesRemoteLciInventory ? lciInventoryGroups.out_intermediate.items : externalOutIntermediate}
                 getDisplayName={getPortDisplayName}
                 unitOptionsByPort={unitOptionsByPort}
                 onUnitChange={(port, nextUnit) => {
@@ -2481,14 +2427,12 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                   const checked = isReferenceProductPort(port, "output");
                   return (
                     <div className="product-sale-cell">
-                      <label className="inline-checkbox">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          disabled={importedLocked || lciNode}
-                          onChange={(event) => applyProductToggle("output", port.id, event.target.checked)}
-                        />
-                      </label>
+                      <Checkbox
+                        checked={checked}
+                        disabled={importedLocked || lciNode}
+                        ariaLabel={t("定义为产品", "Define as product")}
+                        onCheckedChange={(nextChecked) => applyProductToggle("output", port.id, nextChecked)}
+                      />
                       <button
                         type="button"
                         className="sale-link-btn"
@@ -2506,13 +2450,11 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                     </div>
                   );
                 }}
-                remoteTotal={lciNode ? lciInventoryGroups.out_intermediate.total : undefined}
-                remotePage={lciNode ? lciInventoryGroups.out_intermediate.page : undefined}
-                remoteQuery={lciNode ? lciInventoryGroups.out_intermediate.query : undefined}
-                remoteLoading={lciNode ? lciInventoryGroups.out_intermediate.loading : undefined}
-                remoteError={lciNode ? lciInventoryGroups.out_intermediate.error : undefined}
-                onRemotePageChange={lciNode ? (page) => updateLciInventoryGroup("out_intermediate", { page }) : undefined}
-                onRemoteQueryChange={lciNode ? (query) => updateLciInventoryGroup("out_intermediate", { query, page: 1 }) : undefined}
+                remoteTotal={usesRemoteLciInventory ? lciInventoryGroups.out_intermediate.total : undefined}
+                remotePage={usesRemoteLciInventory ? lciInventoryGroups.out_intermediate.page : undefined}
+                remoteLoading={usesRemoteLciInventory ? lciInventoryGroups.out_intermediate.loading : undefined}
+                remoteError={usesRemoteLciInventory ? lciInventoryGroups.out_intermediate.error : undefined}
+                onRemotePageChange={usesRemoteLciInventory ? (page) => updateLciInventoryGroup("out_intermediate", { page }) : undefined}
                 onChange={(next) =>
                   updateNode(node.id, (current) => ({
                     ...current,
@@ -2580,16 +2522,14 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                   plainReadOnly={lciNode}
                   showNodeColumn={false}
                   showActionColumn={!lciNode}
-                  ports={lciNode ? lciInventoryGroups.out_elementary.items : externalOutElementary}
+                  ports={usesRemoteLciInventory ? lciInventoryGroups.out_elementary.items : externalOutElementary}
                   getDisplayName={getPortDisplayName}
                   unitOptionsByPort={unitOptionsByPort}
-                  remoteTotal={lciNode ? lciInventoryGroups.out_elementary.total : undefined}
-                  remotePage={lciNode ? lciInventoryGroups.out_elementary.page : undefined}
-                  remoteQuery={lciNode ? lciInventoryGroups.out_elementary.query : undefined}
-                  remoteLoading={lciNode ? lciInventoryGroups.out_elementary.loading : undefined}
-                  remoteError={lciNode ? lciInventoryGroups.out_elementary.error : undefined}
-                  onRemotePageChange={lciNode ? (page) => updateLciInventoryGroup("out_elementary", { page }) : undefined}
-                  onRemoteQueryChange={lciNode ? (query) => updateLciInventoryGroup("out_elementary", { query, page: 1 }) : undefined}
+                  remoteTotal={usesRemoteLciInventory ? lciInventoryGroups.out_elementary.total : undefined}
+                  remotePage={usesRemoteLciInventory ? lciInventoryGroups.out_elementary.page : undefined}
+                  remoteLoading={usesRemoteLciInventory ? lciInventoryGroups.out_elementary.loading : undefined}
+                  remoteError={usesRemoteLciInventory ? lciInventoryGroups.out_elementary.error : undefined}
+                  onRemotePageChange={usesRemoteLciInventory ? (page) => updateLciInventoryGroup("out_elementary", { page }) : undefined}
                   onUnitChange={(port, nextUnit) => {
                     void updatePortUnitWithConversion("outputs", port, nextUnit);
                   }}

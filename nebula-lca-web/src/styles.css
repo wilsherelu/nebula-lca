@@ -2332,19 +2332,11 @@ body,
 }
 
 .inventory-section-controls {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto;
-  gap: 8px;
+  display: flex;
+  justify-content: flex-end;
   align-items: center;
-  padding: 0 0 8px;
-}
-
-.inventory-section-controls input {
-  height: 32px;
-  border: 1px solid #cbd8de;
-  border-radius: 6px;
-  padding: 0 8px;
-  min-width: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid #e7edf0;
 }
 
 .inventory-section-pagination {
@@ -3039,6 +3031,62 @@ body,
 .inline-checkbox input {
   width: 16px;
   height: 16px;
+}
+
+.app-checkbox {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.app-checkbox input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+}
+
+.app-checkbox-control {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid #90a8b4;
+  border-radius: 4px;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.app-checkbox input:checked + .app-checkbox-control {
+  border-color: #0c84ff;
+  background: #0c84ff;
+}
+
+.app-checkbox input:checked + .app-checkbox-control::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.app-checkbox input:focus-visible + .app-checkbox-control {
+  outline: 3px solid rgba(12, 132, 255, 0.2);
+  outline-offset: 2px;
+}
+
+.app-checkbox.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .internal-out {
@@ -6018,44 +6066,125 @@ body,
   }
 }
 .intermediate-flow-link-panel {
-  display: grid;
-  gap: 10px;
   margin: 12px 0;
-  padding: 12px;
-  border: 1px solid var(--border-color, #dfe4ea);
-  border-radius: 8px;
-  background: var(--panel-subtle-bg, #f8fafc);
+  border: 1px solid #dce7ed;
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.intermediate-flow-link-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+  background: #f7fafc;
+}
+
+.intermediate-flow-link-head p {
+  margin: 3px 0 0;
+  color: #6c808a;
+  font-size: 12px;
+}
+
+.intermediate-flow-link-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #243a44;
+}
+
+.intermediate-flow-link-title > span {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #e8f2f8;
+  color: #4f6f7e;
+  font-size: 11px;
+  text-align: center;
+}
+
+.intermediate-flow-link-list {
+  display: grid;
 }
 
 .intermediate-flow-link-row {
   display: grid;
-  gap: 6px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border-color, #dfe4ea);
+  grid-template-columns: minmax(180px, 0.8fr) minmax(240px, 1.4fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 12px;
+  border-top: 1px solid #e8eef2;
+}
+
+.intermediate-flow-link-summary,
+.intermediate-flow-link-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.intermediate-flow-link-summary strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.intermediate-flow-link-target {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  color: #4c6570;
+  font-size: 12px;
 }
 
 .intermediate-flow-review-card {
+  grid-column: 2 / -1;
   display: grid;
-  gap: 6px;
-  padding: 9px;
-  border: 1px solid var(--border-color, #dfe4ea);
-  border-radius: 6px;
-  background: var(--panel-bg, #fff);
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  color: #4c6570;
+  font-size: 12px;
 }
 
 .intermediate-flow-level-badge {
-  width: fit-content;
   padding: 2px 7px;
   border-radius: 999px;
-  color: var(--warning-text, #8a5a00);
-  background: var(--warning-bg, #fff7d6);
+  color: #8a5a00;
+  background: #fff7d6;
   font-size: 12px;
   font-weight: 700;
 }
 
+.intermediate-flow-level-badge.approved {
+  color: #247044;
+  background: #e7f6ed;
+}
+
+.intermediate-flow-level-badge.unmatched {
+  color: #6c808a;
+  background: #edf2f5;
+}
+
 .provider-candidate-btn {
-  width: 100%;
+  grid-column: 2 / -1;
+  width: auto;
   padding: 7px 9px;
   text-align: left;
   white-space: normal;
+}
+
+@media (max-width: 900px) {
+  .intermediate-flow-link-row,
+  .intermediate-flow-review-card {
+    grid-template-columns: 1fr;
+  }
+
+  .intermediate-flow-review-card,
+  .provider-candidate-btn {
+    grid-column: 1;
+  }
 }
