@@ -10,6 +10,13 @@ from sqlalchemy.orm import sessionmaker
 
 from app.database import Base
 from app.database import SessionLocal, engine as app_engine
+from app.api.intermediate_flow_links import (
+    ConfirmL2Request,
+    ResolveBatchRequest,
+    ResolvePortRequest,
+    confirm_l2,
+    resolve_batch,
+)
 from app.main import app
 from app.models import FlowRecord, LciProcessVector, Model, ModelVersion, ReferenceProcess
 from app.schemas import HybridGraph, IntermediateFlowLink
@@ -209,7 +216,7 @@ def test_l1_resolution_is_one_way_and_validated_against_catalog(db):
     assert resolution.to_dict()["link_direction"] == "tiangong_to_ecoinvent"
 
 
-def test_warned_l2_resolution_is_auto_applicable_and_evidence_checked(db):
+def test_warned_l2_resolution_requires_confirmation_and_evidence_is_checked(db):
     row = _seed_first_compatible_pair(db)
     resolution, issue = resolve_intermediate_flow(db, row["source_flow_uuid"])
     assert issue is None
@@ -227,6 +234,14 @@ def test_warned_l2_resolution_is_auto_applicable_and_evidence_checked(db):
     assert validate_intermediate_flow_link(db, row["source_flow_uuid"], link) is None
     stale = link.model_copy(update={"warnings": ["stale"]})
     assert validate_intermediate_flow_link(db, row["source_flow_uuid"], stale) == "L2_EVIDENCE_MISMATCH"
+
+    confirmed_payload = confirm_l2(ConfirmL2Request(
+        source_flow_uuid=row["source_flow_uuid"],
+        rule_id=row["rule_id"],
+    ), db)
+    assert confirmed_payload["status"] == "user_confirmed"
+    confirmed_link = IntermediateFlowLink.model_validate(confirmed_payload)
+    assert validate_intermediate_flow_link(db, row["source_flow_uuid"], confirmed_link) is None
 
     graph = _graph(row)
     validate_graph_contract(graph)
@@ -269,6 +284,40 @@ def test_provider_candidates_are_all_returned_and_never_collapsed(db):
     assert len(providers) == 3
     assert {item["location"] for item in providers} == {"RER", "CH", "GLO"}
     assert sum(bool(item["has_lci_vector"]) for item in providers) == 2
+
+
+def test_unreviewed_name_candidates_are_opt_in_only(db):
+    db.add_all([
+        FlowRecord(
+            flow_uuid="unreviewed-source",
+            flow_name="custom widget",
+            flow_type="Product flow",
+            default_unit="kg",
+            unit_group="Units of mass",
+            source="Tiangong",
+        ),
+        FlowRecord(
+            flow_uuid="unreviewed-target",
+            flow_name="custom widget",
+            flow_type="Product flow",
+            default_unit="kg",
+            unit_group="mass",
+            source="ecoinvent_3.11",
+        ),
+    ])
+    db.commit()
+    item = ResolvePortRequest(flow_uuid="unreviewed-source")
+
+    default_result = resolve_batch(ResolveBatchRequest(items=[item]), db)
+    assert default_result["items"][0]["status"] == "unmatched"
+    assert default_result["items"][0]["l2_candidates"] == []
+
+    audit_result = resolve_batch(ResolveBatchRequest(
+        items=[item],
+        include_unreviewed_candidates=True,
+    ), db)
+    assert audit_result["items"][0]["status"] == "L2"
+    assert audit_result["items"][0]["l2_candidates"][0]["target_flow_uuid"] == "unreviewed-target"
 
 
 def test_reference_flow_backfill_is_uuid_only_dry_run_commit_and_idempotent(db):

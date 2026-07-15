@@ -275,7 +275,8 @@ def validate_intermediate_flow_link(
             return f"{link.mapping_level}_RULE_NOT_FOUND"
         if expected.mapping_level != link.mapping_level:
             return f"{link.mapping_level}_EVIDENCE_MISMATCH"
-        if link.status != "auto" or link.rule_origin != "builtin":
+        allowed_statuses = {"auto"} if link.mapping_level == "L1" else {"auto", "user_confirmed"}
+        if link.status not in allowed_statuses or link.rule_origin != "builtin":
             return f"{link.mapping_level}_STATUS_OR_ORIGIN_MISMATCH"
         expected_fields = (
             expected.target_flow_uuid,
