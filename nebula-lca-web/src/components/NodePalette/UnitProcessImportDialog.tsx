@@ -8,6 +8,7 @@ import {
   type ProcessImportMode,
 } from "../../store/lcaGraphStore";
 import type { ExchangeType, FlowPort } from "../../model/node";
+import { getLocalizedText } from "../../utils/localizedText";
 
 const API_BASE = getApiBase();
 const CATALOG_CACHE_PREFIX = "nebula:import-catalog:";
@@ -30,7 +31,7 @@ type CatalogProcessItem = {
 
 type ProcessExchange = {
   flow_uuid?: string;
-  flow_name?: string;
+  flow_name?: unknown;
   amount?: number;
   unit?: string;
   unit_group?: string;
@@ -96,10 +97,15 @@ const mapExchangeType = (raw?: string): ExchangeType => {
   return "technosphere";
 };
 
-const toPort = (ex: ProcessExchange, direction: "input" | "output", idx: number): FlowPort => ({
+const toPort = (
+  ex: ProcessExchange,
+  direction: "input" | "output",
+  idx: number,
+  uiLanguage: "zh" | "en",
+): FlowPort => ({
   id: `${direction}_${Math.random().toString(36).slice(2, 8)}_${idx}`,
   flowUuid: String(ex.flow_uuid ?? "").trim(),
-  name: String(ex.flow_name ?? ex.flow_uuid ?? "Unnamed Flow"),
+  name: getLocalizedText(ex.flow_name, uiLanguage, String(ex.flow_uuid ?? "Unnamed Flow")),
   unit: String(ex.unit ?? "kg"),
   unitGroup: String(ex.unit_group ?? ex.unitGroup ?? "").trim() || undefined,
   amount: Number.isFinite(Number(ex.amount)) ? Number(ex.amount) : 0,
@@ -109,10 +115,10 @@ const toPort = (ex: ProcessExchange, direction: "input" | "output", idx: number)
   showOnNode: true,
 });
 
-const parsePortRows = (raw: unknown, direction: "input" | "output"): FlowPort[] => {
+const parsePortRows = (raw: unknown, direction: "input" | "output", uiLanguage: "zh" | "en"): FlowPort[] => {
   if (!Array.isArray(raw)) return [];
   return raw
-    .map((item, idx) => toPort((item as ProcessExchange) ?? {}, direction, idx))
+    .map((item, idx) => toPort((item as ProcessExchange) ?? {}, direction, idx, uiLanguage))
     .filter((port) => Boolean(port.flowUuid));
 };
 
@@ -132,15 +138,15 @@ export const parseImportedRows = (
     .map((item) => (typeof item === "object" && item ? (item as Record<string, unknown>) : null))
     .filter((item): item is Record<string, unknown> => Boolean(item))
     .map((item, idx) => {
-      const inputs = parsePortRows(item.inputs, "input");
-      const outputs = parsePortRows(item.outputs, "output");
+      const inputs = parsePortRows(item.inputs, "input", uiLanguage);
+      const outputs = parsePortRows(item.outputs, "output", uiLanguage);
       const exchanges = Array.isArray(item.exchanges) ? (item.exchanges as ProcessExchange[]) : [];
       const fallbackInputs = exchanges
         .filter((ex) => String(ex.direction ?? "").toLowerCase().includes("in"))
-        .map((ex, i) => toPort(ex, "input", i));
+        .map((ex, i) => toPort(ex, "input", i, uiLanguage));
       const fallbackOutputs = exchanges
         .filter((ex) => String(ex.direction ?? "").toLowerCase().includes("out"))
-        .map((ex, i) => toPort(ex, "output", i));
+        .map((ex, i) => toPort(ex, "output", i, uiLanguage));
 
       const referenceFlow = String(item.reference_flow_uuid ?? item.reference_flow_internal_id ?? "").trim();
       const nextOutputs = (outputs.length > 0 ? outputs : fallbackOutputs).map((port) => ({

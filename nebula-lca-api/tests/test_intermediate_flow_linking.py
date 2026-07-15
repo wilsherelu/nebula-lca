@@ -216,6 +216,19 @@ def test_l1_resolution_is_one_way_and_validated_against_catalog(db):
     assert resolution.to_dict()["link_direction"] == "tiangong_to_ecoinvent"
 
 
+def test_hidden_background_provider_is_preserved_in_graph_contract(db):
+    row = _seed_first_l1_pair(db)
+    payload = _graph(row).model_dump(mode="json", by_alias=True)
+    payload["nodes"][0]["hidden"] = True
+
+    graph = HybridGraph.model_validate(payload)
+
+    assert graph.nodes[0].hidden is True
+    assert graph.model_dump(mode="json", by_alias=True)["nodes"][0]["hidden"] is True
+    validate_graph_contract(graph)
+    validate_graph_intermediate_flow_links(db, graph)
+
+
 def test_warned_l2_resolution_requires_confirmation_and_evidence_is_checked(db):
     row = _seed_first_compatible_pair(db)
     resolution, issue = resolve_intermediate_flow(db, row["source_flow_uuid"])

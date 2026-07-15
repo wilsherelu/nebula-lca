@@ -142,6 +142,7 @@ def _normalize_process_target_kind_value(value: object) -> object:
 
 class HybridNode(BaseModel):
     id: str
+    hidden: bool = False
     node_kind: NodeKind = Field(alias="node_kind")
     mode: ProcessMode
     lci_role: LciRole | None = Field(default=None, alias="lci_role")

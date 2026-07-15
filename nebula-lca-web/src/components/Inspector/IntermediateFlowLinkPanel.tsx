@@ -4,6 +4,7 @@ import { getApiBase } from "../../apiBase";
 import type { FlowPort, LcaNodeData } from "../../model/node";
 import { useLcaGraphStore } from "../../store/lcaGraphStore";
 import { parseImportedRows } from "../NodePalette/UnitProcessImportDialog";
+import { getLocalizedText } from "../../utils/localizedText";
 import {
   confirmL2IntermediateFlowLink,
   fetchIntermediateFlowProviders,
@@ -14,7 +15,12 @@ import {
   type EcoIntermediateFlow,
   type ProviderCandidate,
   type RawResolution,
+  type ResolveItem,
 } from "../../services/intermediateFlowLinks";
+import {
+  IntermediateFlowL2ReviewDialog,
+  type IntermediateFlowL2ReviewItem,
+} from "./IntermediateFlowL2ReviewDialog";
 
 type Props = {
   node: Node<LcaNodeData>;
@@ -28,9 +34,14 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
   const edges = useLcaGraphStore((state) => state.edges);
   const updateNode = useLcaGraphStore((state) => state.updateNode);
   const connectProvider = useLcaGraphStore((state) => state.connectIntermediateProvider);
+  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [resolutionState, setResolutionState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [providersByPort, setProvidersByPort] = useState<Record<string, ProviderCandidate[]>>({});
-  const [reviewByPort, setReviewByPort] = useState<Record<string, RawResolution>>({});
+  const [candidateByPort, setCandidateByPort] = useState<Record<string, RawResolution>>({});
+  const [statusByPort, setStatusByPort] = useState<Record<string, ResolveItem["status"]>>({});
+  const [reasonByPort, setReasonByPort] = useState<Record<string, string>>({});
+  const [l2ReviewOpen, setL2ReviewOpen] = useState(false);
   const [proxyPortId, setProxyPortId] = useState<string>();
   const [proxyQuery, setProxyQuery] = useState("");
   const [proxyReason, setProxyReason] = useState("");
@@ -45,47 +56,121 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
     () => new Set(edges.filter((edge) => edge.target === node.id).map((edge) => edge.targetHandle?.replace(/^in:/, ""))),
     [edges, node.id],
   );
+  const linkedCount = inputs.filter((port) => (
+    port.intermediateFlowLink && port.intermediateFlowLink.status !== "inactive"
+  )).length;
 
-  const runMatch = async () => {
+  const resolveCandidates = async () => {
     setBusy(true);
+    setResolutionState("loading");
     try {
       const payload = await resolveIntermediateFlowPorts(
         inputs.filter((port) => !connectedPortIds.has(port.id)),
       );
-      const links = new Map<string, ReturnType<typeof toIntermediateFlowLink>>();
-      const nextReview: Record<string, RawResolution> = {};
+      const nextCandidates: Record<string, RawResolution> = {};
+      const nextStatuses: Record<string, ResolveItem["status"]> = {};
+      const nextReasons: Record<string, string> = {};
       for (const item of payload.items) {
-        if (item.port_id && item.status === "L1" && item.resolution && "source_flow_uuid" in item.resolution) {
-          links.set(item.port_id, toIntermediateFlowLink(item.resolution));
-        }
+        if (!item.port_id) continue;
+        nextStatuses[item.port_id] = item.status;
+        if (item.reason) nextReasons[item.port_id] = item.reason;
         if (
-          item.port_id
-          && (item.status === "L2" || item.status === "L3")
+          (item.status === "L1" || item.status === "L2" || item.status === "L3")
           && item.resolution
           && "source_flow_uuid" in item.resolution
         ) {
-          nextReview[item.port_id] = item.resolution;
+          nextCandidates[item.port_id] = item.resolution;
         }
       }
-      if (links.size > 0) {
-        updateNode(node.id, (current) => ({
-          ...current,
-          data: {
-            ...current.data,
-            inputs: current.data.inputs.map((port) => {
-              const link = links.get(port.id);
-              return link ? { ...port, intermediateFlowLink: link } : port;
-            }),
-          },
-        }));
-      }
-      setReviewByPort(nextReview);
+      setCandidateByPort(nextCandidates);
+      setStatusByPort(nextStatuses);
+      setReasonByPort(nextReasons);
+      setResolutionState("ready");
+    } catch (error) {
+      setResolutionState("error");
+      onStatus?.(error instanceof Error ? error.message : t("中间流匹配失败", "Intermediate flow matching failed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openDialog = () => {
+    setOpen(true);
+    void resolveCandidates();
+  };
+
+  const applyAllL1 = () => {
+    const links = new Map<string, ReturnType<typeof toIntermediateFlowLink>>();
+    for (const [portId, resolution] of Object.entries(candidateByPort)) {
+      if (resolution.mapping_level === "L1") links.set(portId, toIntermediateFlowLink(resolution));
+    }
+    if (links.size === 0) return;
+    updateNode(node.id, (current) => ({
+      ...current,
+      data: {
+        ...current.data,
+        inputs: current.data.inputs.map((port) => {
+          const link = links.get(port.id);
+          return link ? { ...port, intermediateFlowLink: link } : port;
+        }),
+      },
+    }));
+    setCandidateByPort((current) => {
+      const next = { ...current };
+      links.forEach((_, portId) => delete next[portId]);
+      return next;
+    });
+    onStatus?.(t(`已转换 ${links.size} 条 L1 中间流。`, `Converted ${links.size} L1 intermediate flows.`));
+  };
+
+  const l2ReviewItems = useMemo<IntermediateFlowL2ReviewItem[]>(() => inputs.flatMap((port) => {
+    const resolution = candidateByPort[port.id];
+    return resolution?.mapping_level === "L2" ? [{ port, resolution }] : [];
+  }), [candidateByPort, inputs]);
+
+  const l1Count = Object.values(candidateByPort).filter((item) => item.mapping_level === "L1").length;
+  const unmatchedCount = inputs.filter((port) => (
+    !port.intermediateFlowLink
+    && resolutionState === "ready"
+    && ["unmatched", "blocked", "skipped"].includes(statusByPort[port.id] ?? "unmatched")
+  )).length;
+
+  const applySelectedL2 = async (portIds: string[]) => {
+    const selections = portIds.flatMap((portId) => {
+      const port = inputs.find((item) => item.id === portId);
+      const resolution = candidateByPort[portId];
+      return port && resolution?.mapping_level === "L2" ? [{ port, resolution }] : [];
+    });
+    if (selections.length === 0) return;
+    setBusy(true);
+    try {
+      const confirmed = await Promise.all(selections.map(async ({ port, resolution }) => ({
+        portId: port.id,
+        link: await confirmL2IntermediateFlowLink(port.flowUuid, resolution.rule_id),
+      })));
+      const links = new Map(confirmed.map((item) => [item.portId, item.link]));
+      updateNode(node.id, (current) => ({
+        ...current,
+        data: {
+          ...current.data,
+          inputs: current.data.inputs.map((port) => {
+            const link = links.get(port.id);
+            return link ? { ...port, intermediateFlowLink: link } : port;
+          }),
+        },
+      }));
+      setCandidateByPort((current) => {
+        const next = { ...current };
+        links.forEach((_, portId) => delete next[portId]);
+        return next;
+      });
+      setL2ReviewOpen(false);
       onStatus?.(t(
-        `已自动应用 ${links.size} 条 L1；${Object.keys(nextReview).length} 条 L2/L3 等待逐项确认。`,
-        `Applied ${links.size} L1 links; ${Object.keys(nextReview).length} L2/L3 links await per-flow confirmation.`,
+        `已确认并转换 ${links.size} 条 L2 中间流；请继续选择具体背景 LCI。`,
+        `Confirmed and converted ${links.size} L2 intermediate flows; choose specific background LCI providers next.`,
       ));
     } catch (error) {
-      onStatus?.(error instanceof Error ? error.message : t("中间流匹配失败", "Intermediate flow matching failed"));
+      onStatus?.(error instanceof Error ? error.message : t("批量确认 L2 失败", "Batch L2 confirmation failed"));
     } finally {
       setBusy(false);
     }
@@ -106,7 +191,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
           ),
         },
       }));
-      setReviewByPort((current) => {
+      setCandidateByPort((current) => {
         const next = { ...current };
         delete next[port.id];
         return next;
@@ -188,32 +273,84 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
 
   if (inputs.length === 0) return null;
   return (
-    <section className="intermediate-flow-link-panel">
-      <header className="intermediate-flow-link-head">
-        <div>
-          <div className="intermediate-flow-link-title">
-            <strong>{t("ecoinvent 背景连接", "ecoinvent Background Linking")}</strong>
-            <span>{inputs.length}</span>
-          </div>
-          <p>{t("L1 自动匹配，L2/L3 逐流确认；背景数据集另行选择。", "Apply L1 automatically, review L2/L3 per flow, then choose a provider.")}</p>
-        </div>
-        <button type="button" className="inspector-toolbar-btn" disabled={busy} onClick={runMatch}>
-          {busy ? t("匹配中…", "Matching…") : t("匹配 L1", "Match L1")}
-        </button>
-      </header>
-      <div className="intermediate-flow-link-list">
+    <>
+      <button
+        type="button"
+        className="text-btn inspector-toolbar-btn intermediate-flow-link-trigger"
+        onClick={openDialog}
+      >
+        {t("中间流转换", "Convert Flows")}
+        <span>{linkedCount}/{inputs.length}</span>
+      </button>
+      {open && (
+        <div className="overlay-modal" onMouseDown={() => setOpen(false)}>
+          <section
+            className="overlay-panel intermediate-flow-link-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("中间流转换与背景连接", "Intermediate Flow Conversion and Background Linking")}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header className="overlay-head intermediate-flow-link-dialog-head">
+              <div className="intermediate-flow-link-title">
+                <strong>{t("中间流转换与背景连接", "Intermediate Flow Conversion and Background Linking")}</strong>
+                <span>{inputs.length}</span>
+              </div>
+              <button type="button" className="drawer-close-btn" onClick={() => setOpen(false)}>
+                {t("关闭", "Close")}
+              </button>
+            </header>
+            <div className="intermediate-flow-link-dialog-toolbar">
+              <div className="intermediate-flow-link-overview">
+                <p>{t("已自动检测全部中间流。L1 可直接批量转换；L2 需核对目标后批量确认；无 L1/L2 候选时才使用 L3。", "All intermediate flows are checked automatically. Convert L1 in bulk, review L2 targets in bulk, and use L3 only when no L1/L2 candidate exists.")}</p>
+                <div className="intermediate-flow-link-counts" aria-live="polite">
+                  {resolutionState === "loading" ? (
+                    <span>{t("正在检测可转换关系…", "Checking conversion candidates…")}</span>
+                  ) : resolutionState === "error" ? (
+                    <span className="error-text">{t("检测失败，请重试", "Candidate check failed; retry")}</span>
+                  ) : (
+                    <>
+                      <span className="approved">L1 {l1Count}</span>
+                      <span className="review">L2 {l2ReviewItems.length}</span>
+                      <span>{t("无候选", "No candidate")} {unmatchedCount}</span>
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="intermediate-flow-link-toolbar-actions">
+                {resolutionState === "error" && (
+                  <button type="button" className="inspector-toolbar-btn secondary" disabled={busy} onClick={resolveCandidates}>
+                    {t("重新检测", "Retry")}
+                  </button>
+                )}
+                <button type="button" className="inspector-toolbar-btn" disabled={busy || l1Count === 0} onClick={applyAllL1}>
+                  {t(`转换全部 L1（${l1Count}）`, `Convert all L1 (${l1Count})`)}
+                </button>
+                <button type="button" className="inspector-toolbar-btn secondary" disabled={busy || l2ReviewItems.length === 0} onClick={() => setL2ReviewOpen(true)}>
+                  {t(`批量确认 L2（${l2ReviewItems.length}）`, `Review L2 (${l2ReviewItems.length})`)}
+                </button>
+              </div>
+            </div>
+            <div className="intermediate-flow-link-dialog-body">
+              <div className="intermediate-flow-link-list">
       {inputs.map((port) => {
         const link = port.intermediateFlowLink;
-        const review = reviewByPort[port.id];
+        const review = candidateByPort[port.id];
+        const resolutionStatus = statusByPort[port.id];
         const providers = providersByPort[port.id] ?? [];
         return (
           <div className="intermediate-flow-link-row" key={port.id}>
             <div className="intermediate-flow-link-summary">
-              <strong>{port.name}</strong>
+              <strong title={getLocalizedText(port.name, uiLanguage, port.name)}>
+                {getLocalizedText(port.name, uiLanguage, port.name)}
+              </strong>
               <span className={`intermediate-flow-level-badge ${link ? "approved" : review ? "review" : "unmatched"}`}>
                 {link && link.status !== "inactive"
                   ? link.mappingLevel
-                  : review?.mapping_level ?? t("未匹配", "Unmatched")}
+                  : review?.mapping_level
+                    ?? (resolutionState === "loading" || resolutionState === "idle"
+                      ? t("检测中", "Checking")
+                      : t("无候选", "No candidate"))}
               </span>
             </div>
             {link && link.status !== "inactive" ? (
@@ -251,39 +388,47 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                   {` · ${review.target_unit}`}
                 </span>
                 <span className="muted-text">
-                  {review.mapping_level === "L2"
-                    ? t("兼容但语义可能更宽或更窄，确认后才写入模型。", "Compatible but potentially broader or narrower; written only after confirmation.")
-                    : t("这是已保存的用户代理，需逐条确认复用。", "This saved user proxy must be reused per flow explicitly.")}
+                  {review.mapping_level === "L1"
+                    ? t("严格匹配，可通过上方按钮批量转换。", "Strict match; use the action above to convert it in bulk.")
+                    : review.mapping_level === "L2"
+                      ? t("兼容但语义可能更宽或更窄，确认后才写入模型。", "Compatible but potentially broader or narrower; written only after confirmation.")
+                      : t("这是已保存的用户代理，需逐条确认复用。", "This saved user proxy must be reused per flow explicitly.")}
                 </span>
                 {(review.warnings ?? []).length > 0 && (
                   <span className="muted-text">{(review.warnings ?? []).join(" · ")}</span>
                 )}
                 <div className="intermediate-flow-link-actions">
-                  <button
-                    type="button"
-                    className="inspector-toolbar-btn"
-                    disabled={busy}
-                    onClick={() => applyReviewedLink(port, review)}
-                  >
-                    {review.mapping_level === "L2"
-                      ? t("确认 L2", "Confirm L2")
-                      : t("复用 L3", "Reuse L3")}
-                  </button>
-                  <button type="button" className="link-btn" disabled={busy} onClick={() => setProxyPortId(port.id)}>
-                    {t("更换代理", "Change proxy")}
-                  </button>
+                  {review.mapping_level === "L1" ? (
+                    <span className="muted-text">{t("等待批量转换 L1", "Ready for bulk L1 conversion")}</span>
+                  ) : review.mapping_level === "L2" ? (
+                    <span className="muted-text">{t("等待批量确认 L2", "Ready for batch L2 review")}</span>
+                  ) : (
+                    <button type="button" className="inspector-toolbar-btn" disabled={busy} onClick={() => applyReviewedLink(port, review)}>
+                      {t("复用 L3", "Reuse L3")}
+                    </button>
+                  )}
+                  {review.mapping_level === "L3" && (
+                    <button type="button" className="link-btn" disabled={busy} onClick={() => setProxyPortId(port.id)}>
+                      {t("更换代理", "Change proxy")}
+                    </button>
+                  )}
                 </div>
               </div>
             ) : null}
-            {!link && !review && (
-              <button type="button" className="link-btn" onClick={() => setProxyPortId(port.id)}>
-                {t("指定 L3 用户代理", "Assign L3 user proxy")}
-              </button>
+            {!link && !review && resolutionState === "ready" && (
+              <div className="intermediate-flow-link-actions">
+                <span className="muted-text" title={reasonByPort[port.id] ?? resolutionStatus}>
+                  {t("未找到可用的 L1/L2 转换", "No usable L1/L2 conversion found")}
+                </span>
+                <button type="button" className="link-btn" onClick={() => setProxyPortId(port.id)}>
+                  {t("指定 L3 用户代理", "Assign L3 user proxy")}
+                </button>
+              </div>
             )}
           </div>
         );
       })}
-      </div>
+              </div>
       {proxyPortId && (
         <div className="intermediate-flow-proxy-editor">
           <input
@@ -316,6 +461,18 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
           ))}
         </div>
       )}
-    </section>
+            </div>
+          </section>
+        </div>
+      )}
+      <IntermediateFlowL2ReviewDialog
+        open={l2ReviewOpen}
+        busy={busy}
+        items={l2ReviewItems}
+        language={uiLanguage}
+        onClose={() => setL2ReviewOpen(false)}
+        onConfirm={applySelectedL2}
+      />
+    </>
   );
 }

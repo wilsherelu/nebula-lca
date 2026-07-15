@@ -21,6 +21,7 @@ Note: ``_derive_reference_flow_display`` exists in main.py but is dead code
 
 from __future__ import annotations
 
+import ast
 import uuid
 from collections import Counter
 from datetime import datetime
@@ -56,6 +57,83 @@ def _safe_str(value: object) -> str | None:
         return None
     text_value = str(value).strip()
     return text_value or None
+
+
+def _localized_display_text(value: object) -> str | None:
+    parsed = value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith(("{", "[")):
+            try:
+                parsed = ast.literal_eval(stripped)
+            except (SyntaxError, ValueError):
+                return stripped or None
+        else:
+            return stripped or None
+    if isinstance(parsed, list):
+        rows = [item for item in parsed if isinstance(item, dict)]
+        for language in ("zh", "en"):
+            for row in rows:
+                if str(row.get("@xml:lang") or "").lower().startswith(language):
+                    text = _safe_str(row.get("#text") or row.get("text") or row.get("value"))
+                    if text:
+                        return text
+        for item in parsed:
+            text = _localized_display_text(item)
+            if text:
+                return text
+        return None
+    if isinstance(parsed, dict):
+        return _safe_str(parsed.get("#text") or parsed.get("text") or parsed.get("value"))
+    return _safe_str(parsed)
+
+
+def _restore_exchange_amounts_from_lineage(
+    exchanges: list[dict],
+    metadata: dict | None,
+) -> int:
+    row = metadata.get("row") if isinstance(metadata, dict) else None
+    raw_payload = row.get("json") if isinstance(row, dict) and isinstance(row.get("json"), dict) else row
+    process_dataset = raw_payload.get("processDataSet") if isinstance(raw_payload, dict) else None
+    exchange_root = process_dataset.get("exchanges") if isinstance(process_dataset, dict) else None
+    raw_exchanges = exchange_root.get("exchange") if isinstance(exchange_root, dict) else None
+    if isinstance(raw_exchanges, dict):
+        raw_exchanges = [raw_exchanges]
+    if not isinstance(raw_exchanges, list):
+        return 0
+
+    raw_by_internal_id: dict[str, dict] = {}
+    for raw in raw_exchanges:
+        if not isinstance(raw, dict):
+            continue
+        internal_id = _to_stripped(
+            raw.get("@dataSetInternalID")
+            or raw.get("dataSetInternalID")
+            or raw.get("exchange_internal_id")
+        )
+        if internal_id:
+            raw_by_internal_id[internal_id] = raw
+
+    restored = 0
+    for exchange in exchanges:
+        internal_id = _to_stripped(exchange.get("exchange_internal_id"))
+        raw = raw_by_internal_id.get(internal_id)
+        if raw is None:
+            continue
+        raw_amount = next(
+            (raw.get(key) for key in ("amount", "meanAmount", "resultingAmount", "meanValue") if raw.get(key) is not None),
+            None,
+        )
+        if raw_amount is None:
+            continue
+        try:
+            amount = float(raw_amount)
+        except (TypeError, ValueError):
+            continue
+        if exchange.get("amount") != amount:
+            exchange["amount"] = amount
+            restored += 1
+    return restored
 
 
 def _is_output_direction(value: object) -> bool:
@@ -248,7 +326,7 @@ def _build_imported_process_ports(
         if not isinstance(ex, dict):
             continue
         flow_uuid = _safe_str(ex.get("flow_uuid"))
-        flow_name = _safe_str(ex.get("flow_name"))
+        flow_name = _localized_display_text(ex.get("flow_name"))
         unit = _safe_str(ex.get("unit"))
         unit_group = ""
         flow_type = _safe_str(ex.get("flow_type"))

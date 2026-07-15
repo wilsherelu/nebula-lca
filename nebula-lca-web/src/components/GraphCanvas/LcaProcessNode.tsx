@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import type { FlowPort, LcaNodeData } from "../../model/node";
 import { useLcaGraphStore } from "../../store/lcaGraphStore";
+import { getLocalizedText } from "../../utils/localizedText";
 
 const API_BASE = getApiBase();
 
@@ -55,6 +56,7 @@ export function LcaProcessNode(props: NodeProps) {
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState(data.name);
   const [flowNameEnByUuid, setFlowNameEnByUuid] = useState<Record<string, string>>({});
+  const [flowNameZhByUuid, setFlowNameZhByUuid] = useState<Record<string, string>>({});
   const stableIoSectionsRef = useRef<{
     inputRows: React.ReactNode[];
     outputRows: React.ReactNode[];
@@ -233,9 +235,9 @@ export function LcaProcessNode(props: NodeProps) {
     const baseName =
       data.nodeKind === "market_process" && port?.direction === "input"
         ? formatMarketInputLabel(port)
-        : name;
+        : getLocalizedText(name, uiLanguage, name);
     if (uiLanguage !== "en") {
-      return baseName;
+      return (flowUuid ? String(flowNameZhByUuid[flowUuid] ?? "").trim() : "") || baseName;
     }
       const portMatch =
         port ??
@@ -266,7 +268,6 @@ export function LcaProcessNode(props: NodeProps) {
 
   useEffect(() => {
     const shouldSkipFlowNameBackfill =
-      uiLanguage !== "en" ||
       activeCanvasKind === "pts_internal" ||
       (activeCanvasKind === "root" && data.nodeKind === "pts_module");
     if (shouldSkipFlowNameBackfill) {
@@ -277,7 +278,11 @@ export function LcaProcessNode(props: NodeProps) {
         .filter((port) => String(port.flowNameEn ?? "").trim())
         .map((port) => String(port.flowUuid ?? "").trim()),
     );
-    const needFetch = visibleFlowUuids.filter((uuid) => !existingEnglish.has(uuid) && !flowNameEnByUuid[uuid]);
+    const needFetch = visibleFlowUuids.filter((uuid) => (
+      uiLanguage === "en"
+        ? !existingEnglish.has(uuid) && !flowNameEnByUuid[uuid]
+        : !flowNameZhByUuid[uuid]
+    ));
     if (needFetch.length === 0) {
       return;
     }
@@ -297,6 +302,7 @@ export function LcaProcessNode(props: NodeProps) {
           return;
         }
         const patch: Record<string, string> = {};
+        const zhPatch: Record<string, string> = {};
         rows.forEach((row) => {
           if (!row?.flow_uuid) {
             return;
@@ -304,6 +310,10 @@ export function LcaProcessNode(props: NodeProps) {
           const englishName = String(row.flow_name_en ?? "").trim();
           if (englishName) {
             patch[row.flow_uuid] = englishName;
+          }
+          const chineseName = String((row as { flow_name?: string }).flow_name ?? "").trim();
+          if (chineseName) {
+            zhPatch[row.flow_uuid] = chineseName;
           }
         });
         if (Object.keys(patch).length > 0) {
@@ -331,6 +341,9 @@ export function LcaProcessNode(props: NodeProps) {
             };
           });
         }
+        if (Object.keys(zhPatch).length > 0) {
+          setFlowNameZhByUuid((prev) => ({ ...prev, ...zhPatch }));
+        }
       })
       .catch(() => {
         // ignore display-only lookup failures
@@ -338,7 +351,7 @@ export function LcaProcessNode(props: NodeProps) {
     return () => {
       canceled = true;
     };
-  }, [activeCanvasKind, data.nodeKind, flowNameEnByUuid, props.id, uiLanguage, updateNode, visibleFlowUuids, visibleInputs, visibleOutputs]);
+  }, [activeCanvasKind, data.nodeKind, flowNameEnByUuid, flowNameZhByUuid, props.id, uiLanguage, updateNode, visibleFlowUuids, visibleInputs, visibleOutputs]);
 
   useEffect(() => {
     // React Flow requires an internals refresh when dynamic handles change.
@@ -505,8 +518,6 @@ export function LcaProcessNode(props: NodeProps) {
     </div>
   );
 }
-
-
 
 
 

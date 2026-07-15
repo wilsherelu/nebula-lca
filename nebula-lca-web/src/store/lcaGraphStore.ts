@@ -4867,20 +4867,36 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         x: consumerNode.position.x - 360,
         y: consumerNode.position.y,
       });
-      const providerPort = providerNode.data.outputs.find((item) => item.flowUuid === link.targetFlowUuid);
+      const backgroundProviderNode: Node<LcaNodeData> = {
+        ...providerNode,
+        hidden: true,
+        data: {
+          ...providerNode.data,
+          lciRole: "provider",
+        },
+      };
+      const providerPort = backgroundProviderNode.data.outputs.find((item) => item.flowUuid === link.targetFlowUuid);
       if (!providerPort) {
         return state;
       }
 
-      createdNodeId = providerNode.id;
+      createdNodeId = backgroundProviderNode.id;
       const targetHandle = `in:${consumerPort.id}`;
+      const replacedProviderNodeIds = new Set(
+        active.edges
+          .filter((edge) => edge.target === consumerNodeId && edge.targetHandle === targetHandle)
+          .map((edge) => edge.source),
+      );
       const remainingEdges = active.edges.filter(
         (edge) => !(edge.target === consumerNodeId && edge.targetHandle === targetHandle),
+      );
+      const remainingNodes = active.nodes.filter(
+        (item) => !(item.hidden && replacedProviderNodeIds.has(item.id)),
       );
       const consumerAmount = consumerPort.amount * link.amountFactor;
       const edge: Edge<LcaEdgeData> = {
         id: `edge_${uid()}`,
-        source: providerNode.id,
+        source: backgroundProviderNode.id,
         target: consumerNodeId,
         sourceHandle: `out:${providerPort.id}`,
         targetHandle,
@@ -4904,10 +4920,10 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
       return {
         ...updateActiveCanvas(state, (canvas) => ({
           ...canvas,
-          nodes: [...canvas.nodes, providerNode],
+          nodes: [...remainingNodes, backgroundProviderNode],
           edges: [...remainingEdges, edge],
         })),
-        selection: { nodeIds: [providerNode.id], edgeIds: [], nodeId: providerNode.id },
+        selection: { nodeIds: [consumerNodeId], edgeIds: [], nodeId: consumerNodeId },
         connectionHint: undefined,
       };
     });
@@ -6069,6 +6085,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
           reference_year?: number;
           time_representativeness?: string;
           technology_description?: string;
+          hidden?: boolean;
           inputs?: FlowPort[];
           outputs?: FlowPort[];
           position?: XYPosition;
@@ -6100,6 +6117,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         return sanitizeMarketNode({
           id: node.id,
           type: "lcaProcess",
+          hidden: Boolean(node.hidden),
           position: isValidPosition(node.position)
             ? node.position
             : isValidPosition(nodePositionsRaw?.[node.id])
@@ -6250,6 +6268,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         reference_year?: number;
         time_representativeness?: string;
         technology_description?: string;
+        hidden?: boolean;
         inputs?: FlowPort[];
         outputs?: FlowPort[];
         position?: XYPosition;
@@ -6261,6 +6280,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
           {
             id: node.id,
             type: "lcaProcess",
+            hidden: Boolean(node.hidden),
             position: node.position ?? toStablePosition(node.id),
             data: {
               nodeKind: node.node_kind,
@@ -6312,6 +6332,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         reference_year?: number;
         time_representativeness?: string;
         technology_description?: string;
+        hidden?: boolean;
         inputs?: FlowPort[];
         outputs?: FlowPort[];
         position?: XYPosition;
@@ -6369,6 +6390,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         reference_year: node.data.referenceYear,
         time_representativeness: node.data.timeRepresentativeness,
         technology_description: node.data.technologyDescription,
+        hidden: Boolean(node.hidden),
         inputs: normalized.inputs.map(serializePort),
         outputs: normalized.outputs.map(serializePort),
         position: {
@@ -6483,6 +6505,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
           reference_year?: number;
           time_representativeness?: string;
           technology_description?: string;
+          hidden?: boolean;
           inputs?: FlowPort[];
           outputs?: FlowPort[];
           position?: XYPosition;
@@ -6498,6 +6521,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         return sanitizeMarketNode({
           id: node.id,
           type: "lcaProcess",
+          hidden: Boolean(node.hidden),
           position: isValidPosition(node.position)
             ? node.position
             : isValidPosition(nodePositionsRaw?.[node.id])
