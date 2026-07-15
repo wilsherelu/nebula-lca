@@ -2794,10 +2794,10 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                 />
               )}
               <div className="assoc-actions">
-                <button type="button" className="ghost-btn" onClick={() => setAssocDialog({ open: false, direction: "output", port: null })}>
+                <button type="button" className="flow-link-button secondary" onClick={() => setAssocDialog({ open: false, direction: "output", port: null })}>
                   {t("取消", "Cancel")}
                 </button>
-                <button type="button" onClick={applyAssociation} disabled={!selectedNodeId}>
+                <button type="button" className="flow-link-button primary" onClick={applyAssociation} disabled={!selectedNodeId}>
                   {t("关联", "Link")}
                 </button>
               </div>

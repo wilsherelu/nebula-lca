@@ -125,7 +125,7 @@ export function BackgroundLciAssociationSection({
             <strong>{t(`${selectableProviders.length} 个可计算 provider`, `${selectableProviders.length} calculable providers`)}</strong>
             <span>{t("可按过程类型和地区筛选", "Filter by process type and location")}</span>
           </div>
-          <button type="button" disabled={loading} onClick={() => setPickerOpen(true)}>
+          <button type="button" className="flow-link-button primary" disabled={loading} onClick={() => setPickerOpen(true)}>
             {t("选择背景数据库", "Choose Background Database")}
           </button>
         </div>

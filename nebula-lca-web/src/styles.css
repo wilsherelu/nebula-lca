@@ -6085,6 +6085,70 @@ body,
   font-size: 11px;
 }
 
+.flow-link-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  min-width: 76px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.flow-link-button.primary {
+  border-color: #0c84ff;
+  background: #0c84ff;
+  color: #ffffff;
+}
+
+.flow-link-button.primary:hover:not(:disabled) {
+  border-color: #0875e3;
+  background: #0875e3;
+}
+
+.flow-link-button.secondary {
+  border-color: #a6c7dd;
+  background: #ffffff;
+  color: #1478d4;
+}
+
+.flow-link-button.secondary:hover:not(:disabled) {
+  border-color: #80b8dc;
+  background: #f3f9ff;
+}
+
+.flow-link-button.ghost {
+  min-width: 0;
+  border-color: transparent;
+  background: transparent;
+  color: #1478d4;
+}
+
+.flow-link-button.ghost:hover:not(:disabled) {
+  background: #eef7ff;
+}
+
+.flow-link-button.compact {
+  height: 30px;
+  min-width: 0;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.flow-link-button:disabled {
+  border-color: #d6e0e5;
+  background: #f3f6f8;
+  color: #9aaab2;
+  cursor: not-allowed;
+}
+
 .intermediate-flow-link-dialog {
   width: min(1120px, 94vw);
   height: min(82vh, 780px);
@@ -6173,10 +6237,11 @@ body,
 
 .intermediate-flow-link-row {
   display: grid;
-  grid-template-columns: minmax(180px, 0.8fr) minmax(240px, 1.4fr) auto;
-  gap: 12px;
+  grid-template-columns: minmax(220px, 0.9fr) minmax(320px, 1.4fr) minmax(140px, auto);
+  gap: 16px;
   align-items: center;
-  padding: 9px 12px;
+  min-height: 60px;
+  padding: 10px 16px;
   border-top: 1px solid #e8eef2;
 }
 
@@ -6186,6 +6251,10 @@ body,
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.intermediate-flow-link-actions {
+  justify-content: flex-end;
 }
 
 .intermediate-flow-link-summary strong {
@@ -6205,11 +6274,27 @@ body,
 .intermediate-flow-review-card {
   grid-column: 2 / -1;
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto;
-  gap: 10px;
+  grid-template-columns: minmax(190px, 0.9fr) minmax(220px, 1.1fr) minmax(150px, auto) auto;
+  gap: 12px;
   align-items: center;
   color: #4c6570;
   font-size: 12px;
+}
+
+.intermediate-flow-review-hint,
+.intermediate-flow-l2-risk {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #fff7d6;
+  color: #795a1a;
+  font-size: 11px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .intermediate-flow-level-badge {
@@ -6245,6 +6330,8 @@ body,
 
 .intermediate-flow-l2-review-dialog {
   width: min(980px, 92vw);
+  height: auto;
+  min-height: 360px;
   max-height: min(78vh, 720px);
 }
 
@@ -6256,23 +6343,34 @@ body,
   font-size: 12px;
 }
 
+.intermediate-flow-l2-select-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: #405d69;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 .intermediate-flow-l2-review-note {
   background: #fffaf0;
   color: #795a1a;
 }
 
 .intermediate-flow-l2-review-list {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-height: 0;
+  max-height: 430px;
   overflow: auto;
 }
 
 .intermediate-flow-l2-review-row {
   display: grid;
-  grid-template-columns: 28px minmax(150px, 0.8fr) 24px minmax(190px, 1fr) minmax(180px, 1fr);
-  gap: 10px;
+  grid-template-columns: 28px minmax(210px, 1fr) 28px minmax(190px, 0.9fr) minmax(190px, 0.9fr);
+  gap: 12px;
   align-items: center;
-  padding: 11px 16px;
+  min-height: 72px;
+  padding: 10px 16px;
   border-bottom: 1px solid #e8eef2;
   cursor: pointer;
 }
@@ -6288,6 +6386,19 @@ body,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.intermediate-flow-l2-review-flow,
+.intermediate-flow-l2-review-target {
+  display: grid;
+  gap: 3px;
+}
+
+.intermediate-flow-l2-review-flow small,
+.intermediate-flow-l2-review-target small {
+  color: #7a8e97;
+  font-size: 11px;
+  font-weight: 400;
 }
 
 .intermediate-flow-l2-review-target {
@@ -6353,6 +6464,12 @@ body,
 .background-lci-association-controls > div > span {
   color: #6c808a;
   font-size: 11px;
+}
+
+.assoc-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .background-lci-picker-overlay {

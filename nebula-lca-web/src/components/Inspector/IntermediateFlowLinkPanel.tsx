@@ -319,14 +319,14 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
               </div>
               <div className="intermediate-flow-link-toolbar-actions">
                 {resolutionState === "error" && (
-                  <button type="button" className="inspector-toolbar-btn secondary" disabled={busy} onClick={resolveCandidates}>
+                  <button type="button" className="flow-link-button secondary" disabled={busy} onClick={resolveCandidates}>
                     {t("重新检测", "Retry")}
                   </button>
                 )}
-                <button type="button" className="inspector-toolbar-btn" disabled={busy || l1Count === 0} onClick={applyAllL1}>
+                <button type="button" className="flow-link-button primary" disabled={busy || l1Count === 0} onClick={applyAllL1}>
                   {t(`转换全部 L1（${l1Count}）`, `Convert all L1 (${l1Count})`)}
                 </button>
-                <button type="button" className="inspector-toolbar-btn secondary" disabled={busy || l2ReviewItems.length === 0} onClick={() => setL2ReviewOpen(true)}>
+                <button type="button" className="flow-link-button secondary" disabled={busy || l2ReviewItems.length === 0} onClick={() => setL2ReviewOpen(true)}>
                   {t(`批量确认 L2（${l2ReviewItems.length}）`, `Review L2 (${l2ReviewItems.length})`)}
                 </button>
               </div>
@@ -364,7 +364,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                   )}
                 </div>
                 <div className="intermediate-flow-link-actions">
-                  <button type="button" className="link-btn" disabled={busy} onClick={() => loadProviders(port)}>
+                  <button type="button" className="flow-link-button secondary compact" disabled={busy} onClick={() => loadProviders(port)}>
                     {t("选择背景 LCI", "Choose background LCI")}
                   </button>
                 </div>
@@ -395,7 +395,9 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                       : t("这是已保存的用户代理，需逐条确认复用。", "This saved user proxy must be reused per flow explicitly.")}
                 </span>
                 {(review.warnings ?? []).length > 0 && (
-                  <span className="muted-text">{(review.warnings ?? []).join(" · ")}</span>
+                  <span className="intermediate-flow-review-hint" title={(review.warnings ?? []).join(" · ")}>
+                    {t("需核对产品范围和限定词", "Review product scope and qualifiers")}
+                  </span>
                 )}
                 <div className="intermediate-flow-link-actions">
                   {review.mapping_level === "L1" ? (
@@ -403,12 +405,12 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                   ) : review.mapping_level === "L2" ? (
                     <span className="muted-text">{t("等待批量确认 L2", "Ready for batch L2 review")}</span>
                   ) : (
-                    <button type="button" className="inspector-toolbar-btn" disabled={busy} onClick={() => applyReviewedLink(port, review)}>
+                    <button type="button" className="flow-link-button primary compact" disabled={busy} onClick={() => applyReviewedLink(port, review)}>
                       {t("复用 L3", "Reuse L3")}
                     </button>
                   )}
                   {review.mapping_level === "L3" && (
-                    <button type="button" className="link-btn" disabled={busy} onClick={() => setProxyPortId(port.id)}>
+                    <button type="button" className="flow-link-button ghost compact" disabled={busy} onClick={() => setProxyPortId(port.id)}>
                       {t("更换代理", "Change proxy")}
                     </button>
                   )}
@@ -420,7 +422,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                 <span className="muted-text" title={reasonByPort[port.id] ?? resolutionStatus}>
                   {t("未找到可用的 L1/L2 转换", "No usable L1/L2 conversion found")}
                 </span>
-                <button type="button" className="link-btn" onClick={() => setProxyPortId(port.id)}>
+                <button type="button" className="flow-link-button ghost compact" onClick={() => setProxyPortId(port.id)}>
                   {t("指定 L3 用户代理", "Assign L3 user proxy")}
                 </button>
               </div>
@@ -443,6 +445,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
           />
           <button
             type="button"
+            className="flow-link-button secondary"
             disabled={busy || !proxyQuery.trim()}
             onClick={async () => setProxyFlows(await searchEcoIntermediateFlows(proxyQuery.trim()))}
           >
@@ -451,7 +454,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
           {proxyFlows.map((flow) => (
             <button
               type="button"
-              className="provider-candidate-btn"
+              className="provider-candidate-btn flow-link-button ghost"
               key={flow.flow_uuid}
               disabled={busy || proxyReason.trim().length < 3}
               onClick={() => chooseProxyFlow(flow)}
