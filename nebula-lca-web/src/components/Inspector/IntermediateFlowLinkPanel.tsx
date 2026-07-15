@@ -189,34 +189,48 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
   if (inputs.length === 0) return null;
   return (
     <section className="intermediate-flow-link-panel">
-      <div className="inspector-section-title">{t("ecoinvent 背景连接", "ecoinvent Background Linking")}</div>
-      <p className="muted-text">
-        {t(
-          "L1 可一键转换；L2/L3 必须逐条确认。这里只建立天工流到 eco reference product 的单向兼容关系，provider 仍需单独选择。",
-          "L1 can be applied in one click; L2/L3 require per-flow confirmation. This only links to an eco reference product; providers are selected separately.",
-        )}
-      </p>
-      <button type="button" className="secondary-btn" disabled={busy} onClick={runMatch}>
-        {busy ? t("处理中…", "Working…") : t("一键转换 L1", "Apply all L1 links")}
-      </button>
+      <header className="intermediate-flow-link-head">
+        <div>
+          <div className="intermediate-flow-link-title">
+            <strong>{t("ecoinvent 背景连接", "ecoinvent Background Linking")}</strong>
+            <span>{inputs.length}</span>
+          </div>
+          <p>{t("L1 自动匹配，L2/L3 逐流确认；背景数据集另行选择。", "Apply L1 automatically, review L2/L3 per flow, then choose a provider.")}</p>
+        </div>
+        <button type="button" className="inspector-toolbar-btn" disabled={busy} onClick={runMatch}>
+          {busy ? t("匹配中…", "Matching…") : t("匹配 L1", "Match L1")}
+        </button>
+      </header>
+      <div className="intermediate-flow-link-list">
       {inputs.map((port) => {
         const link = port.intermediateFlowLink;
         const review = reviewByPort[port.id];
         const providers = providersByPort[port.id] ?? [];
         return (
           <div className="intermediate-flow-link-row" key={port.id}>
-            <strong>{port.name}</strong>
+            <div className="intermediate-flow-link-summary">
+              <strong>{port.name}</strong>
+              <span className={`intermediate-flow-level-badge ${link ? "approved" : review ? "review" : "unmatched"}`}>
+                {link && link.status !== "inactive"
+                  ? link.mappingLevel
+                  : review?.mapping_level ?? t("未匹配", "Unmatched")}
+              </span>
+            </div>
             {link && link.status !== "inactive" ? (
               <>
-                <span>{link.mappingLevel} · {t("单向兼容", "one-way compatible")}</span>
-                {link.applicationMode === "auto_compatible" && (
-                  <span className="muted-text" title={(link.warnings ?? []).join(", ")}>
-                    {t("语义泛化，计算前请核对", "Semantic generalization; review before calculation")}
-                  </span>
-                )}
-                <button type="button" className="link-btn" disabled={busy} onClick={() => loadProviders(port)}>
-                  {t("选择背景 LCI", "Choose background LCI")}
-                </button>
+                <div className="intermediate-flow-link-target">
+                  <span>{t("已关联 eco reference product", "Linked to eco reference product")}</span>
+                  {link.applicationMode === "auto_compatible" && (
+                    <span className="muted-text" title={(link.warnings ?? []).join(", ")}>
+                      {t("语义泛化，计算前请核对", "Review semantic generalization before calculation")}
+                    </span>
+                  )}
+                </div>
+                <div className="intermediate-flow-link-actions">
+                  <button type="button" className="link-btn" disabled={busy} onClick={() => loadProviders(port)}>
+                    {t("选择背景 LCI", "Choose background LCI")}
+                  </button>
+                </div>
                 {providers.map((provider) => (
                   <button
                     type="button"
@@ -231,7 +245,6 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
               </>
             ) : review ? (
               <div className="intermediate-flow-review-card">
-                <span className="intermediate-flow-level-badge">{review.mapping_level}</span>
                 <span>
                   {t("目标：", "Target: ")}
                   {review.target_flow_name || review.target_flow_name_en || review.target_flow_uuid}
@@ -245,19 +258,21 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                 {(review.warnings ?? []).length > 0 && (
                   <span className="muted-text">{(review.warnings ?? []).join(" · ")}</span>
                 )}
-                <button
-                  type="button"
-                  className="secondary-btn"
-                  disabled={busy}
-                  onClick={() => applyReviewedLink(port, review)}
-                >
-                  {review.mapping_level === "L2"
-                    ? t("确认此 L2 映射", "Confirm this L2 link")
-                    : t("复用此 L3 代理", "Reuse this L3 proxy")}
-                </button>
-                <button type="button" className="link-btn" disabled={busy} onClick={() => setProxyPortId(port.id)}>
-                  {t("改用其他 L3 代理", "Choose another L3 proxy")}
-                </button>
+                <div className="intermediate-flow-link-actions">
+                  <button
+                    type="button"
+                    className="inspector-toolbar-btn"
+                    disabled={busy}
+                    onClick={() => applyReviewedLink(port, review)}
+                  >
+                    {review.mapping_level === "L2"
+                      ? t("确认 L2", "Confirm L2")
+                      : t("复用 L3", "Reuse L3")}
+                  </button>
+                  <button type="button" className="link-btn" disabled={busy} onClick={() => setProxyPortId(port.id)}>
+                    {t("更换代理", "Change proxy")}
+                  </button>
+                </div>
               </div>
             ) : null}
             {!link && !review && (
@@ -268,6 +283,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
           </div>
         );
       })}
+      </div>
       {proxyPortId && (
         <div className="intermediate-flow-proxy-editor">
           <input
