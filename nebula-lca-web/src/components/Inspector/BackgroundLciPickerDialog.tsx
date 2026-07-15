@@ -127,7 +127,7 @@ export function BackgroundLciPickerDialog({
           </label>
           <button
             type="button"
-            className="inspector-toolbar-btn secondary background-lci-picker-reset"
+            className="flow-link-button secondary background-lci-picker-reset"
             disabled={busy || (!query && !location && kind === "all")}
             onClick={() => {
               setQuery("");
@@ -171,7 +171,7 @@ export function BackgroundLciPickerDialog({
                     <td>{provider.location || "-"}</td>
                     <td><span className="background-lci-vector-badge">{provider.vector_nnz.toLocaleString()}</span></td>
                     <td>
-                      <button type="button" className="table-link-btn" disabled={busy} onClick={() => onSelect(provider)}>
+                      <button type="button" className="flow-link-button ghost compact" disabled={busy} onClick={() => onSelect(provider)}>
                         {busy ? t("关联中…", "Linking…") : t("关联", "Link")}
                       </button>
                     </td>
@@ -190,14 +190,16 @@ export function BackgroundLciPickerDialog({
             `共 ${filteredProviders.length} 个可计算 provider，第 ${page}/${totalPages} 页`,
             `${filteredProviders.length} calculable providers, page ${page}/${totalPages}`,
           )}</span>
-          <div>
-            <button type="button" className="inspector-toolbar-btn secondary" disabled={busy || page <= 1} onClick={() => setPage((current) => current - 1)}>
-              {t("上一页", "Previous")}
-            </button>
-            <button type="button" className="inspector-toolbar-btn secondary" disabled={busy || page >= totalPages} onClick={() => setPage((current) => current + 1)}>
-              {t("下一页", "Next")}
-            </button>
-          </div>
+          {totalPages > 1 && (
+            <div>
+              <button type="button" className="flow-link-button secondary" disabled={busy || page <= 1} onClick={() => setPage((current) => current - 1)}>
+                {t("上一页", "Previous")}
+              </button>
+              <button type="button" className="flow-link-button secondary" disabled={busy || page >= totalPages} onClick={() => setPage((current) => current + 1)}>
+                {t("下一页", "Next")}
+              </button>
+            </div>
+          )}
         </footer>
       </section>
     </div>

@@ -63,16 +63,18 @@ export function IntermediateFlowL2ReviewDialog({
           )}
         </div>
         <div className="intermediate-flow-l2-review-select-all">
-          <label className="app-checkbox">
-            <input
-              type="checkbox"
-              checked={allSelected}
-              disabled={busy || items.length === 0}
-              onChange={(event) => setSelected(event.target.checked
-                ? new Set(items.map((item) => item.port.id))
-                : new Set())}
-            />
-            <span className="app-checkbox-control" aria-hidden="true" />
+          <label className="intermediate-flow-l2-select-control">
+            <span className="app-checkbox">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                disabled={busy || items.length === 0}
+                onChange={(event) => setSelected(event.target.checked
+                  ? new Set(items.map((item) => item.port.id))
+                  : new Set())}
+              />
+              <span className="app-checkbox-control" aria-hidden="true" />
+            </span>
             <span>{t(`全选（${selected.size}/${items.length}）`, `Select all (${selected.size}/${items.length})`)}</span>
           </label>
         </div>
@@ -99,26 +101,29 @@ export function IntermediateFlowL2ReviewDialog({
                   />
                   <span className="app-checkbox-control" aria-hidden="true" />
                 </span>
-                <span className="intermediate-flow-l2-review-flow" title={sourceName}>{sourceName}</span>
+                <span className="intermediate-flow-l2-review-flow" title={sourceName}>
+                  <strong>{sourceName}</strong>
+                  <small>{t("天工中间流", "Tiangong intermediate flow")}</small>
+                </span>
                 <span className="intermediate-flow-l2-review-arrow" aria-hidden="true">→</span>
                 <span className="intermediate-flow-l2-review-target" title={targetName}>
                   <strong>{targetName}</strong>
                   <small>{resolution.source_unit} → {resolution.target_unit}</small>
                 </span>
-                <span className="muted-text" title={(resolution.warnings ?? []).join(" · ")}>
-                  {(resolution.warnings ?? []).join(" · ") || t("需人工确认语义", "Semantic review required")}
+                <span className="intermediate-flow-l2-risk" title={(resolution.warnings ?? []).join(" · ")}>
+                  {t("需核对产品范围和限定词", "Review product scope and qualifiers")}
                 </span>
               </label>
             );
           })}
         </div>
         <footer className="intermediate-flow-l2-review-footer">
-          <button type="button" className="inspector-toolbar-btn secondary" disabled={busy} onClick={onClose}>
+          <button type="button" className="flow-link-button secondary" disabled={busy} onClick={onClose}>
             {t("取消", "Cancel")}
           </button>
           <button
             type="button"
-            className="inspector-toolbar-btn"
+            className="flow-link-button primary"
             disabled={busy || selectedIds.length === 0}
             onClick={() => onConfirm(selectedIds)}
           >
