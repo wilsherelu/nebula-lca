@@ -2097,6 +2097,30 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
 
   return (
     <div className="inspector-block">
+      <div className="inspector-utility-actions">
+        {!ptsNode && (
+          <button
+            type="button"
+            className="inspector-utility-btn"
+            title={t("过程信息", "Process Info")}
+            aria-label={t("过程信息", "Process Info")}
+            onClick={openProcessInfoModal}
+          >
+            {t("过程信息", "Process Info")}
+          </button>
+        )}
+        {!marketProcess && !ptsNode && !lciNode && (
+          <button
+            type="button"
+            className="inspector-utility-btn"
+            title={t("多产品分配", "Multi-product Allocation")}
+            aria-label={t("多产品分配", "Multi-product Allocation")}
+            onClick={() => setAllocationModalOpen(true)}
+          >
+            {t("多产品分配", "Allocation")}
+          </button>
+        )}
+      </div>
       <div className="inspector-control-row">
         <div className="tabs compact-tabs page-tabs">
           <button type="button" className={tab === "external_in" ? "active" : ""} onClick={() => setTab("external_in")}>
@@ -2137,26 +2161,8 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
               {t("单位自动换算", "Unit auto conversion")}
             </label>
           )}
-          {!ptsNode && (
-            <button
-              type="button"
-              className="text-btn inspector-toolbar-btn"
-              onClick={openProcessInfoModal}
-            >
-              {t("过程信息", "Process Info")}
-            </button>
-          )}
-          {!marketProcess && !ptsNode && !lciNode && (
-            <>
-              {!importedLocked && <IntermediateFlowLinkPanel node={node} onStatus={onStatus} />}
-              <button
-                type="button"
-                className="text-btn inspector-toolbar-btn"
-                onClick={() => setAllocationModalOpen(true)}
-              >
-                {t("多产品分配", "Allocation")}
-              </button>
-            </>
+          {!marketProcess && !ptsNode && !lciNode && !importedLocked && (
+            <IntermediateFlowLinkPanel node={node} onStatus={onStatus} />
           )}
           {marketProcess && (
             <label className="inline-checkbox">

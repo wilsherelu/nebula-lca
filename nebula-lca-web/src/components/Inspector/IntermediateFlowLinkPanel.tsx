@@ -1,18 +1,15 @@
 import { useMemo, useState } from "react";
 import type { Node } from "@xyflow/react";
 import { getApiBase } from "../../apiBase";
-import type { FlowPort, LcaNodeData } from "../../model/node";
+import type { FlowPort, IntermediateFlowLink, LcaNodeData } from "../../model/node";
 import { useLcaGraphStore } from "../../store/lcaGraphStore";
 import { parseImportedRows } from "../NodePalette/UnitProcessImportDialog";
 import { getLocalizedText } from "../../utils/localizedText";
 import {
   confirmL2IntermediateFlowLink,
   fetchIntermediateFlowProviders,
-  createUserProxyRule,
   resolveIntermediateFlowPorts,
-  searchEcoIntermediateFlows,
   toIntermediateFlowLink,
-  type EcoIntermediateFlow,
   type ProviderCandidate,
   type RawResolution,
   type ResolveItem,
@@ -21,6 +18,8 @@ import {
   IntermediateFlowL2ReviewDialog,
   type IntermediateFlowL2ReviewItem,
 } from "./IntermediateFlowL2ReviewDialog";
+import { L3UserProxyModal } from "./L3UserProxyModal";
+import { BackgroundLciPickerDialog } from "./BackgroundLciPickerDialog";
 
 type Props = {
   node: Node<LcaNodeData>;
@@ -37,16 +36,21 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [resolutionState, setResolutionState] = useState<"idle" | "loading" | "ready" | "error">("idle");
-  const [providersByPort, setProvidersByPort] = useState<Record<string, ProviderCandidate[]>>({});
   const [candidateByPort, setCandidateByPort] = useState<Record<string, RawResolution>>({});
   const [statusByPort, setStatusByPort] = useState<Record<string, ResolveItem["status"]>>({});
   const [reasonByPort, setReasonByPort] = useState<Record<string, string>>({});
   const [l2ReviewOpen, setL2ReviewOpen] = useState(false);
   const [proxyPortId, setProxyPortId] = useState<string>();
-  const [proxyQuery, setProxyQuery] = useState("");
-  const [proxyReason, setProxyReason] = useState("");
-  const [proxyFlows, setProxyFlows] = useState<EcoIntermediateFlow[]>([]);
+  const [backgroundPickerPortId, setBackgroundPickerPortId] = useState<string>();
+  const [backgroundPickerProviders, setBackgroundPickerProviders] = useState<ProviderCandidate[]>([]);
+  const [backgroundPickerLoading, setBackgroundPickerLoading] = useState(false);
   const t = (zh: string, en: string) => (uiLanguage === "zh" ? zh : en);
+  const conversionLabel = (level: "L1" | "L2" | "L3") =>
+    level === "L1"
+      ? t("自动转换", "Automatic conversion")
+      : level === "L2"
+        ? t("需确认转换", "Conversion needs confirmation")
+        : t("手动转换", "Manual conversion");
 
   const inputs = useMemo(
     () => node.data.inputs.filter((port) => port.type !== "biosphere"),
@@ -120,7 +124,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
       links.forEach((_, portId) => delete next[portId]);
       return next;
     });
-    onStatus?.(t(`已转换 ${links.size} 条 L1 中间流。`, `Converted ${links.size} L1 intermediate flows.`));
+    onStatus?.(t(`已自动转换 ${links.size} 条中间流。`, `Automatically converted ${links.size} intermediate flows.`));
   };
 
   const l2ReviewItems = useMemo<IntermediateFlowL2ReviewItem[]>(() => inputs.flatMap((port) => {
@@ -166,11 +170,11 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
       });
       setL2ReviewOpen(false);
       onStatus?.(t(
-        `已确认并转换 ${links.size} 条 L2 中间流；请继续选择具体背景 LCI。`,
-        `Confirmed and converted ${links.size} L2 intermediate flows; choose specific background LCI providers next.`,
+        `已确认并转换 ${links.size} 条中间流；请继续选择具体背景 LCI。`,
+        `Confirmed and converted ${links.size} intermediate flows; choose specific background LCI providers next.`,
       ));
     } catch (error) {
-      onStatus?.(error instanceof Error ? error.message : t("批量确认 L2 失败", "Batch L2 confirmation failed"));
+      onStatus?.(error instanceof Error ? error.message : t("批量确认转换失败", "Batch conversion confirmation failed"));
     } finally {
       setBusy(false);
     }
@@ -197,8 +201,8 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
         return next;
       });
       onStatus?.(resolution.mapping_level === "L2"
-        ? t("已确认该 L2 兼容映射；请继续选择具体背景 LCI。", "Confirmed this L2 compatibility link; choose a background LCI next.")
-        : t("已复用该 L3 用户代理；请继续选择具体背景 LCI。", "Reused this L3 user proxy; choose a background LCI next."));
+        ? t("已确认该转换；请继续选择具体背景 LCI。", "Confirmed this conversion; choose a background LCI next.")
+        : t("已复用手动转换；请继续选择具体背景 LCI。", "Reused this manual conversion; choose a background LCI next."));
     } catch (error) {
       onStatus?.(error instanceof Error ? error.message : t("确认映射失败", "Link confirmation failed"));
     } finally {
@@ -206,15 +210,19 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
     }
   };
 
-  const loadProviders = async (port: FlowPort) => {
+  const openBackgroundPicker = async (port: FlowPort) => {
     const target = port.intermediateFlowLink?.targetFlowUuid;
     if (!target) return;
-    setBusy(true);
+    setBackgroundPickerPortId(port.id);
+    setBackgroundPickerLoading(true);
+    setBackgroundPickerProviders([]);
     try {
       const providers = await fetchIntermediateFlowProviders(target);
-      setProvidersByPort((current) => ({ ...current, [port.id]: providers }));
+      setBackgroundPickerProviders(providers);
+    } catch (error) {
+      onStatus?.(error instanceof Error ? error.message : t("背景 LCI 加载失败", "Background LCI lookup failed"));
     } finally {
-      setBusy(false);
+      setBackgroundPickerLoading(false);
     }
   };
 
@@ -246,29 +254,21 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
     }
   };
 
-  const chooseProxyFlow = async (target: EcoIntermediateFlow) => {
-    const port = inputs.find((item) => item.id === proxyPortId);
-    if (!port || proxyReason.trim().length < 3) return;
-    setBusy(true);
-    try {
-      const link = await createUserProxyRule(port.flowUuid, target.flow_uuid, proxyReason.trim());
-      updateNode(node.id, (current) => ({
-        ...current,
-        data: {
-          ...current.data,
-          inputs: current.data.inputs.map((item) =>
-            item.id === port.id ? { ...item, intermediateFlowLink: link } : item,
-          ),
-        },
-      }));
-      setProxyPortId(undefined);
-      setProxyFlows([]);
-      setProxyQuery("");
-      setProxyReason("");
-      onStatus?.(t("已保存 L3 用户代理；该关系不表示环境或 provider 等价。", "Saved L3 user proxy; it does not imply environmental or provider equivalence."));
-    } finally {
-      setBusy(false);
-    }
+  const handleL3ProxyConfirm = (port: FlowPort, link: IntermediateFlowLink) => {
+    updateNode(node.id, (current) => ({
+      ...current,
+      data: {
+        ...current.data,
+        inputs: current.data.inputs.map((item) =>
+          item.id === port.id ? { ...item, intermediateFlowLink: link } : item,
+        ),
+      },
+    }));
+    setProxyPortId(undefined);
+    onStatus?.(t(
+      "已保存手动转换；该关系不表示环境或 provider 等价。请继续选择具体背景 LCI。",
+      "Saved manual conversion; it does not imply environmental or provider equivalence. Choose a specific background LCI next.",
+    ));
   };
 
   if (inputs.length === 0) return null;
@@ -288,12 +288,12 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
             className="overlay-panel intermediate-flow-link-dialog"
             role="dialog"
             aria-modal="true"
-            aria-label={t("中间流转换与背景连接", "Intermediate Flow Conversion and Background Linking")}
+            aria-label={t("中间流转换", "Intermediate Flow Conversion")}
             onMouseDown={(event) => event.stopPropagation()}
           >
             <header className="overlay-head intermediate-flow-link-dialog-head">
               <div className="intermediate-flow-link-title">
-                <strong>{t("中间流转换与背景连接", "Intermediate Flow Conversion and Background Linking")}</strong>
+                <strong>{t("中间流转换", "Intermediate Flow Conversion")}</strong>
                 <span>{inputs.length}</span>
               </div>
               <button type="button" className="drawer-close-btn" onClick={() => setOpen(false)}>
@@ -302,7 +302,10 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
             </header>
             <div className="intermediate-flow-link-dialog-toolbar">
               <div className="intermediate-flow-link-overview">
-                <p>{t("已自动检测全部中间流。L1 可直接批量转换；L2 需核对目标后批量确认；无 L1/L2 候选时才使用 L3。", "All intermediate flows are checked automatically. Convert L1 in bulk, review L2 targets in bulk, and use L3 only when no L1/L2 candidate exists.")}</p>
+                <p>{t(
+                  "在此完成中间流转换。可自动转换的流会直接处理；需要核对的流请确认后转换；没有自动结果时可手动转换。转换完成后，再选择背景 LCI 用于清单分析计算。",
+                  "Convert intermediate flows here. Automatically convertible flows can be processed directly; review flows that need confirmation; use manual conversion when no automatic result is available. After conversion, choose a background LCI for inventory-analysis calculation.",
+                )}</p>
                 <div className="intermediate-flow-link-counts" aria-live="polite">
                   {resolutionState === "loading" ? (
                     <span>{t("正在检测可转换关系…", "Checking conversion candidates…")}</span>
@@ -310,9 +313,9 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                     <span className="error-text">{t("检测失败，请重试", "Candidate check failed; retry")}</span>
                   ) : (
                     <>
-                      <span className="approved">L1 {l1Count}</span>
-                      <span className="review">L2 {l2ReviewItems.length}</span>
-                      <span>{t("无候选", "No candidate")} {unmatchedCount}</span>
+                      <span className="approved">{t("自动可转换", "Auto-convertible")} {l1Count}</span>
+                      <span className="review">{t("需确认", "Needs review")} {l2ReviewItems.length}</span>
+                      <span>{t("需手动转换", "Manual conversion needed")} {unmatchedCount}</span>
                     </>
                   )}
                 </div>
@@ -324,10 +327,10 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                   </button>
                 )}
                 <button type="button" className="flow-link-button primary" disabled={busy || l1Count === 0} onClick={applyAllL1}>
-                  {t(`转换全部 L1（${l1Count}）`, `Convert all L1 (${l1Count})`)}
+                  {t(`自动转换（${l1Count}）`, `Auto-convert (${l1Count})`)}
                 </button>
                 <button type="button" className="flow-link-button secondary" disabled={busy || l2ReviewItems.length === 0} onClick={() => setL2ReviewOpen(true)}>
-                  {t(`批量确认 L2（${l2ReviewItems.length}）`, `Review L2 (${l2ReviewItems.length})`)}
+                  {t(`确认转换（${l2ReviewItems.length}）`, `Confirm conversion (${l2ReviewItems.length})`)}
                 </button>
               </div>
             </div>
@@ -337,7 +340,6 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
         const link = port.intermediateFlowLink;
         const review = candidateByPort[port.id];
         const resolutionStatus = statusByPort[port.id];
-        const providers = providersByPort[port.id] ?? [];
         return (
           <div className="intermediate-flow-link-row" key={port.id}>
             <div className="intermediate-flow-link-summary">
@@ -346,9 +348,10 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
               </strong>
               <span className={`intermediate-flow-level-badge ${link ? "approved" : review ? "review" : "unmatched"}`}>
                 {link && link.status !== "inactive"
-                  ? link.mappingLevel
+                  ? conversionLabel(link.mappingLevel)
                   : review?.mapping_level
-                    ?? (resolutionState === "loading" || resolutionState === "idle"
+                    ? conversionLabel(review.mapping_level)
+                    : (resolutionState === "loading" || resolutionState === "idle"
                       ? t("检测中", "Checking")
                       : t("无候选", "No candidate"))}
               </span>
@@ -356,7 +359,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
             {link && link.status !== "inactive" ? (
               <>
                 <div className="intermediate-flow-link-target">
-                  <span>{t("已关联 eco reference product", "Linked to eco reference product")}</span>
+                  <span>{t("已完成转换", "Conversion completed")}</span>
                   {link.applicationMode === "auto_compatible" && (
                     <span className="muted-text" title={(link.warnings ?? []).join(", ")}>
                       {t("语义泛化，计算前请核对", "Review semantic generalization before calculation")}
@@ -364,21 +367,18 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                   )}
                 </div>
                 <div className="intermediate-flow-link-actions">
-                  <button type="button" className="flow-link-button secondary compact" disabled={busy} onClick={() => loadProviders(port)}>
-                    {t("选择背景 LCI", "Choose background LCI")}
-                  </button>
-                </div>
-                {providers.map((provider) => (
                   <button
                     type="button"
-                    className="provider-candidate-btn"
-                    key={provider.process_uuid}
-                    disabled={busy || !provider.has_lci_vector}
-                    onClick={() => chooseProvider(port, provider)}
+                    className="flow-link-button secondary compact"
+                    disabled={busy}
+                    onClick={() => void openBackgroundPicker(port)}
                   >
-                    {provider.process_name} · {provider.location || "-"}
+                    {t("选择背景 LCI", "Choose background LCI")}
                   </button>
-                ))}
+                  <span className="muted-text">
+                    {t("在清单分析工作流中关联背景 LCI", "Link a background LCI for the inventory-analysis workflow")}
+                  </span>
+                </div>
               </>
             ) : review ? (
               <div className="intermediate-flow-review-card">
@@ -389,10 +389,10 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                 </span>
                 <span className="muted-text">
                   {review.mapping_level === "L1"
-                    ? t("严格匹配，可通过上方按钮批量转换。", "Strict match; use the action above to convert it in bulk.")
+                    ? t("可自动转换，可通过上方按钮批量处理。", "Ready for automatic conversion; use the action above to process it in bulk.")
                     : review.mapping_level === "L2"
-                      ? t("兼容但语义可能更宽或更窄，确认后才写入模型。", "Compatible but potentially broader or narrower; written only after confirmation.")
-                      : t("这是已保存的用户代理，需逐条确认复用。", "This saved user proxy must be reused per flow explicitly.")}
+                      ? t("需要核对转换目标，确认后才写入模型。", "Review the conversion target before writing it into the model.")
+                      : t("这是已保存的手动转换，需逐条确认复用。", "This saved manual conversion must be reused per flow explicitly.")}
                 </span>
                 {(review.warnings ?? []).length > 0 && (
                   <span className="intermediate-flow-review-hint" title={(review.warnings ?? []).join(" · ")}>
@@ -401,12 +401,12 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                 )}
                 <div className="intermediate-flow-link-actions">
                   {review.mapping_level === "L1" ? (
-                    <span className="muted-text">{t("等待批量转换 L1", "Ready for bulk L1 conversion")}</span>
+                    <span className="muted-text">{t("等待自动转换", "Ready for automatic conversion")}</span>
                   ) : review.mapping_level === "L2" ? (
-                    <span className="muted-text">{t("等待批量确认 L2", "Ready for batch L2 review")}</span>
+                    <span className="muted-text">{t("等待确认转换", "Ready for confirmation")}</span>
                   ) : (
                     <button type="button" className="flow-link-button primary compact" disabled={busy} onClick={() => applyReviewedLink(port, review)}>
-                      {t("复用 L3", "Reuse L3")}
+                      {t("复用手动转换", "Reuse manual conversion")}
                     </button>
                   )}
                   {review.mapping_level === "L3" && (
@@ -420,10 +420,10 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
             {!link && !review && resolutionState === "ready" && (
               <div className="intermediate-flow-link-actions">
                 <span className="muted-text" title={reasonByPort[port.id] ?? resolutionStatus}>
-                  {t("未找到可用的 L1/L2 转换", "No usable L1/L2 conversion found")}
+                  {t("未找到可自动转换的结果", "No automatic conversion is available")}
                 </span>
                 <button type="button" className="flow-link-button ghost compact" onClick={() => setProxyPortId(port.id)}>
-                  {t("指定 L3 用户代理", "Assign L3 user proxy")}
+                  {t("手动转换", "Manual conversion")}
                 </button>
               </div>
             )}
@@ -431,42 +431,36 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
         );
       })}
               </div>
-      {proxyPortId && (
-        <div className="intermediate-flow-proxy-editor">
-          <input
-            value={proxyQuery}
-            placeholder={t("搜索 eco 中间流", "Search eco intermediate flows")}
-            onChange={(event) => setProxyQuery(event.target.value)}
-          />
-          <textarea
-            value={proxyReason}
-            placeholder={t("必填：代理原因", "Required: proxy reason")}
-            onChange={(event) => setProxyReason(event.target.value)}
-          />
-          <button
-            type="button"
-            className="flow-link-button secondary"
-            disabled={busy || !proxyQuery.trim()}
-            onClick={async () => setProxyFlows(await searchEcoIntermediateFlows(proxyQuery.trim()))}
-          >
-            {t("搜索", "Search")}
-          </button>
-          {proxyFlows.map((flow) => (
-            <button
-              type="button"
-              className="provider-candidate-btn flow-link-button ghost"
-              key={flow.flow_uuid}
-              disabled={busy || proxyReason.trim().length < 3}
-              onClick={() => chooseProxyFlow(flow)}
-            >
-              {flow.flow_name} · {flow.default_unit}
-            </button>
-          ))}
-        </div>
-      )}
             </div>
           </section>
         </div>
+      )}
+      <L3UserProxyModal
+        open={Boolean(proxyPortId)}
+        busy={busy}
+        port={inputs.find((item) => item.id === proxyPortId) ?? null}
+        language={uiLanguage}
+        onClose={() => setProxyPortId(undefined)}
+        onConfirm={handleL3ProxyConfirm}
+        onStatus={onStatus}
+      />
+      {backgroundPickerPortId && (
+        <BackgroundLciPickerDialog
+          open={Boolean(backgroundPickerPortId)}
+          busy={backgroundPickerLoading}
+          providers={backgroundPickerProviders}
+          sourceFlowName={getLocalizedText(inputs.find((item) => item.id === backgroundPickerPortId)?.name, uiLanguage, "")}
+          targetFlowUuid={inputs.find((item) => item.id === backgroundPickerPortId)?.intermediateFlowLink?.targetFlowUuid ?? ""}
+          language={uiLanguage}
+          onClose={() => setBackgroundPickerPortId(undefined)}
+          onSelect={(provider) => {
+            const port = inputs.find((item) => item.id === backgroundPickerPortId);
+            if (port) {
+              void chooseProvider(port, provider);
+            }
+            setBackgroundPickerPortId(undefined);
+          }}
+        />
       )}
       <IntermediateFlowL2ReviewDialog
         open={l2ReviewOpen}

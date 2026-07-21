@@ -1658,6 +1658,39 @@ body,
   color: #1e3641;
 }
 
+.inspector-utility-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.inspector-utility-btn {
+  height: 26px;
+  padding: 0 10px;
+  white-space: nowrap;
+  border: 1px solid #d0dce3;
+  border-radius: 6px;
+  background: #f7fbfe;
+  color: #5a7b8a;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 24px;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.inspector-utility-btn:hover {
+  border-color: #a6c7dd;
+  background: #edf5fb;
+  color: #0c84ff;
+}
+
+.inspector-utility-btn:focus-visible {
+  outline: 2px solid #0c84ff;
+  outline-offset: 1px;
+}
+
 .inspector-control-row {
   display: flex;
   align-items: center;
@@ -3684,6 +3717,10 @@ body,
 
   .topbar-actions {
     margin-left: 0;
+  }
+
+  .inspector-utility-actions {
+    flex-wrap: wrap;
   }
 
   .inspector-control-row {
@@ -6488,12 +6525,34 @@ body,
 
 .background-lci-picker-toolbar {
   display: grid;
-  grid-template-columns: minmax(260px, 1.5fr) minmax(170px, 0.8fr) minmax(150px, 0.7fr) auto;
+  grid-template-columns: minmax(180px, 1fr) minmax(260px, 1.5fr) minmax(170px, 0.8fr) minmax(150px, 0.7fr) auto;
   gap: 12px;
   align-items: end;
   padding: 12px 16px;
   border-bottom: 1px solid #e6eef2;
   background: #f7fafc;
+}
+
+.background-lci-picker-context {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  color: #3d5f6d;
+}
+
+.background-lci-picker-context strong {
+  font-size: 12px;
+}
+
+.background-lci-picker-context span,
+.background-lci-picker-context small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.background-lci-picker-context small {
+  color: #6a7e87;
 }
 
 .background-lci-picker-toolbar label {
@@ -6605,6 +6664,126 @@ body,
   gap: 8px;
 }
 
+/* L3 User Proxy Modal */
+.l3-proxy-modal-overlay {
+  z-index: 60;
+}
+
+.l3-proxy-modal-dialog {
+  max-width: min(720px, 94vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.l3-proxy-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.l3-proxy-modal-context {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  border: 1px solid #d7e6ee;
+  border-radius: 8px;
+  background: #f7fbfe;
+}
+
+.l3-proxy-context-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6a7e87;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.l3-proxy-modal-search {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.l3-proxy-modal-search label {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.l3-proxy-modal-search label > span {
+  font-size: 12px;
+  font-weight: 600;
+  color: #3d5f6d;
+}
+
+.l3-proxy-modal-search input {
+  height: 34px;
+  border: 1px solid #c3d2db;
+  border-radius: 6px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.l3-proxy-modal-results {
+  flex: 1 1 0;
+  min-height: 120px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.l3-proxy-results-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.l3-proxy-results-table th,
+.l3-proxy-results-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid #e4ecef;
+}
+
+.l3-proxy-results-table th {
+  font-weight: 600;
+  color: #3d5f6d;
+  font-size: 12px;
+  background: #f7fbfe;
+}
+
+.l3-proxy-modal-reason label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.l3-proxy-modal-reason label > span {
+  font-size: 12px;
+  font-weight: 600;
+  color: #3d5f6d;
+}
+
+.l3-proxy-modal-reason textarea {
+  border: 1px solid #c3d2db;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  resize: vertical;
+  min-height: 60px;
+}
+
+.l3-proxy-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
 @media (max-width: 900px) {
   .intermediate-flow-link-dialog-toolbar {
     align-items: stretch;
@@ -6651,5 +6830,14 @@ body,
   .background-lci-picker-footer {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .l3-proxy-modal-search {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .l3-proxy-modal-dialog {
+    max-width: 98vw;
   }
 }
