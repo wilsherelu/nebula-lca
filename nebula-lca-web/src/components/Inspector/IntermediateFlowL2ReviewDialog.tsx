@@ -44,12 +44,12 @@ export function IntermediateFlowL2ReviewDialog({
         className="overlay-panel intermediate-flow-l2-review-dialog"
         role="dialog"
         aria-modal="true"
-        aria-label={t("批量确认 L2 中间流", "Review L2 Intermediate Flows")}
+        aria-label={t("确认待核对的转换", "Confirm conversions needing review")}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="overlay-head intermediate-flow-link-dialog-head">
           <div className="intermediate-flow-link-title">
-            <strong>{t("批量确认 L2 中间流", "Review L2 Intermediate Flows")}</strong>
+            <strong>{t("确认待核对的转换", "Confirm conversions needing review")}</strong>
             <span>{items.length}</span>
           </div>
           <button type="button" className="drawer-close-btn" disabled={busy} onClick={onClose}>
@@ -58,8 +58,8 @@ export function IntermediateFlowL2ReviewDialog({
         </header>
         <div className="intermediate-flow-l2-review-note">
           {t(
-            "L2 表示单位兼容且可用于连接，但产品语义可能更宽或更窄。请核对目标后再批量确认。",
-            "L2 is unit-compatible for linking, but product meaning may be broader or narrower. Review targets before confirming.",
+            "这些转换的单位兼容，但产品语义可能更宽或更窄。请核对目标后再批量确认。",
+            "These conversions are unit-compatible, but product meaning may be broader or narrower. Review targets before confirming.",
           )}
         </div>
         <div className="intermediate-flow-l2-review-select-all">
@@ -129,7 +129,7 @@ export function IntermediateFlowL2ReviewDialog({
           >
             {busy
               ? t("确认中…", "Confirming…")
-              : t(`确认并转换 ${selectedIds.length} 条 L2`, `Confirm and convert ${selectedIds.length} L2 flows`)}
+              : t(`确认并转换 ${selectedIds.length} 条`, `Confirm and convert ${selectedIds.length}`)}
           </button>
         </footer>
       </section>

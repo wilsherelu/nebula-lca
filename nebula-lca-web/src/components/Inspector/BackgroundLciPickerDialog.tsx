@@ -5,6 +5,8 @@ type Props = {
   open: boolean;
   busy: boolean;
   providers: ProviderCandidate[];
+  sourceFlowName?: string;
+  targetFlowUuid?: string;
   language: "zh" | "en";
   onClose: () => void;
   onSelect: (provider: ProviderCandidate) => void;
@@ -26,6 +28,8 @@ export function BackgroundLciPickerDialog({
   open,
   busy,
   providers,
+  sourceFlowName = "",
+  targetFlowUuid = "",
   language,
   onClose,
   onSelect,
@@ -99,6 +103,11 @@ export function BackgroundLciPickerDialog({
         </header>
 
         <div className="background-lci-picker-toolbar">
+          <div className="background-lci-picker-context">
+            <strong>{t("已转换流", "Converted flow")}</strong>
+            <span title={sourceFlowName}>{sourceFlowName || targetFlowUuid || "-"}</span>
+            {targetFlowUuid && <small title={targetFlowUuid}>{targetFlowUuid}</small>}
+          </div>
           <label>
             <span>{t("过程名称", "Process")}</span>
             <input
