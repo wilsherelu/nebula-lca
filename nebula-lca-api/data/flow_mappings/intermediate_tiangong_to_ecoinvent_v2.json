@@ -1,11 +1,29 @@
 {
   "package_id": "intermediate_tiangong_to_ecoinvent_v2",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "direction": "tiangong_to_ecoinvent",
-  "pipeline_version": "flow-mapping-review-v3",
-  "review_policy": "pragmatic-compatibility-v4",
+  "pipeline_version": "flow-mapping-review-v4",
+  "review_policy": "saas-full-catalog-gap-review-v1",
   "unit_rules_version": "1.0.0",
-  "generated_at": "2026-07-15T02:01:13.8247038Z",
+  "unit_group_contracts": {
+    "mass": {
+      "source_unit_group": "Units of mass",
+      "target_unit_group": "mass"
+    },
+    "volume": {
+      "source_unit_group": "Units of volume",
+      "target_unit_group": "volume"
+    },
+    "energy": {
+      "source_unit_group": "Units of energy",
+      "target_unit_group": "energy"
+    },
+    "area": {
+      "source_unit_group": "Units of area",
+      "target_unit_group": "area"
+    }
+  },
+  "generated_at": "2026-07-22T00:00:00Z",
   "mappings": [
     {
       "rule_id": "if-v2-0123d60d-1c78-4a38-9fa0-90b1b6c9491e",
@@ -9878,6 +9896,149 @@
         "HEAD_NAME_MISMATCH",
         "SEMANTIC_GENERALIZATION"
       ]
+    },
+    {
+      "rule_id": "if-v2-72c8ae93-36ff-4153-a0e2-84fef01462e7",
+      "source_flow_uuid": "72c8ae93-36ff-4153-a0e2-84fef01462e7",
+      "target_flow_uuid": "fef44ccb-917e-4c8d-bb35-a1898827b659",
+      "source_flow_type": "Product flow",
+      "target_flow_type": "Product flow",
+      "source_unit": "kg",
+      "target_unit": "kg",
+      "unit_dimension": "mass",
+      "amount_factor": 1,
+      "direction": "tiangong_to_ecoinvent",
+      "mapping_level": "L2",
+      "review_status": "approved_with_warning",
+      "pipeline_version": "flow-mapping-review-v4",
+      "evidence_sha256": "8ace3dd7ed2900a1a75c516750d09e7e9634107b5bc4bc666ff6c4d096a8d425",
+      "application_mode": "auto_compatible",
+      "warnings": ["MATERIAL_FORM_PROXY", "PROCESSING_OMITTED"]
+    },
+    {
+      "rule_id": "if-v2-5fd237b0-2305-4216-8c40-eb1524a8c177",
+      "source_flow_uuid": "5fd237b0-2305-4216-8c40-eb1524a8c177",
+      "target_flow_uuid": "ec23da1b-e5fa-4f01-bd2c-3233fece2175",
+      "source_flow_type": "Product flow",
+      "target_flow_type": "Product flow",
+      "source_unit": "kg",
+      "target_unit": "kg",
+      "unit_dimension": "mass",
+      "amount_factor": 1,
+      "direction": "tiangong_to_ecoinvent",
+      "mapping_level": "L1",
+      "review_status": "approved",
+      "pipeline_version": "flow-mapping-review-v4",
+      "evidence_sha256": "f4001ddff6501a95526be1916278556fb2df740dcf11c03b2323b6277ff561b4",
+      "application_mode": "strict_identity"
+    },
+    {
+      "rule_id": "if-v2-695bb4aa-fca2-44a8-8656-3aa7316e854d",
+      "source_flow_uuid": "695bb4aa-fca2-44a8-8656-3aa7316e854d",
+      "target_flow_uuid": "d4ee8f39-342b-4443-bbb9-c49b6801b5d6",
+      "source_flow_type": "Product flow",
+      "target_flow_type": "Product flow",
+      "source_unit": "kg",
+      "target_unit": "kg",
+      "unit_dimension": "mass",
+      "amount_factor": 1,
+      "direction": "tiangong_to_ecoinvent",
+      "mapping_level": "L2",
+      "review_status": "approved_with_warning",
+      "pipeline_version": "flow-mapping-review-v4",
+      "evidence_sha256": "fbb971611d5986f9dca0a340d571919938fe05801b46681b8507d46702bcfbf6",
+      "application_mode": "auto_compatible",
+      "warnings": ["PRODUCT_FORM_PROXY", "SPECIFICATION_PROXY"]
+    },
+    {
+      "rule_id": "if-v2-b59452f3-c6c2-4d36-a17a-ca4f106b82a6",
+      "source_flow_uuid": "b59452f3-c6c2-4d36-a17a-ca4f106b82a6",
+      "target_flow_uuid": "fbb039f7-f9cc-46d2-b631-313ddb125c1a",
+      "source_flow_type": "Product flow",
+      "target_flow_type": "Product flow",
+      "source_unit": "kg",
+      "target_unit": "kg",
+      "unit_dimension": "mass",
+      "amount_factor": 1,
+      "direction": "tiangong_to_ecoinvent",
+      "mapping_level": "L2",
+      "review_status": "approved_with_warning",
+      "pipeline_version": "flow-mapping-review-v4",
+      "evidence_sha256": "b7de1c3f7cf2a3b7ab40b8a735bd69410a244e6c946b454963c59de02e37cea8",
+      "application_mode": "auto_compatible",
+      "warnings": ["PRODUCT_FORM_PROXY", "PROCESSING_OMITTED"]
+    },
+    {
+      "rule_id": "if-v2-dce4b62f-0ba7-460a-b99a-7d62e6b55932",
+      "source_flow_uuid": "dce4b62f-0ba7-460a-b99a-7d62e6b55932",
+      "target_flow_uuid": "237b35c6-69e1-49c4-8e99-0be6c1b1806e",
+      "source_flow_type": "Product flow",
+      "target_flow_type": "Product flow",
+      "source_unit": "kg",
+      "target_unit": "kg",
+      "unit_dimension": "mass",
+      "amount_factor": 1,
+      "direction": "tiangong_to_ecoinvent",
+      "mapping_level": "L2",
+      "review_status": "approved_with_warning",
+      "pipeline_version": "flow-mapping-review-v4",
+      "evidence_sha256": "945533e636e7e478d34d11ae4e33a52ebaed4aaa2eb275a8a7eca959dbd6e214",
+      "application_mode": "auto_compatible",
+      "warnings": ["REFINING_STATE_PROXY"]
+    },
+    {
+      "rule_id": "if-v2-3fbc2a8c-5368-436b-b0f7-0b6bdb88e99a",
+      "source_flow_uuid": "3fbc2a8c-5368-436b-b0f7-0b6bdb88e99a",
+      "target_flow_uuid": "e180c07f-fa94-4f7c-8a2f-32cb78f52bd6",
+      "source_flow_type": "Product flow",
+      "target_flow_type": "Product flow",
+      "source_unit": "kg",
+      "target_unit": "kg",
+      "unit_dimension": "mass",
+      "amount_factor": 1,
+      "direction": "tiangong_to_ecoinvent",
+      "mapping_level": "L2",
+      "review_status": "approved_with_warning",
+      "pipeline_version": "flow-mapping-review-v4",
+      "evidence_sha256": "a62eb0342b1daf1867aa5d397deacb566844caf9df2608153b4d800d200531e3",
+      "application_mode": "auto_compatible",
+      "warnings": ["FUEL_GRADE_PROXY"]
+    },
+    {
+      "rule_id": "if-v2-78db838b-1b97-48ac-b90d-39a678be7a4a",
+      "source_flow_uuid": "78db838b-1b97-48ac-b90d-39a678be7a4a",
+      "target_flow_uuid": "92292ccd-ecbb-5ae6-8141-03114dd9c07c",
+      "source_flow_type": "Product flow",
+      "target_flow_type": "Product flow",
+      "source_unit": "m3",
+      "target_unit": "m3",
+      "unit_dimension": "volume",
+      "amount_factor": 1,
+      "direction": "tiangong_to_ecoinvent",
+      "mapping_level": "L2",
+      "review_status": "approved_with_warning",
+      "pipeline_version": "flow-mapping-review-v4",
+      "evidence_sha256": "56530c89bfff47ff1413405ed689361dcd3f3e82afc23ea371f022766e4eed4f",
+      "application_mode": "auto_compatible",
+      "warnings": ["WOOD_SPECIFICATION_PROXY"]
+    },
+    {
+      "rule_id": "if-v2-e49e116f-436d-4aa7-9994-d8c221c76fe0",
+      "source_flow_uuid": "e49e116f-436d-4aa7-9994-d8c221c76fe0",
+      "target_flow_uuid": "dae5718b-c433-4bd9-9deb-eb3ffc2c889e",
+      "source_flow_type": "Product flow",
+      "target_flow_type": "Product flow",
+      "source_unit": "kg",
+      "target_unit": "kg",
+      "unit_dimension": "mass",
+      "amount_factor": 1,
+      "direction": "tiangong_to_ecoinvent",
+      "mapping_level": "L2",
+      "review_status": "approved_with_warning",
+      "pipeline_version": "flow-mapping-review-v4",
+      "evidence_sha256": "73b2365be434898c6337d727ed29598cfd6348db688cd75d69ca86f80fd3828a",
+      "application_mode": "auto_compatible",
+      "warnings": ["REFINING_STATE_PROXY"]
     }
   ]
 }
