@@ -81,6 +81,9 @@ class IntermediateFlowLink(BaseModel):
     package_version: str | None = Field(default=None, alias="packageVersion")
     package_hash: str | None = Field(default=None, alias="packageHash")
     application_mode: Literal["strict_identity", "auto_compatible"] | None = Field(default=None, alias="applicationMode")
+    source_flow_type: str | None = Field(default=None, alias="sourceFlowType")
+    target_flow_type: str | None = Field(default=None, alias="targetFlowType")
+    flow_subtype_override: bool = Field(default=False, alias="flowSubtypeOverride")
     warnings: list[str] = Field(default_factory=list)
 
     model_config = ConfigDict(populate_by_name=True)
