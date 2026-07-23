@@ -118,6 +118,18 @@ def test_incremental_reviewed_medium_voltage_rule_is_available():
     assert resolution.amount_factor == pytest.approx(1 / 3.6)
 
 
+def test_dry_basis_sodium_hydroxide_rule_keeps_factor_one():
+    resolution = get_intermediate_flow_link_registry().resolve(
+        "2e7fda39-6310-42b0-ab45-b4eb571dd825"
+    )
+
+    assert resolution is not None
+    assert resolution.target_flow_uuid == "61396bcb-bf35-411a-a6a6-8543ccef83e8"
+    assert resolution.mapping_level == "L2"
+    assert resolution.amount_factor == 1
+    assert "DRY_SUBSTANCE_QUANTITY_BASIS" in resolution.warnings
+
+
 def test_tidas_import_source_is_eligible_for_reviewed_forward_mapping(db):
     row = _seed_first_l1_pair(db)
     source = db.get(FlowRecord, row["source_flow_uuid"])
