@@ -59,6 +59,8 @@ class IntermediateFlowResolution:
     target_unit: str
     source_unit_group: str | None
     target_unit_group: str | None
+    source_flow_type: str | None
+    target_flow_type: str | None
     mapping_level: str
     mapping_reason: str
     rule_id: str
@@ -67,6 +69,7 @@ class IntermediateFlowResolution:
     package_version: str | None = None
     package_hash: str | None = None
     application_mode: str | None = None
+    flow_subtype_override: bool = False
     warnings: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -78,6 +81,8 @@ class IntermediateFlowResolution:
             "target_unit": self.target_unit,
             "source_unit_group": self.source_unit_group,
             "target_unit_group": self.target_unit_group,
+            "source_flow_type": self.source_flow_type,
+            "target_flow_type": self.target_flow_type,
             "mapping_level": self.mapping_level,
             "mapping_reason": self.mapping_reason,
             "rule_id": self.rule_id,
@@ -86,6 +91,7 @@ class IntermediateFlowResolution:
             "package_version": self.package_version,
             "package_hash": self.package_hash,
             "application_mode": self.application_mode,
+            "flow_subtype_override": self.flow_subtype_override,
             "warnings": list(self.warnings),
             "link_direction": "tiangong_to_ecoinvent",
         }
@@ -122,8 +128,18 @@ class IntermediateFlowLinkRegistry:
             target_uuid = str(row.get("target_flow_uuid") or "").strip()
             if not source_uuid or not target_uuid or source_uuid in indexed:
                 raise ValueError("intermediate-flow package has invalid or duplicate UUIDs")
-            if _flow_type_key(row.get("source_flow_type")) != _flow_type_key(row.get("target_flow_type")):
-                raise ValueError(f"flow type mismatch in rule {row.get('rule_id')}")
+            source_flow_type = _flow_type_key(row.get("source_flow_type"))
+            target_flow_type = _flow_type_key(row.get("target_flow_type"))
+            flow_subtype_override = bool(row.get("flow_subtype_override"))
+            if source_flow_type != target_flow_type:
+                if (
+                    mapping_level != "L2"
+                    or not flow_subtype_override
+                    or "FLOW_SUBTYPE_OVERRIDE" not in (row.get("warnings") or [])
+                ):
+                    raise ValueError(f"flow type mismatch in rule {row.get('rule_id')}")
+            elif flow_subtype_override:
+                raise ValueError(f"unnecessary flow subtype override in rule {row.get('rule_id')}")
             unit_dimension = str(row.get("unit_dimension") or "").strip()
             contract = unit_group_contracts.get(unit_dimension)
             if not isinstance(contract, dict):
@@ -159,6 +175,8 @@ class IntermediateFlowLinkRegistry:
             target_unit=str(row["target_unit"]),
             source_unit_group=str(row["source_unit_group"]),
             target_unit_group=str(row["target_unit_group"]),
+            source_flow_type=str(row["source_flow_type"]),
+            target_flow_type=str(row["target_flow_type"]),
             mapping_level=str(row["mapping_level"]),
             mapping_reason=(
                 "approved_one_way_reference_product_link"
@@ -171,6 +189,7 @@ class IntermediateFlowLinkRegistry:
             package_version=self.package_version,
             package_hash=self.package_hash,
             application_mode=str(row.get("application_mode") or "strict_identity"),
+            flow_subtype_override=bool(row.get("flow_subtype_override")),
             warnings=tuple(str(item) for item in row.get("warnings") or []),
         )
 
@@ -197,7 +216,14 @@ def _validate_resolution_records(
         return "SOURCE_FLOW_NOT_TIANGONG"
     if "ecoinvent" not in str(target.source or "").casefold():
         return "TARGET_FLOW_NOT_ECOINVENT"
-    if _flow_type_key(source.flow_type) != _flow_type_key(target.flow_type):
+    if resolution.source_flow_type and _flow_type_key(source.flow_type) != _flow_type_key(resolution.source_flow_type):
+        return "SOURCE_FLOW_TYPE_DRIFT"
+    if resolution.target_flow_type and _flow_type_key(target.flow_type) != _flow_type_key(resolution.target_flow_type):
+        return "TARGET_FLOW_TYPE_DRIFT"
+    if (
+        _flow_type_key(source.flow_type) != _flow_type_key(target.flow_type)
+        and not resolution.flow_subtype_override
+    ):
         return "FLOW_TYPE_MISMATCH"
     if resolution.source_unit_group and _unit_group_key(source.unit_group) != _unit_group_key(resolution.source_unit_group):
         return "SOURCE_UNIT_GROUP_DRIFT"
@@ -249,6 +275,8 @@ def resolve_intermediate_flow(db: Session, flow_uuid: str) -> tuple[Intermediate
             target_unit=user_rule.target_unit,
             source_unit_group=None,
             target_unit_group=None,
+            source_flow_type=None,
+            target_flow_type=None,
             mapping_level="L3",
             mapping_reason=user_rule.mapping_reason,
             rule_id=user_rule.id,
@@ -292,6 +320,8 @@ def validate_intermediate_flow_link(
             target_unit=link.target_unit,
             source_unit_group=None,
             target_unit_group=None,
+            source_flow_type=None,
+            target_flow_type=None,
             mapping_level=link.mapping_level,
             mapping_reason=link.mapping_reason,
             rule_id=link.rule_id,
@@ -326,6 +356,14 @@ def validate_intermediate_flow_link(
             return f"{link.mapping_level}_EVIDENCE_MISMATCH"
         if link.mapping_level == "L2" and (
             link.application_mode != expected.application_mode
+            or link.flow_subtype_override != expected.flow_subtype_override
+            or (
+                expected.flow_subtype_override
+                and (
+                    link.source_flow_type != expected.source_flow_type
+                    or link.target_flow_type != expected.target_flow_type
+                )
+            )
             or tuple(link.warnings) != expected.warnings
         ):
             return "L2_EVIDENCE_MISMATCH"
