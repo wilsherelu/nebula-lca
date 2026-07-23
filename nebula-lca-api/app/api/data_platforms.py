@@ -1650,6 +1650,10 @@ def _import_single_flow(
         raise ConnectorError(
             f"Remote flow UUID '{flow.flow_uuid}' does not match expected UUID '{expected_uuid}'."
         )
+    if not str(flow.default_unit or "").strip() or not str(flow.unit_group or "").strip():
+        raise ConnectorError(
+            f"Remote flow '{flow.flow_uuid}' has unresolved unit metadata; sync was blocked."
+        )
     synced.extend(_upsert_flow_dependencies(db, account=account, connector=connector, flow=flow, warnings=warnings))
 
     flow_json_row = _remote_raw_row(

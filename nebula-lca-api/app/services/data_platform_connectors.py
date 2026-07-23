@@ -1227,9 +1227,9 @@ def _tiangong_flow_from_row(row: dict[str, Any]) -> RemoteFlowDTO:
         flow_info = {}
     if not unit or not unit_group:
         if not unit:
-            unit = str(flow_info.get("referenceUnit") or row.get("default_unit") or row.get("unit") or "kg").strip()
+            unit = str(flow_info.get("referenceUnit") or row.get("default_unit") or row.get("unit") or "").strip()
         if not unit_group:
-            unit_group = str(flow_info.get("unitGroup") or row.get("unit_group") or row.get("unitGroup") or "Units of mass").strip()
+            unit_group = str(flow_info.get("unitGroup") or row.get("unit_group") or row.get("unitGroup") or "").strip()
 
     metadata = {
         "row": row,
@@ -1237,6 +1237,7 @@ def _tiangong_flow_from_row(row: dict[str, Any]) -> RemoteFlowDTO:
         "modified_at": row.get("modified_at"),
         "state_code": row.get("state_code"),
         "explicit_unit_fields": bool(flow_info.get("referenceUnit") or flow_info.get("unitGroup")),
+        "unit_resolution_error": "" if unit and unit_group else "FLOW_UNIT_METADATA_UNRESOLVED",
     }
     return RemoteFlowDTO(
         remote_id=str(row.get("id") or flow_uuid).strip(),

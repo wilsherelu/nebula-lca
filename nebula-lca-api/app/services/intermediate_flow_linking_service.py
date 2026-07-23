@@ -24,6 +24,7 @@ from ..models import (
     UnitDefinition,
 )
 from ..schemas import HybridGraph, IntermediateFlowLink
+from ..source_policy import SOURCE_SPACE_TIANGONG, classify_flow_source
 
 
 DEFAULT_PACKAGE_PATH = (
@@ -56,6 +57,8 @@ class IntermediateFlowResolution:
     amount_factor: float
     source_unit: str
     target_unit: str
+    source_unit_group: str | None
+    target_unit_group: str | None
     mapping_level: str
     mapping_reason: str
     rule_id: str
@@ -73,6 +76,8 @@ class IntermediateFlowResolution:
             "amount_factor": self.amount_factor,
             "source_unit": self.source_unit,
             "target_unit": self.target_unit,
+            "source_unit_group": self.source_unit_group,
+            "target_unit_group": self.target_unit_group,
             "mapping_level": self.mapping_level,
             "mapping_reason": self.mapping_reason,
             "rule_id": self.rule_id,
@@ -96,6 +101,9 @@ class IntermediateFlowLinkRegistry:
         rows = payload.get("rules") or payload.get("mappings")
         if not isinstance(rows, list) or not rows:
             raise ValueError("intermediate-flow package contains no rules")
+        unit_group_contracts = payload.get("unit_group_contracts")
+        if not isinstance(unit_group_contracts, dict) or not unit_group_contracts:
+            raise ValueError("intermediate-flow package contains no unit-group contracts")
         indexed: dict[str, dict[str, Any]] = {}
         for row in rows:
             if not isinstance(row, dict) or row.get("review_status") not in {"approved", "approved_with_warning"}:
@@ -116,14 +124,23 @@ class IntermediateFlowLinkRegistry:
                 raise ValueError("intermediate-flow package has invalid or duplicate UUIDs")
             if _flow_type_key(row.get("source_flow_type")) != _flow_type_key(row.get("target_flow_type")):
                 raise ValueError(f"flow type mismatch in rule {row.get('rule_id')}")
-            if row.get("source_unit_group") or row.get("target_unit_group"):
-                if _unit_group_key(row.get("source_unit_group")) != _unit_group_key(row.get("target_unit_group")):
-                    raise ValueError(f"unit group mismatch in rule {row.get('rule_id')}")
-            elif not str(row.get("unit_dimension") or "").strip():
-                raise ValueError(f"unit dimension missing in rule {row.get('rule_id')}")
+            unit_dimension = str(row.get("unit_dimension") or "").strip()
+            contract = unit_group_contracts.get(unit_dimension)
+            if not isinstance(contract, dict):
+                raise ValueError(f"unit-group contract missing in rule {row.get('rule_id')}")
+            source_unit_group = str(contract.get("source_unit_group") or "").strip()
+            target_unit_group = str(contract.get("target_unit_group") or "").strip()
+            if not source_unit_group or not target_unit_group:
+                raise ValueError(f"unit group missing in rule {row.get('rule_id')}")
+            if _unit_group_key(source_unit_group) != _unit_group_key(target_unit_group):
+                raise ValueError(f"unit group mismatch in rule {row.get('rule_id')}")
             if float(row.get("amount_factor") or 0) <= 0:
                 raise ValueError(f"invalid amount factor in rule {row.get('rule_id')}")
-            indexed[source_uuid] = row
+            indexed[source_uuid] = {
+                **row,
+                "source_unit_group": source_unit_group,
+                "target_unit_group": target_unit_group,
+            }
         self.path = path
         self.package_id = str(payload["package_id"])
         self.package_version = str(payload.get("package_version") or payload.get("version"))
@@ -140,6 +157,8 @@ class IntermediateFlowLinkRegistry:
             amount_factor=float(row["amount_factor"]),
             source_unit=str(row["source_unit"]),
             target_unit=str(row["target_unit"]),
+            source_unit_group=str(row["source_unit_group"]),
+            target_unit_group=str(row["target_unit_group"]),
             mapping_level=str(row["mapping_level"]),
             mapping_reason=(
                 "approved_one_way_reference_product_link"
@@ -174,12 +193,16 @@ def _validate_resolution_records(
         return "SOURCE_FLOW_NOT_FOUND"
     if target is None:
         return "TARGET_FLOW_NOT_FOUND"
-    if "tiangong" not in str(source.source or "").casefold():
+    if classify_flow_source(str(source.source or "")) != SOURCE_SPACE_TIANGONG:
         return "SOURCE_FLOW_NOT_TIANGONG"
     if "ecoinvent" not in str(target.source or "").casefold():
         return "TARGET_FLOW_NOT_ECOINVENT"
     if _flow_type_key(source.flow_type) != _flow_type_key(target.flow_type):
         return "FLOW_TYPE_MISMATCH"
+    if resolution.source_unit_group and _unit_group_key(source.unit_group) != _unit_group_key(resolution.source_unit_group):
+        return "SOURCE_UNIT_GROUP_DRIFT"
+    if resolution.target_unit_group and _unit_group_key(target.unit_group) != _unit_group_key(resolution.target_unit_group):
+        return "TARGET_UNIT_GROUP_DRIFT"
     if _unit_group_key(source.unit_group) != _unit_group_key(target.unit_group):
         return "UNIT_GROUP_MISMATCH"
     if str(source.default_unit or "") != resolution.source_unit:
@@ -224,6 +247,8 @@ def resolve_intermediate_flow(db: Session, flow_uuid: str) -> tuple[Intermediate
             amount_factor=float(user_rule.amount_factor),
             source_unit=user_rule.source_unit,
             target_unit=user_rule.target_unit,
+            source_unit_group=None,
+            target_unit_group=None,
             mapping_level="L3",
             mapping_reason=user_rule.mapping_reason,
             rule_id=user_rule.id,
@@ -249,17 +274,24 @@ def validate_intermediate_flow_link(
     if str(link.source_flow_uuid or "") != str(source_flow_uuid or ""):
         return "SOURCE_FLOW_UUID_MISMATCH"
 
+    expected = None
+    if link.mapping_level in {"L1", "L2"}:
+        expected = get_intermediate_flow_link_registry().resolve(source_flow_uuid)
+        if expected is None:
+            return f"{link.mapping_level}_RULE_NOT_FOUND"
     source = db.get(FlowRecord, source_flow_uuid)
     target = db.get(FlowRecord, link.target_flow_uuid)
     record_issue = _validate_resolution_records(
         source,
         target,
-        IntermediateFlowResolution(
+        expected or IntermediateFlowResolution(
             source_flow_uuid=link.source_flow_uuid,
             target_flow_uuid=link.target_flow_uuid,
             amount_factor=link.amount_factor,
             source_unit=link.source_unit,
             target_unit=link.target_unit,
+            source_unit_group=None,
+            target_unit_group=None,
             mapping_level=link.mapping_level,
             mapping_reason=link.mapping_reason,
             rule_id=link.rule_id,
@@ -270,9 +302,7 @@ def validate_intermediate_flow_link(
         return record_issue
 
     if link.mapping_level in {"L1", "L2"}:
-        expected = get_intermediate_flow_link_registry().resolve(source_flow_uuid)
-        if expected is None:
-            return f"{link.mapping_level}_RULE_NOT_FOUND"
+        assert expected is not None
         if expected.mapping_level != link.mapping_level:
             return f"{link.mapping_level}_EVIDENCE_MISMATCH"
         allowed_statuses = {"auto"} if link.mapping_level == "L1" else {"auto", "user_confirmed"}

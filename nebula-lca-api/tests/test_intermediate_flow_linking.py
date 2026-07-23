@@ -107,6 +107,30 @@ def _seed_first_compatible_pair(db):
     return row
 
 
+def test_incremental_reviewed_medium_voltage_rule_is_available():
+    resolution = get_intermediate_flow_link_registry().resolve(
+        "128818e9-cefb-4c94-8b9b-fe8883223f3b"
+    )
+
+    assert resolution is not None
+    assert resolution.target_flow_uuid == "759b89bd-3aa6-42ad-b767-5bb9ef5d331d"
+    assert resolution.mapping_level == "L2"
+    assert resolution.amount_factor == pytest.approx(1 / 3.6)
+
+
+def test_tidas_import_source_is_eligible_for_reviewed_forward_mapping(db):
+    row = _seed_first_l1_pair(db)
+    source = db.get(FlowRecord, row["source_flow_uuid"])
+    source.source = "tidas_bundle_import"
+    db.commit()
+
+    resolution, issue = resolve_intermediate_flow(db, row["source_flow_uuid"])
+
+    assert issue is None
+    assert resolution is not None
+    assert resolution.target_flow_uuid == row["target_flow_uuid"]
+
+
 def _graph(row, *, package_hash: str | None = None) -> HybridGraph:
     registry = get_intermediate_flow_link_registry()
     mapping_level = row.get("mapping_level", "L1")

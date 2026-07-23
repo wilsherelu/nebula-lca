@@ -31,7 +31,38 @@ from app.models import (
     UnitDefinition,
     UnitGroup,
 )
-from app.services.data_platform_connectors import ConnectorError, PlatformAccountContext, TianGongSupabaseConnector, encrypt_credential
+from app.services.data_platform_connectors import (
+    ConnectorError,
+    PlatformAccountContext,
+    TianGongSupabaseConnector,
+    _tiangong_flow_from_row,
+    encrypt_credential,
+)
+
+
+def test_tiangong_flow_without_resolved_unit_metadata_does_not_fallback_to_mass():
+    row = {
+        "id": "11111111-1111-4111-8111-111111111111",
+        "name": "Alternating current",
+        "json": {
+            "flowDataSet": {
+                "flowProperties": {
+                    "flowProperty": {
+                        "referenceToFlowPropertyDataSet": {
+                            "@refObjectId": "energy-property",
+                            "common:shortDescription": {"#text": "Energy", "@xml:lang": "en"},
+                        }
+                    }
+                }
+            }
+        },
+    }
+
+    flow = _tiangong_flow_from_row(row)
+
+    assert flow.default_unit == ""
+    assert flow.unit_group == ""
+    assert flow.metadata["unit_resolution_error"] == "FLOW_UNIT_METADATA_UNRESOLVED"
 
 
 @pytest.fixture(autouse=True)
@@ -1263,6 +1294,8 @@ def test_process_sync_stores_plain_string_exchange_names(client, monkeypatch):
                 "id": flow_id,
                 "name": "Flow",
                 "version": "1",
+                "default_unit": "kg",
+                "unit_group": "Units of mass",
                 "json": {"flowDataSet": {"flowInformation": {"dataSetInformation": {"common:name": "Flow"}}}},
             }])
         raise AssertionError(f"Unexpected URL {url}")
@@ -2110,6 +2143,8 @@ def test_tiangong_flow_refresh_success(client, monkeypatch):
                 "id": flow_uuid,
                 "name": "Updated Test Flow",
                 "version": "2",
+                "default_unit": "kg",
+                "unit_group": "Units of mass",
                 "json": {"flowDataSet": {"flowInformation": {"dataSetInformation": {"common:name": "Updated Test Flow"}}}},
             }])
         if "/rest/v1/flowproperties" in url:
@@ -2351,6 +2386,8 @@ def test_tiangong_flow_refresh_falls_back_to_local_uuid(client, monkeypatch):
                 "id": flow_uuid,
                 "name": "Fallback Flow",
                 "version": "1",
+                "default_unit": "kg",
+                "unit_group": "Units of mass",
                 "json": {"flowDataSet": {"flowInformation": {"dataSetInformation": {"common:name": "Fallback Flow"}}}},
             }])
         if "/rest/v1/flowproperties" in url:
