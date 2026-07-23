@@ -136,6 +136,10 @@ class IntermediateFlowLinkRegistry:
                     mapping_level != "L2"
                     or not flow_subtype_override
                     or "FLOW_SUBTYPE_OVERRIDE" not in (row.get("warnings") or [])
+                    or not re.fullmatch(
+                        r"[0-9a-f]{64}",
+                        str(row.get("evidence_sha256") or ""),
+                    )
                 ):
                     raise ValueError(f"flow type mismatch in rule {row.get('rule_id')}")
             elif flow_subtype_override:

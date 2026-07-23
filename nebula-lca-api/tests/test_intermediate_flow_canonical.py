@@ -20,11 +20,28 @@ def test_canonical_package_is_explicit_and_bound_to_forward_release():
     payload = json.loads(DEFAULT_CANONICAL_PACKAGE_PATH.read_text(encoding="utf-8"))
 
     assert registry.package_id == "intermediate_ecoinvent_to_tidas_canonical_v1"
-    assert registry.package_version == "1.0.4"
+    assert registry.package_version == "1.0.5"
     assert len(registry.rules) == 314
-    assert registry.unresolved_source_count == 129
-    assert payload["source_package_version"] == "2.7.0"
+    assert registry.unresolved_source_count == 160
+    assert payload["source_package_version"] == "2.8.0"
     assert payload["source_package_sha256"] == hashlib.sha256(DEFAULT_PACKAGE_PATH.read_bytes()).hexdigest()
+
+
+def test_canonical_package_excludes_forward_only_flow_subtype_overrides():
+    forward = json.loads(DEFAULT_PACKAGE_PATH.read_text(encoding="utf-8"))
+    canonical = json.loads(DEFAULT_CANONICAL_PACKAGE_PATH.read_text(encoding="utf-8"))
+    override_targets = {
+        mapping["target_flow_uuid"]
+        for mapping in forward["mappings"]
+        if mapping.get("flow_subtype_override")
+    }
+    canonical_sources = {
+        mapping["source_flow_uuid"]
+        for mapping in canonical["mappings"]
+    }
+
+    assert len(override_targets) == 1
+    assert override_targets.isdisjoint(canonical_sources)
 
 
 def test_canonical_resolution_prefers_reviewed_active_tiangong_alias():
