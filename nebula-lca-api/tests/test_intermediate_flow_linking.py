@@ -125,8 +125,8 @@ def test_rework_acceptance_package_keeps_only_globally_unique_l1():
     copper_scrap = registry.resolve("dd15940e-a6be-4335-9a0b-d754746a4713")
     electricity_alias = registry.resolve("c0e1aaac-9086-46ad-9d83-878f9fb97da4")
 
-    assert registry.package_version == "2.7.0"
-    assert len(registry.rules) == 942
+    assert registry.package_version == "2.8.0"
+    assert len(registry.rules) == 1020
     assert copper_scrap is not None
     assert copper_scrap.mapping_level == "L1"
     assert copper_scrap.target_flow_uuid == "cc0d4252-6207-41d6-8567-bcbad58a7bef"
@@ -173,8 +173,16 @@ def test_reviewed_l2_flow_subtype_override_is_explicit_and_validated(tmp_path, d
             "application_mode": "auto_compatible",
             "flow_subtype_override": True,
             "warnings": ["FLOW_SUBTYPE_OVERRIDE"],
+            "evidence_sha256": "a" * 64,
         }],
     }
+    missing_evidence = json.loads(json.dumps(payload))
+    missing_evidence["mappings"][0].pop("evidence_sha256")
+    missing_path = tmp_path / "override-missing-evidence.json"
+    missing_path.write_text(json.dumps(missing_evidence), encoding="utf-8")
+    with pytest.raises(ValueError, match="flow type mismatch"):
+        IntermediateFlowLinkRegistry(missing_path)
+
     package_path = tmp_path / "override.json"
     package_path.write_text(json.dumps(payload), encoding="utf-8")
     registry = IntermediateFlowLinkRegistry(package_path)

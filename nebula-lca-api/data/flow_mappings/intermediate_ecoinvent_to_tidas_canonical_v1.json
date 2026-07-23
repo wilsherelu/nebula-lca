@@ -1,14 +1,14 @@
 {
   "package_id": "intermediate_ecoinvent_to_tidas_canonical_v1",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "direction": "ecoinvent_to_tidas_canonical",
   "source_package_id": "intermediate_tiangong_to_ecoinvent_v2",
-  "source_package_version": "2.7.0",
-  "source_package_sha256": "4f29d0c4249f00d7db4c2f8500d3fc8125a460707a9dc60995ba917245387a59",
+  "source_package_version": "2.8.0",
+  "source_package_sha256": "b60104591e80eba1a83eb8513901800fc3d6830ce6e33cc9cb69f57f9e2a0383",
   "selection_policy": "active_reviewed_l1_first_latest_version_v1",
-  "generated_at": "2026-07-23T14:51:34.666701+00:00",
-  "eligible_source_count": 443,
-  "unresolved_source_count": 129,
+  "generated_at": "2026-07-23T15:55:33.907444+00:00",
+  "eligible_source_count": 474,
+  "unresolved_source_count": 160,
   "mappings": [
     {
       "rule_id": "if-canonical-004f81b0-dd66-4146-a292-c2caa4353971",
