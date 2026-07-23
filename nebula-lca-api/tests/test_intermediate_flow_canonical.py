@@ -20,10 +20,10 @@ def test_canonical_package_is_explicit_and_bound_to_forward_release():
     payload = json.loads(DEFAULT_CANONICAL_PACKAGE_PATH.read_text(encoding="utf-8"))
 
     assert registry.package_id == "intermediate_ecoinvent_to_tidas_canonical_v1"
-    assert registry.package_version == "1.0.2"
+    assert registry.package_version == "1.0.3"
     assert len(registry.rules) == 314
-    assert registry.unresolved_source_count == 122
-    assert payload["source_package_version"] == "2.6.0"
+    assert registry.unresolved_source_count == 124
+    assert payload["source_package_version"] == "2.6.1"
     assert payload["source_package_sha256"] == hashlib.sha256(DEFAULT_PACKAGE_PATH.read_bytes()).hexdigest()
 
 

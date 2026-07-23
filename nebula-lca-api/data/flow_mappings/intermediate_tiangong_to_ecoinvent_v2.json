@@ -1,6 +1,6 @@
 {
   "package_id": "intermediate_tiangong_to_ecoinvent_v2",
-  "version": "2.6.0",
+  "version": "2.6.1",
   "direction": "tiangong_to_ecoinvent",
   "pipeline_version": "flow-mapping-review-v5-incremental",
   "review_policy": "completed-shard-conservative-review-v1",
@@ -23,7 +23,7 @@
       "target_unit_group": "area"
     }
   },
-  "generated_at": "2026-07-23T13:24:04.481142+00:00",
+  "generated_at": "2026-07-23T13:40:30.823739+00:00",
   "mappings": [
     {
       "rule_id": "if-v2-00e13b1e-b38b-42bc-b5d9-22b1ff5d4355",
@@ -2872,6 +2872,29 @@
       "application_mode": "auto_compatible",
       "warnings": [
         "DETERMINISTIC_L1_CEILING",
+        "HEAD_NAME_MISMATCH",
+        "QUALIFIER_MISMATCH",
+        "SEMANTIC_GENERALIZATION"
+      ]
+    },
+    {
+      "rule_id": "if-v2-2e7fda39-6310-42b0-ab45-b4eb571dd825",
+      "source_flow_uuid": "2e7fda39-6310-42b0-ab45-b4eb571dd825",
+      "target_flow_uuid": "61396bcb-bf35-411a-a6a6-8543ccef83e8",
+      "source_flow_type": "Product flow",
+      "target_flow_type": "Product flow",
+      "source_unit": "kg",
+      "target_unit": "kg",
+      "unit_dimension": "mass",
+      "amount_factor": 1,
+      "direction": "tiangong_to_ecoinvent",
+      "mapping_level": "L2",
+      "review_status": "approved_with_warning",
+      "pipeline_version": "flow-mapping-review-v6-dry-basis",
+      "evidence_sha256": "7a3e6348f09ea91f122834d9074ec6823cced099a9630596ab95043c5e47a0aa",
+      "application_mode": "auto_compatible",
+      "warnings": [
+        "DRY_SUBSTANCE_QUANTITY_BASIS",
         "HEAD_NAME_MISMATCH",
         "QUALIFIER_MISMATCH",
         "SEMANTIC_GENERALIZATION"
@@ -11456,6 +11479,28 @@
       ]
     },
     {
+      "rule_id": "if-v2-964d524a-87f5-4b63-a856-2e31a8f21b67",
+      "source_flow_uuid": "964d524a-87f5-4b63-a856-2e31a8f21b67",
+      "target_flow_uuid": "3ab60559-40d3-42e4-9cac-476a519098fa",
+      "source_flow_type": "Product flow",
+      "target_flow_type": "Product flow",
+      "source_unit": "kg",
+      "target_unit": "kg",
+      "unit_dimension": "mass",
+      "amount_factor": 1,
+      "direction": "tiangong_to_ecoinvent",
+      "mapping_level": "L2",
+      "review_status": "approved_with_warning",
+      "pipeline_version": "flow-mapping-review-v6-dry-basis",
+      "evidence_sha256": "c84c38158cf3057b3b6bc646de7d79cf52617f6645f16567b7d4524f1fa1c7df",
+      "application_mode": "auto_compatible",
+      "warnings": [
+        "DRY_SUBSTANCE_QUANTITY_BASIS",
+        "QUALIFIER_MISMATCH",
+        "SEMANTIC_GENERALIZATION"
+      ]
+    },
+    {
       "rule_id": "if-v2-96c5f842-ea53-419b-b1cd-c02c479efb45",
       "source_flow_uuid": "96c5f842-ea53-419b-b1cd-c02c479efb45",
       "target_flow_uuid": "858164b0-44f1-4118-b6cb-47054faa21ef",
@@ -12049,6 +12094,28 @@
       "pipeline_version": "flow-mapping-review-v3",
       "evidence_sha256": "a4df9a4c8b917b29125eb67e62787cca7caba991709a8559abb88e11d61eeffa",
       "application_mode": "strict_identity"
+    },
+    {
+      "rule_id": "if-v2-a118a682-1600-4855-b959-c78777b75ee8",
+      "source_flow_uuid": "a118a682-1600-4855-b959-c78777b75ee8",
+      "target_flow_uuid": "3ab60559-40d3-42e4-9cac-476a519098fa",
+      "source_flow_type": "Product flow",
+      "target_flow_type": "Product flow",
+      "source_unit": "kg",
+      "target_unit": "kg",
+      "unit_dimension": "mass",
+      "amount_factor": 1,
+      "direction": "tiangong_to_ecoinvent",
+      "mapping_level": "L2",
+      "review_status": "approved_with_warning",
+      "pipeline_version": "flow-mapping-review-v6-dry-basis",
+      "evidence_sha256": "2d3f6124e9e260bce388d299d1ce4e712ffc7fa2f956fdd72c67ee0dfd3a37f3",
+      "application_mode": "auto_compatible",
+      "warnings": [
+        "DRY_SUBSTANCE_QUANTITY_BASIS",
+        "QUALIFIER_MISMATCH",
+        "SEMANTIC_GENERALIZATION"
+      ]
     },
     {
       "rule_id": "if-v2-a13db5b2-5e2d-4817-865f-894d522783e2",
@@ -16407,6 +16474,28 @@
       "evidence_sha256": "d49f95dade161100aee7cae3c7c79fb27e14f07d5e5d62d925191f2d2dd378a1",
       "application_mode": "auto_compatible",
       "warnings": [
+        "QUALIFIER_MISMATCH",
+        "SEMANTIC_GENERALIZATION"
+      ]
+    },
+    {
+      "rule_id": "if-v2-e0abcced-0611-4c24-9290-5a2c5a0c4169",
+      "source_flow_uuid": "e0abcced-0611-4c24-9290-5a2c5a0c4169",
+      "target_flow_uuid": "61396bcb-bf35-411a-a6a6-8543ccef83e8",
+      "source_flow_type": "Product flow",
+      "target_flow_type": "Product flow",
+      "source_unit": "kg",
+      "target_unit": "kg",
+      "unit_dimension": "mass",
+      "amount_factor": 1,
+      "direction": "tiangong_to_ecoinvent",
+      "mapping_level": "L2",
+      "review_status": "approved_with_warning",
+      "pipeline_version": "flow-mapping-review-v6-dry-basis",
+      "evidence_sha256": "88a26d678f4911f9e985ccfb741428f654b7dec376d95b00175c885fcd3d083c",
+      "application_mode": "auto_compatible",
+      "warnings": [
+        "DRY_SUBSTANCE_QUANTITY_BASIS",
         "QUALIFIER_MISMATCH",
         "SEMANTIC_GENERALIZATION"
       ]
