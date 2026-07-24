@@ -103,7 +103,7 @@ export function BackgroundLciAssociationSection({
       </div>
       {!targetFlowUuid ? (
         <div className="mode-lock-hint">
-          {t("该输入尚未完成中间流转换。请先执行 L1/L2/L3 转换，再选择背景 LCI。", "Convert this input through L1/L2/L3 before choosing a background LCI.")}
+          {t("该输入尚未完成中间流转换。请先完成转换，再选择背景 LCI。", "Convert this input before choosing a background LCI.")}
         </div>
       ) : loading && providers.length === 0 ? (
         <div className="table-empty">{t("正在加载可关联的背景 LCI…", "Loading linkable background LCI providers…")}</div>

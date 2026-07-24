@@ -1,16 +1,12 @@
 import { useMemo, useState } from "react";
 import type { Node } from "@xyflow/react";
-import { getApiBase } from "../../apiBase";
 import type { FlowPort, IntermediateFlowLink, LcaNodeData } from "../../model/node";
 import { useLcaGraphStore } from "../../store/lcaGraphStore";
-import { parseImportedRows } from "../NodePalette/UnitProcessImportDialog";
 import { getLocalizedText } from "../../utils/localizedText";
 import {
   confirmL2IntermediateFlowLink,
-  fetchIntermediateFlowProviders,
   resolveIntermediateFlowPorts,
   toIntermediateFlowLink,
-  type ProviderCandidate,
   type RawResolution,
   type ResolveItem,
 } from "../../services/intermediateFlowLinks";
@@ -19,20 +15,16 @@ import {
   type IntermediateFlowL2ReviewItem,
 } from "./IntermediateFlowL2ReviewDialog";
 import { L3UserProxyModal } from "./L3UserProxyModal";
-import { BackgroundLciPickerDialog } from "./BackgroundLciPickerDialog";
 
 type Props = {
   node: Node<LcaNodeData>;
   onStatus?: (text: string) => void;
 };
 
-const API_BASE = getApiBase();
-
 export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
   const uiLanguage = useLcaGraphStore((state) => state.uiLanguage);
   const edges = useLcaGraphStore((state) => state.edges);
   const updateNode = useLcaGraphStore((state) => state.updateNode);
-  const connectProvider = useLcaGraphStore((state) => state.connectIntermediateProvider);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [resolutionState, setResolutionState] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -41,9 +33,6 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
   const [reasonByPort, setReasonByPort] = useState<Record<string, string>>({});
   const [l2ReviewOpen, setL2ReviewOpen] = useState(false);
   const [proxyPortId, setProxyPortId] = useState<string>();
-  const [backgroundPickerPortId, setBackgroundPickerPortId] = useState<string>();
-  const [backgroundPickerProviders, setBackgroundPickerProviders] = useState<ProviderCandidate[]>([]);
-  const [backgroundPickerLoading, setBackgroundPickerLoading] = useState(false);
   const t = (zh: string, en: string) => (uiLanguage === "zh" ? zh : en);
   const conversionLabel = (level: "L1" | "L2" | "L3") =>
     level === "L1"
@@ -210,50 +199,6 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
     }
   };
 
-  const openBackgroundPicker = async (port: FlowPort) => {
-    const target = port.intermediateFlowLink?.targetFlowUuid;
-    if (!target) return;
-    setBackgroundPickerPortId(port.id);
-    setBackgroundPickerLoading(true);
-    setBackgroundPickerProviders([]);
-    try {
-      const providers = await fetchIntermediateFlowProviders(target);
-      setBackgroundPickerProviders(providers);
-    } catch (error) {
-      onStatus?.(error instanceof Error ? error.message : t("背景 LCI 加载失败", "Background LCI lookup failed"));
-    } finally {
-      setBackgroundPickerLoading(false);
-    }
-  };
-
-  const chooseProvider = async (port: FlowPort, provider: ProviderCandidate) => {
-    setBusy(true);
-    try {
-      const response = await fetch(`${API_BASE}/reference/processes/import`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          import_mode: "locked",
-          target_kind: "lci_dataset",
-          process_uuids: [provider.process_uuid],
-        }),
-      });
-      if (!response.ok) throw new Error(`Provider import failed (${response.status})`);
-      const rows = parseImportedRows(await response.json(), "locked", uiLanguage, "lci_dataset");
-      if (!rows[0] || !connectProvider(node.id, port.id, rows[0])) {
-        throw new Error(t("provider 参考产品与链接目标不一致", "Provider reference product does not match the link target"));
-      }
-      onStatus?.(t(
-        `已选择背景 LCI：${provider.process_name}；此选择不代表其他 provider 与其等价。`,
-        `Selected background LCI: ${provider.process_name}; no equivalence with other providers is implied.`,
-      ));
-    } catch (error) {
-      onStatus?.(error instanceof Error ? error.message : t("连接 provider 失败", "Provider connection failed"));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const handleL3ProxyConfirm = (port: FlowPort, link: IntermediateFlowLink) => {
     updateNode(node.id, (current) => ({
       ...current,
@@ -303,8 +248,8 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
             <div className="intermediate-flow-link-dialog-toolbar">
               <div className="intermediate-flow-link-overview">
                 <p>{t(
-                  "在此完成中间流转换。可自动转换的流会直接处理；需要核对的流请确认后转换；没有自动结果时可手动转换。转换完成后，再选择背景 LCI 用于清单分析计算。",
-                  "Convert intermediate flows here. Automatically convertible flows can be processed directly; review flows that need confirmation; use manual conversion when no automatic result is available. After conversion, choose a background LCI for inventory-analysis calculation.",
+                  "在此完成中间流转换。可自动转换的流会直接处理；需要核对的流请确认后转换；没有自动结果时可手动转换。完成后回到清单分析，在对应流的“关联背景数据”中选择背景过程。",
+                  "Convert intermediate flows here. Automatically convertible flows can be processed directly; review flows that need confirmation; use manual conversion when no automatic result is available. Then return to inventory analysis and use Link background data on the relevant flow to choose a background process.",
                 )}</p>
                 <div className="intermediate-flow-link-counts" aria-live="polite">
                   {resolutionState === "loading" ? (
@@ -367,16 +312,8 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                   )}
                 </div>
                 <div className="intermediate-flow-link-actions">
-                  <button
-                    type="button"
-                    className="flow-link-button secondary compact"
-                    disabled={busy}
-                    onClick={() => void openBackgroundPicker(port)}
-                  >
-                    {t("选择背景 LCI", "Choose background LCI")}
-                  </button>
                   <span className="muted-text">
-                    {t("在清单分析工作流中关联背景 LCI", "Link a background LCI for the inventory-analysis workflow")}
+                    {t("请回到清单分析，点击该流的“关联背景数据”。", "Return to inventory analysis and use Link background data on this flow.")}
                   </span>
                 </div>
               </>
@@ -444,24 +381,6 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
         onConfirm={handleL3ProxyConfirm}
         onStatus={onStatus}
       />
-      {backgroundPickerPortId && (
-        <BackgroundLciPickerDialog
-          open={Boolean(backgroundPickerPortId)}
-          busy={backgroundPickerLoading}
-          providers={backgroundPickerProviders}
-          sourceFlowName={getLocalizedText(inputs.find((item) => item.id === backgroundPickerPortId)?.name, uiLanguage, "")}
-          targetFlowUuid={inputs.find((item) => item.id === backgroundPickerPortId)?.intermediateFlowLink?.targetFlowUuid ?? ""}
-          language={uiLanguage}
-          onClose={() => setBackgroundPickerPortId(undefined)}
-          onSelect={(provider) => {
-            const port = inputs.find((item) => item.id === backgroundPickerPortId);
-            if (port) {
-              void chooseProvider(port, provider);
-            }
-            setBackgroundPickerPortId(undefined);
-          }}
-        />
-      )}
       <IntermediateFlowL2ReviewDialog
         open={l2ReviewOpen}
         busy={busy}

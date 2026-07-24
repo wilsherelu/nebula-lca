@@ -285,6 +285,8 @@ type FlowSectionProps = {
   unitOptionsByPort?: Record<string, string[]>;
   onUnitChange?: (port: FlowPort, nextUnit: string) => void;
   onLink?: (port: FlowPort) => void;
+  allowLinkWhenLocked?: boolean;
+  getLinkLabel?: (port: FlowPort) => string;
 };
 
 function FlowSection({
@@ -314,6 +316,8 @@ function FlowSection({
   unitOptionsByPort,
   onUnitChange,
   onLink,
+  allowLinkWhenLocked = false,
+  getLinkLabel,
 }: FlowSectionProps) {
   const t = (zh: string, en: string) => (uiLanguage === "zh" ? zh : en);
   const pageSize = 10;
@@ -445,10 +449,10 @@ function FlowSection({
                 <button
                   type="button"
                   className="link-btn"
-                  disabled={locked}
+                  disabled={readOnly || plainReadOnly || (lockFields && !allowLinkWhenLocked)}
                   onClick={() => onLink(port)}
                 >
-                  {t("关联", "Link")}
+                  {getLinkLabel?.(port) ?? t("关联", "Link")}
                 </button>
               )}
               {!plainReadOnly && (
@@ -2161,7 +2165,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
               {t("单位自动换算", "Unit auto conversion")}
             </label>
           )}
-          {!marketProcess && !ptsNode && !lciNode && !importedLocked && (
+          {!marketProcess && !ptsNode && !lciNode && (
             <IntermediateFlowLinkPanel node={node} onStatus={onStatus} />
           )}
           {marketProcess && (
@@ -2337,6 +2341,10 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                 }
                 onAdd={lciNode ? undefined : () => setFlowPicker({ open: true, target: "in_intermediate" })}
                 onLink={!marketProcess && !lciNode ? (port) => openAssociationDialog("input", port) : undefined}
+                allowLinkWhenLocked
+                getLinkLabel={(port) => port.intermediateFlowLink?.status !== "inactive"
+                  ? t("关联背景数据", "Link background data")
+                  : t("关联", "Link")}
                 onDelete={lciNode ? undefined : (id) =>
                   updateNode(node.id, (current) => ({
                     ...current,
