@@ -125,8 +125,8 @@ def test_rework_acceptance_package_keeps_only_globally_unique_l1():
     copper_scrap = registry.resolve("dd15940e-a6be-4335-9a0b-d754746a4713")
     electricity_alias = registry.resolve("c0e1aaac-9086-46ad-9d83-878f9fb97da4")
 
-    assert registry.package_version == "2.8.0"
-    assert len(registry.rules) == 1020
+    assert registry.package_version == "2.9.0"
+    assert len(registry.rules) == 1057
     assert copper_scrap is not None
     assert copper_scrap.mapping_level == "L1"
     assert copper_scrap.target_flow_uuid == "cc0d4252-6207-41d6-8567-bcbad58a7bef"
