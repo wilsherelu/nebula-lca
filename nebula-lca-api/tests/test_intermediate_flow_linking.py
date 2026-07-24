@@ -125,14 +125,32 @@ def test_rework_acceptance_package_keeps_only_globally_unique_l1():
     copper_scrap = registry.resolve("dd15940e-a6be-4335-9a0b-d754746a4713")
     electricity_alias = registry.resolve("c0e1aaac-9086-46ad-9d83-878f9fb97da4")
 
-    assert registry.package_version == "2.9.0"
-    assert len(registry.rules) == 1057
+    assert registry.package_version == "2.10.0"
+    assert len(registry.rules) == 1015
     assert copper_scrap is not None
     assert copper_scrap.mapping_level == "L1"
     assert copper_scrap.target_flow_uuid == "cc0d4252-6207-41d6-8567-bcbad58a7bef"
     assert electricity_alias is not None
     assert electricity_alias.mapping_level == "L2"
     assert "L1_GLOBAL_UNIQUENESS_NOT_MET" in electricity_alias.warnings
+
+
+def test_pragmatic_l3_review_removes_public_rules_and_retargets_animal_water():
+    registry = get_intermediate_flow_link_registry()
+    removed_sources = {
+        "85c3d99f-341d-42c8-8fb5-8c7c8ceab69d",
+        "c05f08b8-e3a2-4f7c-8534-e04c89be8a9f",
+        "d6a6b877-75b8-48c5-b219-857c70de3e3d",
+        "e4b98afa-eb1f-4372-a463-1a440ce31f7f",
+        "fa402946-6236-41bb-8a2d-f7890b2e75cf",
+    }
+
+    assert all(registry.resolve(source_uuid) is None for source_uuid in removed_sources)
+    animal_water = registry.resolve("cf8836e6-a586-452d-9c53-b6487e93d07d")
+    assert animal_water is not None
+    assert animal_water.mapping_level == "L2"
+    assert animal_water.target_flow_uuid == "c5adb1fb-872e-4446-a3bb-c4b61aa4bd45"
+    assert animal_water.amount_factor == 1
 
 
 def test_dry_basis_sodium_hydroxide_rule_keeps_factor_one():
