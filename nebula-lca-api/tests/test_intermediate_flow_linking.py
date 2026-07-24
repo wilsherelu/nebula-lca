@@ -125,14 +125,25 @@ def test_rework_acceptance_package_keeps_only_globally_unique_l1():
     copper_scrap = registry.resolve("dd15940e-a6be-4335-9a0b-d754746a4713")
     electricity_alias = registry.resolve("c0e1aaac-9086-46ad-9d83-878f9fb97da4")
 
-    assert registry.package_version == "2.10.0"
-    assert len(registry.rules) == 1015
+    assert registry.package_version == "2.11.0"
+    assert len(registry.rules) == 1052
     assert copper_scrap is not None
     assert copper_scrap.mapping_level == "L1"
     assert copper_scrap.target_flow_uuid == "cc0d4252-6207-41d6-8567-bcbad58a7bef"
     assert electricity_alias is not None
     assert electricity_alias.mapping_level == "L2"
     assert "L1_GLOBAL_UNIQUENESS_NOT_MET" in electricity_alias.warnings
+
+
+def test_reviewed_v4_l2_increment_is_available_without_reprocessing():
+    resolution = get_intermediate_flow_link_registry().resolve(
+        "009a4421-0580-4496-9a93-688f7686b995"
+    )
+
+    assert resolution is not None
+    assert resolution.target_flow_uuid == "759b89bd-3aa6-42ad-b767-5bb9ef5d331d"
+    assert resolution.mapping_level == "L2"
+    assert resolution.application_mode == "auto_compatible"
 
 
 def test_pragmatic_l3_review_removes_public_rules_and_retargets_animal_water():
