@@ -45,7 +45,7 @@ describe("IntermediateFlowL2ReviewDialog", () => {
 
     expect(screen.getByText("需核对产品范围和限定词")).toBeTruthy();
     expect(screen.queryByText("HEAD_NAME_MISMATCH")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "确认并转换 1 条 L2" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认并转换 1 条" }));
     expect(onConfirm).toHaveBeenCalledWith(["diesel-port"]);
   });
 });
