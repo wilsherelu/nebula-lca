@@ -125,14 +125,20 @@ def test_rework_acceptance_package_keeps_only_globally_unique_l1():
     copper_scrap = registry.resolve("dd15940e-a6be-4335-9a0b-d754746a4713")
     electricity_alias = registry.resolve("c0e1aaac-9086-46ad-9d83-878f9fb97da4")
 
-    assert registry.package_version == "2.11.0"
-    assert len(registry.rules) == 1052
+    assert registry.package_version == "2.12.0"
+    assert len(registry.rules) == 1051
     assert copper_scrap is not None
     assert copper_scrap.mapping_level == "L1"
     assert copper_scrap.target_flow_uuid == "cc0d4252-6207-41d6-8567-bcbad58a7bef"
     assert electricity_alias is not None
     assert electricity_alias.mapping_level == "L2"
     assert "L1_GLOBAL_UNIQUENESS_NOT_MET" in electricity_alias.warnings
+
+
+def test_l3_shortlist_is_not_exposed_as_an_executable_builtin_rule():
+    registry = get_intermediate_flow_link_registry()
+
+    assert registry.resolve("0fab8c14-7641-454b-9f45-9201ddfe567a") is None
 
 
 def test_reviewed_v4_l2_increment_is_available_without_reprocessing():
