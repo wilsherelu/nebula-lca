@@ -125,8 +125,8 @@ def test_rework_acceptance_package_keeps_only_globally_unique_l1():
     copper_scrap = registry.resolve("dd15940e-a6be-4335-9a0b-d754746a4713")
     electricity_alias = registry.resolve("c0e1aaac-9086-46ad-9d83-878f9fb97da4")
 
-    assert registry.package_version == "2.12.0"
-    assert len(registry.rules) == 1051
+    assert registry.package_version == "2.13.0"
+    assert len(registry.rules) == 1043
     assert copper_scrap is not None
     assert copper_scrap.mapping_level == "L1"
     assert copper_scrap.target_flow_uuid == "cc0d4252-6207-41d6-8567-bcbad58a7bef"
@@ -139,6 +139,22 @@ def test_l3_shortlist_is_not_exposed_as_an_executable_builtin_rule():
     registry = get_intermediate_flow_link_registry()
 
     assert registry.resolve("0fab8c14-7641-454b-9f45-9201ddfe567a") is None
+
+
+def test_orphan_sources_are_not_exposed_as_executable_builtin_rules():
+    registry = get_intermediate_flow_link_registry()
+    orphan_sources = {
+        "72c8ae93-36ff-4153-a0e2-84fef01462e7",
+        "5fd237b0-2305-4216-8c40-eb1524a8c177",
+        "695bb4aa-fca2-44a8-8656-3aa7316e854d",
+        "b59452f3-c6c2-4d36-a17a-ca4f106b82a6",
+        "dce4b62f-0ba7-460a-b99a-7d62e6b55932",
+        "3fbc2a8c-5368-436b-b0f7-0b6bdb88e99a",
+        "78db838b-1b97-48ac-b90d-39a678be7a4a",
+        "e49e116f-436d-4aa7-9994-d8c221c76fe0",
+    }
+
+    assert all(registry.resolve(source_uuid) is None for source_uuid in orphan_sources)
 
 
 def test_reviewed_v4_l2_increment_is_available_without_reprocessing():
