@@ -95,6 +95,65 @@ def _connector_error(exc: ConnectorError) -> HTTPException:
     )
 
 
+def _validate_tiangong_credential(
+    *,
+    auth_type: str,
+    credential: Any | None,
+    credential_required: bool,
+) -> None:
+    """Keep TianGong's two user-facing authentication paths mutually exclusive."""
+    if auth_type not in {"basic", "api_key"}:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "TIANGONG_AUTH_TYPE_INVALID",
+                "message": "TianGong authentication must use either account login or TianGong API Key.",
+            },
+        )
+    if credential is None:
+        if credential_required:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "TIANGONG_CREDENTIAL_REQUIRED",
+                    "message": "Provide credentials for the selected TianGong authentication method.",
+                },
+            )
+        return
+
+    values = credential.model_dump(mode="python")
+    api_key = _safe_str(values.get("api_key"))
+    token = _safe_str(values.get("token"))
+    username = _safe_str(values.get("username"))
+    password = str(values.get("password") or "")
+    if credential_required and not any((api_key, token, username, password)):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "TIANGONG_CREDENTIAL_REQUIRED",
+                "message": "Provide credentials for the selected TianGong authentication method.",
+            },
+        )
+    if auth_type == "api_key":
+        if not api_key or token or username or password:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "TIANGONG_API_KEY_CREDENTIAL_INVALID",
+                    "message": "TianGong API Key authentication accepts only credential.api_key.",
+                },
+            )
+        return
+    if not username or not password or api_key or token:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "TIANGONG_LOGIN_CREDENTIAL_INVALID",
+                "message": "TianGong account login accepts only credential.username and credential.password.",
+            },
+        )
+
+
 def _account_or_404(db: Session, account_id: str) -> DataPlatformAccount:
     row = db.get(DataPlatformAccount, account_id)
     if row is None:
@@ -868,6 +927,12 @@ def list_data_platform_accounts(db: Session = Depends(get_db)) -> list[DataPlatf
 
 @api_router.post("/accounts", response_model=DataPlatformAccountOut, status_code=201)
 def create_data_platform_account(payload: DataPlatformAccountCreateRequest, db: Session = Depends(get_db)) -> DataPlatformAccountOut:
+    if payload.platform == "tiangong":
+        _validate_tiangong_credential(
+            auth_type=payload.auth_type,
+            credential=payload.credential,
+            credential_required=True,
+        )
     try:
         credential_ciphertext = encrypt_credential(payload.credential.model_dump(mode="python") if payload.credential else None)
     except CredentialError as exc:
@@ -890,6 +955,13 @@ def create_data_platform_account(payload: DataPlatformAccountCreateRequest, db: 
 @api_router.patch("/accounts/{account_id}", response_model=DataPlatformAccountOut)
 def update_data_platform_account(account_id: str, payload: DataPlatformAccountUpdateRequest, db: Session = Depends(get_db)) -> DataPlatformAccountOut:
     row = _account_or_404(db, account_id)
+    selected_auth_type = payload.auth_type or row.auth_type
+    if row.platform == "tiangong" and (payload.auth_type is not None or payload.credential is not None):
+        _validate_tiangong_credential(
+            auth_type=selected_auth_type,
+            credential=payload.credential,
+            credential_required=payload.auth_type is not None and payload.auth_type != row.auth_type,
+        )
     reset_session = False
     if payload.alias is not None:
         row.alias = payload.alias.strip()

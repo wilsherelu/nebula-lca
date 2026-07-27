@@ -574,6 +574,41 @@ def test_tiangong_session_cache_reuses_unexpired_token(client, monkeypatch):
     assert len(password_grants) == 1
 
 
+def test_tiangong_api_key_and_account_login_exchange_the_same_password_grant(client, monkeypatch):
+    api_key_calls = _install_fake_tiangong_http(monkeypatch)
+    api_key_account_id = _create_tiangong_account(client)
+
+    api_key_checked = client.post(f"/api/data-platforms/accounts/{api_key_account_id}/test")
+
+    assert api_key_checked.status_code == 200
+    api_key_grant = next(call for call in api_key_calls if "grant_type=password" in call["url"])
+
+    login_calls = _install_fake_tiangong_http(monkeypatch)
+    login_account_id = _create_tiangong_login_account(client)
+
+    login_checked = client.post(f"/api/data-platforms/accounts/{login_account_id}/test")
+
+    assert login_checked.status_code == 200
+    login_grant = next(call for call in login_calls if "grant_type=password" in call["url"])
+    assert json.loads(api_key_grant["body"]) == json.loads(login_grant["body"])
+
+
+def test_tiangong_account_rejects_mixed_authentication_credentials(client):
+    response = client.post(
+        "/api/data-platforms/accounts",
+        json={
+            "platform": "tiangong",
+            "alias": "TianGong Mixed",
+            "auth_type": "api_key",
+            "credential": {"api_key": _tg_api_key(), "username": "user@example.com"},
+            "status": "active",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "TIANGONG_API_KEY_CREDENTIAL_INVALID"
+
+
 def test_tiangong_search_uses_latest_search_rpc_payload(client, monkeypatch):
     calls = _install_fake_tiangong_http(monkeypatch)
     account_id = _create_tiangong_account(client)
@@ -737,7 +772,7 @@ def test_tiangong_expired_session_refreshes_then_falls_back_to_password(client, 
     assert any("grant_type=password" in call["url"] for call in calls_fallback)
 
 
-def test_tiangong_connection_test_requires_api_key_or_token(client):
+def test_tiangong_account_creation_requires_one_supported_credential(client):
     response = client.post(
         "/api/data-platforms/accounts",
         json={
@@ -749,11 +784,8 @@ def test_tiangong_connection_test_requires_api_key_or_token(client):
         },
     )
 
-    assert response.status_code == 201
-    checked = client.post(f"/api/data-platforms/accounts/{response.json()['id']}/test")
-    assert checked.status_code == 200
-    assert checked.json()["ok"] is False
-    assert "required" in checked.json()["message"]
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "TIANGONG_CREDENTIAL_REQUIRED"
 
 
 def test_tiangong_api_key_decode_errors_do_not_leak_secret(client):

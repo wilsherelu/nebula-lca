@@ -128,7 +128,7 @@ const emptyForm = {
   baseUrl: TIANGONG_SUPABASE_URL,
   publishableKey: TIANGONG_PUBLISHABLE_KEY,
   environmentLabel: "",
-  authType: "basic" as "basic" | "bearer" | "api_key",
+  authType: "basic" as "basic" | "api_key",
   email: "",
   password: "",
   secret: "",
@@ -287,7 +287,7 @@ export function ExternalPlatformAccounts(props: Props) {
       baseUrl: account.base_url ?? "",
       publishableKey: typeof account.metadata?.publishable_key === "string" ? account.metadata.publishable_key : "",
       environmentLabel: typeof account.metadata?.environment_label === "string" ? account.metadata.environment_label : "",
-      authType: account.auth_type === "bearer" ? "bearer" : account.auth_type === "api_key" ? "api_key" : "basic",
+      authType: account.auth_type === "api_key" ? "api_key" : "basic",
       email: "",
       password: "",
       secret: "",
@@ -306,12 +306,8 @@ export function ExternalPlatformAccounts(props: Props) {
       setErrorText(zh ? "首次绑定需要填写天工平台用户名（邮箱）和密码。" : "TianGong platform username (email) and password are required for first binding.");
       return;
     }
-    if (!editingId && form.authType === "bearer" && !form.secret.trim()) {
-      setErrorText(zh ? "首次绑定 Bearer Token 需要填写 token。" : "Bearer token is required for first binding.");
-      return;
-    }
     if (!editingId && form.authType === "api_key" && !form.secret.trim()) {
-      setErrorText(zh ? "首次绑定兼容 API Key 需要填写凭据。" : "Legacy API Key credential is required for first binding.");
+      setErrorText(zh ? "首次绑定需要填写天工账户页面生成的 API Key。" : "A TianGong API Key is required for first binding.");
       return;
     }
     setSaving(true);
@@ -323,9 +319,7 @@ export function ExternalPlatformAccounts(props: Props) {
             ? { username: form.email.trim(), password: form.password }
             : undefined
           : form.secret.trim().length > 0
-            ? form.authType === "bearer"
-              ? { token: form.secret.trim() }
-              : { api_key: form.secret.trim() }
+            ? { api_key: form.secret.trim() }
             : undefined;
       const body = {
         platform: "tiangong",
@@ -906,10 +900,9 @@ export function ExternalPlatformAccounts(props: Props) {
               <label><span>{zh ? "环境名" : "Environment"}</span><input value={form.environmentLabel} onChange={(event) => setForm((prev) => ({ ...prev, environmentLabel: event.target.value }))} /></label>
               <label>
                 <span>{zh ? "认证方式" : "Auth Type"}</span>
-                <select value={form.authType} onChange={(event) => setForm((prev) => ({ ...prev, authType: event.target.value as "basic" | "bearer" | "api_key" }))}>
+                <select value={form.authType} onChange={(event) => setForm((prev) => ({ ...prev, authType: event.target.value as "basic" | "api_key" }))}>
                   <option value="basic">{zh ? "天工账号登录" : "TianGong Login"}</option>
-                  <option value="bearer">Bearer Token</option>
-                  <option value="api_key">{zh ? "兼容 API Key" : "Legacy API Key"}</option>
+                  <option value="api_key">{zh ? "天工 API Key" : "TianGong API Key"}</option>
                 </select>
               </label>
               {form.authType === "basic" ? (
@@ -918,7 +911,7 @@ export function ExternalPlatformAccounts(props: Props) {
                   <label><span>{zh ? "天工密码" : "TianGong Password"}</span><input type="password" autoComplete="current-password" placeholder={editingId ? (zh ? "留空则保留原凭据" : "Leave blank to keep existing credential") : ""} value={form.password} onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))} /></label>
                 </>
               ) : (
-                <label><span>{form.authType === "bearer" ? "Bearer Token" : (zh ? "兼容 API Key" : "Legacy API Key")}</span><input type="password" autoComplete="off" placeholder={editingId ? (zh ? "留空则保留原凭据" : "Leave blank to keep existing credential") : ""} value={form.secret} onChange={(event) => setForm((prev) => ({ ...prev, secret: event.target.value }))} /></label>
+                <label><span>{zh ? "天工 API Key" : "TianGong API Key"}</span><input type="password" autoComplete="off" placeholder={editingId ? (zh ? "留空则保留原凭据" : "Leave blank to keep existing credential") : ""} value={form.secret} onChange={(event) => setForm((prev) => ({ ...prev, secret: event.target.value }))} /></label>
               )}
               <label>
                 <span>{zh ? "状态" : "Status"}</span>
