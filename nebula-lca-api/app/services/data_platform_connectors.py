@@ -185,6 +185,7 @@ class RemoteProcessDTO:
     remote_id: str
     process_uuid: str
     process_name: str
+    process_name_en: str | None = None
     process_type: str = "unit_process"
     reference_flow_uuid: str | None = None
     source: str | None = None
@@ -197,6 +198,7 @@ class RemoteModelDTO:
     remote_id: str
     model_uuid: str
     model_name: str
+    model_name_en: str | None = None
     source: str | None = None
     remote_version: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -970,12 +972,19 @@ def _session_expires_at(payload: dict[str, Any]) -> datetime | None:
     return datetime.utcnow() + timedelta(seconds=max(60, expires_in))
 
 
-def _localized_name(value: Any) -> str:
+def _localized_name(value: Any, preferred_language: str | None = None) -> str:
     if isinstance(value, str):
         return value.strip()
     if isinstance(value, list):
+        if preferred_language:
+            language = preferred_language.lower()
+            for item in value:
+                if isinstance(item, dict) and str(item.get("@xml:lang") or "").lower().startswith(language):
+                    text = _localized_name(item, preferred_language)
+                    if text:
+                        return text
         for item in value:
-            text = _localized_name(item)
+            text = _localized_name(item, preferred_language)
             if text:
                 return text
     if isinstance(value, dict):
@@ -984,7 +993,7 @@ def _localized_name(value: Any) -> str:
             if text:
                 return text
         for key in ("baseName", "common:baseName", "name", "common:name", "shortDescription", "common:shortDescription"):
-            text = _localized_name(value.get(key))
+            text = _localized_name(value.get(key), preferred_language)
             if text:
                 return text
     return ""
@@ -1211,11 +1220,10 @@ def _rerank_tiangong_rows(kind: str, rows: list[dict[str, Any]], query: str) -> 
 def _tiangong_flow_from_row(row: dict[str, Any]) -> RemoteFlowDTO:
     payload = _extract_json_payload(row)
     flow_uuid = str(row.get("id") or row.get("flow_uuid") or row.get("uuid") or _nested_text(payload, "flowDataSet", "flowInformation", "dataSetInformation", "common:UUID")).strip()
-    name = (
-        _localized_name(row.get("name") or row.get("flow_name"))
-        or _nested_text(payload, "flowDataSet", "flowInformation", "dataSetInformation", "name")
-        or flow_uuid
-    )
+    info = payload.get("flowDataSet", {}).get("flowInformation", {}).get("dataSetInformation", {}) if isinstance(payload.get("flowDataSet"), dict) else {}
+    name_node = info.get("name") if isinstance(info, dict) else None
+    name = _localized_name(name_node, "zh") or _localized_name(row.get("name") or row.get("flow_name"), "zh") or _localized_name(name_node) or _localized_name(row.get("name") or row.get("flow_name")) or flow_uuid
+    name_en = _localized_name(name_node, "en") or _localized_name(row.get("name_en"), "en") or None
     flow_type = str(row.get("flow_type") or row.get("type") or _nested_text(payload, "flowDataSet", "modellingAndValidation", "LCIMethod", "typeOfDataSet") or "Product flow").strip()
 
     # Extract default unit and unit group from top-level row fields first,
@@ -1243,7 +1251,7 @@ def _tiangong_flow_from_row(row: dict[str, Any]) -> RemoteFlowDTO:
         remote_id=str(row.get("id") or flow_uuid).strip(),
         flow_uuid=flow_uuid,
         flow_name=name,
-        flow_name_en=str(row.get("name_en") or "").strip() or None,
+        flow_name_en=name_en,
         flow_type=flow_type,
         default_unit=unit,
         unit_group=unit_group,
@@ -1256,11 +1264,10 @@ def _tiangong_flow_from_row(row: dict[str, Any]) -> RemoteFlowDTO:
 def _tiangong_process_from_row(row: dict[str, Any]) -> RemoteProcessDTO:
     payload = _extract_json_payload(row)
     process_uuid = str(row.get("id") or row.get("process_uuid") or row.get("uuid") or _nested_text(payload, "processDataSet", "processInformation", "dataSetInformation", "common:UUID")).strip()
-    name = (
-        _localized_name(row.get("name") or row.get("process_name"))
-        or _nested_text(payload, "processDataSet", "processInformation", "dataSetInformation", "name")
-        or process_uuid
-    )
+    info = payload.get("processDataSet", {}).get("processInformation", {}).get("dataSetInformation", {}) if isinstance(payload.get("processDataSet"), dict) else {}
+    name_node = info.get("name") if isinstance(info, dict) else None
+    name = _localized_name(name_node, "zh") or _localized_name(row.get("name") or row.get("process_name"), "zh") or _localized_name(name_node) or _localized_name(row.get("name") or row.get("process_name")) or process_uuid
+    name_en = _localized_name(name_node, "en") or _localized_name(row.get("name_en"), "en") or None
     process_type = str(
         row.get("process_type")
         or row.get("type")
@@ -1287,6 +1294,7 @@ def _tiangong_process_from_row(row: dict[str, Any]) -> RemoteProcessDTO:
         remote_id=str(row.get("id") or process_uuid).strip(),
         process_uuid=process_uuid,
         process_name=name,
+        process_name_en=name_en,
         process_type=process_type,
         reference_flow_uuid=reference_flow_uuid or None,
         source="tiangong",
@@ -1298,15 +1306,15 @@ def _tiangong_process_from_row(row: dict[str, Any]) -> RemoteProcessDTO:
 def _tiangong_model_from_row(row: dict[str, Any]) -> RemoteModelDTO:
     payload = _extract_json_payload(row)
     model_uuid = str(row.get("id") or row.get("model_uuid") or row.get("uuid") or payload.get("id") or _nested_text(payload, "lifeCycleModelDataSet", "lifeCycleModelInformation", "dataSetInformation", "common:UUID") or "").strip()
-    name = (
-        _localized_name(row.get("name") or row.get("model_name") or payload.get("name") or payload.get("title"))
-        or _nested_text(payload, "lifeCycleModelDataSet", "lifeCycleModelInformation", "dataSetInformation", "name")
-        or model_uuid
-    )
+    info = payload.get("lifeCycleModelDataSet", {}).get("lifeCycleModelInformation", {}).get("dataSetInformation", {}) if isinstance(payload.get("lifeCycleModelDataSet"), dict) else {}
+    name_node = info.get("name") if isinstance(info, dict) else payload.get("name") or payload.get("title")
+    name = _localized_name(name_node, "zh") or _localized_name(row.get("name") or row.get("model_name"), "zh") or _localized_name(name_node) or _localized_name(row.get("name") or row.get("model_name")) or model_uuid
+    name_en = _localized_name(name_node, "en") or _localized_name(row.get("name_en"), "en") or None
     return RemoteModelDTO(
         remote_id=str(row.get("id") or model_uuid).strip(),
         model_uuid=model_uuid,
         model_name=name,
+        model_name_en=name_en,
         source="tiangong",
         remote_version=_row_version(row),
         metadata={"row": row, "classification": _classification_text(payload, "model"), "modified_at": row.get("modified_at"), "state_code": row.get("state_code")},
@@ -1432,7 +1440,7 @@ def _tiangong_process_json_from_row(row: dict[str, Any], process: RemoteProcessD
         "process_uuid": process.process_uuid,
         "process_name": process.process_name,
         "process_name_zh": process.process_name,
-        "process_name_en": process.process_name,
+        "process_name_en": process.process_name_en or process.process_name,
         "process_type": process.process_type,
         "location": str(geography.get("locationOfOperationSupplyOrProduction") or row.get("location") or "").strip(),
         "reference_flow_internal_id": reference_internal_id,
@@ -1491,6 +1499,7 @@ def _process_from_mapping(row: dict[str, Any], platform: str) -> RemoteProcessDT
         remote_id=str(row.get("remote_id") or row.get("id") or process_uuid).strip(),
         process_uuid=process_uuid,
         process_name=str(row.get("process_name") or row.get("name") or process_uuid).strip(),
+        process_name_en=str(row.get("process_name_en") or row.get("name_en") or "").strip() or None,
         process_type=str(row.get("process_type") or row.get("type") or "unit_process").strip(),
         reference_flow_uuid=str(row.get("reference_flow_uuid") or row.get("referenceFlowUuid") or "").strip() or None,
         source=str(row.get("source") or platform).strip(),
@@ -1505,6 +1514,7 @@ def _model_from_mapping(row: dict[str, Any], platform: str) -> RemoteModelDTO:
         remote_id=str(row.get("remote_id") or row.get("id") or model_uuid).strip(),
         model_uuid=model_uuid,
         model_name=str(row.get("model_name") or row.get("name") or model_uuid).strip(),
+        model_name_en=str(row.get("model_name_en") or row.get("name_en") or "").strip() or None,
         source=str(row.get("source") or platform).strip(),
         remote_version=str(row.get("remote_version") or row.get("version") or "").strip() or None,
         metadata=row.get("metadata") if isinstance(row.get("metadata"), dict) else {},

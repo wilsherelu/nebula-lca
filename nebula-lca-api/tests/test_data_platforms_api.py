@@ -36,6 +36,7 @@ from app.services.data_platform_connectors import (
     PlatformAccountContext,
     TianGongSupabaseConnector,
     _tiangong_flow_from_row,
+    _tiangong_process_from_row,
     encrypt_credential,
 )
 
@@ -63,6 +64,31 @@ def test_tiangong_flow_without_resolved_unit_metadata_does_not_fallback_to_mass(
     assert flow.default_unit == ""
     assert flow.unit_group == ""
     assert flow.metadata["unit_resolution_error"] == "FLOW_UNIT_METADATA_UNRESOLVED"
+
+
+def test_tiangong_process_preserves_localized_chinese_and_english_names():
+    process = _tiangong_process_from_row(
+        {
+            "id": "22222222-2222-4222-8222-222222222222",
+            "json": {
+                "processDataSet": {
+                    "processInformation": {
+                        "dataSetInformation": {
+                            "name": {
+                                "baseName": [
+                                    {"#text": "Aluminium, primary, liquid", "@xml:lang": "en"},
+                                    {"#text": "原铝液", "@xml:lang": "zh"},
+                                ]
+                            }
+                        }
+                    }
+                }
+            },
+        }
+    )
+
+    assert process.process_name == "原铝液"
+    assert process.process_name_en == "Aluminium, primary, liquid"
 
 
 @pytest.fixture(autouse=True)
