@@ -92,6 +92,10 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
     void resolveCandidates();
   };
 
+  const keepTidasFlows = () => {
+    setOpen(false);
+  };
+
   const applyAllL1 = () => {
     const links = new Map<string, ReturnType<typeof toIntermediateFlowLink>>();
     for (const [portId, resolution] of Object.entries(candidateByPort)) {
@@ -228,7 +232,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
         <span>{linkedCount}/{inputs.length}</span>
       </button>
       {open && (
-        <div className="overlay-modal" onMouseDown={() => setOpen(false)}>
+        <div className="overlay-modal" onMouseDown={keepTidasFlows}>
           <section
             className="overlay-panel intermediate-flow-link-dialog"
             role="dialog"
@@ -241,15 +245,15 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                 <strong>{t("中间流转换", "Intermediate Flow Conversion")}</strong>
                 <span>{inputs.length}</span>
               </div>
-              <button type="button" className="drawer-close-btn" onClick={() => setOpen(false)}>
+              <button type="button" className="drawer-close-btn" onClick={keepTidasFlows}>
                 {t("关闭", "Close")}
               </button>
             </header>
             <div className="intermediate-flow-link-dialog-toolbar">
               <div className="intermediate-flow-link-overview">
                 <p>{t(
-                  "在此完成中间流转换。可自动转换的流会直接处理；需要核对的流请确认后转换；没有自动结果时可手动转换。完成后回到清单分析，在对应流的“关联背景数据”中选择背景过程。",
-                  "Convert intermediate flows here. Automatically convertible flows can be processed directly; review flows that need confirmation; use manual conversion when no automatic result is available. Then return to inventory analysis and use Link background data on the relevant flow to choose a background process.",
+                  "在此完成中间流转换。可自动转换的流会直接处理；需要核对的流请确认后转换；没有自动结果时可手动转换。也可以暂不转换，未转换的流会保留原始 TIDAS 标识，仍可继续使用并在之后处理。完成转换后，回到清单分析，在对应流的“关联背景数据”中选择背景过程。",
+                  "Convert intermediate flows here. Automatically convertible flows can be processed directly; review flows that need confirmation; use manual conversion when no automatic result is available. You can also keep TIDAS flows unchanged and convert them later. After conversion, return to inventory analysis and use Link background data on the relevant flow to choose a background process.",
                 )}</p>
                 <div className="intermediate-flow-link-counts" aria-live="polite">
                   {resolutionState === "loading" ? (
@@ -266,6 +270,9 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                 </div>
               </div>
               <div className="intermediate-flow-link-toolbar-actions">
+                <button type="button" className="flow-link-button secondary" disabled={busy} onClick={keepTidasFlows}>
+                  {t("暂不转换", "Keep TIDAS flows")}
+                </button>
                 {resolutionState === "error" && (
                   <button type="button" className="flow-link-button secondary" disabled={busy} onClick={resolveCandidates}>
                     {t("重新检测", "Retry")}
