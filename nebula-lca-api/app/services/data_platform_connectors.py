@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -681,6 +682,7 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
             new_rpc, latest_rpc, search_rpc, mapper = "pgroonga_search_processes_v1", "get_latest_process_versions", "search_processes_latest", _tiangong_process_from_row
         else:
             new_rpc, latest_rpc, search_rpc, mapper = "pgroonga_search_lifecyclemodels_v1", "get_latest_lifecyclemodel_versions", "search_lifecyclemodels_latest", _tiangong_model_from_row
+        normalized_query = " ".join(re.sub(r"[;；]+", " ", query).split())
         user_id = self._current_user_id()
         filter_condition: dict[str, Any] = {}
         normalized_flow_type = str(flow_type or "").strip()
@@ -701,14 +703,14 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
             legacy_payload["filter_condition"] = filter_condition
         if kind == "process":
             legacy_payload["type_of_data_set_filter"] = normalized_process_type if normalized_process_type and normalized_process_type != "all" else "all"
-        if not query.strip():
+        if not normalized_query:
             raw = self._rpc(latest_rpc, legacy_payload)
             rows, total = _tiangong_rows_and_total(raw)
             items = [mapper(row) for row in rows if isinstance(row, dict)]
             return RemotePageDTO(items=items, total=total if total is not None else len(items), page=page, page_size=page_size, has_more=(page * page_size) < (total if total is not None else len(items)))
 
         search_payload: dict[str, Any] = {
-            "query_text": query.strip(),
+            "query_text": normalized_query,
             "filter_condition": filter_condition,
             "order_by": {},
             "page_size": page_size,
@@ -727,7 +729,7 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
             if search_exc.status_code not in {404, 500}:
                 raise
             new_payload: dict[str, Any] = {
-                "query_text": query.strip(),
+                "query_text": normalized_query,
                 "filter_condition": filter_condition,
                 "page_size": page_size,
                 "page_current": page,
@@ -747,7 +749,7 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
                     status_code=new_exc.status_code,
                 ) from new_exc
         rows, total = _tiangong_rows_and_total(raw)
-        rows = _rerank_tiangong_rows(kind, rows, query)
+        rows = _rerank_tiangong_rows(kind, rows, normalized_query)
         items = [mapper(row) for row in rows if isinstance(row, dict)]
         return RemotePageDTO(items=items, total=total if total is not None else len(items), page=page, page_size=page_size, has_more=(page * page_size) < (total if total is not None else len(items)))
 

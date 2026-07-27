@@ -657,6 +657,17 @@ def test_tiangong_search_uses_latest_search_rpc_payload(client, monkeypatch):
     assert "sort_direction" not in body
 
 
+def test_tiangong_search_normalizes_semicolon_separated_keywords(client, monkeypatch):
+    calls = _install_fake_tiangong_http(monkeypatch)
+    account_id = _create_tiangong_account(client)
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/processes/search?q=primary%3B+aluminium")
+
+    assert response.status_code == 200
+    search_call = next(call for call in calls if "/rest/v1/rpc/search_processes_latest" in call["url"])
+    assert json.loads(search_call["body"])["query_text"] == "primary aluminium"
+
+
 def test_tiangong_empty_query_uses_latest_rpc_with_open_state_code(client, monkeypatch):
     calls = _install_fake_tiangong_http(monkeypatch)
     account_id = _create_tiangong_account(client)
