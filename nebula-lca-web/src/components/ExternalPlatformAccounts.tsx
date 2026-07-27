@@ -27,14 +27,17 @@ type RemoteItem = {
   source?: string | null;
   metadata?: Record<string, unknown>;
   flow_name?: string;
+  flow_name_en?: string | null;
   flow_uuid?: string;
   flow_type?: string;
   default_unit?: string;
   unit_group?: string;
   process_name?: string;
+  process_name_en?: string | null;
   process_uuid?: string;
   process_type?: string;
   model_name?: string;
+  model_name_en?: string | null;
   model_uuid?: string;
 };
 
@@ -79,43 +82,6 @@ type RemoteSyncResponse = {
 type RemoteSyncError = Error & {
   failedFlowUuid?: string | null;
   rolledBack?: boolean;
-};
-
-type SyncJob = {
-  id: string;
-  account_id: string;
-  platform: string;
-  remote_process_id: string | null;
-  status: string;
-  phase: string;
-  stats: Record<string, unknown> | null;
-  error_summary: string | null;
-  created_at: string;
-  updated_at: string;
-  finished_at: string | null;
-};
-
-type SyncRecord = {
-  id: string;
-  account_id: string;
-  platform: string;
-  local_kind: string;
-  local_uuid: string;
-  remote_id: string;
-  remote_version: string | null;
-  metadata: Record<string, unknown> | null;
-  synced_at: string;
-};
-
-type PublishResult = {
-  account_id: string;
-  platform: string;
-  local_kind: string;
-  local_uuid: string;
-  remote_id: string;
-  remote_version: string | null;
-  status: string;
-  warnings: string[];
 };
 
 type Props = {
@@ -200,12 +166,6 @@ export function ExternalPlatformAccounts(props: Props) {
   const [remotePreview, setRemotePreview] = useState<RemotePreviewResponse | null>(null);
   const [syncingKey, setSyncingKey] = useState("");
   const [lastSync, setLastSync] = useState<RemoteSyncResponse | null>(null);
-  const [syncJobs, setSyncJobs] = useState<SyncJob[]>([]);
-  const [syncRecords, setSyncRecords] = useState<SyncRecord[]>([]);
-  const [syncHistoryLoading, setSyncHistoryLoading] = useState(false);
-  const [syncHistoryError, setSyncHistoryError] = useState("");
-  const [publishingKey, setPublishingKey] = useState("");
-  const [publishResult, setPublishResult] = useState<PublishResult | null>(null);
   const [modelSyncConfirm, setModelSyncConfirm] = useState<{ open: boolean; item: RemoteItem | null }>({ open: false, item: null });
   const tiangongAccounts = useMemo(
     () => accounts.filter((account) => account.platform === "tiangong"),
@@ -222,10 +182,6 @@ export function ExternalPlatformAccounts(props: Props) {
     }
   }, [selectedAccountId, tiangongAccounts]);
 
-  useEffect(() => {
-    void loadSyncHistory();
-  }, [selectedAccount?.id]);
-
   const loadAccounts = async () => {
     setErrorText("");
     try {
@@ -240,31 +196,6 @@ export function ExternalPlatformAccounts(props: Props) {
   useEffect(() => {
     void loadAccounts();
   }, []);
-
-  const loadSyncHistory = async () => {
-    if (!selectedAccount?.id) {
-      setSyncJobs([]);
-      setSyncRecords([]);
-      return;
-    }
-    setSyncHistoryLoading(true);
-    setSyncHistoryError("");
-    try {
-      const [jobs, records] = await Promise.all([
-        requestJson<SyncJob[]>(`${API_BASE}/data-platforms/accounts/${encodeURIComponent(selectedAccount.id)}/sync-jobs?limit=20`),
-        requestJson<SyncRecord[]>(`${API_BASE}/data-platforms/accounts/${encodeURIComponent(selectedAccount.id)}/sync-records?limit=20`),
-      ]);
-      setSyncJobs(jobs);
-      setSyncRecords(records);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "sync history load failed";
-      setSyncHistoryError(zh ? `同步历史加载失败：${message}` : `Failed to load sync history: ${message}`);
-      setSyncJobs([]);
-      setSyncRecords([]);
-    } finally {
-      setSyncHistoryLoading(false);
-    }
-  };
 
   const resetForm = () => {
     setEditingId("");
@@ -368,7 +299,6 @@ export function ExternalPlatformAccounts(props: Props) {
       setValidationDialog({ ok: result.ok, message: result.message, checkedAt: result.checked_at });
       onStatus?.(zh ? `天工账号校验：${result.message}` : `TianGong account check: ${result.message}`);
       await loadAccounts();
-      await loadSyncHistory();
     } catch (error) {
       const message = error instanceof Error ? error.message : "test failed";
       setValidationDialog({ ok: false, message });
@@ -473,7 +403,6 @@ export function ExternalPlatformAccounts(props: Props) {
         body: JSON.stringify(body),
       });
       setLastSync(result);
-      setPublishResult(null);
       const report = result.tidas_import_report;
       const failed = Number(report?.failed ?? 0);
       const warnings = Number(report?.warning_count ?? 0) + Number(report?.unresolved_count ?? 0);
@@ -482,7 +411,6 @@ export function ExternalPlatformAccounts(props: Props) {
           ? `已按需导入：新增 ${report?.inserted ?? 0}，更新 ${report?.updated ?? 0}，失败 ${failed}，警告 ${warnings}。`
           : `Imported on demand: ${report?.inserted ?? 0} inserted, ${report?.updated ?? 0} updated, ${failed} failed, ${warnings} warnings.`,
       );
-      await loadSyncHistory();
     } catch (error) {
       const syncError = error as RemoteSyncError;
       const message = error instanceof Error ? error.message : "sync failed";
@@ -521,40 +449,10 @@ export function ExternalPlatformAccounts(props: Props) {
     await performRemoteSync(item);
   };
 
-  const publishLocalRecord = async (record: SyncRecord) => {
-    if (!selectedAccount) return;
-    if (record.local_kind !== "flow" && record.local_kind !== "process") return;
-    const pluralKind = record.local_kind === "flow" ? "flows" : "processes";
-    const key = `${record.local_kind}:${record.local_uuid}`;
-    setPublishingKey(key);
-    setErrorText("");
-    try {
-      const result = await requestJson<PublishResult>(
-        `${API_BASE}/data-platforms/accounts/${encodeURIComponent(selectedAccount.id)}/${pluralKind}/${encodeURIComponent(record.local_uuid)}/publish`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ overwrite: true, ruleVerification: false }),
-        },
-      );
-      setPublishResult(result);
-      setLastSync(null);
-      onStatus?.(
-        zh
-          ? `已发布 ${record.local_kind}：${result.remote_id}。`
-          : `${record.local_kind} published: ${result.remote_id}.`,
-      );
-      await loadSyncHistory();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "publish failed";
-      setErrorText(zh ? `发布失败：${message}` : `Publish failed: ${message}`);
-    } finally {
-      setPublishingKey("");
-    }
+  const itemTitle = (item: RemoteItem): string => {
+    if (!zh) return item.flow_name_en ?? item.process_name_en ?? item.model_name_en ?? item.flow_name ?? item.process_name ?? item.model_name ?? item.remote_id;
+    return item.flow_name ?? item.process_name ?? item.model_name ?? item.remote_id;
   };
-
-  const itemTitle = (item: RemoteItem): string => item.flow_name ?? item.process_name ?? item.model_name ?? item.remote_id;
-  const itemUuid = (item: RemoteItem): string => item.flow_uuid ?? item.process_uuid ?? item.model_uuid ?? item.remote_id;
   const itemType = (item: RemoteItem): string => item.flow_type ?? item.process_type ?? (remoteKind === "models" ? "Model" : "-");
   const itemSummary = (item: RemoteItem): string => {
     const classification = typeof item.metadata?.classification === "string" ? item.metadata.classification : "";
@@ -581,15 +479,6 @@ export function ExternalPlatformAccounts(props: Props) {
     const ref = item.is_reference_flow ? (zh ? "参考" : "reference") : "";
     return [direction, name, amount !== "-" ? amount : "", unit !== "-" ? unit : "", ref].filter(Boolean).join(" · ");
   };
-  const copyText = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      onStatus?.(zh ? "已复制 ID。" : "ID copied.");
-    } catch {
-      onStatus?.(text);
-    }
-  };
-
   return (
     <section className="pm-page pm-platform-workbench">
       <div className="pm-page-head">
@@ -634,43 +523,42 @@ export function ExternalPlatformAccounts(props: Props) {
               </button>
             ))}
           </div>
+          <div className="pm-remote-filterbar">
+            <input
+              value={remoteQuery}
+              onChange={(event) => setRemoteQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void searchRemote(1);
+              }}
+              placeholder={zh ? "搜索名称、中文名、英文名或同义词" : "Search name, localized title, or synonym"}
+            />
+            <select value={remoteStateMode} onChange={(event) => setRemoteStateMode(event.target.value as "open" | "all")}>
+              <option value="open">{zh ? "开放数据" : "Open data"}</option>
+              <option value="all">{zh ? "全部状态" : "All states"}</option>
+            </select>
+            {remoteKind === "flows" && (
+              <select value={remoteFlowType} onChange={(event) => setRemoteFlowType(event.target.value)}>
+                {flowTypeOptions.map((value) => (
+                  <option key={value} value={value}>{value === "all" ? (zh ? "全部流类型" : "All flow types") : value}</option>
+                ))}
+              </select>
+            )}
+            {remoteKind === "processes" && (
+              <select value={remoteProcessType} onChange={(event) => setRemoteProcessType(event.target.value)}>
+                {processTypeOptions.map((value) => (
+                  <option key={value} value={value}>{value === "all" ? (zh ? "全部数据集类型" : "All dataset types") : value}</option>
+                ))}
+              </select>
+            )}
+            <button type="button" className="pm-primary-btn" onClick={() => void searchRemote(1)} disabled={remoteLoading || !selectedAccount}>
+              {remoteLoading ? (zh ? "查询中..." : "Searching...") : (zh ? "查询" : "Search")}
+            </button>
+          </div>
           {!selectedAccount && (
             <button type="button" className="pm-primary-btn" onClick={openNewAccountDialog}>
               {zh ? "绑定天工账号" : "Bind TianGong Account"}
             </button>
           )}
-        </div>
-
-        <div className="pm-remote-filterbar">
-          <input
-            value={remoteQuery}
-            onChange={(event) => setRemoteQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") void searchRemote(1);
-            }}
-            placeholder={zh ? "搜索名称、中文名、英文名或同义词" : "Search name, localized title, or synonym"}
-          />
-          <select value={remoteStateMode} onChange={(event) => setRemoteStateMode(event.target.value as "open" | "all")}>
-            <option value="open">{zh ? "开放数据" : "Open data"}</option>
-            <option value="all">{zh ? "全部状态" : "All states"}</option>
-          </select>
-          {remoteKind === "flows" && (
-            <select value={remoteFlowType} onChange={(event) => setRemoteFlowType(event.target.value)}>
-              {flowTypeOptions.map((value) => (
-                <option key={value} value={value}>{value === "all" ? (zh ? "全部流类型" : "All flow types") : value}</option>
-              ))}
-            </select>
-          )}
-          {remoteKind === "processes" && (
-            <select value={remoteProcessType} onChange={(event) => setRemoteProcessType(event.target.value)}>
-              {processTypeOptions.map((value) => (
-                <option key={value} value={value}>{value === "all" ? (zh ? "全部数据集类型" : "All dataset types") : value}</option>
-              ))}
-            </select>
-          )}
-          <button type="button" className="pm-primary-btn" onClick={() => void searchRemote(1)} disabled={remoteLoading || !selectedAccount}>
-            {remoteLoading ? (zh ? "查询中..." : "Searching...") : (zh ? "查询" : "Search")}
-          </button>
         </div>
 
         <div className="pm-remote-table-panel">
@@ -692,9 +580,6 @@ export function ExternalPlatformAccounts(props: Props) {
                   <tr key={`${item.remote_id}:${item.remote_version ?? ""}`}>
                     <td>
                       <strong>{itemTitle(item)}</strong>
-                      <button type="button" className="pm-copy-id-btn" onClick={() => void copyText(itemUuid(item))}>
-                        {zh ? "复制ID" : "Copy ID"}
-                      </button>
                     </td>
                     <td>{itemType(item)}</td>
                     <td><span className="pm-result-summary">{itemSummary(item)}</span></td>
@@ -736,45 +621,29 @@ export function ExternalPlatformAccounts(props: Props) {
         </div>
       </div>
 
-      {(lastSync?.tidas_import_report || publishResult) && (
+      {lastSync?.tidas_import_report && (
         <div className="pm-refresh-result-strip">
           <div className="pm-refresh-result-content">
-            {lastSync?.tidas_import_report ? (
-              <>
-                <strong>{zh ? "最近导入" : "Last Import"}</strong>
-                <span>{zh ? `新增 ${lastSync?.tidas_import_report?.inserted ?? 0}` : `${lastSync?.tidas_import_report?.inserted ?? 0} inserted`}</span>
-                <span>{zh ? `更新 ${lastSync?.tidas_import_report?.updated ?? 0}` : `${lastSync?.tidas_import_report?.updated ?? 0} updated`}</span>
-                <span>{zh ? `失败 ${lastSync?.tidas_import_report?.failed ?? 0}` : `${lastSync?.tidas_import_report?.failed ?? 0} failed`}</span>
-                {lastSync.flow_count !== undefined && (
-                  <span>{zh ? `引用 Flow ${lastSync.flow_count}` : `${lastSync.flow_count} referenced flows`}</span>
-                )}
-                <span>
-                  {zh
-                    ? `警告 ${Number(lastSync?.tidas_import_report?.warning_count ?? 0) + Number(lastSync?.tidas_import_report?.unresolved_count ?? 0)}`
-                    : `${Number(lastSync?.tidas_import_report?.warning_count ?? 0) + Number(lastSync?.tidas_import_report?.unresolved_count ?? 0)} warnings`}
-                </span>
-              </>
-            ) : (
-              <>
-                <strong>{zh ? "最近发布" : "Last Publish"}</strong>
-                <span>{publishResult?.local_kind}</span>
-                <span title={publishResult?.local_uuid}>{publishResult?.local_uuid}</span>
-                <span>{publishResult?.status}</span>
-                <span>{publishResult?.remote_version ?? "-"}</span>
-                {publishResult && publishResult.warnings.length > 0 && (
-                  <span className="pm-refresh-result-error" title={publishResult.warnings.join("; ")}>
-                    {zh ? `警告 ${publishResult.warnings.length}` : `${publishResult.warnings.length} warnings`}
-                  </span>
-                )}
-              </>
-            )}
+            <>
+              <strong>{zh ? "最近导入" : "Last Import"}</strong>
+              <span>{zh ? `新增 ${lastSync?.tidas_import_report?.inserted ?? 0}` : `${lastSync?.tidas_import_report?.inserted ?? 0} inserted`}</span>
+              <span>{zh ? `更新 ${lastSync?.tidas_import_report?.updated ?? 0}` : `${lastSync?.tidas_import_report?.updated ?? 0} updated`}</span>
+              <span>{zh ? `失败 ${lastSync?.tidas_import_report?.failed ?? 0}` : `${lastSync?.tidas_import_report?.failed ?? 0} failed`}</span>
+              {lastSync.flow_count !== undefined && (
+                <span>{zh ? `引用 Flow ${lastSync.flow_count}` : `${lastSync.flow_count} referenced flows`}</span>
+              )}
+              <span>
+                {zh
+                  ? `警告 ${Number(lastSync?.tidas_import_report?.warning_count ?? 0) + Number(lastSync?.tidas_import_report?.unresolved_count ?? 0)}`
+                  : `${Number(lastSync?.tidas_import_report?.warning_count ?? 0) + Number(lastSync?.tidas_import_report?.unresolved_count ?? 0)} warnings`}
+              </span>
+            </>
           </div>
           <button
             type="button"
             className="pm-refresh-result-close"
             onClick={() => {
               setLastSync(null);
-              setPublishResult(null);
             }}
             title={zh ? "关闭" : "Close"}
           >
@@ -783,106 +652,6 @@ export function ExternalPlatformAccounts(props: Props) {
         </div>
       )}
 
-      {(() => {
-        const hasHistory = syncJobs.length > 0 || syncRecords.length > 0;
-        return (
-          <section className="pm-sync-history-panel">
-            <div className="pm-sync-history-head">
-              <strong>{zh ? "同步历史" : "Sync History"}</strong>
-              <span className="pm-sync-history-count">
-                {syncJobs.length} {zh ? "任务" : "jobs"} · {syncRecords.length} {zh ? "记录" : "records"}
-              </span>
-            </div>
-
-            {syncHistoryError && <div className="pm-field-error pm-sync-history-error">{syncHistoryError}</div>}
-
-            {syncHistoryLoading && (
-              <div className="pm-sync-history-empty">{zh ? "加载同步历史中..." : "Loading sync history..."}</div>
-            )}
-
-            {!syncHistoryLoading && !hasHistory && !syncHistoryError && (
-              <div className="pm-sync-history-empty">
-                {zh ? "暂无同步历史。导入 Flow 或 Process 后将在此显示记录。" : "No sync history. Imported flows and processes will appear here."}
-              </div>
-            )}
-
-            {!syncHistoryLoading && syncJobs.length > 0 && (
-              <div className="pm-sync-history-section">
-                <h4>{zh ? "同步任务" : "Sync Jobs"}</h4>
-                <div className="pm-sync-history-list">
-                  {syncJobs.map((job) => {
-                    const stats = job.stats as Record<string, unknown> | undefined;
-                    const remoteKind = typeof stats?.remote_kind === "string" ? stats.remote_kind : job.remote_process_id ? "process" : "-";
-                    const errorCount = typeof stats?.error_count === "number" ? stats.error_count : 0;
-                    const tidasReport = stats?.tidas_import as Record<string, unknown> | undefined;
-                    const inserted = Number(tidasReport?.inserted ?? 0);
-                    const updated = Number(tidasReport?.updated ?? 0);
-                    const failed = Number(tidasReport?.failed ?? 0);
-                    return (
-                      <div key={job.id} className={`pm-sync-row pm-sync-job ${job.status === "completed" ? "pm-status-ok" : job.status === "failed" ? "pm-status-error" : ""}`}>
-                        <span className="pm-sync-row-status" title={job.status}>{job.status}</span>
-                        <span className="pm-sync-row-kind">{remoteKind}</span>
-                        <span className="pm-sync-row-id" title={job.remote_process_id ?? ""}>{job.remote_process_id ?? "-"}</span>
-                        <span className="pm-sync-row-time">{formatTime(job.created_at)}</span>
-                        {job.error_summary && (
-                          <span className="pm-sync-row-error" title={job.error_summary}>
-                            {zh ? "错误" : "Error"}: {job.error_summary.length > 40 ? job.error_summary.slice(0, 40) + "…" : job.error_summary}
-                          </span>
-                        )}
-                        {errorCount && Number(errorCount) > 0 && (
-                          <span className="pm-sync-row-warn">{zh ? "错误数" : "Errors"}: {errorCount}</span>
-                        )}
-                        {tidasReport && (
-                          <span className="pm-sync-row-stats">
-                            +{inserted} {zh ? "新增" : "ins"} · {updated} {zh ? "更新" : "upd"} · {failed} {zh ? "失败" : "fail"}
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {!syncHistoryLoading && syncRecords.length > 0 && (
-              <div className="pm-sync-history-section">
-                <h4>{zh ? "同步记录" : "Sync Records"}</h4>
-                <div className="pm-sync-history-list">
-                  {syncRecords.map((record) => {
-                    const canPublish = record.local_kind === "flow" || record.local_kind === "process";
-                    const publishKey = `${record.local_kind}:${record.local_uuid}`;
-                    return (
-                      <div key={record.id} className={`pm-sync-row pm-sync-record pm-status-ok`}>
-                        <span className="pm-sync-row-kind">{record.local_kind}</span>
-                        <span className="pm-sync-row-id" title={record.local_uuid}>
-                          {record.local_uuid}
-                          <button type="button" className="pm-copy-id-btn pm-copy-id-btn--compact" onClick={() => void copyText(record.local_uuid)}>{zh ? "复制" : "Copy"}</button>
-                        </span>
-                        <span className="pm-sync-row-id" title={record.remote_id}>
-                          {record.remote_id}
-                          <button type="button" className="pm-copy-id-btn pm-copy-id-btn--compact" onClick={() => void copyText(record.remote_id)}>{zh ? "复制" : "Copy"}</button>
-                        </span>
-                        {record.remote_version && <span className="pm-sync-row-version">{record.remote_version}</span>}
-                        <span className="pm-sync-row-time">{formatTime(record.synced_at)}</span>
-                        {canPublish && (
-                          <button
-                            type="button"
-                            className="pm-sync-row-action"
-                            onClick={() => void publishLocalRecord(record)}
-                            disabled={Boolean(publishingKey) || !selectedAccount}
-                          >
-                            {publishingKey === publishKey ? (zh ? "发布中" : "Publishing") : (zh ? "发布" : "Publish")}
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </section>
-        );
-      })()}
 
       {accountDialogOpen && (
         <div className="pm-modal-backdrop" role="presentation" onMouseDown={(event) => {

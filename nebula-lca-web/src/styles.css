@@ -5380,7 +5380,7 @@ body,
 }
 
 .pm-remote-toolbar {
-  justify-content: space-between;
+  gap: 12px;
   min-height: 38px;
 }
 
@@ -5402,11 +5402,8 @@ body,
 }
 
 .pm-remote-filterbar {
-  margin-top: 10px;
-  padding: 10px;
-  border: 1px solid #e2ebf0;
-  border-radius: 8px;
-  background: #f8fbfc;
+  flex: 1;
+  min-width: 0;
 }
 
 .pm-remote-filterbar input {
@@ -5446,22 +5443,6 @@ body,
 
 .pm-remote-result-table td:nth-child(3) {
   min-width: 260px;
-}
-
-.pm-copy-id-btn {
-  display: block;
-  margin-top: 5px;
-  border: 0;
-  background: transparent;
-  color: #6b8796;
-  font-size: 12px;
-  font-weight: 700;
-  padding: 0;
-  cursor: pointer;
-}
-
-.pm-copy-id-btn:hover {
-  color: #0876df;
 }
 
 .pm-result-summary {

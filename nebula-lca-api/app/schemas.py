@@ -1644,6 +1644,7 @@ class RemoteProcessItem(BaseModel):
     remote_id: str
     process_uuid: str
     process_name: str
+    process_name_en: str | None = None
     process_type: str = "unit_process"
     reference_flow_uuid: str | None = None
     source: str | None = None
@@ -1655,6 +1656,7 @@ class RemoteModelItem(BaseModel):
     remote_id: str
     model_uuid: str
     model_name: str
+    model_name_en: str | None = None
     source: str | None = None
     remote_version: str | None = None
     metadata: dict = Field(default_factory=dict)
