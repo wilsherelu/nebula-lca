@@ -1196,7 +1196,11 @@ def preview_remote_process(
 ) -> DataPlatformRemotePreviewResponse:
     account = _account_or_404(db, account_id)
     try:
-        detail = connector_for_account(_account_context(account, db)).get_process_detail(remote_id, remote_version)
+        detail = connector_for_account(_account_context(account, db)).get_process_detail(
+            remote_id,
+            remote_version,
+            resolve_flows=False,
+        )
         return _preview_from_process(account, detail)
     except ConnectorError as exc:
         raise _connector_error(exc) from exc

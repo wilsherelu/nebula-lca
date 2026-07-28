@@ -2342,9 +2342,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                 onAdd={lciNode ? undefined : () => setFlowPicker({ open: true, target: "in_intermediate" })}
                 onLink={!marketProcess && !lciNode ? (port) => openAssociationDialog("input", port) : undefined}
                 allowLinkWhenLocked
-                getLinkLabel={(port) => port.intermediateFlowLink?.status !== "inactive"
-                  ? t("关联背景数据", "Link background data")
-                  : t("关联", "Link")}
+                getLinkLabel={() => t("关联", "Link")}
                 onDelete={lciNode ? undefined : (id) =>
                   updateNode(node.id, (current) => ({
                     ...current,

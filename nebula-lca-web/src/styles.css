@@ -1659,10 +1659,13 @@ body,
 }
 
 .inspector-utility-actions {
+  position: absolute;
+  top: 14px;
+  right: 96px;
+  z-index: 1;
   display: flex;
-  justify-content: flex-end;
   gap: 6px;
-  margin-bottom: 4px;
+  margin: 0;
 }
 
 .inspector-utility-btn {
@@ -1695,7 +1698,7 @@ body,
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 14px;
+  gap: 10px;
   margin-bottom: 10px;
   border-bottom: 1px solid #e4ecef;
   padding-bottom: 8px;
@@ -2231,7 +2234,7 @@ body,
 .inventory-grid-header,
 .inventory-grid-row {
   display: grid;
-  grid-template-columns: 44px minmax(320px, 1fr) 96px 86px 92px 116px 72px 98px;
+  grid-template-columns: 44px minmax(260px, 1fr) 92px 84px 76px 92px 64px 72px;
   gap: 8px;
   align-items: center;
   padding: 8px 10px;
@@ -5236,6 +5239,18 @@ body,
   font-size: 12px;
 }
 
+.pm-remote-page-indicator {
+  display: inline-flex;
+  min-width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  color: #456777;
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
 .pm-remote-sync-report {
   margin-top: 10px;
   border: 1px solid #d7e2e8;
@@ -6142,6 +6157,10 @@ body,
   }
 }
 .intermediate-flow-link-trigger {
+  position: absolute;
+  top: 14px;
+  right: 292px;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -6233,7 +6252,7 @@ body,
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
   padding: 10px 16px;
   background: #f7fafc;
   border-bottom: 1px solid #e6eef2;
@@ -6249,6 +6268,7 @@ body,
   display: grid;
   gap: 7px;
   min-width: 0;
+  flex: 1 1 auto;
 }
 
 .intermediate-flow-link-counts,
@@ -6257,6 +6277,11 @@ body,
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.intermediate-flow-link-toolbar-actions {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
 }
 
 .intermediate-flow-link-counts > span {
@@ -6970,9 +6995,23 @@ body,
 }
 
 @media (max-width: 900px) {
+  .inspector-utility-actions,
+  .intermediate-flow-link-trigger {
+    position: static;
+  }
+
+  .inspector-utility-actions {
+    justify-content: flex-end;
+    margin-bottom: 4px;
+  }
+
   .intermediate-flow-link-dialog-toolbar {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .intermediate-flow-link-toolbar-actions {
+    flex-wrap: wrap;
   }
 
   .intermediate-flow-link-row,
