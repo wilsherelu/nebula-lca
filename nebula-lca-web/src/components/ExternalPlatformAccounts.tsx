@@ -506,54 +506,51 @@ export function ExternalPlatformAccounts(props: Props) {
 
       <div className="pm-remote-workspace">
         <div className="pm-remote-toolbar">
-          <div className="pm-remote-tabs">
-            {remoteKinds.map((kind) => (
-              <button
-                key={kind}
-                type="button"
-                className={remoteKind === kind ? "active" : ""}
-                onClick={() => {
-                  setRemoteKind(kind);
-                  setRemotePage(1);
-                  setRemoteResult(null);
-                  setRemotePreview(null);
-                }}
-              >
-                {kind === "flows" ? "Flow" : kind === "processes" ? "Process" : "Model"}
-              </button>
-            ))}
-          </div>
-          <div className="pm-remote-filterbar">
-            <input
-              value={remoteQuery}
-              onChange={(event) => setRemoteQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") void searchRemote(1);
+          {remoteKinds.map((kind) => (
+            <button
+              key={kind}
+              type="button"
+              className={`pm-remote-tab ${remoteKind === kind ? "active" : ""}`}
+              onClick={() => {
+                setRemoteKind(kind);
+                setRemotePage(1);
+                setRemoteResult(null);
+                setRemotePreview(null);
               }}
-              placeholder={zh ? "搜索名称、中文名、英文名或同义词" : "Search name, localized title, or synonym"}
-            />
-            <select value={remoteStateMode} onChange={(event) => setRemoteStateMode(event.target.value as "open" | "all")}>
-              <option value="open">{zh ? "开放数据" : "Open data"}</option>
-              <option value="all">{zh ? "全部状态" : "All states"}</option>
-            </select>
-            {remoteKind === "flows" && (
-              <select value={remoteFlowType} onChange={(event) => setRemoteFlowType(event.target.value)}>
-                {flowTypeOptions.map((value) => (
-                  <option key={value} value={value}>{value === "all" ? (zh ? "全部流类型" : "All flow types") : value}</option>
-                ))}
-              </select>
-            )}
-            {remoteKind === "processes" && (
-              <select value={remoteProcessType} onChange={(event) => setRemoteProcessType(event.target.value)}>
-                {processTypeOptions.map((value) => (
-                  <option key={value} value={value}>{value === "all" ? (zh ? "全部数据集类型" : "All dataset types") : value}</option>
-                ))}
-              </select>
-            )}
-            <button type="button" className="pm-primary-btn" onClick={() => void searchRemote(1)} disabled={remoteLoading || !selectedAccount}>
-              {remoteLoading ? (zh ? "查询中..." : "Searching...") : (zh ? "查询" : "Search")}
+            >
+              {kind === "flows" ? "Flow" : kind === "processes" ? "Process" : "Model"}
             </button>
-          </div>
+          ))}
+          <input
+            className="pm-remote-query-input"
+            value={remoteQuery}
+            onChange={(event) => setRemoteQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void searchRemote(1);
+            }}
+            placeholder={zh ? "搜索名称、中文名、英文名或同义词" : "Search name, localized title, or synonym"}
+          />
+          <select value={remoteStateMode} onChange={(event) => setRemoteStateMode(event.target.value as "open" | "all")}>
+            <option value="open">{zh ? "开放数据" : "Open data"}</option>
+            <option value="all">{zh ? "全部状态" : "All states"}</option>
+          </select>
+          {remoteKind === "flows" && (
+            <select value={remoteFlowType} onChange={(event) => setRemoteFlowType(event.target.value)}>
+              {flowTypeOptions.map((value) => (
+                <option key={value} value={value}>{value === "all" ? (zh ? "全部流类型" : "All flow types") : value}</option>
+              ))}
+            </select>
+          )}
+          {remoteKind === "processes" && (
+            <select value={remoteProcessType} onChange={(event) => setRemoteProcessType(event.target.value)}>
+              {processTypeOptions.map((value) => (
+                <option key={value} value={value}>{value === "all" ? (zh ? "全部数据集类型" : "All dataset types") : value}</option>
+              ))}
+            </select>
+          )}
+          <button type="button" className="pm-primary-btn" onClick={() => void searchRemote(1)} disabled={remoteLoading || !selectedAccount}>
+            {remoteLoading ? (zh ? "查询中..." : "Searching...") : (zh ? "查询" : "Search")}
+          </button>
           {!selectedAccount && (
             <button type="button" className="pm-primary-btn" onClick={openNewAccountDialog}>
               {zh ? "绑定天工账号" : "Bind TianGong Account"}
@@ -581,17 +578,22 @@ export function ExternalPlatformAccounts(props: Props) {
                     <td>
                       <strong>{itemTitle(item)}</strong>
                     </td>
-                    <td>{itemType(item)}</td>
+                    <td>
+                      <span>{itemType(item)}</span>
+                      {itemType(item) === "LCI result" && (
+                        <span className="pm-lci-result-badge" title={zh ? "清单结果（背景 LCI 数据集）" : "LCI result (background LCI dataset)"}>LCI</span>
+                      )}
+                    </td>
                     <td><span className="pm-result-summary">{itemSummary(item)}</span></td>
                     <td>{item.remote_version ?? "-"}</td>
                     <td>{itemModifiedAt(item)}</td>
                     <td>
                       <div className="pm-row-actions">
+                        <button type="button" className="pm-link-btn primary" onClick={() => void syncRemoteItem(item)} disabled={syncingKey === key}>
+                          {syncingKey === key ? (zh ? "导入中" : "Importing") : (zh ? "导入" : "Import")}
+                        </button>
                         <button type="button" className="pm-link-btn" onClick={() => void previewRemoteItem(item)} disabled={previewLoadingKey === key}>
                           {previewLoadingKey === key ? (zh ? "预览中" : "Previewing") : (zh ? "预览" : "Preview")}
-                        </button>
-                        <button type="button" className="pm-link-btn primary" onClick={() => void syncRemoteItem(item)} disabled={syncingKey === key}>
-                          {syncingKey === key ? (zh ? "导入中" : "Importing") : (zh ? "导入/更新" : "Import/Update")}
                         </button>
                       </div>
                     </td>

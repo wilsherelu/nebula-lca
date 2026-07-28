@@ -98,46 +98,76 @@ export function BackgroundLciAssociationSection({
     }
   };
 
+  const statusClass = !targetFlowUuid
+    ? "disabled"
+    : loading && providers.length === 0
+      ? "loading"
+      : error
+        ? "error"
+        : providers.length === 0
+          ? "empty"
+          : selectableProviders.length === 0
+            ? "partial"
+            : "ready";
+
+  const statusLabel = !targetFlowUuid
+    ? t("未就绪", "Not ready")
+    : loading && providers.length === 0
+      ? t("加载中", "Loading")
+      : error
+        ? t("加载失败", "Failed")
+        : providers.length === 0
+          ? t("无数据", "None")
+          : selectableProviders.length === 0
+            ? t("向量未导入", "No vector")
+            : t(`${selectableProviders.length} 可用`, `${selectableProviders.length} available`);
+
   return (
     <section className="background-lci-association-section">
-      <div className="background-lci-association-title">
-        <strong>{t("背景 LCI", "Background LCI")}</strong>
-        {targetFlowUuid && <span>{t(
+      <div className="background-lci-association-header">
+        <div className="background-lci-association-title">
+          <strong>{t("关联背景 LCI", "Link Background LCI")}</strong>
+          <span className={`background-lci-status-badge background-lci-status-badge--${statusClass}`}>{statusLabel}</span>
+        </div>
+        {targetFlowUuid && <span className="background-lci-match-hint">{t(
           convertedTargetFlowUuid ? "按转换后的产品流匹配" : "按当前产品流匹配",
           convertedTargetFlowUuid ? "Matched by converted product flow" : "Matched by current product flow",
         )}</span>}
       </div>
       {!targetFlowUuid ? (
-        <div className="mode-lock-hint">
-          {t("该输入尚未完成中间流转换。请先完成转换，再选择背景 LCI。", "Convert this input before choosing a background LCI.")}
+        <div className="background-lci-hint">
+          {t("请先完成中间流转换，再选择背景 LCI。", "Convert this input before choosing a background LCI.")}
         </div>
       ) : loading && providers.length === 0 ? (
-        <div className="table-empty">{t("正在加载可关联的背景 LCI…", "Loading linkable background LCI providers…")}</div>
+        <div className="background-lci-hint">{t("正在查找可关联的背景 LCI…", "Loading background LCI providers…")}</div>
       ) : error ? (
-        <div className="error-text">{error}</div>
+        <div className="background-lci-hint error-text">{error}</div>
       ) : providers.length === 0 ? (
-        <div className="table-empty">{t(
+        <div className="background-lci-hint">{t(
           convertedTargetFlowUuid
-            ? "本地数据库尚未导入该产品流对应的 LCI 数据集"
+            ? "本地数据库尚未导入该产品流对应的 LCI 数据集。"
             : "当前产品流尚无可关联背景 LCI；可先转换到目标产品流后再选择。",
           convertedTargetFlowUuid
-            ? "The local database has no imported LCI dataset for this product flow"
-            : "No background LCI is available for the current product flow. Convert it to a target product flow first.",
+            ? "No imported LCI dataset for this product flow in the local database."
+            : "No background LCI available. Convert to a target product flow first.",
         )}</div>
       ) : selectableProviders.length === 0 ? (
-        <div className="table-empty">{t(
-          `已找到 ${providers.length} 个 provider，但对应 LCI 向量尚未完成导入`,
-          `${providers.length} providers were found, but their LCI vectors are not imported`,
+        <div className="background-lci-hint">{t(
+          `已找到 ${providers.length} 个 provider，但 LCI 向量尚未导入。`,
+          `${providers.length} providers found, but LCI vectors are not imported.`,
         )}</div>
       ) : (
         <div className="background-lci-association-controls">
-          <div>
-            <strong>{t(`${selectableProviders.length} 个可计算 provider`, `${selectableProviders.length} calculable providers`)}</strong>
-            <span>{t("可按过程类型和地区筛选", "Filter by process type and location")}</span>
+          <div className="background-lci-association-status">
+            <strong className="background-lci-association-label">{t("背景 LCI 关联", "Background LCI association")}</strong>
+            <span className="background-lci-association-count">{t(`${selectableProviders.length} 个可计算 provider`, `${selectableProviders.length} calculable providers`)}</span>
+            <span className="background-lci-association-hint">{t("可按过程类型和地区筛选", "Filter by process type and location")}</span>
           </div>
-          <button type="button" className="flow-link-button primary" disabled={loading} onClick={() => setPickerOpen(true)}>
-            {t("选择背景数据库", "Choose Background Database")}
-          </button>
+          <div className="background-lci-association-action">
+            <button type="button" className="flow-link-button primary" disabled={loading} onClick={() => setPickerOpen(true)}>
+              {loading ? t("加载中…", "Loading…") : t("选择背景数据库", "Choose Background Database")}
+            </button>
+          </div>
         </div>
       )}
       <BackgroundLciPickerDialog
