@@ -125,8 +125,8 @@ def test_rework_acceptance_package_keeps_only_globally_unique_l1():
     copper_scrap = registry.resolve("dd15940e-a6be-4335-9a0b-d754746a4713")
     electricity_alias = registry.resolve("c0e1aaac-9086-46ad-9d83-878f9fb97da4")
 
-    assert registry.package_version == "2.13.0"
-    assert len(registry.rules) == 1043
+    assert registry.package_version == "2.14.0"
+    assert len(registry.rules) == 1389
     assert copper_scrap is not None
     assert copper_scrap.mapping_level == "L1"
     assert copper_scrap.target_flow_uuid == "cc0d4252-6207-41d6-8567-bcbad58a7bef"
@@ -139,6 +139,47 @@ def test_l3_shortlist_is_not_exposed_as_an_executable_builtin_rule():
     registry = get_intermediate_flow_link_registry()
 
     assert registry.resolve("0fab8c14-7641-454b-9f45-9201ddfe567a") is None
+
+
+def test_voltage_band_corrections_keep_only_safe_executable_rules():
+    registry = get_intermediate_flow_link_registry()
+
+    low_voltage_sources = {
+        "1d628fbe-aeb6-5714-9402-020bdbe70cb6",
+        "50657322-939c-4829-a87b-47c093bfa6a7",
+    }
+    for source_uuid in low_voltage_sources:
+        resolution = registry.resolve(source_uuid)
+        assert resolution is not None
+        assert resolution.mapping_level == "L2"
+        assert resolution.target_flow_uuid == "d69294d7-8d64-4915-a896-9996a014c410"
+        assert resolution.amount_factor == pytest.approx(1 / 3.6)
+
+    ambiguous_voltage_sources = {
+        "09635ee8-8993-4f3e-96fb-54917a2127c5",
+        "890a70b7-b677-4e2a-8a1b-7d017e0a10ae",
+        "d90ae09f-433d-46f0-a4f2-79c9e74a7c07",
+    }
+    assert all(
+        registry.resolve(source_uuid) is None
+        for source_uuid in ambiguous_voltage_sources
+    )
+
+
+def test_catalog_role_drift_rules_are_withdrawn_from_execution():
+    registry = get_intermediate_flow_link_registry()
+    withdrawn_sources = {
+        "1eb68227-7d39-4354-956b-2acb63931247",
+        "37a44719-0587-415a-a222-a2e48dfe8e80",
+        "7e0caeab-a6f8-4706-b349-7ed22e0832bb",
+        "e1a44d20-d968-4d64-bd7c-253a1441ab35",
+        "e7f0099e-ecb6-48b5-a683-c0da022022b4",
+    }
+
+    assert all(
+        registry.resolve(source_uuid) is None
+        for source_uuid in withdrawn_sources
+    )
 
 
 def test_orphan_sources_are_not_exposed_as_executable_builtin_rules():
