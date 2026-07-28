@@ -33,7 +33,10 @@ export function BackgroundLciAssociationSection({
   const [error, setError] = useState("");
   const t = (zh: string, en: string) => (language === "zh" ? zh : en);
   const link = port.intermediateFlowLink;
-  const targetFlowUuid = link && link.status !== "inactive" ? link.targetFlowUuid : "";
+  const convertedTargetFlowUuid = link && link.status !== "inactive" ? link.targetFlowUuid : "";
+  // An unchanged UUID is already a valid same-source target.  It does not
+  // need a synthetic conversion record before an exact provider can be used.
+  const targetFlowUuid = convertedTargetFlowUuid || port.flowUuid || "";
 
   useEffect(() => {
     setProviders([]);
@@ -99,7 +102,10 @@ export function BackgroundLciAssociationSection({
     <section className="background-lci-association-section">
       <div className="background-lci-association-title">
         <strong>{t("背景 LCI", "Background LCI")}</strong>
-        {targetFlowUuid && <span>{t("按转换后的 eco 中间流匹配", "Matched by converted eco flow")}</span>}
+        {targetFlowUuid && <span>{t(
+          convertedTargetFlowUuid ? "按转换后的产品流匹配" : "按当前产品流匹配",
+          convertedTargetFlowUuid ? "Matched by converted product flow" : "Matched by current product flow",
+        )}</span>}
       </div>
       {!targetFlowUuid ? (
         <div className="mode-lock-hint">
@@ -111,8 +117,12 @@ export function BackgroundLciAssociationSection({
         <div className="error-text">{error}</div>
       ) : providers.length === 0 ? (
         <div className="table-empty">{t(
-          "本地数据库尚未导入该 eco reference product 对应的 LCI 数据集",
-          "The local database has no imported LCI dataset for this eco reference product",
+          convertedTargetFlowUuid
+            ? "本地数据库尚未导入该产品流对应的 LCI 数据集"
+            : "当前产品流尚无可关联背景 LCI；可先转换到目标产品流后再选择。",
+          convertedTargetFlowUuid
+            ? "The local database has no imported LCI dataset for this product flow"
+            : "No background LCI is available for the current product flow. Convert it to a target product flow first.",
         )}</div>
       ) : selectableProviders.length === 0 ? (
         <div className="table-empty">{t(

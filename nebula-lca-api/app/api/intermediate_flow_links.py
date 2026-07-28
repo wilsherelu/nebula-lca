@@ -178,11 +178,6 @@ def get_providers(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     target = _flow_or_404(db, target_flow_uuid)
-    if "ecoinvent" not in str(target.source or "").casefold():
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "TARGET_FLOW_NOT_ECOINVENT", "message": "Provider lookup requires an ecoinvent flow"},
-        )
     providers = list_provider_candidates(db, target.flow_uuid)
     return {
         "target_flow_uuid": target.flow_uuid,
@@ -228,10 +223,6 @@ def list_user_rules(
 def create_user_rule(payload: UserRuleCreateRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
     source = _flow_or_404(db, payload.source_flow_uuid)
     target = _flow_or_404(db, payload.target_flow_uuid)
-    if "tiangong" not in str(source.source or "").casefold():
-        raise HTTPException(status_code=422, detail={"code": "SOURCE_FLOW_NOT_TIANGONG"})
-    if "ecoinvent" not in str(target.source or "").casefold():
-        raise HTTPException(status_code=422, detail={"code": "TARGET_FLOW_NOT_ECOINVENT"})
     source_type = "waste" if "waste" in source.flow_type.casefold() else "product"
     target_type = "waste" if "waste" in target.flow_type.casefold() else "product"
     if source_type != target_type:

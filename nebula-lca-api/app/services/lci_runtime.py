@@ -148,7 +148,7 @@ def expand_lci_vectors_into_graph(db: Session, graph: HybridGraph) -> ExpandedLc
                 direction=direction,
                 showOnNode=False,
                 isProduct=False,
-                sourceSystem="ecoinvent",
+                sourceSystem=flow.source if flow is not None else None,
             )
             if direction == "input":
                 node.inputs.append(port)

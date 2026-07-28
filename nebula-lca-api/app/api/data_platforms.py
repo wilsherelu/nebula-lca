@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
@@ -815,6 +816,61 @@ def _upsert_lci_vector(db: Session, *, account: DataPlatformAccount, process_uui
     return True
 
 
+def _is_lci_result_process(process: RemoteProcessDTO) -> bool:
+    return "lci result" in _safe_str(process.process_type).casefold()
+
+
+def _lci_vector_from_process_detail(detail: Any) -> dict[str, Any] | None:
+    """Derive a local vector from an already-solved TianGong LCI Process.
+
+    TianGong stores an LCI result as a normal TIDAS Process dataset.  It does
+    not add a Nebula-specific ``vector`` property, so the elementary exchanges
+    are the authoritative inventory representation.
+    """
+    process = detail.process
+    if not _is_lci_result_process(process):
+        return detail.vector if isinstance(detail.vector, dict) else None
+
+    process_json = detail.process_json if isinstance(detail.process_json, dict) else {}
+    reference_flow_uuid = _safe_str(process_json.get("reference_flow_uuid") or process.reference_flow_uuid)
+    if not reference_flow_uuid:
+        raise ConnectorError("TianGong LCI result is missing its quantitative reference flow.")
+
+    flows_by_uuid = {
+        flow.flow_uuid: flow
+        for flow in detail.flows
+        if _safe_str(flow.flow_uuid)
+    }
+    items: list[dict[str, Any]] = []
+    for exchange in process_json.get("exchanges", []):
+        if not isinstance(exchange, dict):
+            continue
+        flow_uuid = _safe_str(exchange.get("flow_uuid") or exchange.get("flowUuid"))
+        if not flow_uuid or flow_uuid == reference_flow_uuid:
+            continue
+        flow = flows_by_uuid.get(flow_uuid)
+        if flow is None:
+            raise ConnectorError(f"TianGong LCI result flow detail is unavailable: {flow_uuid}")
+        if "elementary" not in _safe_str(flow.flow_type).casefold():
+            raise ConnectorError(
+                f"TianGong LCI result contains a non-elementary exchange outside its reference product: {flow_uuid}"
+            )
+        unit = _safe_str(exchange.get("unit"))
+        if not unit:
+            raise ConnectorError(f"TianGong LCI result elementary exchange has no unit: {flow_uuid}")
+        items.append(
+            {
+                "flow_uuid": flow_uuid,
+                "direction": _safe_str(exchange.get("direction")).lower(),
+                "unit": unit,
+                "amount": exchange.get("amount"),
+            }
+        )
+    if not items:
+        raise ConnectorError("TianGong LCI result has no elementary exchanges to import.")
+    return {"items": items, "remote_version": process.remote_version}
+
+
 def _extract_hybrid_graph_from_remote_model(payload: dict[str, Any]) -> dict[str, Any]:
     candidates: list[Any] = [
         payload,
@@ -1244,6 +1300,11 @@ def sync_remote_process(account_id: str, payload: DataPlatformSyncProcessRequest
         synced: list[dict[str, Any]] = []
         for expected_flow_uuid, flow_dto in flows_by_uuid.items():
             dependency_flow_uuid = expected_flow_uuid
+            flow_dto = _resolve_flow_unit_metadata_from_local_catalog(
+                db,
+                account=account,
+                flow=flow_dto,
+            )
             flow_synced, flow_warnings, flow_report = _import_single_flow(
                 db,
                 connector,
@@ -1276,10 +1337,21 @@ def sync_remote_process(account_id: str, payload: DataPlatformSyncProcessRequest
         )
         if process_report.failed:
             raise ConnectorError(f"TIDAS process import failed: {process_report.errors[:3]}")
+        vector_payload = _lci_vector_from_process_detail(detail)
+        if vector_payload is not None:
+            db.flush()
+            local_process = db.get(ReferenceProcess, process.process_uuid)
+            if local_process is None:
+                raise ConnectorError(f"Imported TianGong process is unavailable locally: {process.process_uuid}")
+            local_process.process_type = "lci_dataset"
+            local_process_json = local_process.process_json if isinstance(local_process.process_json, dict) else {}
+            local_process_json["process_type"] = "lci_dataset"
+            local_process_json["source_dataset_type"] = process.process_type
+            local_process.process_json = local_process_json
         # Upsert process and vector lineage
         synced.append(_upsert_sync_record(db, account=account, local_kind="process", local_uuid=process.process_uuid, remote_id=process.remote_id, remote_version=process.remote_version, metadata=process.metadata))
-        if detail.vector and _upsert_lci_vector(db, account=account, process_uuid=process.process_uuid, vector_payload=detail.vector, warnings=warnings):
-            synced.append(_upsert_sync_record(db, account=account, local_kind="vector", local_uuid=process.process_uuid, remote_id=process.remote_id, remote_version=process.remote_version, metadata={"vector": True}))
+        if vector_payload and _upsert_lci_vector(db, account=account, process_uuid=process.process_uuid, vector_payload=vector_payload, warnings=warnings):
+            synced.append(_upsert_sync_record(db, account=account, local_kind="vector", local_uuid=process.process_uuid, remote_id=process.remote_id, remote_version=process.remote_version, metadata={"vector": True, "source_dataset_type": process.process_type}))
         # Commit all at once
         job.status = "completed"
         job.phase = "done"
@@ -1767,6 +1839,36 @@ def _import_single_flow(
         )
     )
     return synced, warnings, tidas_report
+
+
+def _resolve_flow_unit_metadata_from_local_catalog(
+    db: Session,
+    *,
+    account: DataPlatformAccount,
+    flow: RemoteFlowDTO,
+) -> RemoteFlowDTO:
+    """Reuse a previously synced, same-source Flow only for missing units.
+
+    TianGong's protected standard flow-property records are not always readable
+    through the account API.  A prior TianGong Flow sync is still an auditable
+    unit source for the exact same UUID, so it can complete that metadata
+    without guessing a unit or accepting an unreadable Flow.
+    """
+    if _safe_str(flow.default_unit) and _safe_str(flow.unit_group):
+        return flow
+    local = db.get(FlowRecord, flow.flow_uuid)
+    if local is None or _safe_str(local.source).casefold() != _safe_str(account.platform).casefold():
+        return flow
+    if not _safe_str(local.default_unit) or not _safe_str(local.unit_group):
+        return flow
+    metadata = dict(flow.metadata) if isinstance(flow.metadata, dict) else {}
+    metadata["unit_metadata_source"] = "local_same_source_flow"
+    return replace(
+        flow,
+        default_unit=local.default_unit,
+        unit_group=local.unit_group,
+        metadata=metadata,
+    )
 
 
 def _persist_failed_sync_job(
