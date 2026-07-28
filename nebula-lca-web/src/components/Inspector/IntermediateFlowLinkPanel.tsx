@@ -252,8 +252,8 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
             <div className="intermediate-flow-link-dialog-toolbar">
               <div className="intermediate-flow-link-overview">
                 <p>{t(
-                  "在此完成中间流转换。可自动转换的流会直接处理；需要核对的流请确认后转换；没有自动结果时可手动转换。也可以暂不转换，未转换的流会保留原始 TIDAS 标识，仍可继续使用并在之后处理。完成转换后，回到清单分析，在对应流的“关联背景数据”中选择背景过程。",
-                  "Convert intermediate flows here. Automatically convertible flows can be processed directly; review flows that need confirmation; use manual conversion when no automatic result is available. You can also keep TIDAS flows unchanged and convert them later. After conversion, return to inventory analysis and use Link background data on the relevant flow to choose a background process.",
+                  "在此完成中间流转换。可自动转换的流会直接处理；需要核对的流请确认后转换；没有自动结果时可手动转换。也可以暂不转换，未转换的流会保留原始 TIDAS 标识，仍可继续使用并在之后处理。转换本身不会关联背景数据库；完成转换后，回到清单分析，在对应流的「关联背景数据」中选择背景过程。",
+                  "Convert intermediate flows here. Automatically convertible flows can be processed directly; review flows that need confirmation; use manual conversion when no automatic result is available. You can also keep TIDAS flows unchanged and convert them later. Conversion itself does not associate a background database; after conversion, return to inventory analysis and use Link background data on the relevant flow to choose a background process.",
                 )}</p>
                 <div className="intermediate-flow-link-counts" aria-live="polite">
                   {resolutionState === "loading" ? (
@@ -270,9 +270,6 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                 </div>
               </div>
               <div className="intermediate-flow-link-toolbar-actions">
-                <button type="button" className="flow-link-button secondary" disabled={busy} onClick={keepTidasFlows}>
-                  {t("暂不转换", "Keep TIDAS flows")}
-                </button>
                 {resolutionState === "error" && (
                   <button type="button" className="flow-link-button secondary" disabled={busy} onClick={resolveCandidates}>
                     {t("重新检测", "Retry")}
@@ -283,6 +280,9 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                 </button>
                 <button type="button" className="flow-link-button secondary" disabled={busy || l2ReviewItems.length === 0} onClick={() => setL2ReviewOpen(true)}>
                   {t(`确认转换（${l2ReviewItems.length}）`, `Confirm conversion (${l2ReviewItems.length})`)}
+                </button>
+                <button type="button" className="flow-link-button ghost" disabled={busy} onClick={keepTidasFlows}>
+                  {t("保留原始 TIDAS", "Keep original TIDAS")}
                 </button>
               </div>
             </div>
@@ -320,7 +320,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                 </div>
                 <div className="intermediate-flow-link-actions">
                   <span className="muted-text">
-                    {t("请回到清单分析，点击该流的“关联背景数据”。", "Return to inventory analysis and use Link background data on this flow.")}
+                    {t("请回到清单分析，点击该流的「关联背景数据」。", "Return to inventory analysis and use Link background data on this flow.")}
                   </span>
                 </div>
               </>
@@ -333,10 +333,10 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                 </span>
                 <span className="muted-text">
                   {review.mapping_level === "L1"
-                    ? t("可自动转换，可通过上方按钮批量处理。", "Ready for automatic conversion; use the action above to process it in bulk.")
+                    ? t("自动转换：可通过上方按钮批量处理。", "Automatic conversion: use the action above to process in bulk.")
                     : review.mapping_level === "L2"
-                      ? t("需要核对转换目标，确认后才写入模型。", "Review the conversion target before writing it into the model.")
-                      : t("这是已保存的手动转换，需逐条确认复用。", "This saved manual conversion must be reused per flow explicitly.")}
+                      ? t("需确认转换：请核对转换目标，确认后才写入模型。", "Needs confirmation: review the conversion target before writing it into the model.")
+                      : t("手动转换：已保存的手动选择，需逐条确认复用。", "Manual conversion: saved manual selection; must be reused per flow explicitly.")}
                 </span>
                 {(review.warnings ?? []).length > 0 && (
                   <span className="intermediate-flow-review-hint" title={(review.warnings ?? []).join(" · ")}>

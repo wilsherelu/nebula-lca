@@ -45,10 +45,10 @@ describe("IntermediateFlowLinkPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /中间流转换/ }));
     await waitFor(() => expect(screen.getByRole("dialog", { name: "中间流转换" })).toBeTruthy());
-    expect(screen.getByText("暂不转换")).toBeTruthy();
+    expect(screen.getByText("保留原始 TIDAS")).toBeTruthy();
     expect(screen.getByText(/未转换的流会保留原始 TIDAS 标识/)).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "暂不转换" }));
+    fireEvent.click(screen.getByRole("button", { name: "保留原始 TIDAS" }));
     expect(screen.queryByRole("dialog", { name: "中间流转换" })).toBeNull();
     expect(node.data.inputs[0].intermediateFlowLink).toBeUndefined();
   });

@@ -93,9 +93,16 @@ export function BackgroundLciPickerDialog({
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="overlay-head background-lci-picker-head">
-          <div className="intermediate-flow-link-title">
-            <strong>{t("选择背景数据库", "Choose Background Database")}</strong>
-            <span>{filteredProviders.length}</span>
+          <div className="background-lci-picker-head-content">
+            <div className="intermediate-flow-link-title">
+              <strong>{t("选择背景数据库", "Choose Background Database")}</strong>
+              <span>{filteredProviders.length}</span>
+            </div>
+            {(sourceFlowName || targetFlowUuid) && (
+              <span className="background-lci-picker-subtitle" title={targetFlowUuid}>
+                {sourceFlowName || targetFlowUuid}
+              </span>
+            )}
           </div>
           <button type="button" className="drawer-close-btn" disabled={busy} onClick={onClose}>
             {t("关闭", "Close")}
@@ -103,37 +110,34 @@ export function BackgroundLciPickerDialog({
         </header>
 
         <div className="background-lci-picker-toolbar">
-          <div className="background-lci-picker-context">
-            <strong>{t("已转换流", "Converted flow")}</strong>
-            <span title={sourceFlowName}>{sourceFlowName || targetFlowUuid || "-"}</span>
-            {targetFlowUuid && <small title={targetFlowUuid}>{targetFlowUuid}</small>}
-          </div>
-          <label>
-            <span>{t("过程名称", "Process")}</span>
-            <input
-              value={query}
-              disabled={busy}
-              placeholder={t("搜索过程、参考产品", "Search process or reference product")}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-          </label>
-          <label>
-            <span>{t("过程类型", "Process type")}</span>
-            <select value={kind} disabled={busy} onChange={(event) => setKind(event.target.value as ProcessKind)}>
-              <option value="all">{t("全部类型", "All types")}</option>
-              <option value="market_group">{t("市场组", "Market group")}</option>
-              <option value="market">{t("市场过程", "Market")}</option>
-              <option value="production">{t("生产/运行过程", "Production / operation")}</option>
-              <option value="other">{t("其他过程", "Other")}</option>
-            </select>
-          </label>
-          <label>
-            <span>{t("地理位置", "Location")}</span>
-            <select value={location} disabled={busy} onChange={(event) => setLocation(event.target.value)}>
-              <option value="">{t("全部地区", "All locations")}</option>
-              {locations.map((item) => <option key={item} value={item}>{item}</option>)}
-            </select>
-          </label>
+          <input
+            className="background-lci-picker-search"
+            value={query}
+            disabled={busy}
+            placeholder={t("搜索过程、参考产品、地区…", "Search process, reference product, location…")}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <select
+            className="background-lci-picker-filter"
+            value={kind}
+            disabled={busy}
+            onChange={(event) => setKind(event.target.value as ProcessKind)}
+          >
+            <option value="all">{t("全部类型", "All types")}</option>
+            <option value="market_group">{t("市场组", "Market group")}</option>
+            <option value="market">{t("市场过程", "Market")}</option>
+            <option value="production">{t("生产/运行过程", "Production / operation")}</option>
+            <option value="other">{t("其他过程", "Other")}</option>
+          </select>
+          <select
+            className="background-lci-picker-filter"
+            value={location}
+            disabled={busy}
+            onChange={(event) => setLocation(event.target.value)}
+          >
+            <option value="">{t("全部地区", "All locations")}</option>
+            {locations.map((item) => <option key={item} value={item}>{item}</option>)}
+          </select>
           <button
             type="button"
             className="flow-link-button secondary background-lci-picker-reset"
@@ -155,8 +159,6 @@ export function BackgroundLciPickerDialog({
                 <th>{t("过程名称", "Process")}</th>
                 <th>{t("来源", "Source")}</th>
                 <th>{t("参考产品", "Reference product")}</th>
-                <th>{t("单位", "Unit")}</th>
-                <th>{t("过程类型", "Type")}</th>
                 <th>{t("地区", "Location")}</th>
                 <th>{t("清单", "Inventory")}</th>
                 <th>{t("操作", "Action")}</th>
@@ -168,17 +170,19 @@ export function BackgroundLciPickerDialog({
                 const kindLabel = type === "market_group"
                   ? t("市场组", "Market group")
                   : type === "market"
-                    ? t("市场过程", "Market")
+                    ? t("市场", "Market")
                     : type === "production"
-                      ? t("生产/运行", "Production / operation")
+                      ? t("生产", "Production")
                       : t("其他", "Other");
+                const refProduct = [provider.reference_product_name, provider.reference_product_unit].filter(Boolean).join(" · ");
                 return (
                   <tr key={provider.process_uuid}>
-                    <td title={provider.process_name}>{provider.process_name}</td>
+                    <td className="background-lci-cell-process" title={provider.process_name}>
+                      <span>{provider.process_name}</span>
+                      <small className="background-lci-kind-tag">{kindLabel}</small>
+                    </td>
                     <td>{provider.source || "-"}</td>
-                    <td title={provider.reference_product_name || "-"}>{provider.reference_product_name || "-"}</td>
-                    <td>{provider.reference_product_unit || "-"}</td>
-                    <td>{kindLabel}</td>
+                    <td title={refProduct || "-"}>{refProduct || "-"}</td>
                     <td>{provider.location || "-"}</td>
                     <td><span className="background-lci-vector-badge">{provider.vector_nnz.toLocaleString()}</span></td>
                     <td>
