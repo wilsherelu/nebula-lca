@@ -258,7 +258,7 @@ class BaseDataPlatformConnector:
     def get_flow_detail(self, remote_flow_id: str, remote_version: str | None = None) -> RemoteFlowDTO:
         raise NotImplementedError
 
-    def get_process_detail(self, remote_process_id: str, remote_version: str | None = None) -> RemoteProcessDetailDTO:
+    def get_process_detail(self, remote_process_id: str, remote_version: str | None = None, *, resolve_flows: bool = True) -> RemoteProcessDetailDTO:
         raise NotImplementedError
 
     def get_model_detail(self, remote_model_id: str, remote_version: str | None = None) -> RemoteModelDetailDTO:
@@ -335,7 +335,7 @@ class MockDataPlatformConnector(BaseDataPlatformConnector):
             raise ConnectorError("remote_flow_id is required")
         return RemoteFlowDTO(remote_id=remote_id, flow_uuid=remote_id, flow_name=f"Mock flow {remote_id}", source="mock", remote_version=remote_version or "v1")
 
-    def get_process_detail(self, remote_process_id: str, remote_version: str | None = None) -> RemoteProcessDetailDTO:
+    def get_process_detail(self, remote_process_id: str, remote_version: str | None = None, *, resolve_flows: bool = True) -> RemoteProcessDetailDTO:
         remote_id = remote_process_id.strip()
         if not remote_id:
             raise ConnectorError("remote_process_id is required")
@@ -458,7 +458,7 @@ class CustomHttpDataPlatformConnector(BaseDataPlatformConnector):
             raise ConnectorError("custom flow detail response must be an object")
         return _flow_from_mapping(payload.get("flow") if isinstance(payload.get("flow"), dict) else payload, self.account.platform)
 
-    def get_process_detail(self, remote_process_id: str, remote_version: str | None = None) -> RemoteProcessDetailDTO:
+    def get_process_detail(self, remote_process_id: str, remote_version: str | None = None, *, resolve_flows: bool = True) -> RemoteProcessDetailDTO:
         payload = self._json_get(f"/processes/{url_parse.quote(remote_process_id, safe='')}")
         if not isinstance(payload, dict):
             raise ConnectorError("custom process detail response must be an object")
@@ -770,7 +770,7 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
         flow = _tiangong_flow_from_row(self._table_one("flows", remote_flow_id, remote_version))
         return self._resolve_flow_dependencies(flow)
 
-    def get_process_detail(self, remote_process_id: str, remote_version: str | None = None) -> RemoteProcessDetailDTO:
+    def get_process_detail(self, remote_process_id: str, remote_version: str | None = None, *, resolve_flows: bool = True) -> RemoteProcessDetailDTO:
         row = self._table_one("processes", remote_process_id, remote_version)
         process = _tiangong_process_from_row(row)
         flow_stubs = [_tiangong_flow_from_exchange(exchange) for exchange in _extract_process_exchanges(row)]
@@ -779,6 +779,9 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
         failed_flow_uuids: list[str] = []
         for flow_stub in flow_stubs:
             if flow_stub is None:
+                continue
+            if not resolve_flows:
+                flows.append(flow_stub)
                 continue
             try:
                 flows.append(self.get_flow_detail(flow_stub.flow_uuid, flow_stub.remote_version))
@@ -895,7 +898,7 @@ class SkeletonDataPlatformConnector(BaseDataPlatformConnector):
     def get_flow_detail(self, remote_flow_id: str, remote_version: str | None = None) -> RemoteFlowDTO:
         raise ConnectorError(f"{self.account.platform} live flow sync is not implemented yet")
 
-    def get_process_detail(self, remote_process_id: str, remote_version: str | None = None) -> RemoteProcessDetailDTO:
+    def get_process_detail(self, remote_process_id: str, remote_version: str | None = None, *, resolve_flows: bool = True) -> RemoteProcessDetailDTO:
         raise ConnectorError(f"{self.account.platform} live process sync is not implemented yet")
 
     def get_model_detail(self, remote_model_id: str, remote_version: str | None = None) -> RemoteModelDetailDTO:

@@ -252,8 +252,8 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
             <div className="intermediate-flow-link-dialog-toolbar">
               <div className="intermediate-flow-link-overview">
                 <p>{t(
-                  "在此完成中间流转换。可自动转换的流会直接处理；需要核对的流请确认后转换；没有自动结果时可手动转换。也可以暂不转换，未转换的流会保留原始 TIDAS 标识，仍可继续使用并在之后处理。转换本身不会关联背景数据库；完成转换后，回到清单分析，在对应流的「关联背景数据」中选择背景过程。",
-                  "Convert intermediate flows here. Automatically convertible flows can be processed directly; review flows that need confirmation; use manual conversion when no automatic result is available. You can also keep TIDAS flows unchanged and convert them later. Conversion itself does not associate a background database; after conversion, return to inventory analysis and use Link background data on the relevant flow to choose a background process.",
+                  "先完成转换，再回到清单分析关联背景 LCI；不转换也可继续保留原始 TIDAS Flow。",
+                  "Convert first, then link a background LCI from inventory analysis. You can also keep the original TIDAS flow.",
                 )}</p>
                 <div className="intermediate-flow-link-counts" aria-live="polite">
                   {resolutionState === "loading" ? (
@@ -276,13 +276,13 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                   </button>
                 )}
                 <button type="button" className="flow-link-button primary" disabled={busy || l1Count === 0} onClick={applyAllL1}>
-                  {t(`自动转换（${l1Count}）`, `Auto-convert (${l1Count})`)}
+                  {t(`自动（${l1Count}）`, `Auto (${l1Count})`)}
                 </button>
                 <button type="button" className="flow-link-button secondary" disabled={busy || l2ReviewItems.length === 0} onClick={() => setL2ReviewOpen(true)}>
-                  {t(`确认转换（${l2ReviewItems.length}）`, `Confirm conversion (${l2ReviewItems.length})`)}
+                  {t(`确认（${l2ReviewItems.length}）`, `Confirm (${l2ReviewItems.length})`)}
                 </button>
                 <button type="button" className="flow-link-button ghost" disabled={busy} onClick={keepTidasFlows}>
-                  {t("保留原始 TIDAS", "Keep original TIDAS")}
+                  {t("保留 TIDAS", "Keep TIDAS")}
                 </button>
               </div>
             </div>

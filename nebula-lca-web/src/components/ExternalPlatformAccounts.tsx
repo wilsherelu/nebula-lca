@@ -368,18 +368,24 @@ export function ExternalPlatformAccounts(props: Props) {
     const key = `${remoteKind}:${item.remote_id}`;
     const params = new URLSearchParams();
     if (item.remote_version) params.set("remote_version", item.remote_version);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 20_000);
     setPreviewLoadingKey(key);
     setErrorText("");
     try {
       const suffix = params.toString() ? `?${params.toString()}` : "";
       const payload = await requestJson<RemotePreviewResponse>(
         `${API_BASE}/data-platforms/accounts/${encodeURIComponent(selectedAccount.id)}/${remoteKind}/${encodeURIComponent(item.remote_id)}/preview${suffix}`,
+        { signal: controller.signal },
       );
       setRemotePreview(payload);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "preview failed";
+      const message = error instanceof DOMException && error.name === "AbortError"
+        ? (zh ? "预览超时，请重试或直接导入。" : "Preview timed out. Retry or import directly.")
+        : error instanceof Error ? error.message : "preview failed";
       setErrorText(zh ? `预览失败：${message}` : `Preview failed: ${message}`);
     } finally {
+      window.clearTimeout(timeout);
       setPreviewLoadingKey("");
     }
   };
@@ -615,7 +621,7 @@ export function ExternalPlatformAccounts(props: Props) {
             <button type="button" className="pm-ghost-btn" onClick={() => void searchRemote(Math.max(1, remotePage - 1))} disabled={remoteLoading || remotePage <= 1}>
               {zh ? "上一页" : "Previous"}
             </button>
-            <span>{remotePage}</span>
+            <span className="pm-remote-page-indicator" aria-label={zh ? `第 ${remotePage} 页` : `Page ${remotePage}`}>{remotePage}</span>
             <button type="button" className="pm-ghost-btn" onClick={() => void searchRemote(remotePage + 1)} disabled={remoteLoading || !remoteResult?.has_more}>
               {zh ? "下一页" : "Next"}
             </button>

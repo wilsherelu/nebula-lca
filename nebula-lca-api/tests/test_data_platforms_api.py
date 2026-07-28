@@ -736,6 +736,7 @@ def test_tiangong_preview_reads_detail_without_importing(client, monkeypatch):
     assert payload["summary"]["exchange_count"] == 1
     assert payload["related"][0]["flow_id"] == "flow-1"
     assert any("/rest/v1/processes" in call["url"] for call in calls)
+    assert not any("/rest/v1/flows" in call["url"] for call in calls)
     db = _db_module.SessionLocal()
     try:
         assert db.query(FlowRecord).count() == 0
