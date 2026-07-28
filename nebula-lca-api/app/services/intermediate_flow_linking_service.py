@@ -216,10 +216,11 @@ def _validate_resolution_records(
         return "SOURCE_FLOW_NOT_FOUND"
     if target is None:
         return "TARGET_FLOW_NOT_FOUND"
-    if classify_flow_source(str(source.source or "")) != SOURCE_SPACE_TIANGONG:
-        return "SOURCE_FLOW_NOT_TIANGONG"
-    if "ecoinvent" not in str(target.source or "").casefold():
-        return "TARGET_FLOW_NOT_ECOINVENT"
+    if resolution.rule_origin == "builtin":
+        if classify_flow_source(str(source.source or "")) != SOURCE_SPACE_TIANGONG:
+            return "SOURCE_FLOW_NOT_TIANGONG"
+        if "ecoinvent" not in str(target.source or "").casefold():
+            return "TARGET_FLOW_NOT_ECOINVENT"
     if resolution.source_flow_type and _flow_type_key(source.flow_type) != _flow_type_key(resolution.source_flow_type):
         return "SOURCE_FLOW_TYPE_DRIFT"
     if resolution.target_flow_type and _flow_type_key(target.flow_type) != _flow_type_key(resolution.target_flow_type):
@@ -466,6 +467,8 @@ def list_provider_candidates(db: Session, target_flow_uuid: str) -> list[dict[st
     providers: list[dict[str, Any]] = []
     for row in rows:
         process_json = row.process_json if isinstance(row.process_json, dict) else {}
+        source_file = str(row.source_file or "")
+        source = source_file.split("://", 1)[0] if "://" in source_file else str(process_json.get("source") or source_file)
         reference_uuid = str(
             row.reference_flow_uuid
             or process_json.get("reference_product_id")
@@ -478,6 +481,7 @@ def list_provider_candidates(db: Session, target_flow_uuid: str) -> list[dict[st
             "process_uuid": row.process_uuid,
             "process_name": row.process_name,
             "process_name_en": row.process_name_en,
+            "source": source,
             "location": str(process_json.get("location") or ""),
             "reference_product_flow_uuid": reference_uuid,
             "reference_product_name": str(process_json.get("reference_product") or ""),

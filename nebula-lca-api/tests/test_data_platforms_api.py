@@ -1462,6 +1462,98 @@ def _process_row_with_reference(ref_internal_id: str = "2"):
     }
 
 
+def _lci_result_row():
+    return {
+        "id": "tg-lci-result",
+        "name": "LCI result test",
+        "version": "02.00.001",
+        "json": {
+            "processDataSet": {
+                "processInformation": {
+                    "dataSetInformation": {"common:UUID": "tg-lci-result", "name": "LCI result test"},
+                    "quantitativeReference": {"referenceToReferenceFlow": "1"},
+                },
+                "modellingAndValidation": {"LCIMethodAndAllocation": {"typeOfDataSet": "LCI result"}},
+                "exchanges": {
+                    "exchange": [
+                        {
+                            "@dataSetInternalID": "1",
+                            "exchangeDirection": "output",
+                            "referenceToFlowDataSet": {"@refObjectId": "lci-reference-product"},
+                            "meanAmount": 1,
+                            "referenceToUnit": {"common:shortDescription": "kg"},
+                        },
+                        {
+                            "@dataSetInternalID": "2",
+                            "exchangeDirection": "input",
+                            "referenceToFlowDataSet": {"@refObjectId": "lci-elementary-input"},
+                            "meanAmount": 2.5,
+                            "referenceToUnit": {"common:shortDescription": "kg"},
+                        },
+                        {
+                            "@dataSetInternalID": "3",
+                            "exchangeDirection": "output",
+                            "referenceToFlowDataSet": {"@refObjectId": "lci-elementary-output"},
+                            "meanAmount": 0.4,
+                            "referenceToUnit": {"common:shortDescription": "kg"},
+                        },
+                    ]
+                },
+            }
+        },
+    }
+
+
+def _lci_flow_row(flow_id: str, flow_type: str):
+    return {
+        "id": flow_id,
+        "name": flow_id,
+        "version": "02.00.001",
+        "flow_type": flow_type,
+        "default_unit": "kg",
+        "unit_group": "Units of mass",
+        "json": {"flowDataSet": {"flowInformation": {"dataSetInformation": {"common:UUID": flow_id, "name": flow_id}}}},
+    }
+
+
+def test_tiangong_lci_result_sync_derives_vector_from_elementary_exchanges(client, monkeypatch):
+    def fake_urlopen(req, timeout):  # noqa: ARG001
+        url = req.full_url
+        if "/auth/v1/token?grant_type=password" in url:
+            return _FakeSupabaseResponse({"access_token": _jwt(), "refresh_token": "rt", "expires_in": 3600, "token_type": "bearer"})
+        if "/rest/v1/processes" in url and "tg-lci-result" in url:
+            return _FakeSupabaseResponse([_lci_result_row()])
+        for flow_id, flow_type in (
+            ("lci-reference-product", "Product flow"),
+            ("lci-elementary-input", "Elementary flow"),
+            ("lci-elementary-output", "Elementary flow"),
+        ):
+            if "/rest/v1/flows" in url and flow_id in url:
+                return _FakeSupabaseResponse([_lci_flow_row(flow_id, flow_type)])
+        raise AssertionError(f"Unexpected URL {url}")
+
+    monkeypatch.setattr("app.services.data_platform_connectors.url_request.urlopen", fake_urlopen)
+    account_id = _create_tiangong_account(client)
+    response = client.post(
+        f"/api/data-platforms/accounts/{account_id}/processes/sync",
+        json={"remote_process_id": "tg-lci-result", "overwrite": True},
+    )
+    assert response.status_code == 200, response.text
+    db = _db_module.SessionLocal()
+    try:
+        process = db.get(ReferenceProcess, "tg-lci-result")
+        vector = db.get(LciProcessVector, "tg-lci-result")
+        assert process is not None
+        assert process.process_type == "lci_dataset"
+        assert process.reference_flow_uuid == "lci-reference-product"
+        assert vector is not None
+        assert vector.nnz == 2
+        assert vector.source == "tiangong"
+        assert vector.source_package_version == "02.00.001"
+    finally:
+        db.close()
+
+
 def test_tiangong_process_sync_preserves_quantitative_reference_and_units(client, monkeypatch):
     def fake_urlopen(req, timeout):  # noqa: ARG001
         url = req.full_url

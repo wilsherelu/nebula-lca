@@ -153,6 +153,7 @@ export function BackgroundLciPickerDialog({
             <thead>
               <tr>
                 <th>{t("过程名称", "Process")}</th>
+                <th>{t("来源", "Source")}</th>
                 <th>{t("参考产品", "Reference product")}</th>
                 <th>{t("单位", "Unit")}</th>
                 <th>{t("过程类型", "Type")}</th>
@@ -174,6 +175,7 @@ export function BackgroundLciPickerDialog({
                 return (
                   <tr key={provider.process_uuid}>
                     <td title={provider.process_name}>{provider.process_name}</td>
+                    <td>{provider.source || "-"}</td>
                     <td title={provider.reference_product_name || "-"}>{provider.reference_product_name || "-"}</td>
                     <td>{provider.reference_product_unit || "-"}</td>
                     <td>{kindLabel}</td>

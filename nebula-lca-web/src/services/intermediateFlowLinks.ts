@@ -42,6 +42,7 @@ export type ProviderCandidate = {
   process_uuid: string;
   process_name: string;
   process_name_en?: string;
+  source?: string;
   location?: string;
   reference_product_flow_uuid?: string;
   reference_product_name?: string;
