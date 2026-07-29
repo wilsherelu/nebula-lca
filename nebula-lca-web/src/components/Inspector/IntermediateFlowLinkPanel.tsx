@@ -225,7 +225,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
     <>
       <button
         type="button"
-        className="text-btn inspector-toolbar-btn intermediate-flow-link-trigger"
+        className="inspector-utility-btn intermediate-flow-link-trigger"
         onClick={openDialog}
       >
         {t("中间流转换", "Convert Flows")}
@@ -325,24 +325,19 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                 </div>
               </>
             ) : review ? (
-              <div className="intermediate-flow-review-card">
-                <span>
-                  {t("目标：", "Target: ")}
-                  {review.target_flow_name || review.target_flow_name_en || review.target_flow_uuid}
-                  {` · ${review.target_unit}`}
-                </span>
-                <span className="muted-text">
-                  {review.mapping_level === "L1"
-                    ? t("自动转换：可通过上方按钮批量处理。", "Automatic conversion: use the action above to process in bulk.")
-                    : review.mapping_level === "L2"
-                      ? t("需确认转换：请核对转换目标，确认后才写入模型。", "Needs confirmation: review the conversion target before writing it into the model.")
-                      : t("手动转换：已保存的手动选择，需逐条确认复用。", "Manual conversion: saved manual selection; must be reused per flow explicitly.")}
-                </span>
-                {(review.warnings ?? []).length > 0 && (
-                  <span className="intermediate-flow-review-hint" title={(review.warnings ?? []).join(" · ")}>
-                    {t("需核对产品范围和限定词", "Review product scope and qualifiers")}
+              <>
+                <div className="intermediate-flow-link-target">
+                  <span>
+                    {t("目标：", "Target: ")}
+                    {review.target_flow_name || review.target_flow_name_en || review.target_flow_uuid}
+                    {` · ${review.target_unit}`}
                   </span>
-                )}
+                  {(review.warnings ?? []).length > 0 && (
+                    <span className="intermediate-flow-review-hint" title={(review.warnings ?? []).join(" · ")}>
+                      {t("需核对产品范围和限定词", "Review product scope and qualifiers")}
+                    </span>
+                  )}
+                </div>
                 <div className="intermediate-flow-link-actions">
                   {review.mapping_level === "L1" ? (
                     <span className="muted-text">{t("等待自动转换", "Ready for automatic conversion")}</span>
@@ -359,17 +354,21 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                     </button>
                   )}
                 </div>
-              </div>
+              </>
             ) : null}
             {!link && !review && resolutionState === "ready" && (
-              <div className="intermediate-flow-link-actions">
-                <span className="muted-text" title={reasonByPort[port.id] ?? resolutionStatus}>
-                  {t("未找到可自动转换的结果", "No automatic conversion is available")}
-                </span>
-                <button type="button" className="flow-link-button ghost compact" onClick={() => setProxyPortId(port.id)}>
-                  {t("手动转换", "Manual conversion")}
-                </button>
-              </div>
+              <>
+                <div className="intermediate-flow-link-target">
+                  <span className="muted-text" title={reasonByPort[port.id] ?? resolutionStatus}>
+                    {t("无自动候选", "No automatic candidate")}
+                  </span>
+                </div>
+                <div className="intermediate-flow-link-actions">
+                  <button type="button" className="flow-link-button ghost compact" onClick={() => setProxyPortId(port.id)}>
+                    {t("手动转换", "Manual conversion")}
+                  </button>
+                </div>
+              </>
             )}
           </div>
         );
