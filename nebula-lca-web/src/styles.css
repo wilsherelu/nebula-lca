@@ -6163,7 +6163,7 @@ body,
   z-index: 1;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
 }
 
 .intermediate-flow-link-trigger > span {
@@ -6332,8 +6332,8 @@ body,
 
 .intermediate-flow-link-row {
   display: grid;
-  grid-template-columns: minmax(220px, 0.9fr) minmax(320px, 1.4fr) minmax(140px, auto);
-  gap: 16px;
+  grid-template-columns: minmax(260px, 1.05fr) minmax(300px, 1.25fr) minmax(170px, 0.7fr);
+  gap: 20px;
   align-items: center;
   min-height: 60px;
   padding: 10px 16px;
@@ -6350,6 +6350,7 @@ body,
 
 .intermediate-flow-link-actions {
   justify-content: flex-end;
+  justify-self: end;
 }
 
 .intermediate-flow-link-summary strong {
