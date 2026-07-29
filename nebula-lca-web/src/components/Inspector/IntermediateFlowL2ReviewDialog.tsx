@@ -78,6 +78,13 @@ export function IntermediateFlowL2ReviewDialog({
             <span>{t(`全选（${selected.size}/${items.length}）`, `Select all (${selected.size}/${items.length})`)}</span>
           </label>
         </div>
+        <div className="intermediate-flow-l2-review-columns" aria-hidden="true">
+          <span />
+          <span>{t("来源流", "Source flow")}</span>
+          <span>{t("转换目标", "Conversion target")}</span>
+          <span>{t("单位", "Unit")}</span>
+          <span>{t("核对", "Review")}</span>
+        </div>
         <div className="intermediate-flow-l2-review-list">
           {items.map(({ port, resolution }) => {
             const checked = selected.has(port.id);
@@ -103,13 +110,11 @@ export function IntermediateFlowL2ReviewDialog({
                 </span>
                 <span className="intermediate-flow-l2-review-flow" title={sourceName}>
                   <strong>{sourceName}</strong>
-                  <small>{t("天工中间流", "Tiangong intermediate flow")}</small>
                 </span>
-                <span className="intermediate-flow-l2-review-arrow" aria-hidden="true">→</span>
                 <span className="intermediate-flow-l2-review-target" title={targetName}>
                   <strong>{targetName}</strong>
-                  <small>{resolution.source_unit} → {resolution.target_unit}</small>
                 </span>
+                <span className="intermediate-flow-l2-review-unit">{resolution.source_unit} → {resolution.target_unit}</span>
                 <span className="intermediate-flow-l2-risk" title={(resolution.warnings ?? []).join(" · ")}>
                   {t("需核对产品范围和限定词", "Review product scope and qualifiers")}
                 </span>

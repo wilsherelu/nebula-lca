@@ -8,6 +8,7 @@ import {
 import { useLcaGraphStore } from "../../store/lcaGraphStore";
 import { parseImportedRows } from "../NodePalette/UnitProcessImportDialog";
 import { BackgroundLciPickerDialog } from "./BackgroundLciPickerDialog";
+import { getLocalizedText } from "../../utils/localizedText";
 
 type Props = {
   consumerNodeId: string;
@@ -174,6 +175,8 @@ export function BackgroundLciAssociationSection({
         open={pickerOpen}
         busy={loading}
         providers={providers}
+        sourceFlowName={getLocalizedText(port.name, language, port.name)}
+        targetFlowUuid={targetFlowUuid}
         language={language}
         onClose={() => setPickerOpen(false)}
         onSelect={linkProvider}

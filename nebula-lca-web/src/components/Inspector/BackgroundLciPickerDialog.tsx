@@ -89,13 +89,13 @@ export function BackgroundLciPickerDialog({
         className="overlay-panel background-lci-picker-dialog"
         role="dialog"
         aria-modal="true"
-        aria-label={t("选择背景数据库", "Choose Background Database")}
+        aria-label={t("选择背景 LCI", "Choose Background LCI")}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="overlay-head background-lci-picker-head">
           <div className="background-lci-picker-head-content">
             <div className="intermediate-flow-link-title">
-              <strong>{t("选择背景数据库", "Choose Background Database")}</strong>
+              <strong>{t("选择背景 LCI", "Choose Background LCI")}</strong>
               <span>{filteredProviders.length}</span>
             </div>
             {(sourceFlowName || targetFlowUuid) && (
@@ -114,6 +114,7 @@ export function BackgroundLciPickerDialog({
             className="background-lci-picker-search"
             value={query}
             disabled={busy}
+            aria-label={t("搜索背景 LCI", "Search background LCI")}
             placeholder={t("搜索过程、参考产品、地区…", "Search process, reference product, location…")}
             onChange={(event) => setQuery(event.target.value)}
           />
@@ -121,6 +122,7 @@ export function BackgroundLciPickerDialog({
             className="background-lci-picker-filter"
             value={kind}
             disabled={busy}
+            aria-label={t("过程类型", "Process type")}
             onChange={(event) => setKind(event.target.value as ProcessKind)}
           >
             <option value="all">{t("全部类型", "All types")}</option>
@@ -133,6 +135,7 @@ export function BackgroundLciPickerDialog({
             className="background-lci-picker-filter"
             value={location}
             disabled={busy}
+            aria-label={t("地区", "Location")}
             onChange={(event) => setLocation(event.target.value)}
           >
             <option value="">{t("全部地区", "All locations")}</option>

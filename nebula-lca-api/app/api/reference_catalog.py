@@ -289,11 +289,19 @@ def import_reference_processes(
             valid_flow_uuids=valid_flow_uuids,
         )
         filtered_exchanges.extend(filtered)
-        reference_flow_uuid, product_warnings = _mark_reference_product_exchange(
+        declared_reference_flow_uuid = _safe_str(cloned_json.get("reference_flow_uuid")) or _safe_str(source_row.reference_flow_uuid)
+        marked_reference_flow_uuid, product_warnings = _mark_reference_product_exchange(
             process_uuid=target_uuid,
             process_json=cloned_json,
             exchanges=kept_exchanges,
         )
+        reference_flow_uuid = marked_reference_flow_uuid or declared_reference_flow_uuid
+        if reference_flow_uuid:
+            for exchange in kept_exchanges:
+                if _safe_str(exchange.get("flow_uuid")) == reference_flow_uuid:
+                    exchange["is_reference_flow"] = True
+                    exchange["isProduct"] = True
+                    break
         if target_kind == "lci_dataset":
             scoped_exchanges: list[dict] = []
             for ex in kept_exchanges:

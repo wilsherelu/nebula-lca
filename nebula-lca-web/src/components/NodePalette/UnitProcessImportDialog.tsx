@@ -149,10 +149,24 @@ export const parseImportedRows = (
         .map((ex, i) => toPort(ex, "output", i, uiLanguage));
 
       const referenceFlow = String(item.reference_flow_uuid ?? item.reference_flow_internal_id ?? "").trim();
-      const nextOutputs = (outputs.length > 0 ? outputs : fallbackOutputs).map((port) => ({
+      const outputPorts = outputs.length > 0 ? outputs : fallbackOutputs;
+      const nextOutputs = outputPorts.map((port) => ({
         ...port,
         isProduct: referenceFlow ? port.flowUuid === referenceFlow : Boolean(port.isProduct),
       }));
+      if (referenceFlow && !nextOutputs.some((port) => port.flowUuid === referenceFlow)) {
+        nextOutputs.unshift({
+          id: `output_reference_${idx}`,
+          flowUuid: referenceFlow,
+          name: getLocalizedText(item.reference_flow_name ?? item.reference_product, uiLanguage, referenceFlow),
+          unit: String(item.reference_product_unit ?? "kg"),
+          amount: Number.isFinite(Number(item.reference_product_amount)) ? Number(item.reference_product_amount) : 1,
+          isProduct: true,
+          type: "technosphere",
+          direction: "output",
+          showOnNode: true,
+        });
+      }
       const hasProduct = nextOutputs.some((port) => port.isProduct);
       const sourceProcessUuid = String(item.source_process_uuid ?? item.process_uuid ?? "").trim();
       const processUuidRaw = String(item.process_uuid ?? "").trim();
