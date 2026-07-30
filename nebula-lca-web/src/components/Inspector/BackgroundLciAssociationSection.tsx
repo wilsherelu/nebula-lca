@@ -46,7 +46,7 @@ export function BackgroundLciAssociationSection({
     if (!targetFlowUuid) return;
     let canceled = false;
     setLoading(true);
-    fetchIntermediateFlowProviders(targetFlowUuid)
+    fetchIntermediateFlowProviders(targetFlowUuid, { includeSources: ["hiqlcd"] })
       .then((rows) => {
         if (!canceled) setProviders(rows);
       })
@@ -82,7 +82,10 @@ export function BackgroundLciAssociationSection({
       if (!response.ok) throw new Error(`Provider import failed (${response.status})`);
       const rows = parseImportedRows(await response.json(), "locked", language, "lci_dataset");
       if (!rows[0] || !connectProvider(consumerNodeId, port.id, rows[0])) {
-        throw new Error(t("背景 LCI 的参考产品与转换目标不一致", "Background LCI reference product does not match the converted target"));
+        throw new Error(t(
+          "无法关联：未转换的输入仅可直接关联单位一致的 HiQLCD 背景 LCI。",
+          "Cannot link: an unconverted input can directly use only a HiQLCD background LCI with the same unit.",
+        ));
       }
       onStatus?.(t(
         `已关联背景 LCI：${provider.process_name}。该 provider 仅参与计算，不显示为画布节点。`,
@@ -131,8 +134,8 @@ export function BackgroundLciAssociationSection({
           <span className={`background-lci-status-badge background-lci-status-badge--${statusClass}`}>{statusLabel}</span>
         </div>
         {targetFlowUuid && <span className="background-lci-match-hint">{t(
-          convertedTargetFlowUuid ? "按转换后的产品流匹配" : "按当前产品流匹配",
-          convertedTargetFlowUuid ? "Matched by converted product flow" : "Matched by current product flow",
+          convertedTargetFlowUuid ? "按转换后的产品流匹配；也可直接选择 HiQLCD LCI" : "按当前产品流匹配；也可直接选择单位一致的 HiQLCD LCI",
+          convertedTargetFlowUuid ? "Matched by converted product flow; HiQLCD LCI can also be selected directly" : "Matched by current product flow; a unit-compatible HiQLCD LCI can also be selected directly",
         )}</span>}
       </div>
       {!targetFlowUuid ? (

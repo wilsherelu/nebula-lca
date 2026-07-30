@@ -1627,6 +1627,32 @@ class DataPlatformConnectionTestResponse(BaseModel):
     checked_at: datetime
 
 
+class HiqlcdAccountRequest(BaseModel):
+    """Dedicated HiQLCD account form; only an API Key is accepted."""
+
+    alias: str = "HiQLCD LCI"
+    api_key: str | None = None
+    status: Literal["active", "disabled"] = "active"
+
+
+class HiqlcdDatasetImportRequest(BaseModel):
+    dataset_id: str
+    dataset_version: str | None = None
+    locale: Literal["zh", "en"] = "zh"
+
+
+class HiqlcdDatasetImportResponse(BaseModel):
+    account_id: str
+    platform: Literal["hiqlcd"] = "hiqlcd"
+    process_uuid: str
+    reference_flow_uuid: str
+    reference_product_name: str
+    vector_nnz: int
+    remote_dataset_id: str
+    remote_dataset_version: str | None = None
+    status: Literal["completed"] = "completed"
+
+
 class RemoteFlowItem(BaseModel):
     remote_id: str
     flow_uuid: str

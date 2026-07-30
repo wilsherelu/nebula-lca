@@ -1535,5 +1535,7 @@ def connector_for_account(account: PlatformAccountContext) -> BaseDataPlatformCo
     if platform == "tiangong":
         return TianGongSupabaseConnector(account)
     if platform == "hiqlcd":
-        return SkeletonDataPlatformConnector(account)
+        from .hiqlcd_connector import HiqlcdConnector
+
+        return HiqlcdConnector(account)
     raise ConnectorError(f"Unsupported data platform: {account.platform}")

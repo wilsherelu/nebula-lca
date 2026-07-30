@@ -114,9 +114,16 @@ export async function resolveIntermediateFlowPorts(ports: FlowPort[]): Promise<{
   return response.json();
 }
 
-export async function fetchIntermediateFlowProviders(targetFlowUuid: string): Promise<ProviderCandidate[]> {
+export async function fetchIntermediateFlowProviders(
+  targetFlowUuid: string,
+  options: { includeSources?: string[] } = {},
+): Promise<ProviderCandidate[]> {
+  const params = new URLSearchParams({ target_flow_uuid: targetFlowUuid });
+  for (const source of options.includeSources ?? []) {
+    if (source.trim()) params.append("include_source", source.trim());
+  }
   const response = await fetch(
-    `${API_BASE}/intermediate-flow-links/providers?target_flow_uuid=${encodeURIComponent(targetFlowUuid)}`,
+    `${API_BASE}/intermediate-flow-links/providers?${params.toString()}`,
   );
   if (!response.ok) {
     throw new Error(`Provider lookup failed (${response.status})`);

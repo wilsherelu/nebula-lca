@@ -192,6 +192,16 @@ def _create_tiangong_login_account(client: TestClient) -> str:
     return response.json()["id"]
 
 
+def _create_hiqlcd_account(client: TestClient) -> str:
+    response = client.post(
+        "/api/data-platforms/hiqlcd/accounts",
+        json={"alias": "HiQLCD Test", "api_key": "hiqlcd-secret", "status": "active"},
+    )
+    assert response.status_code == 201, response.text
+    assert "hiqlcd-secret" not in response.text
+    return response.json()["id"]
+
+
 class _FakeSupabaseResponse:
     def __init__(self, payload):
         self.payload = payload
@@ -204,6 +214,35 @@ class _FakeSupabaseResponse:
 
     def read(self):
         return json.dumps(self.payload).encode("utf-8")
+
+
+def _install_fake_hiqlcd_http(monkeypatch, *, output_count: int = 1):
+    calls = []
+
+    def fake_urlopen(req, timeout=20):  # noqa: ARG001
+        body = json.loads(req.data.decode("utf-8")) if req.data else {}
+        calls.append({"url": req.full_url, "body": body, "api_key": req.headers.get("X-api-key")})
+        dataset = {
+            "id": "hiq-dataset-1",
+            "uuid": "11b2cb5e-9dc3-4bd6-90a6-48451898c319",
+            "name": "HiQLCD electricity dataset",
+            "version": "1.2.0",
+            "description": "Background inventory",
+            "location": {"code": "CN", "name": "China"},
+            "source": {"name": "HiQLCD", "version": "2026"},
+            "updatedAt": "2026-07-30T00:00:00Z",
+        }
+        if req.full_url.endswith("/xapi/datasets"):
+            return _FakeSupabaseResponse({"success": True, "data": {"items": [dataset], "total": 1, "page": body.get("page", 1), "pageSize": body.get("pageSize", 20)}})
+        if req.full_url.endswith("/xapi/lci/input"):
+            return _FakeSupabaseResponse({"success": True, "data": [{"id": "hiq-co2", "name": "Carbon dioxide", "category": "air", "amount": 2.5, "unit": "kg", "flowType": "input"}]})
+        if req.full_url.endswith("/xapi/lci/output"):
+            outputs = [{"id": f"hiq-electricity-{index}", "name": "Electricity", "amount": 1, "unit": "kWh", "flowType": "output"} for index in range(output_count)]
+            return _FakeSupabaseResponse({"success": True, "data": outputs})
+        raise AssertionError(f"Unexpected URL {req.full_url}")
+
+    monkeypatch.setattr("app.services.hiqlcd_connector.url_request.urlopen", fake_urlopen)
+    return calls
 
 
 def _graph_payload():
@@ -398,6 +437,80 @@ def test_data_platform_account_crud_keeps_credentials_private(client):
     deleted = client.delete(f"/api/data-platforms/accounts/{account_id}")
     assert deleted.status_code == 200
     assert deleted.json()["deleted"] is True
+
+
+def test_hiqlcd_lci_search_preview_and_import_creates_background_provider(client, monkeypatch):
+    calls = _install_fake_hiqlcd_http(monkeypatch)
+    account_id = _create_hiqlcd_account(client)
+
+    searched = client.get(f"/api/data-platforms/hiqlcd/accounts/{account_id}/datasets/search?q=electricity&page=1&page_size=10")
+    assert searched.status_code == 200, searched.text
+    assert searched.json()["items"][0]["process_name"] == "HiQLCD electricity dataset"
+
+    preview = client.get(f"/api/data-platforms/hiqlcd/accounts/{account_id}/datasets/hiq-dataset-1/preview")
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["summary"]["reference_product"] == "Electricity"
+
+    imported = client.post(
+        f"/api/data-platforms/hiqlcd/accounts/{account_id}/datasets/import",
+        json={"dataset_id": "hiq-dataset-1", "dataset_version": "1.2.0", "locale": "zh"},
+    )
+    assert imported.status_code == 200, imported.text
+    payload = imported.json()
+    assert payload["platform"] == "hiqlcd"
+    assert payload["reference_product_name"] == "Electricity"
+    assert payload["vector_nnz"] == 1
+    assert all(call["api_key"] == "hiqlcd-secret" for call in calls)
+
+    db = _db_module.SessionLocal()
+    try:
+        process = db.get(ReferenceProcess, payload["process_uuid"])
+        vector = db.get(LciProcessVector, payload["process_uuid"])
+        reference_flow = db.get(FlowRecord, payload["reference_flow_uuid"])
+        assert process is not None
+        assert process.process_type == "lci_dataset"
+        assert process.source_file == "hiqlcd://datasets/hiq-dataset-1"
+        assert vector is not None and vector.source == "hiqlcd" and vector.nnz == 1
+        assert reference_flow is not None and reference_flow.source == "hiqlcd"
+    finally:
+        db.close()
+
+
+def test_hiqlcd_lci_rejects_multiple_reference_products_without_writing_provider(client, monkeypatch):
+    _install_fake_hiqlcd_http(monkeypatch, output_count=2)
+    account_id = _create_hiqlcd_account(client)
+
+    response = client.post(
+        f"/api/data-platforms/hiqlcd/accounts/{account_id}/datasets/import",
+        json={"dataset_id": "hiq-dataset-1", "locale": "zh"},
+    )
+    assert response.status_code == 502
+    assert "exactly one reference product" in response.json()["detail"]["message"]
+
+    db = _db_module.SessionLocal()
+    try:
+        assert db.query(ReferenceProcess).count() == 0
+        assert db.query(LciProcessVector).count() == 0
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected"),
+    [(401, "HiQLCD API Key was rejected."), (429, "HiQLCD request rate limit reached.")],
+)
+def test_hiqlcd_connection_failures_are_safe_and_do_not_expose_api_key(client, monkeypatch, status_code, expected):
+    def fake_urlopen(req, timeout=20):  # noqa: ARG001
+        raise HTTPError(req.full_url, status_code, "error", hdrs=None, fp=io.BytesIO(b"{}"))
+
+    monkeypatch.setattr("app.services.hiqlcd_connector.url_request.urlopen", fake_urlopen)
+    account_id = _create_hiqlcd_account(client)
+
+    response = client.post(f"/api/data-platforms/hiqlcd/accounts/{account_id}/test")
+    assert response.status_code == 200
+    assert response.json()["ok"] is False
+    assert response.json()["message"] == expected
+    assert "hiqlcd-secret" not in response.text
 
 
 def test_local_sqlite_generates_persistent_credential_key(monkeypatch, tmp_path):
