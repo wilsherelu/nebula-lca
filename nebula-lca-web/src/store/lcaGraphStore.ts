@@ -4859,7 +4859,8 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
       const consumerNode = active.nodes.find((item) => item.id === consumerNodeId);
       const consumerPort = consumerNode?.data.inputs.find((item) => item.id === consumerPortId);
       const link = consumerPort?.intermediateFlowLink;
-      if (!consumerNode || !consumerPort || !link || !["auto", "user_confirmed"].includes(link.status)) {
+      const hasConvertedTarget = Boolean(link && ["auto", "user_confirmed"].includes(link.status));
+      if (!consumerNode || !consumerPort) {
         return state;
       }
 
@@ -4875,8 +4876,10 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
           lciRole: "provider",
         },
       };
-      const providerPort = backgroundProviderNode.data.outputs.find((item) => item.flowUuid === link.targetFlowUuid);
-      if (!providerPort) {
+      const providerPort = hasConvertedTarget
+        ? backgroundProviderNode.data.outputs.find((item) => item.flowUuid === link?.targetFlowUuid)
+        : backgroundProviderNode.data.outputs.find((item) => item.isProduct) ?? backgroundProviderNode.data.outputs[0];
+      if (!providerPort || (!hasConvertedTarget && providerPort.unit !== consumerPort.unit)) {
         return state;
       }
 
@@ -4893,7 +4896,8 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
       const remainingNodes = active.nodes.filter(
         (item) => !(item.hidden && replacedProviderNodeIds.has(item.id)),
       );
-      const consumerAmount = consumerPort.amount * link.amountFactor;
+      const conversionFactor = hasConvertedTarget ? link?.amountFactor ?? 1 : 1;
+      const consumerAmount = consumerPort.amount * conversionFactor;
       const edge: Edge<LcaEdgeData> = {
         id: `edge_${uid()}`,
         source: backgroundProviderNode.id,
@@ -4901,20 +4905,20 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         sourceHandle: `out:${providerPort.id}`,
         targetHandle,
         data: {
-          flowUuid: link.targetFlowUuid,
+          flowUuid: providerPort.flowUuid,
           flowName: providerPort.name,
           quantityMode: "dual",
           amount: consumerAmount,
           providerAmount: providerPort.amount,
           consumerAmount,
-          unit: link.targetUnit,
+          unit: providerPort.unit,
           type: "technosphere",
           allocation: "none",
           consumerFlowUuid: consumerPort.flowUuid,
           providerUnit: providerPort.unit,
           consumerUnit: consumerPort.unit,
-          intermediateFlowLinkRuleId: link.ruleId,
-          intermediateFlowLinkFactor: link.amountFactor,
+          intermediateFlowLinkRuleId: hasConvertedTarget ? link?.ruleId : undefined,
+          intermediateFlowLinkFactor: conversionFactor,
         },
       };
       return {

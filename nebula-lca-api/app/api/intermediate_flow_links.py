@@ -175,10 +175,15 @@ def confirm_l2(payload: ConfirmL2Request, db: Session = Depends(get_db)) -> dict
 @api_router.get("/providers")
 def get_providers(
     target_flow_uuid: str = Query(min_length=1),
+    include_source: list[str] = Query(default=[]),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     target = _flow_or_404(db, target_flow_uuid)
-    providers = list_provider_candidates(db, target.flow_uuid)
+    providers = list_provider_candidates(
+        db,
+        target.flow_uuid,
+        include_sources={str(source).strip().casefold() for source in include_source if str(source).strip()},
+    )
     return {
         "target_flow_uuid": target.flow_uuid,
         "target_flow_name": target.flow_name,

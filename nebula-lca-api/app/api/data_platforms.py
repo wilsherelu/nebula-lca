@@ -44,6 +44,9 @@ from ..schemas import (
     DataPlatformSyncProcessRequest,
     DataPlatformSyncProcessResponse,
     DataPlatformSyncRecordOut,
+    HiqlcdAccountRequest,
+    HiqlcdDatasetImportRequest,
+    HiqlcdDatasetImportResponse,
     RemoteFlowItem,
     RemoteModelItem,
     RemoteProcessItem,
@@ -152,6 +155,27 @@ def _validate_tiangong_credential(
                 "code": "TIANGONG_LOGIN_CREDENTIAL_INVALID",
                 "message": "TianGong account login accepts only credential.username and credential.password.",
             },
+        )
+
+
+def _validate_hiqlcd_credential(*, credential: Any | None, credential_required: bool) -> None:
+    if credential is None:
+        if credential_required:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "HIQLCD_API_KEY_REQUIRED", "message": "Provide a HiQLCD API Key."},
+            )
+        return
+    values = credential.model_dump(mode="python")
+    if credential_required and not _safe_str(values.get("api_key")):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "HIQLCD_API_KEY_REQUIRED", "message": "Provide a HiQLCD API Key."},
+        )
+    if _safe_str(values.get("token")) or _safe_str(values.get("username")) or str(values.get("password") or ""):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "HIQLCD_AUTH_TYPE_INVALID", "message": "HiQLCD only accepts its API Key."},
         )
 
 
@@ -384,10 +408,12 @@ def _preview_from_process(account: DataPlatformAccount, detail: Any) -> DataPlat
     payload = detail.process_json if isinstance(detail.process_json, dict) else {}
     data_info = _dataset_info(payload, "processDataSet", "processInformation")
     exchanges = _process_exchanges_from_payload(payload)
+    if not exchanges and isinstance(payload.get("exchanges"), list):
+        exchanges = [item for item in payload["exchanges"] if isinstance(item, dict)]
     input_count = sum(1 for item in exchanges if _preview_exchange_direction(item) == "input")
     output_count = sum(1 for item in exchanges if _preview_exchange_direction(item) == "output")
     reference_internal_id = _safe_str(payload.get("reference_flow_internal_id"))
-    reference_flow_name = _safe_str(payload.get("reference_flow_source_name") or payload.get("reference_flow_name"))
+    reference_flow_name = _safe_str(payload.get("reference_flow_source_name") or payload.get("reference_flow_name") or payload.get("reference_product"))
     samples = []
     for exchange in exchanges[:5]:
         ref = exchange.get("referenceToFlowDataSet") if isinstance(exchange.get("referenceToFlowDataSet"), dict) else {}
@@ -413,6 +439,8 @@ def _preview_from_process(account: DataPlatformAccount, detail: Any) -> DataPlat
             "reference_flow_uuid": process.reference_flow_uuid,
             "reference_flow_internal_id": reference_internal_id,
             "reference_flow_name": reference_flow_name,
+            "reference_product": _safe_str(payload.get("reference_product")),
+            "reference_product_unit": _safe_str(payload.get("reference_product_unit")),
             "classification": _classification_path(data_info),
             "exchange_count": len(exchanges),
             "input_count": input_count,
@@ -871,6 +899,111 @@ def _lci_vector_from_process_detail(detail: Any) -> dict[str, Any] | None:
     return {"items": items, "remote_version": process.remote_version}
 
 
+def _hiqlcd_account_or_404(db: Session, account_id: str) -> DataPlatformAccount:
+    account = _account_or_404(db, account_id)
+    if account.platform != "hiqlcd":
+        raise HTTPException(status_code=404, detail={"code": "HIQLCD_ACCOUNT_NOT_FOUND", "message": "HiQLCD account not found."})
+    return account
+
+
+def _upsert_hiqlcd_flow(db: Session, flow: RemoteFlowDTO) -> None:
+    if not _safe_str(flow.flow_uuid) or not _safe_str(flow.flow_name) or not _safe_str(flow.default_unit):
+        raise ConnectorError("HiQLCD Flow is missing its identity, name, or unit.")
+    existing = db.get(FlowRecord, flow.flow_uuid)
+    if existing is not None:
+        if _safe_str(existing.source).casefold() != "hiqlcd" or _safe_str(existing.default_unit) != _safe_str(flow.default_unit):
+            raise ConnectorError(f"HiQLCD Flow identity conflicts with an existing local Flow: {flow.flow_uuid}")
+        existing.flow_name = flow.flow_name
+        existing.flow_name_en = flow.flow_name_en
+        existing.flow_type = flow.flow_type
+        existing.unit_group = flow.unit_group
+        existing.source_updated_at = _safe_str(flow.metadata.get("updated_at")) or existing.source_updated_at
+        return
+    db.add(FlowRecord(
+        flow_uuid=flow.flow_uuid,
+        flow_name=flow.flow_name,
+        flow_name_en=flow.flow_name_en,
+        flow_type=flow.flow_type,
+        default_unit=flow.default_unit,
+        unit_group=flow.unit_group,
+        compartment=_safe_str(flow.metadata.get("category")) or None,
+        source_updated_at=_safe_str(flow.metadata.get("updated_at")) or None,
+        source="hiqlcd",
+        is_custom=False,
+        tidas_compatible=False,
+    ))
+
+
+def _import_hiqlcd_lci(db: Session, *, account: DataPlatformAccount, detail: Any) -> HiqlcdDatasetImportResponse:
+    process = detail.process
+    process_json = detail.process_json if isinstance(detail.process_json, dict) else {}
+    vector = detail.vector if isinstance(detail.vector, dict) else None
+    reference_flow_uuid = _safe_str(process.reference_flow_uuid or process_json.get("reference_flow_uuid"))
+    reference_product = _safe_str(process_json.get("reference_product"))
+    if not reference_flow_uuid or not reference_product or vector is None:
+        raise ConnectorError("HiQLCD LCI is missing its reference product or elementary inventory vector.")
+    for flow in detail.flows:
+        _upsert_hiqlcd_flow(db, flow)
+    row = db.get(ReferenceProcess, process.process_uuid)
+    if row is None:
+        row = ReferenceProcess(
+            process_uuid=process.process_uuid,
+            process_name=process.process_name,
+            process_name_zh=process.process_name,
+            process_type="lci_dataset",
+            reference_flow_uuid=reference_flow_uuid,
+            process_json=process_json,
+            source_file=f"hiqlcd://datasets/{process.remote_id}",
+            source_process_uuid=_safe_str(process.metadata.get("dataset_uuid")) or None,
+            import_mode="hiqlcd",
+            import_report_json=detail.import_report if isinstance(detail.import_report, dict) else {},
+        )
+        db.add(row)
+    else:
+        if row.reference_flow_uuid and row.reference_flow_uuid != reference_flow_uuid:
+            raise ConnectorError("HiQLCD dataset identity conflicts with its existing reference product.")
+        row.process_name = process.process_name
+        row.process_name_zh = process.process_name
+        row.process_type = "lci_dataset"
+        row.reference_flow_uuid = reference_flow_uuid
+        row.process_json = process_json
+        row.source_file = f"hiqlcd://datasets/{process.remote_id}"
+        row.source_process_uuid = _safe_str(process.metadata.get("dataset_uuid")) or None
+        row.import_mode = "hiqlcd"
+        row.import_report_json = detail.import_report if isinstance(detail.import_report, dict) else {}
+    db.flush()
+    warnings: list[str] = []
+    if not _upsert_lci_vector(db, account=account, process_uuid=process.process_uuid, vector_payload=vector, warnings=warnings):
+        raise ConnectorError("HiQLCD LCI has no valid elementary inventory vector.")
+    _upsert_sync_record(
+        db,
+        account=account,
+        local_kind="process",
+        local_uuid=process.process_uuid,
+        remote_id=process.remote_id,
+        remote_version=process.remote_version,
+        metadata={**process.metadata, "reference_flow_uuid": reference_flow_uuid, "kind": "hiqlcd_lci_dataset"},
+    )
+    _upsert_sync_record(
+        db,
+        account=account,
+        local_kind="vector",
+        local_uuid=process.process_uuid,
+        remote_id=process.remote_id,
+        remote_version=process.remote_version,
+        metadata={"kind": "hiqlcd_lci_vector", "nnz": len(vector.get("items", []))},
+    )
+    return HiqlcdDatasetImportResponse(
+        account_id=account.id,
+        process_uuid=process.process_uuid,
+        reference_flow_uuid=reference_flow_uuid,
+        reference_product_name=reference_product,
+        vector_nnz=len(vector.get("items", [])),
+        remote_dataset_id=process.remote_id,
+        remote_dataset_version=process.remote_version,
+    )
+
+
 def _extract_hybrid_graph_from_remote_model(payload: dict[str, Any]) -> dict[str, Any]:
     candidates: list[Any] = [
         payload,
@@ -991,6 +1124,10 @@ def create_data_platform_account(payload: DataPlatformAccountCreateRequest, db: 
             credential=payload.credential,
             credential_required=True,
         )
+    if payload.platform == "hiqlcd":
+        if payload.auth_type != "api_key":
+            raise HTTPException(status_code=422, detail={"code": "HIQLCD_AUTH_TYPE_INVALID", "message": "HiQLCD only accepts its API Key."})
+        _validate_hiqlcd_credential(credential=payload.credential, credential_required=True)
     try:
         credential_ciphertext = encrypt_credential(payload.credential.model_dump(mode="python") if payload.credential else None)
     except CredentialError as exc:
@@ -1020,6 +1157,10 @@ def update_data_platform_account(account_id: str, payload: DataPlatformAccountUp
             credential=payload.credential,
             credential_required=payload.auth_type is not None and payload.auth_type != row.auth_type,
         )
+    if row.platform == "hiqlcd" and (payload.auth_type is not None or payload.credential is not None):
+        if selected_auth_type != "api_key":
+            raise HTTPException(status_code=422, detail={"code": "HIQLCD_AUTH_TYPE_INVALID", "message": "HiQLCD only accepts its API Key."})
+        _validate_hiqlcd_credential(credential=payload.credential, credential_required=False)
     reset_session = False
     if payload.alias is not None:
         row.alias = payload.alias.strip()
@@ -1072,6 +1213,139 @@ def test_data_platform_account(account_id: str, db: Session = Depends(get_db)) -
     row.last_validation_message = message
     db.commit()
     return DataPlatformConnectionTestResponse(ok=ok, status=row.last_validation_status, message=message, checked_at=checked_at)
+
+
+@api_router.get("/hiqlcd/accounts", response_model=list[DataPlatformAccountOut])
+def list_hiqlcd_accounts(db: Session = Depends(get_db)) -> list[DataPlatformAccountOut]:
+    rows = (
+        db.query(DataPlatformAccount)
+        .filter(DataPlatformAccount.platform == "hiqlcd")
+        .order_by(DataPlatformAccount.updated_at.desc())
+        .all()
+    )
+    return [_account_out(row) for row in rows]
+
+
+@api_router.post("/hiqlcd/accounts", response_model=DataPlatformAccountOut, status_code=201)
+def create_hiqlcd_account(payload: HiqlcdAccountRequest, db: Session = Depends(get_db)) -> DataPlatformAccountOut:
+    if not _safe_str(payload.api_key):
+        raise HTTPException(status_code=422, detail={"code": "HIQLCD_API_KEY_REQUIRED", "message": "Provide a HiQLCD API Key."})
+    try:
+        credential_ciphertext = encrypt_credential({"api_key": payload.api_key.strip()})
+    except CredentialError as exc:
+        raise _credential_config_error(exc) from exc
+    row = DataPlatformAccount(
+        platform="hiqlcd",
+        alias=_safe_str(payload.alias) or "HiQLCD LCI",
+        base_url="https://x.hiqlcd.com",
+        auth_type="api_key",
+        credential_ciphertext=credential_ciphertext,
+        status=payload.status,
+        metadata_json={"connector": "hiqlcd_lci"},
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _account_out(row)
+
+
+@api_router.patch("/hiqlcd/accounts/{account_id}", response_model=DataPlatformAccountOut)
+def update_hiqlcd_account(account_id: str, payload: HiqlcdAccountRequest, db: Session = Depends(get_db)) -> DataPlatformAccountOut:
+    row = _hiqlcd_account_or_404(db, account_id)
+    row.alias = _safe_str(payload.alias) or row.alias
+    row.status = payload.status
+    if _safe_str(payload.api_key):
+        try:
+            row.credential_ciphertext = encrypt_credential({"api_key": payload.api_key.strip()})
+        except CredentialError as exc:
+            raise _credential_config_error(exc) from exc
+        row.last_validated_at = None
+        row.last_validation_status = None
+        row.last_validation_message = None
+    db.commit()
+    db.refresh(row)
+    return _account_out(row)
+
+
+@api_router.delete("/hiqlcd/accounts/{account_id}")
+def delete_hiqlcd_account(account_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    row = _hiqlcd_account_or_404(db, account_id)
+    db.query(DataPlatformAccountSession).filter(DataPlatformAccountSession.account_id == row.id).delete(synchronize_session=False)
+    db.delete(row)
+    db.commit()
+    return {"deleted": True, "account_id": account_id}
+
+
+@api_router.post("/hiqlcd/accounts/{account_id}/test", response_model=DataPlatformConnectionTestResponse)
+def test_hiqlcd_account(account_id: str, db: Session = Depends(get_db)) -> DataPlatformConnectionTestResponse:
+    return test_data_platform_account(_hiqlcd_account_or_404(db, account_id).id, db)
+
+
+@api_router.get("/hiqlcd/accounts/{account_id}/datasets/search", response_model=DataPlatformSearchResponse)
+def search_hiqlcd_datasets(
+    account_id: str,
+    q: str = Query(min_length=1),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    locale: str = Query(default="zh", pattern="^(zh|en)$"),
+    db: Session = Depends(get_db),
+) -> DataPlatformSearchResponse:
+    account = _hiqlcd_account_or_404(db, account_id)
+    try:
+        result = connector_for_account(_account_context(account, db)).search_lci_datasets(q, page=page, page_size=page_size, locale=locale)
+    except ConnectorError as exc:
+        raise _connector_error(exc) from exc
+    items = [_remote_process_item(item) for item in result.items]
+    for item in items:
+        _write_cache(db, account=account, remote_kind="hiqlcd_lci_dataset", query_key=q, remote_id=item.remote_id, payload=item.model_dump(mode="python"))
+    db.commit()
+    return DataPlatformSearchResponse(
+        account_id=account.id,
+        platform="hiqlcd",
+        query=q,
+        page=result.page,
+        page_size=result.page_size,
+        has_more=result.has_more,
+        total=result.total,
+        items=items,
+    )
+
+
+@api_router.get("/hiqlcd/accounts/{account_id}/datasets/{dataset_id}/preview", response_model=DataPlatformRemotePreviewResponse)
+def preview_hiqlcd_dataset(
+    account_id: str,
+    dataset_id: str,
+    dataset_version: str | None = Query(default=None),
+    locale: str = Query(default="zh", pattern="^(zh|en)$"),
+    db: Session = Depends(get_db),
+) -> DataPlatformRemotePreviewResponse:
+    account = _hiqlcd_account_or_404(db, account_id)
+    try:
+        detail = connector_for_account(_account_context(account, db)).get_lci_detail(dataset_id, dataset_version, locale=locale)
+        return _preview_from_process(account, detail)
+    except ConnectorError as exc:
+        raise _connector_error(exc) from exc
+
+
+@api_router.post("/hiqlcd/accounts/{account_id}/datasets/import", response_model=HiqlcdDatasetImportResponse)
+def import_hiqlcd_dataset(
+    account_id: str,
+    payload: HiqlcdDatasetImportRequest,
+    db: Session = Depends(get_db),
+) -> HiqlcdDatasetImportResponse:
+    account = _hiqlcd_account_or_404(db, account_id)
+    try:
+        connector = connector_for_account(_account_context(account, db))
+        detail = connector.get_lci_detail(payload.dataset_id, payload.dataset_version, locale=payload.locale)
+        response = _import_hiqlcd_lci(db, account=account, detail=detail)
+        db.commit()
+        invalidate_management_caches(flows=True, reference_processes=True, stats=True)
+        return response
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        if isinstance(exc, ConnectorError):
+            raise _connector_error(exc) from exc
+        raise
 
 
 @api_router.get("/accounts/{account_id}/flows/search", response_model=DataPlatformSearchResponse)
