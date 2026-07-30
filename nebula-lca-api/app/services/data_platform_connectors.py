@@ -239,6 +239,16 @@ class RemoteUnitGroupDTO:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class RemoteFlowPublishReferenceDTO:
+    """Authoritative Flow-property and unit-group identity for a Flow create."""
+
+    flow_property_uuid: str
+    flow_property_version: str
+    flow_property_name: str | None
+    unit_group: RemoteUnitGroupDTO
+
+
 class BaseDataPlatformConnector:
     def __init__(self, account: PlatformAccountContext):
         self.account = account
@@ -266,6 +276,9 @@ class BaseDataPlatformConnector:
 
     def get_flow_dependency_unit_groups(self, flow: RemoteFlowDTO) -> list[RemoteUnitGroupDTO]:
         return []
+
+    def resolve_flow_publish_reference(self, flow_property_uuid: str) -> RemoteFlowPublishReferenceDTO:
+        raise NotImplementedError
 
     def publish_flow(self, *, flow_uuid: str, json_ordered: dict[str, Any], rule_verification: bool = False, overwrite: bool = False) -> dict[str, Any]:
         raise NotImplementedError
@@ -818,6 +831,33 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
         unit_group = deps.get("unit_group") if isinstance(deps, dict) else None
         parsed = _unit_group_from_payload(unit_group) if isinstance(unit_group, dict) else None
         return [parsed] if parsed is not None else []
+
+    def resolve_flow_publish_reference(self, flow_property_uuid: str) -> RemoteFlowPublishReferenceDTO:
+        flow_property = self._table_one("flowproperties", flow_property_uuid)
+        unit_group_ref = _extract_unit_group_reference(flow_property)
+        if unit_group_ref is None:
+            raise ConnectorError("TianGong Flow property does not reference a unit group.")
+        unit_group = _tiangong_unit_group_from_row(
+            self._table_one("unitgroups", unit_group_ref["id"], unit_group_ref.get("version"))
+        )
+        if not unit_group.source_uuid or not unit_group.source_version:
+            raise ConnectorError("TianGong unit group identity is incomplete.")
+        flow_property_version = _row_version(flow_property)
+        if not flow_property_version:
+            raise ConnectorError("TianGong Flow property version is missing.")
+        return RemoteFlowPublishReferenceDTO(
+            flow_property_uuid=str(flow_property.get("id") or flow_property_uuid).strip(),
+            flow_property_version=flow_property_version,
+            flow_property_name=_localized_name(
+                _extract_json_payload(flow_property)
+                .get("flowPropertyDataSet", {})
+                .get("flowPropertiesInformation", {})
+                .get("dataSetInformation", {})
+                .get("common:name")
+            )
+            or None,
+            unit_group=unit_group,
+        )
 
     def publish_flow(self, *, flow_uuid: str, json_ordered: dict[str, Any], rule_verification: bool = False, overwrite: bool = False) -> dict[str, Any]:
         body = {
