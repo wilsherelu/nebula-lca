@@ -1745,20 +1745,21 @@ def test_tiangong_process_sync_warns_when_reference_points_to_input(client, monk
 def test_publish_local_flow_invokes_tiangong_create_dataset(client, monkeypatch):
     calls = _install_fake_tiangong_http(monkeypatch)
     account_id = _create_tiangong_account(client)
+    flow_uuid = "11111111-1111-4111-8111-111111111111"
     db = _db_module.SessionLocal()
     try:
         db.add(
             FlowRecord(
-                flow_uuid="local-flow-1",
-                flow_name="Electricity",
-                flow_name_en="Electricity",
+                flow_uuid=flow_uuid,
+                flow_name="Mass test flow",
+                flow_name_en="Mass test flow",
                 flow_type="Product flow",
-                default_unit="MJ",
-                unit_group="Units of energy",
+                default_unit="kg",
+                unit_group="Units of mass",
                 source="custom",
                 is_custom=True,
                 tidas_compatible=True,
-                tidas_flow_property_uuid="flowproperty-energy",
+                tidas_flow_property_uuid="flowproperty-1",
             )
         )
         db.commit()
@@ -1766,7 +1767,7 @@ def test_publish_local_flow_invokes_tiangong_create_dataset(client, monkeypatch)
         db.close()
 
     response = client.post(
-        f"/api/data-platforms/accounts/{account_id}/flows/local-flow-1/publish",
+        f"/api/data-platforms/accounts/{account_id}/flows/{flow_uuid}/publish",
         json={"ruleVerification": False},
     )
 
@@ -1776,17 +1777,51 @@ def test_publish_local_flow_invokes_tiangong_create_dataset(client, monkeypatch)
     assert payload["local_kind"] == "flow"
     function_call = next(call for call in calls if "/functions/v1/app_dataset_create" in call["url"])
     body = json.loads(function_call["body"])
-    assert body["id"] == "local-flow-1"
+    assert body["id"] == flow_uuid
     assert body["table"] == "flows"
-    assert body["jsonOrdered"]["flowDataSet"]["flowInformation"]["referenceUnit"] == "MJ"
-    assert body["jsonOrdered"]["flowDataSet"]["flowInformation"]["unitGroup"] == "Units of energy"
+    assert body["jsonOrdered"]["flowDataSet"]["@xmlns"] == "http://lca.jrc.it/ILCD/Flow"
+    assert body["jsonOrdered"]["flowDataSet"]["flowInformation"]["quantitativeReference"]["referenceToReferenceFlowProperty"] == "0"
+    assert body["jsonOrdered"]["flowDataSet"]["flowProperties"]["flowProperty"]["referenceToFlowPropertyDataSet"]["@version"] == "1"
     db = _db_module.SessionLocal()
     try:
-        record = db.query(ExternalDataSyncRecord).filter(ExternalDataSyncRecord.local_kind == "flow", ExternalDataSyncRecord.local_uuid == "local-flow-1").first()
+        record = db.query(ExternalDataSyncRecord).filter(ExternalDataSyncRecord.local_kind == "flow", ExternalDataSyncRecord.local_uuid == flow_uuid).first()
         assert record is not None
-        assert record.remote_id == "local-flow-1"
+        assert record.remote_id == flow_uuid
     finally:
         db.close()
+
+
+def test_publish_local_flow_rejects_unit_not_in_resolved_unit_group(client, monkeypatch):
+    calls = _install_fake_tiangong_http(monkeypatch)
+    account_id = _create_tiangong_account(client)
+    flow_uuid = "22222222-2222-4222-8222-222222222222"
+    db = _db_module.SessionLocal()
+    try:
+        db.add(
+            FlowRecord(
+                flow_uuid=flow_uuid,
+                flow_name="Volume test flow",
+                flow_type="Product flow",
+                default_unit="m3",
+                unit_group="Units of mass",
+                source="custom",
+                is_custom=True,
+                tidas_compatible=True,
+                tidas_flow_property_uuid="flowproperty-1",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        f"/api/data-platforms/accounts/{account_id}/flows/{flow_uuid}/publish",
+        json={"ruleVerification": False},
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "TIANGONG_FLOW_PUBLISH_PREFLIGHT_FAILED"
+    assert not any("/functions/v1/app_dataset_create" in call["url"] for call in calls)
 
 
 def test_publish_local_process_requires_published_flow_dependencies(client, monkeypatch):

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -58,6 +59,7 @@ from ..services.data_platform_connectors import (
     CredentialError,
     PlatformAccountContext,
     RemoteFlowDTO,
+    RemoteFlowPublishReferenceDTO,
     RemoteModelDTO,
     RemoteProcessDTO,
     RemoteUnitGroupDTO,
@@ -619,51 +621,87 @@ def _tiangong_dataset_version() -> str:
     return "01.01.000"
 
 
-def _flow_json_ordered(flow: FlowRecord) -> dict[str, Any]:
+def _flow_publish_preflight(flow: FlowRecord, reference: RemoteFlowPublishReferenceDTO) -> None:
+    errors: list[str] = []
+    try:
+        UUID(_safe_str(flow.flow_uuid))
+    except (TypeError, ValueError):
+        errors.append("Flow UUID must be a valid UUID.")
+    if not _safe_str(flow.flow_name):
+        errors.append("Flow name is required.")
+    if not _safe_str(flow.flow_type):
+        errors.append("Flow type is required.")
+    if not _safe_str(flow.default_unit):
+        errors.append("Flow reference unit is required.")
+    if not _safe_str(flow.tidas_flow_property_uuid):
+        errors.append("Flow property UUID is required.")
+    if _safe_str(flow.tidas_flow_property_uuid) != reference.flow_property_uuid:
+        errors.append("Resolved Flow property UUID does not match the local Flow.")
+    unit_group = reference.unit_group
+    if not unit_group.source_uuid or not unit_group.source_version:
+        errors.append("Resolved unit group identity is incomplete.")
+    if not any(item.unit_name == _safe_str(flow.default_unit) for item in unit_group.definitions):
+        errors.append("Flow reference unit is not available in the resolved unit group.")
+    if errors:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "TIANGONG_FLOW_PUBLISH_PREFLIGHT_FAILED",
+                "message": "TianGong Flow publish preflight failed.",
+                "errors": errors,
+            },
+        )
+
+
+def _flow_json_ordered(flow: FlowRecord, reference: RemoteFlowPublishReferenceDTO) -> dict[str, Any]:
     version = _tiangong_dataset_version()
     name = _safe_str(flow.flow_name) or flow.flow_uuid
     name_en = _safe_str(flow.flow_name_en)
     name_node: dict[str, Any] = {"baseName": _tiangong_lang_text(name, "zh")}
     if name_en and name_en != name:
         name_node["common:baseName"] = [_tiangong_lang_text(name, "zh"), _tiangong_lang_text(name_en, "en")]
-    flow_property_uuid = _safe_str(flow.tidas_flow_property_uuid)
-    flow_properties: dict[str, Any] = {}
-    if flow_property_uuid:
-        flow_properties["flowProperty"] = {
-            "@dataSetInternalID": "0",
-            "referenceToFlowPropertyDataSet": {
-                "@refObjectId": flow_property_uuid,
-                "@version": "01.01.000",
-                "common:shortDescription": _tiangong_lang_text(flow.unit_group or flow.default_unit, "en"),
-            },
-            "meanValue": 1,
-        }
     return {
         "flowDataSet": {
+            "@xmlns": "http://lca.jrc.it/ILCD/Flow",
+            "@xmlns:common": "http://lca.jrc.it/ILCD/Common",
+            "@xmlns:ecn": "http://eplca.jrc.ec.europa.eu/ILCD/Extensions/2018/ECNumber",
+            "@xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+            "@version": "1.1",
+            "@locations": "../ILCDLocations.xml",
+            "@xsi:schemaLocation": "http://lca.jrc.it/ILCD/Flow ../../schemas/ILCD_FlowDataSet.xsd",
             "flowInformation": {
                 "dataSetInformation": {
                     "common:UUID": flow.flow_uuid,
-                    "UUID": flow.flow_uuid,
                     "name": name_node,
-                    "classificationInformation": {
-                        "common:classification": {
-                            "common:class": _safe_str(flow.compartment) or _safe_str(flow.flow_type)
-                        }
-                    },
                 },
                 "quantitativeReference": {
-                    "referenceToReferenceFlowProperty": "0" if flow_property_uuid else None,
+                    "referenceToReferenceFlowProperty": "0",
                 },
-                "referenceUnit": flow.default_unit,
-                "unitGroup": flow.unit_group,
             },
             "modellingAndValidation": {
                 "LCIMethod": {
                     "typeOfDataSet": flow.flow_type,
                 }
             },
-            "flowProperties": flow_properties,
+            "flowProperties": {
+                "flowProperty": {
+                    "@dataSetInternalID": "0",
+                    "referenceToFlowPropertyDataSet": {
+                        "@refObjectId": reference.flow_property_uuid,
+                        "@version": reference.flow_property_version,
+                        "@type": "flow property data set",
+                        "common:shortDescription": _tiangong_lang_text(
+                            reference.flow_property_name or reference.unit_group.name,
+                            "en",
+                        ),
+                    },
+                    "meanValue": 1,
+                }
+            },
             "administrativeInformation": {
+                "dataEntryBy": {
+                    "common:timeStamp": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                },
                 "publicationAndOwnership": {
                     "common:dataSetVersion": version,
                     "common:permanentDataSetURI": f"nebula-lca://flows/{flow.flow_uuid}?version={version}",
@@ -1786,7 +1824,9 @@ def publish_local_flow(
         raise HTTPException(status_code=404, detail={"code": "FLOW_NOT_FOUND", "message": f"Flow not found: {flow_uuid}"})
     try:
         connector = connector_for_account(_account_context(account, db))
-        json_ordered = _flow_json_ordered(flow)
+        reference = connector.resolve_flow_publish_reference(_safe_str(flow.tidas_flow_property_uuid))
+        _flow_publish_preflight(flow, reference)
+        json_ordered = _flow_json_ordered(flow, reference)
         remote = connector.publish_flow(
             flow_uuid=flow.flow_uuid,
             json_ordered=json_ordered,
