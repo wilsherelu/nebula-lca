@@ -523,7 +523,7 @@ def test_provider_candidates_are_all_returned_and_never_collapsed(db):
     assert sum(bool(item["has_lci_vector"]) for item in providers) == 2
 
 
-def test_hiqlcd_provider_is_available_for_explicit_direct_association(db):
+def test_provider_candidates_require_exact_reference_flow_identity(db):
     row = _seed_first_l1_pair(db)
     db.add(ReferenceProcess(
         process_uuid="hiqlcd-provider",
@@ -536,13 +536,9 @@ def test_hiqlcd_provider_is_available_for_explicit_direct_association(db):
     db.add(LciProcessVector(process_uuid="hiqlcd-provider", nnz=1, amounts_blob=b"x"))
     db.commit()
 
-    providers = list_provider_candidates(
-        db,
-        row["target_flow_uuid"],
-        include_sources={"hiqlcd"},
-    )
+    providers = list_provider_candidates(db, row["target_flow_uuid"])
 
-    assert any(item["process_uuid"] == "hiqlcd-provider" for item in providers)
+    assert all(item["process_uuid"] != "hiqlcd-provider" for item in providers)
 
 
 def test_unreviewed_name_candidates_are_opt_in_only(db):
