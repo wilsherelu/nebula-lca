@@ -40,6 +40,14 @@ nebula-lca-desktop/resources/api/
 nebula-lca-desktop/resources/web/
 nebula-lca-desktop/release/
 exports/
+outputs/
+reports/
+audit-output/
+artifacts/
+screenshots/
+*.docx
+*.pdf
+*.xlsx
 *.tsbuildinfo
 
 # internal docs not intended for public release
