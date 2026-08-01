@@ -461,8 +461,6 @@ def list_l2_candidates(db: Session, source: FlowRecord, limit: int = 5) -> list[
 def list_provider_candidates(
     db: Session,
     target_flow_uuid: str,
-    *,
-    include_sources: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     rows = db.query(ReferenceProcess).filter(ReferenceProcess.process_type == "lci_dataset").all()
     vector_ids = {
@@ -480,8 +478,7 @@ def list_provider_candidates(
             or process_json.get("reference_flow_uuid")
             or ""
         ).strip()
-        is_direct_source = source.casefold() in (include_sources or set())
-        if reference_uuid != target_flow_uuid and not is_direct_source:
+        if reference_uuid != target_flow_uuid:
             continue
         providers.append({
             "process_uuid": row.process_uuid,

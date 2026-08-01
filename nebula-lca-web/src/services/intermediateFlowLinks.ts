@@ -116,12 +116,8 @@ export async function resolveIntermediateFlowPorts(ports: FlowPort[]): Promise<{
 
 export async function fetchIntermediateFlowProviders(
   targetFlowUuid: string,
-  options: { includeSources?: string[] } = {},
 ): Promise<ProviderCandidate[]> {
   const params = new URLSearchParams({ target_flow_uuid: targetFlowUuid });
-  for (const source of options.includeSources ?? []) {
-    if (source.trim()) params.append("include_source", source.trim());
-  }
   const response = await fetch(
     `${API_BASE}/intermediate-flow-links/providers?${params.toString()}`,
   );

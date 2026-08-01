@@ -1660,10 +1660,65 @@ def sync_remote_process(account_id: str, payload: DataPlatformSyncProcessRequest
             if local_process is None:
                 raise ConnectorError(f"Imported TianGong process is unavailable locally: {process.process_uuid}")
             local_process.process_type = "lci_dataset"
-            local_process_json = local_process.process_json if isinstance(local_process.process_json, dict) else {}
+            local_process_json = dict(local_process.process_json) if isinstance(local_process.process_json, dict) else {}
+            remote_process_json = detail.process_json if isinstance(detail.process_json, dict) else {}
+            reference_flow = db.get(FlowRecord, local_process.reference_flow_uuid)
+            reference_internal_id = _safe_str(local_process.reference_flow_internal_id)
+
+            def is_reference_exchange(exchange: dict[str, Any]) -> bool:
+                flow_ref = exchange.get("referenceToFlowDataSet")
+                flow_ref = flow_ref if isinstance(flow_ref, dict) else {}
+                exchange_flow_uuid = _safe_str(
+                    exchange.get("flow_uuid")
+                    or exchange.get("flowUuid")
+                    or flow_ref.get("@refObjectId")
+                    or flow_ref.get("refObjectId")
+                )
+                exchange_internal_id = _safe_str(
+                    exchange.get("exchange_internal_id")
+                    or exchange.get("@dataSetInternalID")
+                    or exchange.get("dataSetInternalID")
+                )
+                return (
+                    exchange_flow_uuid == local_process.reference_flow_uuid
+                    or (reference_internal_id and exchange_internal_id == reference_internal_id)
+                )
+
+            reference_exchange = next(
+                (
+                    exchange
+                    for exchange in [
+                        *(local_process_json.get("exchanges", []) or []),
+                        *(remote_process_json.get("exchanges", []) or []),
+                    ]
+                    if isinstance(exchange, dict)
+                    and is_reference_exchange(exchange)
+                ),
+                None,
+            )
+            if reference_exchange is not None:
+                local_process_json["reference_product"] = (
+                    _safe_str(reference_exchange.get("flow_name"))
+                    or _safe_str(reference_flow.flow_name if reference_flow is not None else None)
+                    or _safe_str(local_process.reference_flow_uuid)
+                )
+                local_process_json["reference_product_amount"] = reference_exchange.get("amount")
+                local_process_json["reference_product_unit"] = (
+                    _safe_str(reference_exchange.get("unit"))
+                    or _safe_str(reference_flow.default_unit if reference_flow is not None else None)
+                )
+            local_process_json["reference_product"] = (
+                _safe_str(local_process_json.get("reference_product"))
+                or _safe_str(reference_flow.flow_name if reference_flow is not None else None)
+                or _safe_str(local_process.reference_flow_uuid)
+            )
+            local_process_json["reference_product_unit"] = (
+                _safe_str(local_process_json.get("reference_product_unit"))
+                or _safe_str(reference_flow.default_unit if reference_flow is not None else None)
+            )
             local_process_json["process_type"] = "lci_dataset"
             local_process_json["source_dataset_type"] = process.process_type
-            local_process.process_json = local_process_json
+            local_process.process_json = dict(local_process_json)
         # Upsert process and vector lineage
         synced.append(_upsert_sync_record(db, account=account, local_kind="process", local_uuid=process.process_uuid, remote_id=process.remote_id, remote_version=process.remote_version, metadata=process.metadata))
         if vector_payload and _upsert_lci_vector(db, account=account, process_uuid=process.process_uuid, vector_payload=vector_payload, warnings=warnings):

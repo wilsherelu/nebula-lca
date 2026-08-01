@@ -46,7 +46,7 @@ export function BackgroundLciAssociationSection({
     if (!targetFlowUuid) return;
     let canceled = false;
     setLoading(true);
-    fetchIntermediateFlowProviders(targetFlowUuid, { includeSources: ["hiqlcd"] })
+    fetchIntermediateFlowProviders(targetFlowUuid)
       .then((rows) => {
         if (!canceled) setProviders(rows);
       })
@@ -134,8 +134,8 @@ export function BackgroundLciAssociationSection({
           <span className={`background-lci-status-badge background-lci-status-badge--${statusClass}`}>{statusLabel}</span>
         </div>
         {targetFlowUuid && <span className="background-lci-match-hint">{t(
-          convertedTargetFlowUuid ? "按转换后的产品流匹配；也可直接选择 HiQLCD LCI" : "按当前产品流匹配；也可直接选择单位一致的 HiQLCD LCI",
-          convertedTargetFlowUuid ? "Matched by converted product flow; HiQLCD LCI can also be selected directly" : "Matched by current product flow; a unit-compatible HiQLCD LCI can also be selected directly",
+          convertedTargetFlowUuid ? "按转换后的产品流精确匹配" : "按当前产品流精确匹配；跨库数据请先手动转换到目标产品流",
+          convertedTargetFlowUuid ? "Matched exactly by converted product flow" : "Matched exactly by current product flow; convert cross-source data to its target product flow first",
         )}</span>}
       </div>
       {!targetFlowUuid ? (

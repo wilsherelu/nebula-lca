@@ -120,6 +120,7 @@ def setup_db(monkeypatch):
         db.commit()
     finally:
         db.close()
+
     _db_module.engine.dispose()
 
 
@@ -1660,12 +1661,24 @@ def test_tiangong_lci_result_sync_derives_vector_from_elementary_exchanges(clien
         assert process is not None
         assert process.process_type == "lci_dataset"
         assert process.reference_flow_uuid == "lci-reference-product"
+        assert process.process_json.get("reference_product") == "lci-reference-product", process.process_json
         assert vector is not None
         assert vector.nnz == 2
         assert vector.source == "tiangong"
         assert vector.source_package_version == "02.00.001"
     finally:
         db.close()
+
+    providers = client.get(
+        "/api/intermediate-flow-links/providers",
+        params={"target_flow_uuid": "lci-reference-product"},
+    )
+    assert providers.status_code == 200, providers.text
+    candidate = next(item for item in providers.json()["providers"] if item["process_uuid"] == "tg-lci-result")
+    assert candidate["reference_product_flow_uuid"] == "lci-reference-product"
+    assert candidate["reference_product_name"] == "lci-reference-product"
+    assert candidate["reference_product_unit"] == "kg"
+    assert candidate["has_lci_vector"] is True
 
 
 def test_tiangong_process_sync_preserves_quantitative_reference_and_units(client, monkeypatch):
