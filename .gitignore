@@ -47,7 +47,6 @@ artifacts/
 screenshots/
 *.docx
 *.pdf
-*.xlsx
 *.tsbuildinfo
 
 # internal docs not intended for public release
