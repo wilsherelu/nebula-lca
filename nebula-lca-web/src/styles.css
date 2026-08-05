@@ -2836,7 +2836,7 @@ body,
 }
 
 .inventory-grid-row > .inline-checkbox {
-  justify-content: flex-start;
+  justify-content: center;
 }
 
 .inventory-grid-product-header,

@@ -1174,17 +1174,21 @@ const normalizeIntermediateFlowLinkPort = (port: FlowPort): FlowPort => {
     return port;
   }
   const value = rawLink as Record<string, unknown>;
+  const mappingLevel = String(value.mappingLevel ?? value.mapping_level) as "L1" | "L2" | "L3";
+  const rawStatus = String(value.status);
   const normalizedLink: FlowPort["intermediateFlowLink"] = {
     sourceFlowUuid: String(value.sourceFlowUuid ?? value.source_flow_uuid ?? ""),
     targetFlowUuid: String(value.targetFlowUuid ?? value.target_flow_uuid ?? ""),
     amountFactor: Number(value.amountFactor ?? value.amount_factor ?? 1),
     sourceUnit: String(value.sourceUnit ?? value.source_unit ?? ""),
     targetUnit: String(value.targetUnit ?? value.target_unit ?? ""),
-    mappingLevel: String(value.mappingLevel ?? value.mapping_level) as "L1" | "L2" | "L3",
+    sourceUnitGroup: String(value.sourceUnitGroup ?? value.source_unit_group ?? "") || undefined,
+    targetUnitGroup: String(value.targetUnitGroup ?? value.target_unit_group ?? "") || undefined,
+    mappingLevel,
     mappingReason: String(value.mappingReason ?? value.mapping_reason ?? ""),
     ruleId: String(value.ruleId ?? value.rule_id ?? ""),
     ruleOrigin: String(value.ruleOrigin ?? value.rule_origin) as "builtin" | "user" | "explicit",
-    status: String(value.status) as "auto" | "user_confirmed" | "inactive",
+    status: (rawStatus === "active" && mappingLevel === "L3" ? "user_confirmed" : rawStatus) as "auto" | "user_confirmed" | "inactive",
     packageId: String(value.packageId ?? value.package_id ?? "") || undefined,
     packageVersion: String(value.packageVersion ?? value.package_version ?? "") || undefined,
     packageHash: String(value.packageHash ?? value.package_hash ?? "") || undefined,
@@ -1193,9 +1197,13 @@ const normalizeIntermediateFlowLinkPort = (port: FlowPort): FlowPort => {
   };
   const isActive = normalizedLink.status === "auto" || normalizedLink.status === "user_confirmed";
   const restoredUnit = isActive && normalizedLink.sourceUnit ? normalizedLink.sourceUnit : port.unit;
+  const restoredUnitGroup = isActive && normalizedLink.sourceUnitGroup
+    ? normalizedLink.sourceUnitGroup
+    : port.unitGroup;
   return {
     ...port,
     unit: restoredUnit,
+    unitGroup: restoredUnitGroup,
     intermediateFlowLink: normalizedLink,
   };
 };

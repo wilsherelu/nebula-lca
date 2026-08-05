@@ -277,6 +277,8 @@ def _resolution_with_catalog_units(
         amount_factor=factor,
         source_unit=str(source.default_unit or ""),
         target_unit=str(target.default_unit or ""),
+        source_unit_group=str(source.unit_group or "") or None,
+        target_unit_group=str(target.unit_group or "") or None,
     )
 
 

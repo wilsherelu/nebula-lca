@@ -41,6 +41,8 @@ export type IntermediateFlowLink = {
   amountFactor: number;
   sourceUnit: string;
   targetUnit: string;
+  sourceUnitGroup?: string;
+  targetUnitGroup?: string;
   mappingLevel: "L1" | "L2" | "L3";
   mappingReason: string;
   ruleId: string;

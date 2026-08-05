@@ -697,11 +697,14 @@ def test_resolve_and_provider_apis_keep_provider_choice_explicit():
         created = client.post("/api/intermediate-flow-links/user-rules", json={
             "source_flow_uuid": row["source_flow_uuid"],
             "target_flow_uuid": row["target_flow_uuid"],
-            "mapping_reason": "User-selected calculation proxy",
         })
         assert created.status_code == 201
         assert created.json()["mapping_level"] == "L3"
         assert created.json()["amount_factor"] == 1.0
+        assert created.json()["mapping_reason"] == ""
+        assert created.json()["source_unit_group"] == row["source_unit_group"]
+        assert created.json()["target_unit_group"] == row["target_unit_group"]
+        assert created.json()["status"] == "user_confirmed"
         deactivated = client.delete(f"/api/intermediate-flow-links/user-rules/{created.json()['id']}")
         assert deactivated.status_code == 200
         assert deactivated.json()["status"] == "inactive"
