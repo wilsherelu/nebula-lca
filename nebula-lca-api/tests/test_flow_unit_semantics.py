@@ -412,6 +412,71 @@ def test_product_result_unit_map_exposes_flow_default_unit_factor():
     assert product_values == [[0.001]]
 
 
+def test_product_result_view_excludes_hidden_lci_dataset_products():
+    graph = HybridGraph.model_validate({
+        "functionalUnit": "1 kg foreground product",
+        "nodes": [
+            {
+                "id": "foreground-node",
+                "node_kind": "unit_process",
+                "mode": "normalized",
+                "process_uuid": "foreground-process",
+                "name": "foreground",
+                "location": "CN",
+                "reference_product": "foreground-flow",
+                "inputs": [],
+                "outputs": [{
+                    "id": "foreground-output",
+                    "flowUuid": "foreground-flow",
+                    "name": "foreground product",
+                    "type": "technosphere",
+                    "direction": "output",
+                    "isProduct": True,
+                    "amount": 1,
+                    "unit": "kg",
+                }],
+                "emissions": [],
+            },
+            {
+                "id": "background-node",
+                "node_kind": "lci_dataset",
+                "lci_role": "provider",
+                "hidden": True,
+                "mode": "normalized",
+                "process_uuid": "background-process",
+                "name": "background",
+                "location": "GLO",
+                "reference_product": "background-flow",
+                "inputs": [],
+                "outputs": [{
+                    "id": "background-output",
+                    "flowUuid": "background-flow",
+                    "name": "background product",
+                    "type": "technosphere",
+                    "direction": "output",
+                    "isProduct": True,
+                    "amount": 1,
+                    "unit": "kg",
+                }],
+                "emissions": [],
+            },
+        ],
+        "exchanges": [],
+    })
+
+    product_index, _, product_values = _build_product_result_view_from_graph(
+        db=_FakeDb(),
+        graph=graph,
+        process_index=["foreground-process", "background-process"],
+        values=[[10.0, 2.0]],
+        unit_factor_by_group_and_name={("Units of mass", "kg"): 1.0},
+        reference_unit_by_group={"Units of mass": "kg"},
+    )
+
+    assert [row["process_uuid"] for row in product_index] == ["foreground-process"]
+    assert product_values == [[10.0]]
+
+
 def test_product_result_view_uses_current_unit_group_for_allocation_display():
     db = _FakeDb()
     db.flow_by_uuid.update({

@@ -2081,7 +2081,11 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
       const patchPorts = (ports: FlowPort[], portDirection: AssocDirection) =>
         ports.map((port) => {
           if (portDirection === direction && port.id === portId) {
-            return { ...port, isProduct: checked };
+            return {
+              ...port,
+              isProduct: checked,
+              ...(portDirection === "output" && !checked ? { externalSaleAmount: 0 } : {}),
+            };
           }
           return port;
         });
@@ -2511,28 +2515,12 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                   }
                   const checked = isReferenceProductPort(port, "output");
                   return (
-                    <div className="product-sale-cell">
-                      <Checkbox
-                        checked={checked}
-                        disabled={importedLocked || lciNode}
-                        ariaLabel={t("定义为产品", "Define as product")}
-                        onCheckedChange={(nextChecked) => applyProductToggle("output", port.id, nextChecked)}
-                      />
-                      <button
-                        type="button"
-                        className="sale-link-btn"
-                        disabled={importedLocked || !checked}
-                        onClick={() =>
-                          setSaleDialog({
-                            open: true,
-                            portId: port.id,
-                            value: Number.isFinite(port.externalSaleAmount ?? 0) ? (port.externalSaleAmount ?? 0) : 0,
-                          })
-                        }
-                      >
-                        {checked ? `${t("外售", "External Sale")}: ${port.externalSaleAmount ?? 0}` : `${t("外售", "External Sale")}: -`}
-                      </button>
-                    </div>
+                    <Checkbox
+                      checked={checked}
+                      disabled={importedLocked || lciNode}
+                      ariaLabel={t("定义为产品", "Define as product")}
+                      onCheckedChange={(nextChecked) => applyProductToggle("output", port.id, nextChecked)}
+                    />
                   );
                 }}
                 remoteTotal={usesRemoteLciInventory ? lciInventoryGroups.out_intermediate.total : undefined}
@@ -2570,7 +2558,18 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                     }
                     : () => setFlowPicker({ open: true, target: "out_intermediate" })
                 }
-                onLink={lciNode ? undefined : (port) => openAssociationDialog("output", port)}
+                getLinkLabel={(port) => isReferenceProductPort(port, "output") ? t("外售量", "External Sale") : t("关联", "Link")}
+                onLink={lciNode ? undefined : (port) => {
+                  if (isReferenceProductPort(port, "output")) {
+                    setSaleDialog({
+                      open: true,
+                      portId: port.id,
+                      value: Number.isFinite(port.externalSaleAmount ?? 0) ? (port.externalSaleAmount ?? 0) : 0,
+                    });
+                    return;
+                  }
+                  openAssociationDialog("output", port);
+                }}
                 onDelete={lciNode ? undefined : (id) => {
                   if (marketProcess) {
                     setPendingMarketOutputSelection(true);
