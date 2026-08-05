@@ -535,6 +535,7 @@ class FlowListItem(BaseModel):
     flow_name_en: str | None = None
     type: str
     unit: str | None = None
+    unit_group: str | None = None
     category: str | None = None
     subcompartment: str | None = None
     source: str | None = None

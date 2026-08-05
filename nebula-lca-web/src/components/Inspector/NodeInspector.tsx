@@ -441,14 +441,14 @@ function FlowSection({
           {hasExtra ? <div className="extra-column-cell">{renderExtraCell?.(port, idx)}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
           {hasExtra2 ? <div className="extra-column-cell inventory-grid-product-cell">{renderExtraCell2?.(port, idx)}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
           {showNodeColumn ? (
-            <label className="inline-checkbox inventory-grid-show-cell">
-              <input
-                type="checkbox"
+            <div className="inline-checkbox inventory-grid-show-cell">
+              <Checkbox
                 checked={port.showOnNode}
                 disabled={showOnNodeLocked || plainReadOnly}
-                onChange={(event) => onChange(updatePortValue(ports, port.id, "showOnNode", event.target.checked))}
+                ariaLabel={t("显示在节点上", "Show on node")}
+                onCheckedChange={(checked) => onChange(updatePortValue(ports, port.id, "showOnNode", checked))}
               />
-            </label>
+            </div>
           ) : <div className="inventory-grid-spacer" aria-hidden="true" />}
           {showActionColumn ? (
             <div className="inventory-action-cell">

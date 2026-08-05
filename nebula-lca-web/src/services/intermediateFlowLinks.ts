@@ -138,8 +138,18 @@ export async function searchEcoIntermediateFlows(query: string): Promise<EcoInte
   });
   const response = await fetch(`${API_BASE}/flows?${params.toString()}`);
   if (!response.ok) throw new Error(`Flow search failed (${response.status})`);
-  const payload = (await response.json()) as { items?: EcoIntermediateFlow[] };
-  return payload.items ?? [];
+  const payload = (await response.json()) as {
+    items?: Array<Partial<EcoIntermediateFlow> & { flow_id?: string; unit?: string; tidas_unit_group?: string }>;
+  };
+  return (payload.items ?? [])
+    .map((item) => ({
+      flow_uuid: String(item.flow_uuid ?? item.flow_id ?? "").trim(),
+      flow_name: String(item.flow_name ?? item.flow_name_en ?? "").trim(),
+      flow_name_en: String(item.flow_name_en ?? "").trim() || undefined,
+      default_unit: String(item.default_unit ?? item.unit ?? "").trim(),
+      unit_group: String(item.unit_group ?? item.tidas_unit_group ?? "").trim(),
+    }))
+    .filter((item) => Boolean(item.flow_uuid));
 }
 
 export async function createUserProxyRule(
