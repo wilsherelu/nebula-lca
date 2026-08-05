@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from difflib import SequenceMatcher
 from functools import lru_cache
 from pathlib import Path
@@ -260,6 +260,26 @@ def deterministic_default_unit_factor(db: Session, source: FlowRecord, target: F
     return source_factor / target_factor
 
 
+def _resolution_with_catalog_units(
+    db: Session,
+    source: FlowRecord | None,
+    target: FlowRecord | None,
+    resolution: IntermediateFlowResolution,
+) -> IntermediateFlowResolution:
+    """Use current catalog spellings when they preserve the reviewed factor."""
+    if source is None or target is None:
+        return resolution
+    factor = deterministic_default_unit_factor(db, source, target)
+    if factor is None or abs(factor - resolution.amount_factor) > 1e-12:
+        return resolution
+    return replace(
+        resolution,
+        amount_factor=factor,
+        source_unit=str(source.default_unit or ""),
+        target_unit=str(target.default_unit or ""),
+    )
+
+
 def resolve_intermediate_flow(db: Session, flow_uuid: str) -> tuple[IntermediateFlowResolution | None, str | None]:
     source_uuid = str(flow_uuid or "").strip()
     user_rule = (
@@ -293,6 +313,7 @@ def resolve_intermediate_flow(db: Session, flow_uuid: str) -> tuple[Intermediate
         return None, None
     source = db.get(FlowRecord, source_uuid)
     target = db.get(FlowRecord, resolution.target_flow_uuid)
+    resolution = _resolution_with_catalog_units(db, source, target, resolution)
     return resolution, _validate_resolution_records(source, target, resolution)
 
 
@@ -314,6 +335,8 @@ def validate_intermediate_flow_link(
             return f"{link.mapping_level}_RULE_NOT_FOUND"
     source = db.get(FlowRecord, source_flow_uuid)
     target = db.get(FlowRecord, link.target_flow_uuid)
+    if expected is not None:
+        expected = _resolution_with_catalog_units(db, source, target, expected)
     record_issue = _validate_resolution_records(
         source,
         target,
