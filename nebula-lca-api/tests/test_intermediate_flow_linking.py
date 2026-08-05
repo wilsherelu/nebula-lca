@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pytest
 from fastapi import HTTPException
@@ -18,13 +19,14 @@ from app.api.intermediate_flow_links import (
     resolve_batch,
 )
 from app.main import app
-from app.models import FlowRecord, LciProcessVector, Model, ModelVersion, ReferenceProcess
+from app.models import FlowRecord, LciProcessVector, Model, ModelVersion, ReferenceProcess, UnitDefinition
 from app.schemas import HybridGraph, IntermediateFlowLink
 from app.services.graph_contract import analyze_handle_consistency, validate_graph_contract
 from app.services.intermediate_flow_linking_service import (
     DEFAULT_PACKAGE_PATH,
     IntermediateFlowLinkRegistry,
     _validate_resolution_records,
+    _resolution_with_catalog_units,
     backfill_ecoinvent_reference_flow_uuids,
     get_intermediate_flow_link_registry,
     list_provider_candidates,
@@ -483,6 +485,37 @@ def test_warned_l2_resolution_requires_confirmation_and_evidence_is_checked(db):
     graph = _graph(row)
     validate_graph_contract(graph)
     validate_graph_intermediate_flow_links(db, graph)
+
+
+def test_reviewed_factor_uses_current_catalog_unit_spelling(db):
+    row = _seed_first_compatible_pair(db)
+    source = db.get(FlowRecord, row["source_flow_uuid"])
+    target = db.get(FlowRecord, row["target_flow_uuid"])
+    source.default_unit = "MJ"
+    source.unit_group = "Units of energy"
+    target.default_unit = "kWh"
+    target.unit_group = "energy"
+    db.add_all([
+        UnitDefinition(unit_group="Units of energy", unit_name="MJ", factor_to_reference=1.0),
+        UnitDefinition(unit_group="energy", unit_name="kWh", factor_to_reference=3.6),
+    ])
+    row["amount_factor"] = 1 / 3.6
+    registry_resolution = get_intermediate_flow_link_registry().resolve(row["source_flow_uuid"])
+    assert registry_resolution is not None
+    registry_resolution = replace(
+        registry_resolution,
+        source_unit="MJ",
+        target_unit="kwh",
+        amount_factor=1 / 3.6,
+    )
+    db.commit()
+
+    resolution = _resolution_with_catalog_units(db, source, target, registry_resolution)
+
+    assert resolution.source_unit == "MJ"
+    assert resolution.target_unit == "kWh"
+    assert resolution.amount_factor == pytest.approx(1 / 3.6)
+    assert _validate_resolution_records(source, target, resolution) is None
 
 
 def test_alias_edge_preserves_consumer_uuid_and_requires_current_l1_evidence(db):
