@@ -155,6 +155,7 @@ class HybridNode(BaseModel):
     process_uuid: str = Field(alias="process_uuid")
     name: str
     location: str
+    source_system: str | None = Field(default=None, alias="source_system")
     reference_product: str = Field(alias="reference_product")
     reference_product_flow_uuid: str | None = Field(default=None, alias="reference_product_flow_uuid")
     reference_product_direction: Literal["input", "output"] | None = Field(default=None, alias="reference_product_direction")

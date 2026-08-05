@@ -103,6 +103,9 @@ export function BackgroundLciAssociationSection({
       });
       if (!response.ok) throw new Error(`Provider import failed (${response.status})`);
       const rows = parseImportedRows(await response.json(), "locked", language, "lci_dataset");
+      if (rows[0] && provider.source) {
+        rows[0].sourceSystem = provider.source;
+      }
       if (!rows[0] || !connectProvider(consumerNodeId, port.id, rows[0])) {
         const sourceLabel = provider.source || t("所选数据源", "the selected source");
         const message = convertedTargetFlowUuid

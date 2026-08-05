@@ -203,6 +203,7 @@ export const parseImportedRows = (
           processUuid ||
           (uiLanguage === "zh" ? "导入单元过程" : "Imported Unit Process"),
         location: String(item.location ?? ""),
+        sourceSystem: String(item.source ?? "").trim() || undefined,
         referenceProduct:
           (uiLanguage === "en" ? referenceProductEn || referenceProductZh : referenceProductZh || referenceProductEn) || "",
         referenceProductFlowUuid: referenceFlow || undefined,

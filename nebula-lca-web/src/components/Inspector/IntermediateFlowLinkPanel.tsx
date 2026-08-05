@@ -109,7 +109,8 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
         ...current.data,
         inputs: current.data.inputs.map((port) => {
           const link = links.get(port.id);
-          return link ? { ...port, intermediateFlowLink: link } : port;
+          if (!link) return port;
+          return { ...port, ...(link.sourceUnit ? { unit: link.sourceUnit } : {}), intermediateFlowLink: link };
         }),
       },
     }));
@@ -153,7 +154,8 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
           ...current.data,
           inputs: current.data.inputs.map((port) => {
             const link = links.get(port.id);
-            return link ? { ...port, intermediateFlowLink: link } : port;
+            if (!link) return port;
+            return { ...port, ...(link.sourceUnit ? { unit: link.sourceUnit } : {}), intermediateFlowLink: link };
           }),
         },
       }));
@@ -185,7 +187,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
         data: {
           ...current.data,
           inputs: current.data.inputs.map((item) =>
-            item.id === port.id ? { ...item, intermediateFlowLink: link } : item,
+            item.id === port.id ? { ...item, ...(link.sourceUnit ? { unit: link.sourceUnit } : {}), intermediateFlowLink: link } : item,
           ),
         },
       }));
@@ -210,7 +212,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
       data: {
         ...current.data,
         inputs: current.data.inputs.map((item) =>
-          item.id === port.id ? { ...item, intermediateFlowLink: link } : item,
+          item.id === port.id ? { ...item, ...(link.sourceUnit ? { unit: link.sourceUnit } : {}), intermediateFlowLink: link } : item,
         ),
       },
     }));

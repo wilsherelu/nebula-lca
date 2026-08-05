@@ -255,6 +255,33 @@ class TestSlimUnit:
         assert "compiled_artifact" not in slim_node
         assert "big_data" not in slim_node
 
+    def test_slim_preserves_source_system_through_hybrid_validation(self):
+        """source_system must survive HybridNode validation and slim storage."""
+        node_dict = _make_simple_graph_node("proc-src", "Provider Node")
+        node_dict["source_system"] = "ecoinvent 4.5"
+        node_dict["node_kind"] = "lci_dataset"
+        node_dict["lci_role"] = "provider"
+        node_dict["hidden"] = True
+
+        graph = HybridGraph(
+            functionalUnit="test",
+            nodes=[node_dict],
+            exchanges=[],
+            metadata={},
+        )
+
+        # HybridNode validation preserves source_system
+        validated = graph.model_dump(mode="python")
+        assert validated["nodes"][0]["source_system"] == "ecoinvent 4.5"
+
+        # Slim storage preserves source_system
+        slim = slim_graph_for_storage(validated)
+        assert slim["nodes"][0]["source_system"] == "ecoinvent 4.5"
+
+        # Hydrate restores source_system
+        hydrated = hydrate_graph_for_api(slim, db=None)
+        assert hydrated["nodes"][0]["source_system"] == "ecoinvent 4.5"
+
     def test_slim_hash_deterministic(self):
         """Same graph → same slim → same hash."""
         graph = _make_graph("proc-1", "Test Process")

@@ -105,6 +105,7 @@ export type LcaNodeData = {
   processUuid: string;
   name: string;
   location: string;
+  sourceSystem?: string;
   referenceProduct: string;
   referenceProductFlowUuid?: string;
   referenceProductDirection?: FlowDirection;

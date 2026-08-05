@@ -287,6 +287,8 @@ type FlowSectionProps = {
   onLink?: (port: FlowPort) => void;
   allowLinkWhenLocked?: boolean;
   getLinkLabel?: (port: FlowPort) => string;
+  getLinkTooltip?: (port: FlowPort) => ReactNode;
+  getLinkClassName?: (port: FlowPort) => string;
 };
 
 function FlowSection({
@@ -318,6 +320,8 @@ function FlowSection({
   onLink,
   allowLinkWhenLocked = false,
   getLinkLabel,
+  getLinkTooltip,
+  getLinkClassName,
 }: FlowSectionProps) {
   const t = (zh: string, en: string) => (uiLanguage === "zh" ? zh : en);
   const pageSize = 10;
@@ -385,8 +389,8 @@ function FlowSection({
         <div>{t("数值", "Amount")}</div>
         <div>{t("单位", "Unit")}</div>
         {hasExtra ? <div>{extraHeader}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
-        {hasExtra2 ? <div>{extraHeader2}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
-        {showNodeColumn ? <div>{t("显示", "Show")}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
+        {hasExtra2 ? <div className="inventory-grid-product-header">{extraHeader2}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
+        {showNodeColumn ? <div className="inventory-grid-show-header">{t("显示", "Show")}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
         {showActionColumn ? <div>{t("操作", "Action")}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
       </div>
       {!remoteLoading && !remoteError && visiblePorts.map((port, idx) => (
@@ -432,9 +436,9 @@ function FlowSection({
             </select>
           )}
           {hasExtra ? <div className="extra-column-cell">{renderExtraCell?.(port, idx)}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
-          {hasExtra2 ? <div className="extra-column-cell">{renderExtraCell2?.(port, idx)}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
+          {hasExtra2 ? <div className="extra-column-cell inventory-grid-product-cell">{renderExtraCell2?.(port, idx)}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
           {showNodeColumn ? (
-            <label className="inline-checkbox">
+            <label className="inline-checkbox inventory-grid-show-cell">
               <input
                 type="checkbox"
                 checked={port.showOnNode}
@@ -445,16 +449,27 @@ function FlowSection({
           ) : <div className="inventory-grid-spacer" aria-hidden="true" />}
           {showActionColumn ? (
             <div className="inventory-action-cell">
-              {onLink && port.type !== "biosphere" && !plainReadOnly && (
-                <button
-                  type="button"
-                  className="link-btn"
-                  disabled={readOnly || plainReadOnly || (lockFields && !allowLinkWhenLocked)}
-                  onClick={() => onLink(port)}
-                >
-                  {getLinkLabel?.(port) ?? t("关联", "Link")}
-                </button>
-              )}
+              {onLink && port.type !== "biosphere" && !plainReadOnly && (() => {
+                const tooltipContent = getLinkTooltip?.(port);
+                return (
+                <div className="inventory-link-wrapper">
+                  <button
+                    type="button"
+                    className={`link-btn${getLinkClassName?.(port) ? ` ${getLinkClassName(port)}` : ""}`}
+                    disabled={readOnly || plainReadOnly || (lockFields && !allowLinkWhenLocked)}
+                    onClick={() => onLink(port)}
+                  >
+                    <span className="link-btn-default">{getLinkLabel?.(port) ?? t("关联", "Link")}</span>
+                    <span className="link-btn-hover">{t("点击切换", "Click to switch")}</span>
+                  </button>
+                  {tooltipContent && (
+                    <div className="inventory-link-tooltip" role="tooltip">
+                      {tooltipContent}
+                    </div>
+                  )}
+                </div>
+                );
+              })()}
               {!plainReadOnly && (
                 <button
                   type="button"
@@ -568,6 +583,25 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
   const unitAutoScaleEnabled = useLcaGraphStore((state) => state.unitAutoScaleEnabled);
   const setUnitAutoScaleEnabled = useLcaGraphStore((state) => state.setUnitAutoScaleEnabled);
   const t = (zh: string, en: string) => (uiLanguage === "zh" ? zh : en);
+
+  const providerByPortId = useMemo(() => {
+    const map = new Map<string, { nodeId: string; name: string; location: string; source: string }>();
+    for (const edge of edges) {
+      if (edge.target !== node.id) continue;
+      const portId = parseHandlePortId(edge.targetHandle, "in:");
+      if (!portId) continue;
+      const providerNode = nodes.find((n) => n.id === edge.source);
+      if (!providerNode || !providerNode.hidden) continue;
+      if (providerNode.data.lciRole !== "provider" && providerNode.data.nodeKind !== "lci_dataset") continue;
+      map.set(portId, {
+        nodeId: providerNode.id,
+        name: providerNode.data.name || "-",
+        location: providerNode.data.location || "-",
+        source: providerNode.data.sourceSystem || "-",
+      });
+    }
+    return map;
+  }, [edges, nodes, node.id]);
 
   useEffect(() => {
     if (initialTab) {
@@ -2288,7 +2322,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                   void updatePortUnitWithConversion("inputs", port, nextUnit);
                 }}
                 extraHeader={t("单位组", "Unit Group")}
-                extraHeader2={lciNode ? undefined : t("定义产品", "Product Def.")}
+                extraHeader2={lciNode ? undefined : t("产品", "Product")}
                 renderExtraCell={(port) => (
                   lciNode
                     ? <div className="flow-value-readonly" title={resolvePortUnitGroupKey(port) || ""}>{resolvePortUnitGroupKey(port) || "-"}</div>
@@ -2342,7 +2376,28 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                 onAdd={lciNode ? undefined : () => setFlowPicker({ open: true, target: "in_intermediate" })}
                 onLink={!marketProcess && !lciNode ? (port) => openAssociationDialog("input", port) : undefined}
                 allowLinkWhenLocked
-                getLinkLabel={() => t("关联", "Link")}
+                getLinkLabel={(port) => providerByPortId.has(port.id) ? t("已关联", "Linked") : t("关联", "Link")}
+                getLinkClassName={(port) => providerByPortId.has(port.id) ? "linked" : ""}
+                getLinkTooltip={(port) => {
+                  const provider = providerByPortId.get(port.id);
+                  if (!provider) return null;
+                  return (
+                    <>
+                      <div className="inventory-link-tooltip-row">
+                        <span className="inventory-link-tooltip-label">{t("数据集", "Dataset")}</span>
+                        <span className="inventory-link-tooltip-value" title={provider.name}>{provider.name}</span>
+                      </div>
+                      <div className="inventory-link-tooltip-row">
+                        <span className="inventory-link-tooltip-label">{t("地区", "Location")}</span>
+                        <span className="inventory-link-tooltip-value">{provider.location}</span>
+                      </div>
+                      <div className="inventory-link-tooltip-row">
+                        <span className="inventory-link-tooltip-label">{t("来源", "Source")}</span>
+                        <span className="inventory-link-tooltip-value">{provider.source}</span>
+                      </div>
+                    </>
+                  );
+                }}
                 onDelete={lciNode ? undefined : (id) =>
                   updateNode(node.id, (current) => ({
                     ...current,
@@ -2435,7 +2490,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                   void updatePortUnitWithConversion("outputs", port, nextUnit);
                 }}
                 extraHeader={t("单位组", "Unit Group")}
-                extraHeader2={lciNode ? undefined : t("定义产品", "Product Def.")}
+                extraHeader2={lciNode ? undefined : t("产品", "Product")}
                 renderExtraCell={(port) => (
                   lciNode
                     ? <div className="flow-value-readonly" title={resolvePortUnitGroupKey(port) || ""}>{resolvePortUnitGroupKey(port) || "-"}</div>

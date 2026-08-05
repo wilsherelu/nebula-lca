@@ -51,6 +51,7 @@ export type LcaGraphPayload = {
   metadata?: Record<string, unknown>;
   nodes: Array<{
     id: string;
+    hidden?: boolean;
     node_kind: LcaNodeKind;
     mode?: "balanced" | "normalized";
     market_allow_mixed_flows?: boolean;
@@ -61,6 +62,7 @@ export type LcaGraphPayload = {
     process_uuid: string;
     name: string;
     location: string;
+    source_system?: string;
     reference_product: string;
     reference_product_flow_uuid?: string;
     reference_product_direction?: "input" | "output";
