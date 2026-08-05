@@ -196,14 +196,15 @@ def _flow_uuid_set_cached(db: Session) -> set[str]:
     return value
 
 
-def _flow_meta_by_uuid_cached(db: Session) -> dict[str, tuple[str | None, str | None, str | None, str | None]]:
-    cache_key = f"flow_meta_by_uuid:v1:rev={_cc.cache_revision('flow_meta')}"
+def _flow_meta_by_uuid_cached(db: Session) -> dict[str, tuple[str | None, str | None, str | None, str | None, str | None]]:
+    cache_key = f"flow_meta_by_uuid:v2:rev={_cc.cache_revision('flow_meta')}"
     cached = _cc.cache_get(cache_key, ttl_seconds=_CACHE_TTL_FLOW_META_SECONDS)
     if isinstance(cached, dict):
         return cached
     value = {
         str(row.flow_uuid).strip(): (
             _safe_str(row.flow_name),
+            _safe_str(row.flow_name_en),
             _safe_str(row.default_unit),
             _safe_str(row.flow_type),
             _safe_str(row.unit_group),
@@ -211,6 +212,7 @@ def _flow_meta_by_uuid_cached(db: Session) -> dict[str, tuple[str | None, str | 
         for row in db.query(
             FlowRecord.flow_uuid,
             FlowRecord.flow_name,
+            FlowRecord.flow_name_en,
             FlowRecord.default_unit,
             FlowRecord.flow_type,
             FlowRecord.unit_group,
@@ -315,7 +317,7 @@ def _mark_reference_product_exchange(
 def _build_imported_process_ports(
     *,
     exchanges: list[dict],
-    flow_meta_by_uuid: dict[str, tuple[str | None, str | None, str | None, str | None]],
+    flow_meta_by_uuid: dict[str, tuple[str | None, str | None, str | None, str | None, str | None]],
 ) -> tuple[list[ImportedProcessPortItem], list[ImportedProcessPortItem]]:
     from ..schemas import flow_semantic_to_exchange_type
 
@@ -326,13 +328,16 @@ def _build_imported_process_ports(
         if not isinstance(ex, dict):
             continue
         flow_uuid = _safe_str(ex.get("flow_uuid"))
-        flow_name = _localized_display_text(ex.get("flow_name"))
+        exchange_flow_name = _localized_display_text(ex.get("flow_name"))
+        flow_name = exchange_flow_name
+        flow_name_en = ""
         unit = _safe_str(ex.get("unit"))
         unit_group = ""
         flow_type = _safe_str(ex.get("flow_type"))
         if flow_uuid and flow_uuid in flow_meta_by_uuid:
-            db_flow_name, db_unit, db_flow_type, db_unit_group = flow_meta_by_uuid.get(flow_uuid) or (None, None, None, None)
-            flow_name = flow_name or db_flow_name
+            db_flow_name, db_flow_name_en, db_unit, db_flow_type, db_unit_group = flow_meta_by_uuid.get(flow_uuid) or (None, None, None, None, None)
+            flow_name = db_flow_name or flow_name
+            flow_name_en = db_flow_name_en or ""
             unit = unit or db_unit
             flow_type = flow_type or db_flow_type
             unit_group = _safe_str(db_unit_group)
@@ -346,6 +351,7 @@ def _build_imported_process_ports(
         item = ImportedProcessPortItem(
             flow_uuid=flow_uuid,
             flow_name=flow_name,
+            flow_name_en=flow_name_en or None,
             unit=unit,
             unit_group=unit_group or None,
             type=flow_semantic_to_exchange_type(flow_type),

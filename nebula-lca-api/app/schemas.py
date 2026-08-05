@@ -716,6 +716,7 @@ class FilteredExchangeEvidence(BaseModel):
 class ImportedProcessPortItem(BaseModel):
     flow_uuid: str | None = None
     flow_name: str | None = None
+    flow_name_en: str | None = None
     unit: str | None = None
     unit_group: str | None = None
     type: ExchangeType = "technosphere"

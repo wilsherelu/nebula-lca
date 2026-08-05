@@ -333,14 +333,18 @@ def test_reference_process_import_repairs_amounts_from_sync_lineage(client):
 
 
 def test_reference_process_import_accepts_lci_dataset_target(client):
-    """Canvas import for ecoinvent LCI datasets should not be rejected as unimplemented."""
+    """Canvas import for ecoinvent LCI datasets should not be rejected as unimplemented.
+    Legacy ecoinvent process_json uses only reference_product_id (not reference_flow_uuid).
+    The FlowRecord carries authoritative Chinese flow_name and English flow_name_en.
+    """
     source_uuid = "source-lci-process-001"
     db = _db_module.SessionLocal()
     try:
         db.add(
             FlowRecord(
                 flow_uuid="ref-flow-001",
-                flow_name="reference product",
+                flow_name="重燃料油（硫含量1.0 wt.%）",
+                flow_name_en="Heavy fuel oil (1.0 wt.% S)",
                 flow_type="Product flow",
                 default_unit="kg",
                 unit_group="Units of mass",
@@ -350,6 +354,7 @@ def test_reference_process_import_accepts_lci_dataset_target(client):
             FlowRecord(
                 flow_uuid="wrong-intermediate-001",
                 flow_name="coal gangue",
+                flow_name_en="coal gangue",
                 flow_type="Product flow",
                 default_unit="kg",
                 unit_group="Units of mass",
@@ -362,13 +367,13 @@ def test_reference_process_import_accepts_lci_dataset_target(client):
                 process_name_zh="Source LCI process",
                 process_name_en="Source LCI process",
                 process_type="lci_dataset",
-                reference_flow_uuid="ref-flow-001",
+                reference_flow_uuid=None,
                 process_json={
                     "process_uuid": source_uuid,
                     "process_name_zh": "Source LCI process",
                     "location": "GLO",
-                    "reference_flow_uuid": "ref-flow-001",
-                    "reference_product": "reference product",
+                    "reference_product_id": "ref-flow-001",
+                    "reference_product": "Heavy fuel oil (1.0 wt.% S)",
                     "reference_product_unit": "kg",
                     "reference_product_amount": 1,
                     "exchanges": [
@@ -379,7 +384,7 @@ def test_reference_process_import_accepts_lci_dataset_target(client):
                             "amount": 0.6,
                             "unit": "kg",
                             "flow_type": "Product flow",
-                        }
+                        },
                     ],
                 },
             )
@@ -409,12 +414,17 @@ def test_reference_process_import_accepts_lci_dataset_target(client):
         product_outputs = [row for row in imported["outputs"] if row["is_product"]]
         assert len(product_outputs) == 1
         assert product_outputs[0]["flow_uuid"] == "ref-flow-001"
+        assert product_outputs[0]["flow_name"] == "重燃料油（硫含量1.0 wt.%）"
+        assert product_outputs[0]["flow_name_en"] == "Heavy fuel oil (1.0 wt.% S)"
         assert all(row["flow_uuid"] != "wrong-intermediate-001" for row in imported["inputs"])
         assert all(row["flow_uuid"] != "wrong-intermediate-001" for row in imported["outputs"])
     finally:
         db = _db_module.SessionLocal()
         try:
             db.query(FlowRecord).filter(FlowRecord.flow_uuid.in_(["ref-flow-001", "wrong-intermediate-001"])).delete(
+                synchronize_session=False
+            )
+            db.query(ReferenceProcess).filter(ReferenceProcess.process_uuid == source_uuid).delete(
                 synchronize_session=False
             )
             db.commit()

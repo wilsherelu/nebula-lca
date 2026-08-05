@@ -255,7 +255,7 @@ def import_reference_processes(
             repaired_source_json["exchanges"] = json.loads(json.dumps(exchanges))
             source_row.process_json = repaired_source_json
         if target_kind == "lci_dataset":
-            reference_flow_uuid = _safe_str(source_json.get("reference_flow_uuid")) or _safe_str(source_row.reference_flow_uuid)
+            reference_flow_uuid = _safe_str(source_json.get("reference_flow_uuid")) or _safe_str(source_json.get("reference_product_id")) or _safe_str(source_row.reference_flow_uuid)
             has_reference_flow = bool(
                 reference_flow_uuid
                 and any(_safe_str(ex.get("flow_uuid")) == reference_flow_uuid for ex in exchanges)
@@ -289,7 +289,7 @@ def import_reference_processes(
             valid_flow_uuids=valid_flow_uuids,
         )
         filtered_exchanges.extend(filtered)
-        declared_reference_flow_uuid = _safe_str(cloned_json.get("reference_flow_uuid")) or _safe_str(source_row.reference_flow_uuid)
+        declared_reference_flow_uuid = _safe_str(cloned_json.get("reference_flow_uuid")) or _safe_str(cloned_json.get("reference_product_id")) or _safe_str(source_row.reference_flow_uuid)
         marked_reference_flow_uuid, product_warnings = _mark_reference_product_exchange(
             process_uuid=target_uuid,
             process_json=cloned_json,
@@ -308,7 +308,7 @@ def import_reference_processes(
                 flow_uuid = _safe_str(ex.get("flow_uuid"))
                 flow_type = _safe_str(ex.get("flow_type"))
                 if flow_uuid and flow_uuid in flow_meta_by_uuid:
-                    _, _, db_flow_type, _ = flow_meta_by_uuid.get(flow_uuid) or (None, None, None, None)
+                    _, _, _, db_flow_type, _ = flow_meta_by_uuid.get(flow_uuid) or (None, None, None, None, None)
                     flow_type = flow_type or _safe_str(db_flow_type)
                 normalized_flow_type = (flow_type or "").strip().lower()
                 is_reference_product = bool(ex.get("isProduct") or ex.get("is_reference_flow"))
