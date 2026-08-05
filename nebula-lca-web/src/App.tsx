@@ -448,6 +448,35 @@ const readProjectTargetProductConfig = (graph?: LcaGraphPayload | null): Project
   };
 };
 
+const reconcileProjectTargetProductConfig = (
+  graph: LcaGraphPayload,
+  config: ProjectTargetProductConfig | null,
+): ProjectTargetProductConfig | null => {
+  if (!config) {
+    return null;
+  }
+  const candidates = (graph.nodes ?? []).flatMap((node) =>
+    (node.outputs ?? [])
+      .filter((port) => Boolean(port.isProduct))
+      .map((port) => ({
+        processUuid: String(node.process_uuid ?? "").trim(),
+        flowUuid: String(port.flowUuid ?? "").trim(),
+        hidden: Boolean(node.hidden),
+        nodeKind: String(node.node_kind ?? ""),
+      })),
+  );
+  if (candidates.some((item) => item.processUuid === config.processUuid && item.flowUuid === config.flowUuid)) {
+    return config;
+  }
+  const visibleFlowMatches = candidates.filter(
+    (item) => !item.hidden && item.nodeKind !== "lci_dataset" && item.flowUuid === config.flowUuid,
+  );
+  if (visibleFlowMatches.length !== 1) {
+    return config;
+  }
+  return { ...config, processUuid: visibleFlowMatches[0].processUuid };
+};
+
 const applyProjectTargetProductConfig = (
   graph: LcaGraphPayload,
   config: ProjectTargetProductConfig | null,
@@ -819,7 +848,7 @@ const resolvePayloadEdgePort = (
   return byFlow.length === 1 ? byFlow[0] : undefined;
 };
 
-const normalizeGraphPayload = (graph: LcaGraphPayload): LcaGraphPayload => {
+export const normalizeGraphPayload = (graph: LcaGraphPayload): LcaGraphPayload => {
   const stripDisplaySuffix = (value: string, sourceName: string) => {
     const text = value.trim();
     const suffix = sourceName.trim();
@@ -2785,7 +2814,7 @@ export default function App() {
   );
 
   const applyTargetProductDraft = useCallback((graph: LcaGraphPayload) => {
-    const targetProductConfig = readProjectTargetProductConfig(graph);
+    const targetProductConfig = reconcileProjectTargetProductConfig(graph, readProjectTargetProductConfig(graph));
     setSelectedProductKey(
       targetProductConfig ? buildProjectTargetMatchKey(targetProductConfig.processUuid, targetProductConfig.flowUuid) : "",
     );

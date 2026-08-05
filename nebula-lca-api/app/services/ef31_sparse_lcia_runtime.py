@@ -14,8 +14,8 @@ from sqlalchemy.orm import Session
 
 from ..config import PROJECT_ROOT, WORKSPACE_ROOT, settings
 from .ef31_runtime_csv import ACTIVE_MANIFEST_NAME, DEFAULT_EF31_RUNTIME_ROOT
-from .lci_runtime import expand_graph_lci_inventory
-from ..models import LciBiosphereFlowKey
+from .lci_runtime import expand_graph_lci_inventory, load_process_vectors
+from ..models import FlowRecord, LciBiosphereFlowKey
 from ..schemas import HybridGraph
 
 
@@ -36,6 +36,186 @@ class Ef31SparseRuntime:
 class DirectSparseLciaResult:
     solver_output: dict[str, Any]
     tiangong_like_input: dict[str, Any]
+
+
+def try_run_hybrid_sparse_lcia(
+    *,
+    db: Session,
+    graph: HybridGraph,
+    lcia_methods: list[str] | None,
+    flow_type_by_uuid: dict[str, str] | None = None,
+    flow_source_by_uuid: dict[str, str] | None = None,
+    runtime_root: Path | None = None,
+) -> DirectSparseLciaResult | None:
+    """Solve foreground technology while keeping terminal LCI vectors compressed."""
+    lci_nodes = [node for node in graph.nodes if node.node_kind == "lci_dataset"]
+    if not lci_nodes or len(lci_nodes) == len(graph.nodes):
+        return None
+    process_uuids = [str(node.process_uuid or "").strip() for node in lci_nodes]
+    if any(not process_uuid or process_uuid.startswith("lci_") for process_uuid in process_uuids):
+        return None
+    if any(
+        str(port.type or "") == "biosphere"
+        for node in lci_nodes
+        for port in [*(node.inputs or []), *(node.outputs or [])]
+    ):
+        return None
+
+    from ..solver import to_tiangong_like
+    from ..solver_adapter import _ensure_embedded_solver_core, _resolve_embedded_ef31_dirs
+
+    snapshot = to_tiangong_like(
+        graph,
+        flow_type_by_uuid=flow_type_by_uuid,
+        flow_source_by_uuid=flow_source_by_uuid,
+    )
+    lci_process_set = set(process_uuids)
+    if any(str(link.get("consumer_process_uuid") or "") in lci_process_set for link in snapshot.get("links", [])):
+        return None
+
+    vectors = load_process_vectors(db, sorted(lci_process_set))
+    missing_vectors = sorted(lci_process_set.difference(vectors))
+    if missing_vectors:
+        return None
+
+    _ensure_embedded_solver_core()
+    import importlib
+    import numpy as np
+
+    matrix_builder = importlib.import_module("app.core.matrix_builder")
+    runtime_cache = importlib.import_module("app.core.ef31_runtime_cache")
+    base = matrix_builder.build_matrices_from_snapshot(snapshot)
+    process_index = list(base["A"]["rows"])
+    process_pos = {process_uuid: index for index, process_uuid in enumerate(process_index)}
+    process_count = len(process_index)
+
+    needed_flow_key_ids = sorted({flow_key_id for vector in vectors.values() for flow_key_id in vector})
+    flow_key_rows = _load_flow_keys(db, needed_flow_key_ids)
+    b_matrix = base["B"]
+    observed_flow_uuids = {
+        *[str(flow_uuid) for flow_uuid in b_matrix.get("rows", [])],
+        *[str(row.flow_uuid) for row in flow_key_rows.values()],
+    }
+    runtime_dirs = [runtime_root] if runtime_root is not None else _resolve_embedded_ef31_dirs()
+    issues = base.setdefault("issues", [])
+    c_pack = runtime_cache.GLOBAL_EF31_RUNTIME_CACHE.build_c_matrix_from_sources(
+        [str(path) for path in runtime_dirs],
+        {
+            "rows": sorted(observed_flow_uuids),
+            "cols": process_index,
+            "shape": [len(observed_flow_uuids), process_count],
+            "data": [],
+        },
+        lcia_methods=lcia_methods or ["EF v3.1"],
+        issues=issues,
+    )
+    c_matrix = c_pack["C"]
+    indicator_count = len(c_matrix["rows"])
+    if indicator_count == 0:
+        return None
+    factor_by_flow_uuid: dict[str, list[tuple[int, float]]] = {}
+    for entry in c_matrix.get("data", []):
+        factor_by_flow_uuid.setdefault(str(entry["col"]), []).append(
+            (int(entry["row_index"]), float(entry["value"]))
+        )
+
+    a_matrix = np.zeros((process_count, process_count), dtype=float)
+    for entry in base["A"]["data"]:
+        a_matrix[int(entry["row_index"]), int(entry["col_index"])] = float(entry["value"])
+
+    characterized = np.zeros((indicator_count, process_count), dtype=float)
+    flow_name_map = {
+        str(item.get("flow_uuid") or ""): str(item.get("flow_name") or "")
+        for item in snapshot.get("flows", [])
+        if item.get("flow_uuid")
+    }
+    flow_rows = {
+        row.flow_uuid: row
+        for row in db.query(FlowRecord).filter(FlowRecord.flow_uuid.in_(sorted(observed_flow_uuids))).all()
+    } if observed_flow_uuids else {}
+    for flow_uuid, row in flow_rows.items():
+        flow_name_map.setdefault(flow_uuid, str(row.flow_name or ""))
+    for entry in b_matrix.get("data", []):
+        flow_uuid = str(b_matrix["rows"][int(entry["row_index"])])
+        amount = float(entry["value"])
+        factors = factor_by_flow_uuid.get(flow_uuid, [])
+        column = int(entry["col_index"])
+        for indicator_pos, coefficient in factors:
+            characterized[indicator_pos, column] += amount * float(coefficient)
+
+    expanded_port_count = 0
+    provenance: list[dict[str, Any]] = []
+    allocation_total = base.get("allocation_total", {})
+    for process_uuid, vector in vectors.items():
+        column = process_pos.get(process_uuid)
+        if column is None:
+            return None
+        denominator = float(allocation_total.get(process_uuid) or 1.0)
+        if denominator <= 0:
+            return None
+        expanded_port_count += len(vector)
+        for flow_key_id, amount in vector.items():
+            flow_key = flow_key_rows.get(int(flow_key_id))
+            if flow_key is None:
+                continue
+            flow_uuid = str(flow_key.flow_uuid)
+            factors = factor_by_flow_uuid.get(flow_uuid, [])
+            normalized_amount = float(amount) / denominator
+            for indicator_pos, coefficient in factors:
+                characterized[indicator_pos, column] += normalized_amount * float(coefficient)
+        provenance.append({"process_uuid": process_uuid, "nnz": len(vector), "denominator": denominator})
+
+    values = characterized @ np.linalg.inv(a_matrix)
+    runtime_flow_uuids = set(c_pack.get("runtime_flow_uuids", set()))
+    missing_flow_uuids = sorted(observed_flow_uuids.difference(runtime_flow_uuids))
+    flow_key_by_uuid = {str(row.flow_uuid): row for row in flow_key_rows.values()}
+    missing_flows = []
+    for flow_uuid in missing_flow_uuids:
+        flow_key = flow_key_by_uuid.get(flow_uuid)
+        missing_flows.append({
+            "flow_uuid": flow_uuid,
+            "flow_name": flow_name_map.get(flow_uuid, ""),
+            "unit": flow_key.canonical_unit if flow_key is not None else "",
+            "direction": flow_key.direction if flow_key is not None else "",
+            "compartment": flow_key.compartment if flow_key is not None else None,
+            "subcompartment": flow_key.subcompartment if flow_key is not None else None,
+            "covered_by_runtime_sources": 0,
+        })
+    indicator_lookup = c_pack.get("indicator_lookup", {})
+    solver_output = {
+        "summary": {
+            "process_count": process_count,
+            "elementary_flow_count": len(observed_flow_uuids),
+            "indicator_count": indicator_count,
+            "issue_count": len(issues),
+            "missing_ef31_flow_count": len(missing_flow_uuids),
+            "ef31_runtime_cache_hit": bool(c_pack.get("cache_hit", False)),
+            "ef31_runtime_source_count": int(c_pack.get("runtime_source_count", 0)),
+            "ef31_runtime_sources": [str(path) for path in runtime_dirs],
+        },
+        "issues": issues,
+        "missing_ef31_flow_uuids": missing_flow_uuids,
+        "missing_ef31_flows": missing_flows,
+        "indicator_index": [
+            {"indicator_index": index, **indicator_lookup.get(index, {})}
+            for index in c_matrix["rows"]
+        ],
+        "process_index": process_index,
+        "values": values.tolist(),
+        "lci_vector_runtime": {
+            "mode": "hybrid_sparse_ef31_v1",
+            "cf_match_scope": "flow_uuid",
+            "expanded_process_count": len(vectors),
+            "expanded_port_count": expanded_port_count,
+            "materialized_port_count": 0,
+            "missing_vectors": [],
+            "provenance": provenance,
+            "runtime_dir": str(runtime_dirs[0]) if runtime_dirs else "",
+            "runtime_source_count": int(c_pack.get("runtime_source_count", 0)),
+            "runtime_sources": [str(path) for path in runtime_dirs],
+        },
+    }
+    return DirectSparseLciaResult(solver_output=solver_output, tiangong_like_input=snapshot)
 
 
 def try_run_direct_sparse_lcia(

@@ -22,10 +22,11 @@ from app.models import (
     UnitGroup,
 )
 from app.schema_maintenance import ensure_lci_exchange_matrix_table
-from app.schemas import FlowPort, HybridGraph, HybridNode
+from app.schemas import FlowPort, HybridEdge, HybridGraph, HybridNode
 from app.services.ef31_sparse_lcia_runtime import (
     load_active_ef31_sparse_runtime,
     try_run_direct_sparse_lcia,
+    try_run_hybrid_sparse_lcia,
 )
 
 
@@ -187,6 +188,108 @@ def test_direct_sparse_lcia_scales_lci_vector_by_demand(tmp_path: Path) -> None:
         assert solver_output["process_index"] == ["proc-lci"]
         assert solver_output["values"] == [[7.0]]
         assert solver_output["summary"]["missing_ef31_flow_count"] == 0
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_hybrid_sparse_lcia_keeps_terminal_lci_vectors_compressed(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime-hybrid"
+    _write_runtime(runtime_root)
+    db, engine = _db_session()
+    try:
+        _seed_lci_vector(db)
+        db.add(FlowRecord(
+            flow_uuid="foreground-product",
+            flow_name="foreground product",
+            flow_type="product_flow",
+            default_unit="kg",
+            unit_group="mass",
+        ))
+        db.commit()
+        graph = HybridGraph(
+            functionalUnit="1 kg foreground product",
+            nodes=[
+                HybridNode(
+                    id="node-foreground",
+                    node_kind="unit_process",
+                    mode="balanced",
+                    process_uuid="proc-foreground",
+                    name="Foreground",
+                    location="GLO",
+                    reference_product="foreground product",
+                    inputs=[FlowPort(
+                        id="in-lci",
+                        flowUuid="product-flow",
+                        name="product",
+                        unit="kg",
+                        unitGroup="mass",
+                        amount=2.0,
+                        type="technosphere",
+                        direction="input",
+                    )],
+                    outputs=[
+                        FlowPort(
+                            id="out-foreground",
+                            flowUuid="foreground-product",
+                            name="foreground product",
+                            unit="kg",
+                            unitGroup="mass",
+                            amount=1.0,
+                            type="technosphere",
+                            direction="output",
+                            isProduct=True,
+                        ),
+                        FlowPort(
+                            id="out-direct-co2",
+                            flowUuid="flow-co2",
+                            name="Carbon dioxide",
+                            unit="kg",
+                            unitGroup="mass",
+                            amount=0.5,
+                            type="biosphere",
+                            direction="output",
+                        ),
+                    ],
+                ),
+                _graph().nodes[0],
+            ],
+            exchanges=[HybridEdge(
+                id="edge-lci",
+                fromNode="node-lci",
+                toNode="node-foreground",
+                sourceHandle="out:out-product",
+                targetHandle="in:in-lci",
+                sourcePortId="out-product",
+                targetPortId="in-lci",
+                flowUuid="product-flow",
+                flowName="product",
+                quantityMode="single",
+                amount=2.0,
+                unit="kg",
+                type="technosphere",
+            )],
+        )
+
+        result = try_run_hybrid_sparse_lcia(
+            db=db,
+            graph=graph,
+            lcia_methods=["EF v3.1"],
+            flow_type_by_uuid={
+                "foreground-product": "product_flow",
+                "product-flow": "product_flow",
+                "flow-co2": "elementary_flow",
+            },
+            runtime_root=runtime_root,
+        )
+
+        assert result is not None
+        output = result.solver_output
+        assert output["lci_vector_runtime"]["mode"] == "hybrid_sparse_ef31_v1"
+        assert output["lci_vector_runtime"]["materialized_port_count"] == 0
+        assert output["process_index"] == ["proc-foreground", "proc-lci"]
+        assert output["values"][0] == [7.5, 3.5]
+        assert output["summary"]["elementary_flow_count"] == 2
     finally:
         db.close()
         engine.dispose()

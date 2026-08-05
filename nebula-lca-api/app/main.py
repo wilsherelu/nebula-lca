@@ -157,7 +157,7 @@ from .services import graph_contract as _gc
 from .services import graph_storage as _gs
 from .services import catalog_cache as _cc
 from .services import pts_resources as _pr
-from .services.ef31_sparse_lcia_runtime import try_run_direct_sparse_lcia
+from .services.ef31_sparse_lcia_runtime import try_run_direct_sparse_lcia, try_run_hybrid_sparse_lcia
 from .services.ef31_runtime_csv import ACTIVE_MANIFEST_NAME, DEFAULT_EF31_RUNTIME_ROOT
 from .services.lci_runtime import expand_lci_vectors_into_graph
 from .api.projects import _base_router, _api_router as _api_projects_router
@@ -4276,6 +4276,63 @@ def run_solver_and_persist(
             })
     flow_type_by_uuid = _solver_flow_type_by_uuid_cached(db)
     flow_source_by_uuid = _solver_flow_source_by_uuid_cached(db)
+
+    compact_normalized_graph = _graph_with_solver_unit_defaults(
+        db=db,
+        graph=payload.graph,
+        unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+        reference_unit_by_group=reference_unit_by_group,
+    )
+    hybrid_result = try_run_hybrid_sparse_lcia(
+        db=db,
+        graph=compact_normalized_graph,
+        lcia_methods=payload.lcia_methods,
+        flow_type_by_uuid=flow_type_by_uuid,
+        flow_source_by_uuid=flow_source_by_uuid,
+    )
+    if hybrid_result is not None:
+        solver_output = hybrid_result.solver_output
+        process_index = solver_output.get("process_index", [])
+        values = solver_output.get("values", [])
+        product_result_index, product_unit_map, product_values = _build_product_result_view_from_graph(
+            db=db,
+            graph=payload.graph,
+            process_index=process_index,
+            values=values,
+            unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+            reference_unit_by_group=reference_unit_by_group,
+        )
+        solved = {
+            "summary": solver_output.get("summary", {}),
+            "lci_result": {
+                "issues": solver_output.get("issues", []),
+                "lci_vector_runtime": solver_output.get("lci_vector_runtime", {}),
+                "missing_ef31_flow_uuids": solver_output.get("missing_ef31_flow_uuids", []),
+                "missing_ef31_flows": solver_output.get("missing_ef31_flows", []),
+                "indicator_index": _enrich_indicator_index_with_units(solver_output.get("indicator_index", [])),
+                "process_index": process_index,
+                "values": values,
+                "process_unit_map": display_process_unit_map,
+                "product_result_index": product_result_index,
+                "product_values": product_values,
+                "product_unit_map": product_unit_map,
+                "intermediate_flow_links": intermediate_flow_link_trace,
+            },
+        }
+        request_json = _build_run_job_request_json(payload)
+        run_job = RunJob(
+            model_version_id=payload.model_version_id,
+            status="completed",
+            request_json=request_json,
+            result_json=solved,
+            message="Run completed",
+            created_at=datetime.utcnow(),
+            finished_at=datetime.utcnow(),
+        )
+        db.add(run_job)
+        db.commit()
+        db.refresh(run_job)
+        return "completed", run_job.id, solved, hybrid_result.tiangong_like_input
 
     solver_graph = expand_lci_vectors_into_graph(db, payload.graph).graph
     normalized_graph = _graph_with_solver_unit_defaults(
