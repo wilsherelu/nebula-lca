@@ -15,6 +15,20 @@ const port: FlowPort = {
   showOnNode: true,
 };
 
+const baseResolution = {
+  source_flow_uuid: "source-flow",
+  target_flow_uuid: "target-flow",
+  amount_factor: 3.6,
+  source_unit: "MJ",
+  target_unit: "kWh",
+  mapping_level: "L2" as const,
+  mapping_reason: "review",
+  rule_id: "rule-1",
+  rule_origin: "builtin" as const,
+  target_flow_name: "diesel",
+  warnings: [] as string[],
+};
+
 describe("IntermediateFlowL2ReviewDialog", () => {
   it("shows the concise review note and status badge instead of raw risk codes", () => {
     const onConfirm = vi.fn();
@@ -26,16 +40,7 @@ describe("IntermediateFlowL2ReviewDialog", () => {
         items={[{
           port,
           resolution: {
-            source_flow_uuid: "source-flow",
-            target_flow_uuid: "target-flow",
-            amount_factor: 1,
-            source_unit: "kg",
-            target_unit: "kg",
-            mapping_level: "L2",
-            mapping_reason: "review",
-            rule_id: "rule-1",
-            rule_origin: "builtin",
-            target_flow_name: "diesel",
+            ...baseResolution,
             warnings: ["HEAD_NAME_MISMATCH", "SEMANTIC_GENERALIZATION"],
           },
         }]}
@@ -62,17 +67,8 @@ describe("IntermediateFlowL2ReviewDialog", () => {
         items={[{
           port,
           resolution: {
-            source_flow_uuid: "source-flow",
-            target_flow_uuid: "target-flow",
-            amount_factor: 1,
-            source_unit: "kg",
-            target_unit: "kg",
-            mapping_level: "L2",
-            mapping_reason: "review",
-            rule_id: "rule-1",
-            rule_origin: "builtin",
+            ...baseResolution,
             target_flow_name_en: "diesel",
-            warnings: [],
           },
         }]}
         onClose={vi.fn()}
@@ -82,5 +78,36 @@ describe("IntermediateFlowL2ReviewDialog", () => {
 
     expect(screen.getByText("Diesel oil")).toBeTruthy();
     expect(screen.queryByText("柴油")).toBeNull();
+  });
+
+  it("renders source, target, unit, and status as separate semantic cells", () => {
+    const { container } = render(
+      <IntermediateFlowL2ReviewDialog
+        open
+        busy={false}
+        language="zh"
+        items={[{
+          port,
+          resolution: baseResolution,
+        }]}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />,
+    );
+
+    const rows = container.querySelectorAll(".intermediate-flow-l2-review-row");
+    expect(rows.length).toBe(1);
+
+    const cells = rows[0].children;
+    expect(cells.length).toBe(5);
+    expect(cells[1].textContent).toContain("柴油");
+    expect(cells[2].textContent).toContain("diesel");
+    expect(cells[3].textContent).toBe("MJ → kWh");
+    expect(cells[4].textContent).toBe("待核对");
+
+    const flowCell = cells[1] as HTMLElement;
+    const targetCell = cells[2] as HTMLElement;
+    expect(getComputedStyle(flowCell).display).not.toBe("grid");
+    expect(getComputedStyle(targetCell).display).not.toBe("grid");
   });
 });

@@ -2839,6 +2839,99 @@ body,
   justify-content: flex-start;
 }
 
+.inventory-grid-product-header,
+.inventory-grid-show-header,
+.inventory-grid-product-cell,
+.inventory-grid-show-cell {
+  text-align: center;
+  justify-content: center;
+}
+
+.inventory-grid-product-cell {
+  display: flex;
+  align-items: center;
+}
+
+.inventory-link-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.inventory-link-wrapper .link-btn {
+  display: inline-flex;
+  align-items: center;
+}
+
+.inventory-link-wrapper .link-btn-hover {
+  display: none;
+}
+
+.inventory-link-wrapper .link-btn.linked:hover .link-btn-default,
+.inventory-link-wrapper .link-btn.linked:focus-within .link-btn-default {
+  display: none;
+}
+
+.inventory-link-wrapper .link-btn.linked:hover .link-btn-hover,
+.inventory-link-wrapper .link-btn.linked:focus-within .link-btn-hover {
+  display: inline;
+}
+
+.inventory-link-wrapper .link-btn.linked {
+  color: #1a7f37;
+  border-color: #1a7f37;
+}
+
+.inventory-link-tooltip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  min-width: 180px;
+  max-width: 280px;
+  padding: 8px 10px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  font-size: 12px;
+  line-height: 18px;
+  color: #35515d;
+  white-space: normal;
+  text-align: left;
+  pointer-events: none;
+}
+
+.inventory-link-tooltip-row {
+  display: flex;
+  gap: 6px;
+}
+
+.inventory-link-tooltip-row + .inventory-link-tooltip-row {
+  margin-top: 2px;
+}
+
+.inventory-link-tooltip-label {
+  color: #6c808a;
+  flex-shrink: 0;
+}
+
+.inventory-link-tooltip-value {
+  color: #1a2b33;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inventory-link-wrapper .link-btn.linked:hover ~ .inventory-link-tooltip,
+.inventory-link-wrapper .link-btn.linked:focus-within ~ .inventory-link-tooltip,
+.inventory-link-wrapper:hover .inventory-link-tooltip,
+.inventory-link-wrapper:focus-within .inventory-link-tooltip {
+  display: block;
+}
+
 .allocation-section {
   border-color: #d7e6ee;
 }
@@ -6563,8 +6656,7 @@ body,
 
 .intermediate-flow-l2-review-flow,
 .intermediate-flow-l2-review-target {
-  display: grid;
-  gap: 3px;
+  display: block;
 }
 
 .intermediate-flow-l2-review-unit {

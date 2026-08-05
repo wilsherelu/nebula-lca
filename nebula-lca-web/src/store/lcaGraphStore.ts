@@ -146,6 +146,7 @@ export type ImportedUnitProcessPayload = {
   importMode: ProcessImportMode;
   name: string;
   location?: string;
+  sourceSystem?: string;
   referenceProduct?: string;
   referenceProductFlowUuid?: string;
   referenceProductDirection?: "input" | "output";
@@ -1157,6 +1158,7 @@ const buildImportedUnitProcessNode = (
       processUuid: payload.processUuid,
       name: payload.name,
       location: payload.location ?? "",
+      sourceSystem: payload.sourceSystem,
       referenceProduct: payload.referenceProduct ?? "",
       referenceProductFlowUuid: payload.referenceProductFlowUuid,
       referenceProductDirection: payload.referenceProductDirection,
@@ -1172,25 +1174,29 @@ const normalizeIntermediateFlowLinkPort = (port: FlowPort): FlowPort => {
     return port;
   }
   const value = rawLink as Record<string, unknown>;
+  const normalizedLink: FlowPort["intermediateFlowLink"] = {
+    sourceFlowUuid: String(value.sourceFlowUuid ?? value.source_flow_uuid ?? ""),
+    targetFlowUuid: String(value.targetFlowUuid ?? value.target_flow_uuid ?? ""),
+    amountFactor: Number(value.amountFactor ?? value.amount_factor ?? 1),
+    sourceUnit: String(value.sourceUnit ?? value.source_unit ?? ""),
+    targetUnit: String(value.targetUnit ?? value.target_unit ?? ""),
+    mappingLevel: String(value.mappingLevel ?? value.mapping_level) as "L1" | "L2" | "L3",
+    mappingReason: String(value.mappingReason ?? value.mapping_reason ?? ""),
+    ruleId: String(value.ruleId ?? value.rule_id ?? ""),
+    ruleOrigin: String(value.ruleOrigin ?? value.rule_origin) as "builtin" | "user" | "explicit",
+    status: String(value.status) as "auto" | "user_confirmed" | "inactive",
+    packageId: String(value.packageId ?? value.package_id ?? "") || undefined,
+    packageVersion: String(value.packageVersion ?? value.package_version ?? "") || undefined,
+    packageHash: String(value.packageHash ?? value.package_hash ?? "") || undefined,
+    applicationMode: (String(value.applicationMode ?? value.application_mode ?? "") || undefined) as "strict_identity" | "auto_compatible" | undefined,
+    warnings: Array.isArray(value.warnings) ? value.warnings.map(String) : [],
+  };
+  const isActive = normalizedLink.status === "auto" || normalizedLink.status === "user_confirmed";
+  const restoredUnit = isActive && normalizedLink.sourceUnit ? normalizedLink.sourceUnit : port.unit;
   return {
     ...port,
-    intermediateFlowLink: {
-      sourceFlowUuid: String(value.sourceFlowUuid ?? value.source_flow_uuid ?? ""),
-      targetFlowUuid: String(value.targetFlowUuid ?? value.target_flow_uuid ?? ""),
-      amountFactor: Number(value.amountFactor ?? value.amount_factor ?? 1),
-      sourceUnit: String(value.sourceUnit ?? value.source_unit ?? ""),
-      targetUnit: String(value.targetUnit ?? value.target_unit ?? ""),
-      mappingLevel: String(value.mappingLevel ?? value.mapping_level) as "L1" | "L2" | "L3",
-      mappingReason: String(value.mappingReason ?? value.mapping_reason ?? ""),
-      ruleId: String(value.ruleId ?? value.rule_id ?? ""),
-      ruleOrigin: String(value.ruleOrigin ?? value.rule_origin) as "builtin" | "user" | "explicit",
-      status: String(value.status) as "auto" | "user_confirmed" | "inactive",
-      packageId: String(value.packageId ?? value.package_id ?? "") || undefined,
-      packageVersion: String(value.packageVersion ?? value.package_version ?? "") || undefined,
-      packageHash: String(value.packageHash ?? value.package_hash ?? "") || undefined,
-      applicationMode: (String(value.applicationMode ?? value.application_mode ?? "") || undefined) as "strict_identity" | "auto_compatible" | undefined,
-      warnings: Array.isArray(value.warnings) ? value.warnings.map(String) : [],
-    },
+    unit: restoredUnit,
+    intermediateFlowLink: normalizedLink,
   };
 };
 
@@ -1666,13 +1672,43 @@ const resolveEdgeDataByNodes = (
   if (!sourcePortResolved || !targetPortResolved) {
     return undefined;
   }
-  const flowUuid = edgeFlowUuid || targetPortResolved.flowUuid || sourcePortResolved.flowUuid || "";
-  if (!flowUuid || sourcePortResolved.flowUuid !== flowUuid || targetPortResolved.flowUuid !== flowUuid) {
+  const sourcePort = sourcePortResolved;
+  const targetPort = targetPortResolved;
+
+  const resolvedFlowUuid = edgeFlowUuid || targetPort.flowUuid || sourcePort.flowUuid || "";
+  const sameFlowMatch = Boolean(resolvedFlowUuid)
+    && sourcePort.flowUuid === resolvedFlowUuid
+    && targetPort.flowUuid === resolvedFlowUuid;
+
+  let isConvertedEdge = false;
+  if (!sameFlowMatch && edgeFlowUuid) {
+    const link = targetPort.intermediateFlowLink;
+    const linkActive = link && (link.status === "auto" || link.status === "user_confirmed");
+    const consumerFlowUuid = edge.data?.consumerFlowUuid ?? "";
+    const edgeRuleId = edge.data?.intermediateFlowLinkRuleId ?? "";
+    const edgeFactor = edge.data?.intermediateFlowLinkFactor;
+
+    if (
+      linkActive
+      && sourcePort.flowUuid === edgeFlowUuid
+      && targetPort.flowUuid === consumerFlowUuid
+      && link.sourceFlowUuid === targetPort.flowUuid
+      && link.targetFlowUuid === sourcePort.flowUuid
+      && edgeRuleId
+      && edgeRuleId === link.ruleId
+      && Number.isFinite(edgeFactor)
+      && (edgeFactor as number) > 0
+      && Math.abs((edgeFactor as number) - link.amountFactor) < 1e-9
+    ) {
+      isConvertedEdge = true;
+    }
+  }
+
+  if (!sameFlowMatch && !isConvertedEdge) {
     return undefined;
   }
 
-  const sourcePort = sourcePortResolved;
-  const targetPort = targetPortResolved;
+  const flowUuid = resolvedFlowUuid;
 
   const quantityMode = edge.data?.quantityMode ?? resolveQuantityMode(sourceNode, targetNode);
   const consumerFromTarget = targetPort && Number.isFinite(targetPort.amount) ? targetPort.amount : undefined;
@@ -1682,7 +1718,13 @@ const resolveEdgeDataByNodes = (
   let providerAmount = 0;
   let consumerAmount = 0;
 
-  if (quantityMode === "dual") {
+  if (isConvertedEdge) {
+    const edgeFactor = edge.data?.intermediateFlowLinkFactor ?? 1;
+    const recomputedConsumer = Number.isFinite(targetPort.amount) ? targetPort.amount * edgeFactor : undefined;
+    consumerAmount = edge.data?.consumerAmount ?? recomputedConsumer ?? consumerFromTarget ?? 0;
+    providerAmount = edge.data?.providerAmount ?? providerFromSource ?? consumerAmount;
+    amount = consumerAmount;
+  } else if (quantityMode === "dual") {
     consumerAmount =
       consumerFromTarget ??
       edge.data?.consumerAmount ??
@@ -4868,7 +4910,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         x: consumerNode.position.x - 360,
         y: consumerNode.position.y,
       });
-      const backgroundProviderNode: Node<LcaNodeData> = {
+      const candidateProviderNode: Node<LcaNodeData> = {
         ...providerNode,
         hidden: true,
         data: {
@@ -4876,31 +4918,45 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
           lciRole: "provider",
         },
       };
+
+      const existingProvider = active.nodes.find(
+        (n) => n.hidden && n.data.processUuid === candidateProviderNode.data.processUuid,
+      );
+      const reusedNode = existingProvider ?? candidateProviderNode;
+
       const providerPort = hasConvertedTarget
-        ? backgroundProviderNode.data.outputs.find((item) => item.flowUuid === link?.targetFlowUuid)
-        : backgroundProviderNode.data.outputs.find((item) => item.isProduct) ?? backgroundProviderNode.data.outputs[0];
+        ? reusedNode.data.outputs.find((item) => item.flowUuid === link?.targetFlowUuid)
+        : reusedNode.data.outputs.find((item) => item.isProduct) ?? reusedNode.data.outputs[0];
       if (!providerPort || (!hasConvertedTarget && providerPort.unit !== consumerPort.unit)) {
         return state;
       }
 
-      createdNodeId = backgroundProviderNode.id;
+      createdNodeId = reusedNode.id;
       const targetHandle = `in:${consumerPort.id}`;
       const replacedProviderNodeIds = new Set(
         active.edges
           .filter((edge) => edge.target === consumerNodeId && edge.targetHandle === targetHandle)
           .map((edge) => edge.source),
       );
+      replacedProviderNodeIds.delete(reusedNode.id);
       const remainingEdges = active.edges.filter(
         (edge) => !(edge.target === consumerNodeId && edge.targetHandle === targetHandle),
       );
-      const remainingNodes = active.nodes.filter(
-        (item) => !(item.hidden && replacedProviderNodeIds.has(item.id)),
+      const remainingEdgeSourceIds = new Set(remainingEdges.map((edge) => edge.source));
+      const removableNodeIds = new Set(
+        [...replacedProviderNodeIds].filter((id) => !remainingEdgeSourceIds.has(id)),
       );
+      const remainingNodes = active.nodes.filter(
+        (item) => !(item.hidden && removableNodeIds.has(item.id)),
+      );
+      const nodesToWrite = remainingNodes.some((n) => n.id === reusedNode.id)
+        ? remainingNodes
+        : [...remainingNodes, reusedNode];
       const conversionFactor = hasConvertedTarget ? link?.amountFactor ?? 1 : 1;
       const consumerAmount = consumerPort.amount * conversionFactor;
       const edge: Edge<LcaEdgeData> = {
         id: `edge_${uid()}`,
-        source: backgroundProviderNode.id,
+        source: reusedNode.id,
         target: consumerNodeId,
         sourceHandle: `out:${providerPort.id}`,
         targetHandle,
@@ -4924,7 +4980,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
       return {
         ...updateActiveCanvas(state, (canvas) => ({
           ...canvas,
-          nodes: [...remainingNodes, backgroundProviderNode],
+          nodes: nodesToWrite,
           edges: [...remainingEdges, edge],
         })),
         selection: { nodeIds: [consumerNodeId], edgeIds: [], nodeId: consumerNodeId },
@@ -6083,6 +6139,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
           process_uuid?: string;
           name: string;
           location: string;
+          source_system?: string;
           reference_product: string;
           reference_product_flow_uuid?: string;
           reference_product_direction?: "input" | "output";
@@ -6143,6 +6200,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
             processUuid: node.process_uuid ?? node.pts_uuid ?? `proc_${node.id}`,
             name: uiLanguage === "en" ? nameEn || nameZh : nameZh || nameEn,
             location: node.location,
+            sourceSystem: node.source_system ?? (String(rawNode.sourceSystem ?? "").trim() || undefined),
             referenceProduct: uiLanguage === "en" ? referenceProductEn || referenceProductZh : referenceProductZh || referenceProductEn,
             referenceProductFlowUuid: node.reference_product_flow_uuid,
             referenceProductDirection: node.reference_product_direction,
@@ -6306,8 +6364,8 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
               referenceYear: node.reference_year,
               timeRepresentativeness: node.time_representativeness,
               technologyDescription: node.technology_description,
-              inputs: node.inputs ?? [],
-              outputs: node.outputs ?? [],
+              inputs: (node.inputs ?? []).map(normalizeIntermediateFlowLinkPort),
+              outputs: (node.outputs ?? []).map(normalizeIntermediateFlowLinkPort),
             },
           } satisfies Node<LcaNodeData>,
         ]),
@@ -6388,6 +6446,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         process_uuid: node.data.processUuid,
         name: node.data.name,
         location: node.data.location,
+        source_system: node.data.sourceSystem,
         reference_product: node.data.referenceProduct,
         reference_product_flow_uuid: node.data.referenceProductFlowUuid,
         reference_product_direction: node.data.referenceProductDirection,
@@ -6503,6 +6562,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
           process_uuid?: string;
           name: string;
           location: string;
+          source_system?: string;
           reference_product: string;
           reference_product_flow_uuid?: string;
           reference_product_direction?: "input" | "output";
@@ -6547,6 +6607,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
             processUuid: node.process_uuid ?? node.pts_uuid ?? `proc_${node.id}`,
             name: node.name,
             location: node.location,
+            sourceSystem: node.source_system ?? (String((node as Record<string, unknown>).sourceSystem ?? "").trim() || undefined),
             referenceProduct: node.reference_product,
             referenceProductFlowUuid: node.reference_product_flow_uuid,
             referenceProductDirection: node.reference_product_direction,

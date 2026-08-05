@@ -292,7 +292,7 @@ const LOCAL_DRAFT_SAVE_DEBOUNCE_MS = 200;
 const INTERVAL_SAVE_MS = 60000;
 const draftKey = (projectId: string) => `nebula:${projectId}:draft`;
 const snapshotKey = (projectId: string) => `nebula:${projectId}:snapshot`;
-const LATEST_PROJECT_CACHE_SCHEMA = "v2";
+const LATEST_PROJECT_CACHE_SCHEMA = "v3";
 const latestProjectCacheKey = (projectId: string) => `nebula:${projectId}:latest:${LATEST_PROJECT_CACHE_SCHEMA}`;
 
 type LatestProjectCacheEntry = {
@@ -972,18 +972,56 @@ const normalizeGraphPayload = (graph: LcaGraphPayload): LcaGraphPayload => {
           flowUuid,
         })
         : undefined;
-      if (targetPort) {
+
+      let resolvedTargetPort = targetPort;
+      if (!resolvedTargetPort && targetNode) {
+        const consumerFlowUuid = String(edge.consumerFlowUuid ?? edge.consumer_flow_uuid ?? "").trim();
+        if (consumerFlowUuid) {
+          const candidate = resolvePayloadEdgePort(targetNode.inputs ?? [], "input", {
+            handle: edge.targetHandle ?? edge.target_handle,
+            portId: edge.target_port_id,
+            flowUuid: consumerFlowUuid,
+          });
+          if (candidate) {
+            const rawCandidate = candidate as Record<string, unknown>;
+            const rawLink = (candidate.intermediateFlowLink ?? rawCandidate.intermediate_flow_link) as Record<string, unknown> | undefined;
+            if (rawLink) {
+              const linkStatus = String(rawLink.status ?? "").trim();
+              const linkActive = linkStatus === "auto" || linkStatus === "user_confirmed";
+              const linkSourceFlowUuid = String(rawLink.sourceFlowUuid ?? rawLink.source_flow_uuid ?? "").trim();
+              const linkTargetFlowUuid = String(rawLink.targetFlowUuid ?? rawLink.target_flow_uuid ?? "").trim();
+              const linkRuleId = String(rawLink.ruleId ?? rawLink.rule_id ?? "").trim();
+              const linkAmountFactor = Number(rawLink.amountFactor ?? rawLink.amount_factor ?? NaN);
+              const edgeRuleId = String(edge.intermediateFlowLinkRuleId ?? edge.intermediate_flow_link_rule_id ?? "").trim();
+              const edgeFactor = Number(edge.intermediateFlowLinkFactor ?? edge.intermediate_flow_link_factor ?? NaN);
+              if (
+                linkActive
+                && linkSourceFlowUuid === candidate.flowUuid
+                && linkTargetFlowUuid === flowUuid
+                && linkRuleId && linkRuleId === edgeRuleId
+                && Number.isFinite(linkAmountFactor) && linkAmountFactor > 0
+                && Number.isFinite(edgeFactor) && edgeFactor > 0
+                && Math.abs(linkAmountFactor - edgeFactor) < 1e-9
+              ) {
+                resolvedTargetPort = candidate;
+              }
+            }
+          }
+        }
+      }
+
+      if (resolvedTargetPort) {
         nextEdge = {
           ...nextEdge,
-          target_port_id: targetPort.id,
+          target_port_id: resolvedTargetPort.id,
           targetHandle: buildPayloadHandleId(
             String(edge.targetHandle ?? edge.target_handle ?? edge.target_port_id ?? ""),
             "input",
-            targetPort.id,
+            resolvedTargetPort.id,
           ),
         };
       }
-      if (!sourcePort || !targetPort) {
+      if (!sourcePort || !resolvedTargetPort) {
         continue;
       }
       sanitized.push(nextEdge);
