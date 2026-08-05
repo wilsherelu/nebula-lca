@@ -567,6 +567,7 @@ def list_flows_api(
                 flow_name_en=row.flow_name_en,
                 type=normalized_type,
                 unit=row.default_unit,
+                unit_group=row.unit_group,
                 category=row.compartment,
                 subcompartment=row.subcompartment,
                 source=row.source,

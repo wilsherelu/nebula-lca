@@ -29,6 +29,7 @@ export function L3UserProxyModal({
   const [query, setQuery] = useState("");
   const [reason, setReason] = useState("");
   const [flows, setFlows] = useState<EcoIntermediateFlow[]>([]);
+  const [selectedFlowUuid, setSelectedFlowUuid] = useState("");
   const [searchState, setSearchState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [searchError, setSearchError] = useState("");
   const [confirming, setConfirming] = useState(false);
@@ -39,14 +40,15 @@ export function L3UserProxyModal({
     setQuery("");
     setReason("");
     setFlows([]);
+    setSelectedFlowUuid("");
     setSearchState("idle");
     setSearchError("");
     setConfirming(false);
   }, [open, port?.id]);
 
   const canSearch = query.trim().length > 0 && !busy && !confirming;
-  const canConfirm = (selectedFlow: EcoIntermediateFlow | null) =>
-    Boolean(selectedFlow) && reason.trim().length >= 3 && !busy && !confirming;
+  const selectedFlow = flows.find((flow) => flow.flow_uuid === selectedFlowUuid) ?? null;
+  const canConfirm = Boolean(selectedFlow) && reason.trim().length >= 3 && !busy && !confirming;
 
   const runSearch = async () => {
     if (!canSearch) return;
@@ -55,6 +57,7 @@ export function L3UserProxyModal({
     try {
       const results = await searchEcoIntermediateFlows(query.trim());
       setFlows(results);
+      setSelectedFlowUuid("");
       setSearchState("ready");
     } catch (error) {
       setSearchState("error");
@@ -63,11 +66,11 @@ export function L3UserProxyModal({
     }
   };
 
-  const handleConfirm = async (target: EcoIntermediateFlow) => {
-    if (!port || !canConfirm(target)) return;
+  const handleConfirm = async () => {
+    if (!port || !selectedFlow || !canConfirm) return;
     setConfirming(true);
     try {
-      const link = await createUserProxyRule(port.flowUuid, target.flow_uuid, reason.trim());
+      const link = await createUserProxyRule(port.flowUuid, selectedFlow.flow_uuid, reason.trim());
       onConfirm(port, link);
     } catch (error) {
       const message = error instanceof Error ? error.message : t("保存手动转换失败", "Failed to save manual conversion");
@@ -162,23 +165,26 @@ export function L3UserProxyModal({
               </thead>
               <tbody>
                 {flows.map((flow) => {
-                  const disabled = !canConfirm(flow) || confirming;
+                  const selected = flow.flow_uuid === selectedFlowUuid;
+                  const showEnglishName = Boolean(
+                    flow.flow_name_en && flow.flow_name_en.trim().toLocaleLowerCase() !== flow.flow_name.trim().toLocaleLowerCase(),
+                  );
                   return (
-                    <tr key={flow.flow_uuid}>
+                    <tr key={flow.flow_uuid} className={selected ? "selected" : ""}>
                       <td title={flow.flow_name_en ? `${flow.flow_name} (${flow.flow_name_en})` : flow.flow_name}>
                         {flow.flow_name}
-                        {flow.flow_name_en && <span className="muted-text"> · {flow.flow_name_en}</span>}
+                        {showEnglishName && <span className="muted-text"> · {flow.flow_name_en}</span>}
                       </td>
                       <td>{flow.default_unit}</td>
                       <td>{flow.unit_group || "-"}</td>
                       <td>
                         <button
                           type="button"
-                          className="flow-link-button primary compact"
-                          disabled={disabled}
-                          onClick={() => void handleConfirm(flow)}
+                          className={`flow-link-button ${selected ? "primary" : "secondary"} compact`}
+                          disabled={busy || confirming}
+                          onClick={() => setSelectedFlowUuid(flow.flow_uuid)}
                         >
-                          {confirming ? t("确认中…", "Confirming…") : t("选择", "Select")}
+                          {selected ? t("已选择", "Selected") : t("选择", "Select")}
                         </button>
                       </td>
                     </tr>
@@ -191,7 +197,7 @@ export function L3UserProxyModal({
 
         <div className="l3-proxy-modal-reason">
           <label>
-            <span>{t("代理原因（必填，至少 3 个字符）", "Proxy reason (required, at least 3 characters)")}</span>
+            <span>{t("选择依据（将记录到转换规则，至少 3 个字符）", "Selection rationale (saved with the conversion rule, at least 3 characters)")}</span>
             <textarea
               value={reason}
               disabled={busy || confirming}
@@ -211,6 +217,7 @@ export function L3UserProxyModal({
               setQuery("");
               setReason("");
               setFlows([]);
+              setSelectedFlowUuid("");
               setSearchState("idle");
               setSearchError("");
             }}
@@ -224,6 +231,14 @@ export function L3UserProxyModal({
             onClick={onClose}
           >
             {t("取消", "Cancel")}
+          </button>
+          <button
+            type="button"
+            className="flow-link-button primary"
+            disabled={!canConfirm}
+            onClick={() => void handleConfirm()}
+          >
+            {confirming ? t("转换中…", "Converting…") : t("确认转换", "Confirm conversion")}
           </button>
         </footer>
       </section>

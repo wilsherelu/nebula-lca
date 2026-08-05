@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { toIntermediateFlowLink, type RawResolution } from "./intermediateFlowLinks";
+import {
+  searchEcoIntermediateFlows,
+  toIntermediateFlowLink,
+  type RawResolution,
+} from "./intermediateFlowLinks";
 
 const resolution = (mappingLevel: "L1" | "L2" | "L3"): RawResolution => ({
   source_flow_uuid: "source",
@@ -19,5 +23,34 @@ describe("toIntermediateFlowLink", () => {
     expect(toIntermediateFlowLink(resolution("L1")).status).toBe("auto");
     expect(toIntermediateFlowLink(resolution("L2")).status).toBe("user_confirmed");
     expect(toIntermediateFlowLink(resolution("L3")).status).toBe("user_confirmed");
+  });
+});
+
+describe("searchEcoIntermediateFlows", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("normalizes the public flow-list fields for manual conversion", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        items: [{
+          flow_id: "eco-flow",
+          flow_name: "electricity, high voltage",
+          flow_name_en: "electricity, high voltage",
+          unit: "kWh",
+          unit_group: "energy",
+        }],
+      }),
+    }));
+
+    await expect(searchEcoIntermediateFlows("electricity")).resolves.toEqual([{
+      flow_uuid: "eco-flow",
+      flow_name: "electricity, high voltage",
+      flow_name_en: "electricity, high voltage",
+      default_unit: "kWh",
+      unit_group: "energy",
+    }]);
   });
 });

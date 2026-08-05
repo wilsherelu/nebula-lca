@@ -1336,9 +1336,9 @@ body,
   z-index: 6;
   border: 1px solid #d6e2e8;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.96);
+  background: #ffffff;
   box-shadow: 0 10px 24px rgba(13, 38, 52, 0.12);
-  backdrop-filter: blur(2px);
+  isolation: isolate;
   max-height: min(32vh, 240px);
   overflow: auto;
 }
@@ -7035,7 +7035,7 @@ label.intermediate-flow-l2-review-row {
 }
 
 .l3-proxy-modal-dialog {
-  width: min(760px, 94vw);
+  width: min(1040px, 96vw);
   height: auto;
   min-height: 0;
   max-height: 88vh;
@@ -7125,8 +7125,14 @@ label.intermediate-flow-l2-review-row {
 .l3-proxy-results-table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
   font-size: 13px;
 }
+
+.l3-proxy-results-table th:nth-child(1) { width: auto; }
+.l3-proxy-results-table th:nth-child(2) { width: 92px; }
+.l3-proxy-results-table th:nth-child(3) { width: 160px; }
+.l3-proxy-results-table th:nth-child(4) { width: 92px; }
 
 .l3-proxy-results-table th,
 .l3-proxy-results-table td {
@@ -7140,6 +7146,16 @@ label.intermediate-flow-l2-review-row {
   color: #3d5f6d;
   font-size: 12px;
   background: #f7fbfe;
+}
+
+.l3-proxy-results-table tbody tr.selected {
+  background: #eef7ff;
+}
+
+.l3-proxy-results-table td:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .l3-proxy-modal-reason label {
