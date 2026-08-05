@@ -116,6 +116,8 @@ describe("IntermediateFlowLinkPanel", () => {
           amount_factor: 3.6,
           source_unit: "MJ",
           target_unit: "kWh",
+          source_unit_group: "Units of energy",
+          target_unit_group: "energy",
           mapping_level: "L1",
           mapping_reason: "auto",
           rule_id: "rule-mj",
@@ -143,9 +145,10 @@ describe("IntermediateFlowLinkPanel", () => {
     expect(updated?.data.inputs[0].intermediateFlowLink?.sourceUnit).toBe("MJ");
     expect(updated?.data.inputs[0].intermediateFlowLink?.targetUnit).toBe("kWh");
     expect(updated?.data.inputs[0].unit).toBe("MJ");
+    expect(updated?.data.inputs[0].unitGroup).toBe("Units of energy");
   });
 
-  it("restores sourceUnit on import when active user_confirmed link has snake_case fields", () => {
+  it("restores source unit semantics and normalizes a persisted active L3 rule", () => {
     useLcaGraphStore.getState().importGraph({
       functionalUnit: "1 kg test",
       nodes: [{
@@ -172,11 +175,13 @@ describe("IntermediateFlowLinkPanel", () => {
             amount_factor: 0.2777777777777778,
             source_unit: "MJ",
             target_unit: "kWh",
-            mapping_level: "L2",
-            mapping_reason: "unit_conversion",
+            source_unit_group: "Units of energy",
+            target_unit_group: "energy",
+            mapping_level: "L3",
+            mapping_reason: "",
             rule_id: "rule-mj-kwh",
-            rule_origin: "builtin",
-            status: "user_confirmed",
+            rule_origin: "user",
+            status: "active",
             warnings: [],
           },
         }] as unknown as import("../../model/node").FlowPort[],
@@ -190,9 +195,11 @@ describe("IntermediateFlowLinkPanel", () => {
     expect(imported).toBeDefined();
     const port = imported!.data.inputs[0];
     expect(port.unit).toBe("MJ");
+    expect(port.unitGroup).toBe("Units of energy");
     expect(port.intermediateFlowLink).toBeDefined();
     expect(port.intermediateFlowLink!.sourceUnit).toBe("MJ");
     expect(port.intermediateFlowLink!.targetUnit).toBe("kWh");
+    expect(port.intermediateFlowLink!.targetUnitGroup).toBe("energy");
     expect(port.intermediateFlowLink!.status).toBe("user_confirmed");
   });
 

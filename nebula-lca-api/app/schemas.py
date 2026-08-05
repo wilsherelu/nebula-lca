@@ -72,6 +72,8 @@ class IntermediateFlowLink(BaseModel):
     amount_factor: float = Field(default=1.0, gt=0, alias="amountFactor")
     source_unit: str = Field(alias="sourceUnit")
     target_unit: str = Field(alias="targetUnit")
+    source_unit_group: str | None = Field(default=None, alias="sourceUnitGroup")
+    target_unit_group: str | None = Field(default=None, alias="targetUnitGroup")
     mapping_level: Literal["L1", "L2", "L3"] = Field(alias="mappingLevel")
     mapping_reason: str = Field(alias="mappingReason")
     rule_id: str = Field(alias="ruleId")

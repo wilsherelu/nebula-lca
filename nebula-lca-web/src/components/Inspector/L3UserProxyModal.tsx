@@ -48,7 +48,7 @@ export function L3UserProxyModal({
 
   const canSearch = query.trim().length > 0 && !busy && !confirming;
   const selectedFlow = flows.find((flow) => flow.flow_uuid === selectedFlowUuid) ?? null;
-  const canConfirm = Boolean(selectedFlow) && reason.trim().length >= 3 && !busy && !confirming;
+  const canConfirm = Boolean(selectedFlow) && !busy && !confirming;
 
   const runSearch = async () => {
     if (!canSearch) return;
@@ -197,11 +197,11 @@ export function L3UserProxyModal({
 
         <div className="l3-proxy-modal-reason">
           <label>
-            <span>{t("选择依据（将记录到转换规则，至少 3 个字符）", "Selection rationale (saved with the conversion rule, at least 3 characters)")}</span>
+            <span>{t("选择说明（选填）", "Selection note (optional)")}</span>
             <textarea
               value={reason}
               disabled={busy || confirming}
-              placeholder={t("请说明为何选择此流作为代理", "Explain why this flow is used as a proxy")}
+              placeholder={t("可补充选择说明", "Add an optional note")}
               onChange={(event) => setReason(event.target.value)}
               rows={3}
             />

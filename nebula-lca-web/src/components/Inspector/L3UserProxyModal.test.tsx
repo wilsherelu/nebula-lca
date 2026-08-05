@@ -40,8 +40,10 @@ describe("L3UserProxyModal", () => {
       amountFactor: 1 / 3.6,
       sourceUnit: "MJ",
       targetUnit: "kWh",
+      sourceUnitGroup: "Units of energy",
+      targetUnitGroup: "energy",
       mappingLevel: "L3",
-      mappingReason: "同类电力产品",
+      mappingReason: "",
       ruleId: "rule-1",
       ruleOrigin: "user",
       status: "user_confirmed",
@@ -49,7 +51,7 @@ describe("L3UserProxyModal", () => {
     });
   });
 
-  it("lets the user select a result before entering the recorded rationale", async () => {
+  it("confirms a selected result without requiring a note", async () => {
     const onConfirm = vi.fn();
     render(
       <L3UserProxyModal
@@ -70,15 +72,11 @@ describe("L3UserProxyModal", () => {
     expect((selectButton as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(selectButton);
     expect(screen.getByRole("button", { name: "已选择" })).toBeTruthy();
-    expect((screen.getByRole("button", { name: "确认转换" }) as HTMLButtonElement).disabled).toBe(true);
-
-    fireEvent.change(screen.getByPlaceholderText("请说明为何选择此流作为代理"), {
-      target: { value: "同类电力产品" },
-    });
+    expect((screen.getByRole("button", { name: "确认转换" }) as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "确认转换" }));
 
     await waitFor(() => {
-      expect(createUserProxyRule).toHaveBeenCalledWith("source-flow", "eco-flow", "同类电力产品");
+      expect(createUserProxyRule).toHaveBeenCalledWith("source-flow", "eco-flow", "");
       expect(onConfirm).toHaveBeenCalledTimes(1);
     });
   });

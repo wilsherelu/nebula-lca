@@ -50,7 +50,7 @@ class UserRuleCreateRequest(BaseModel):
     source_flow_uuid: str
     target_flow_uuid: str
     amount_factor: float | None = Field(default=None, gt=0)
-    mapping_reason: str = Field(min_length=3, max_length=1024)
+    mapping_reason: str = Field(default="", max_length=1024)
 
 
 class ConfirmL2Request(BaseModel):
@@ -68,7 +68,9 @@ def _flow_or_404(db: Session, flow_uuid: str) -> FlowRecord:
     return row
 
 
-def _rule_payload(row: IntermediateFlowLinkRule) -> dict[str, Any]:
+def _rule_payload(db: Session, row: IntermediateFlowLinkRule) -> dict[str, Any]:
+    source = db.get(FlowRecord, row.source_flow_uuid)
+    target = db.get(FlowRecord, row.target_flow_uuid)
     return {
         "id": row.id,
         "source_flow_uuid": row.source_flow_uuid,
@@ -76,6 +78,8 @@ def _rule_payload(row: IntermediateFlowLinkRule) -> dict[str, Any]:
         "amount_factor": row.amount_factor,
         "source_unit": row.source_unit,
         "target_unit": row.target_unit,
+        "source_unit_group": source.unit_group if source is not None else None,
+        "target_unit_group": target.unit_group if target is not None else None,
         "mapping_level": row.mapping_level,
         "mapping_reason": row.mapping_reason,
         "rule_origin": row.rule_origin,
@@ -216,7 +220,7 @@ def list_user_rules(
     if not include_inactive:
         query = query.filter(IntermediateFlowLinkRule.status == "active")
     rows = query.order_by(IntermediateFlowLinkRule.updated_at.desc()).all()
-    return {"items": [_rule_payload(row) for row in rows], "total": len(rows)}
+    return {"items": [_rule_payload(db, row) for row in rows], "total": len(rows)}
 
 
 @api_router.post("/user-rules", status_code=201)
@@ -259,7 +263,9 @@ def create_user_rule(payload: UserRuleCreateRequest, db: Session = Depends(get_d
     existing.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(existing)
-    return _rule_payload(existing)
+    result = _rule_payload(db, existing)
+    result["status"] = "user_confirmed"
+    return result
 
 
 @api_router.delete("/user-rules/{rule_id}")

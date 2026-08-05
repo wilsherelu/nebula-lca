@@ -24,6 +24,23 @@ describe("toIntermediateFlowLink", () => {
     expect(toIntermediateFlowLink(resolution("L2")).status).toBe("user_confirmed");
     expect(toIntermediateFlowLink(resolution("L3")).status).toBe("user_confirmed");
   });
+
+  it("normalizes an active user rule and preserves its unit-group mapping", () => {
+    const link = toIntermediateFlowLink({
+      ...resolution("L3"),
+      source_unit: "MJ",
+      target_unit: "kWh",
+      source_unit_group: "Units of energy",
+      target_unit_group: "energy",
+      amount_factor: 1 / 3.6,
+      status: "active",
+    });
+
+    expect(link.status).toBe("user_confirmed");
+    expect(link.sourceUnitGroup).toBe("Units of energy");
+    expect(link.targetUnitGroup).toBe("energy");
+    expect(link.amountFactor).toBeCloseTo(1 / 3.6, 12);
+  });
 });
 
 describe("searchEcoIntermediateFlows", () => {

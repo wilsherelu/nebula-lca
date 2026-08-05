@@ -9,6 +9,8 @@ export type RawResolution = {
   amount_factor: number;
   source_unit: string;
   target_unit: string;
+  source_unit_group?: string;
+  target_unit_group?: string;
   mapping_level: "L1" | "L2" | "L3";
   mapping_reason: string;
   rule_id: string;
@@ -18,7 +20,7 @@ export type RawResolution = {
   package_hash?: string;
   application_mode?: "strict_identity" | "auto_compatible";
   warnings?: string[];
-  status?: "auto" | "user_confirmed";
+  status?: "active" | "auto" | "user_confirmed";
   target_flow_name?: string;
   target_flow_name_en?: string;
 };
@@ -65,11 +67,15 @@ export const toIntermediateFlowLink = (raw: RawResolution): IntermediateFlowLink
   amountFactor: raw.amount_factor,
   sourceUnit: raw.source_unit,
   targetUnit: raw.target_unit,
+  sourceUnitGroup: raw.source_unit_group,
+  targetUnitGroup: raw.target_unit_group,
   mappingLevel: raw.mapping_level,
   mappingReason: raw.mapping_reason,
   ruleId: raw.rule_id,
   ruleOrigin: raw.rule_origin,
-  status: raw.status ?? (raw.mapping_level === "L1" ? "auto" : "user_confirmed"),
+  status: raw.status === "active"
+    ? "user_confirmed"
+    : raw.status ?? (raw.mapping_level === "L1" ? "auto" : "user_confirmed"),
   packageId: raw.package_id,
   packageVersion: raw.package_version,
   packageHash: raw.package_hash,

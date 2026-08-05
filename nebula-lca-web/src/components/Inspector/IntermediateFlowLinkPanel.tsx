@@ -22,6 +22,13 @@ type Props = {
   getPortDisplayName?: (port: FlowPort) => string;
 };
 
+const applyLinkToPort = (port: FlowPort, link: IntermediateFlowLink): FlowPort => ({
+  ...port,
+  ...(link.sourceUnit ? { unit: link.sourceUnit } : {}),
+  ...(link.sourceUnitGroup ? { unitGroup: link.sourceUnitGroup } : {}),
+  intermediateFlowLink: link,
+});
+
 export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }: Props) {
   const uiLanguage = useLcaGraphStore((state) => state.uiLanguage);
   const edges = useLcaGraphStore((state) => state.edges);
@@ -110,7 +117,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
         inputs: current.data.inputs.map((port) => {
           const link = links.get(port.id);
           if (!link) return port;
-          return { ...port, ...(link.sourceUnit ? { unit: link.sourceUnit } : {}), intermediateFlowLink: link };
+          return applyLinkToPort(port, link);
         }),
       },
     }));
@@ -155,7 +162,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
           inputs: current.data.inputs.map((port) => {
             const link = links.get(port.id);
             if (!link) return port;
-            return { ...port, ...(link.sourceUnit ? { unit: link.sourceUnit } : {}), intermediateFlowLink: link };
+            return applyLinkToPort(port, link);
           }),
         },
       }));
@@ -187,7 +194,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
         data: {
           ...current.data,
           inputs: current.data.inputs.map((item) =>
-            item.id === port.id ? { ...item, ...(link.sourceUnit ? { unit: link.sourceUnit } : {}), intermediateFlowLink: link } : item,
+            item.id === port.id ? applyLinkToPort(item, link) : item,
           ),
         },
       }));
@@ -212,7 +219,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
       data: {
         ...current.data,
         inputs: current.data.inputs.map((item) =>
-          item.id === port.id ? { ...item, ...(link.sourceUnit ? { unit: link.sourceUnit } : {}), intermediateFlowLink: link } : item,
+          item.id === port.id ? applyLinkToPort(item, link) : item,
         ),
       },
     }));
