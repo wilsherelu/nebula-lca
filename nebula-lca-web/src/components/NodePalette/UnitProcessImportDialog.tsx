@@ -32,6 +32,7 @@ type CatalogProcessItem = {
 type ProcessExchange = {
   flow_uuid?: string;
   flow_name?: unknown;
+  flow_name_en?: unknown;
   amount?: number;
   unit?: string;
   unit_group?: string;
@@ -102,18 +103,25 @@ const toPort = (
   direction: "input" | "output",
   idx: number,
   uiLanguage: "zh" | "en",
-): FlowPort => ({
-  id: `${direction}_${Math.random().toString(36).slice(2, 8)}_${idx}`,
-  flowUuid: String(ex.flow_uuid ?? "").trim(),
-  name: getLocalizedText(ex.flow_name, uiLanguage, String(ex.flow_uuid ?? "Unnamed Flow")),
-  unit: String(ex.unit ?? "kg"),
-  unitGroup: String(ex.unit_group ?? ex.unitGroup ?? "").trim() || undefined,
-  amount: Number.isFinite(Number(ex.amount)) ? Number(ex.amount) : 0,
-  isProduct: Boolean(ex.is_product ?? ex.isProduct),
-  type: mapExchangeType(ex.flow_type ?? ex.type),
-  direction,
-  showOnNode: true,
-});
+): FlowPort => {
+  const flowNameEnRaw = getLocalizedText(ex.flow_name_en, "en", "").trim();
+  const displayName = uiLanguage === "en"
+    ? (flowNameEnRaw || getLocalizedText(ex.flow_name, "en", String(ex.flow_uuid ?? "Unnamed Flow")))
+    : getLocalizedText(ex.flow_name, uiLanguage, flowNameEnRaw || String(ex.flow_uuid ?? "Unnamed Flow"));
+  return {
+    id: `${direction}_${Math.random().toString(36).slice(2, 8)}_${idx}`,
+    flowUuid: String(ex.flow_uuid ?? "").trim(),
+    name: displayName,
+    flowNameEn: flowNameEnRaw || undefined,
+    unit: String(ex.unit ?? "kg"),
+    unitGroup: String(ex.unit_group ?? ex.unitGroup ?? "").trim() || undefined,
+    amount: Number.isFinite(Number(ex.amount)) ? Number(ex.amount) : 0,
+    isProduct: Boolean(ex.is_product ?? ex.isProduct),
+    type: mapExchangeType(ex.flow_type ?? ex.type),
+    direction,
+    showOnNode: true,
+  };
+};
 
 const parsePortRows = (raw: unknown, direction: "input" | "output", uiLanguage: "zh" | "en"): FlowPort[] => {
   if (!Array.isArray(raw)) return [];

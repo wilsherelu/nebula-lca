@@ -19,9 +19,10 @@ import { L3UserProxyModal } from "./L3UserProxyModal";
 type Props = {
   node: Node<LcaNodeData>;
   onStatus?: (text: string) => void;
+  getPortDisplayName?: (port: FlowPort) => string;
 };
 
-export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
+export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }: Props) {
   const uiLanguage = useLcaGraphStore((state) => state.uiLanguage);
   const edges = useLcaGraphStore((state) => state.edges);
   const updateNode = useLcaGraphStore((state) => state.updateNode);
@@ -92,7 +93,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
     void resolveCandidates();
   };
 
-  const keepTidasFlows = () => {
+  const closeDialog = () => {
     setOpen(false);
   };
 
@@ -232,7 +233,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
         <span>{linkedCount}/{inputs.length}</span>
       </button>
       {open && (
-        <div className="overlay-modal" onMouseDown={keepTidasFlows}>
+        <div className="overlay-modal" onMouseDown={closeDialog}>
           <section
             className="overlay-panel intermediate-flow-link-dialog"
             role="dialog"
@@ -245,15 +246,15 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                 <strong>{t("中间流转换", "Intermediate Flow Conversion")}</strong>
                 <span>{inputs.length}</span>
               </div>
-              <button type="button" className="drawer-close-btn" onClick={keepTidasFlows}>
+              <button type="button" className="drawer-close-btn" onClick={closeDialog}>
                 {t("关闭", "Close")}
               </button>
             </header>
             <div className="intermediate-flow-link-dialog-toolbar">
               <div className="intermediate-flow-link-overview">
                 <p>{t(
-                  "先完成转换，再回到清单分析关联背景 LCI；不转换也可继续保留原始 TIDAS Flow。",
-                  "Convert first, then link a background LCI from inventory analysis. You can also keep the original TIDAS flow.",
+                  "将 TIDAS 中间流转换为 ecoinvent 产品流。",
+                  "Convert TIDAS intermediate flows to ecoinvent product flows.",
                 )}</p>
                 <div className="intermediate-flow-link-counts" aria-live="polite">
                   {resolutionState === "loading" ? (
@@ -276,67 +277,70 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                   </button>
                 )}
                 <button type="button" className="flow-link-button primary" disabled={busy || l1Count === 0} onClick={applyAllL1}>
-                  {t(`自动（${l1Count}）`, `Auto (${l1Count})`)}
+                  {t(`自动转换（${l1Count}）`, `Auto convert (${l1Count})`)}
                 </button>
                 <button type="button" className="flow-link-button secondary" disabled={busy || l2ReviewItems.length === 0} onClick={() => setL2ReviewOpen(true)}>
-                  {t(`确认（${l2ReviewItems.length}）`, `Confirm (${l2ReviewItems.length})`)}
-                </button>
-                <button type="button" className="flow-link-button ghost" disabled={busy} onClick={keepTidasFlows}>
-                  {t("保留 TIDAS", "Keep TIDAS")}
+                  {t(`确认转换（${l2ReviewItems.length}）`, `Confirm convert (${l2ReviewItems.length})`)}
                 </button>
               </div>
             </div>
             <div className="intermediate-flow-link-dialog-body">
               <div className="intermediate-flow-link-list">
+              <div className="intermediate-flow-link-columns" aria-hidden="true">
+                <span>{t("来源流", "Source flow")}</span>
+                <span>{t("转换目标", "Conversion target")}</span>
+                <span>{t("状态", "Status")}</span>
+                <span>{t("操作", "Actions")}</span>
+              </div>
       {inputs.map((port) => {
+        const sourceName = getPortDisplayName
+          ? getPortDisplayName(port)
+          : (uiLanguage === "en"
+            ? (port.flowNameEn || port.displayNameEn || getLocalizedText(port.name, "en", port.name))
+            : getLocalizedText(port.name, uiLanguage, port.name));
         const link = port.intermediateFlowLink;
         const review = candidateByPort[port.id];
         const resolutionStatus = statusByPort[port.id];
+        const targetDisplayName = review
+          ? (uiLanguage === "zh"
+            ? review.target_flow_name || review.target_flow_name_en || review.target_flow_uuid
+            : review.target_flow_name_en || review.target_flow_name || review.target_flow_uuid)
+          : "";
         return (
           <div className="intermediate-flow-link-row" key={port.id}>
-            <div className="intermediate-flow-link-summary">
-              <strong title={getLocalizedText(port.name, uiLanguage, port.name)}>
-                {getLocalizedText(port.name, uiLanguage, port.name)}
-              </strong>
-              <span className={`intermediate-flow-level-badge ${link ? "approved" : review ? "review" : "unmatched"}`}>
-                {link && link.status !== "inactive"
-                  ? conversionLabel(link.mappingLevel)
-                  : review?.mapping_level
-                    ? conversionLabel(review.mapping_level)
-                    : (resolutionState === "loading" || resolutionState === "idle"
-                      ? t("检测中", "Checking")
-                      : t("无候选", "No candidate"))}
-              </span>
+            <div className="intermediate-flow-link-source">
+              <strong title={sourceName}>{sourceName}</strong>
             </div>
             {link && link.status !== "inactive" ? (
               <>
                 <div className="intermediate-flow-link-target">
-                  <span>{t("已完成转换", "Conversion completed")}</span>
+                  <span>{t("ecoinvent 产品流", "ecoinvent product flow")}{` · ${link.targetUnit}`}</span>
                   {link.applicationMode === "auto_compatible" && (
                     <span className="muted-text" title={(link.warnings ?? []).join(", ")}>
                       {t("语义泛化，计算前请核对", "Review semantic generalization before calculation")}
                     </span>
                   )}
                 </div>
-                <div className="intermediate-flow-link-actions">
-                  <span className="muted-text">
-                    {t("请回到清单分析，点击该流的「关联背景数据」。", "Return to inventory analysis and use Link background data on this flow.")}
-                  </span>
+                <div className="intermediate-flow-link-status">
+                  <span className="intermediate-flow-level-badge approved">{t("转换完成", "Conversion completed")}</span>
+                  <span className="muted-text">{t("可关联 ecoinvent 背景数据", "Ready for ecoinvent background data association")}</span>
                 </div>
+                <div className="intermediate-flow-link-actions" />
               </>
             ) : review ? (
               <>
                 <div className="intermediate-flow-link-target">
-                  <span>
-                    {t("目标：", "Target: ")}
-                    {review.target_flow_name || review.target_flow_name_en || review.target_flow_uuid}
-                    {` · ${review.target_unit}`}
-                  </span>
+                  <span>{targetDisplayName}{` · ${review.target_unit}`}</span>
                   {(review.warnings ?? []).length > 0 && (
                     <span className="intermediate-flow-review-hint" title={(review.warnings ?? []).join(" · ")}>
                       {t("需核对产品范围和限定词", "Review product scope and qualifiers")}
                     </span>
                   )}
+                </div>
+                <div className="intermediate-flow-link-status">
+                  <span className="intermediate-flow-level-badge review">
+                    {conversionLabel(review.mapping_level)}
+                  </span>
                 </div>
                 <div className="intermediate-flow-link-actions">
                   {review.mapping_level === "L1" ? (
@@ -355,18 +359,24 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
                   )}
                 </div>
               </>
-            ) : null}
-            {!link && !review && resolutionState === "ready" && (
+            ) : (
               <>
                 <div className="intermediate-flow-link-target">
+                  <span>—</span>
+                </div>
+                <div className="intermediate-flow-link-status">
                   <span className="muted-text" title={reasonByPort[port.id] ?? resolutionStatus}>
-                    {t("无自动候选", "No automatic candidate")}
+                    {resolutionState === "loading" || resolutionState === "idle"
+                      ? t("检测中", "Checking")
+                      : t("无自动候选", "No automatic candidate")}
                   </span>
                 </div>
                 <div className="intermediate-flow-link-actions">
-                  <button type="button" className="flow-link-button ghost compact" onClick={() => setProxyPortId(port.id)}>
-                    {t("手动转换", "Manual conversion")}
-                  </button>
+                  {resolutionState === "ready" && (
+                    <button type="button" className="flow-link-button ghost compact" onClick={() => setProxyPortId(port.id)}>
+                      {t("手动转换", "Manual conversion")}
+                    </button>
+                  )}
                 </div>
               </>
             )}
@@ -394,6 +404,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus }: Props) {
         language={uiLanguage}
         onClose={() => setL2ReviewOpen(false)}
         onConfirm={applySelectedL2}
+        getSourceDisplayName={getPortDisplayName}
       />
     </>
   );

@@ -2166,7 +2166,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
             </label>
           )}
           {!marketProcess && !ptsNode && !lciNode && (
-            <IntermediateFlowLinkPanel node={node} onStatus={onStatus} />
+            <IntermediateFlowLinkPanel node={node} onStatus={onStatus} getPortDisplayName={getPortDisplayName} />
           )}
           {marketProcess && (
             <label className="inline-checkbox">
@@ -2803,6 +2803,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                   language={uiLanguage}
                   onStatus={onStatus}
                   onLinked={() => setAssocDialog({ open: false, direction: "output", port: null })}
+                  sourceFlowName={getPortDisplayName(assocDialog.port)}
                 />
               )}
               <div className="assoc-actions">

@@ -16,6 +16,7 @@ type Props = {
   language: "zh" | "en";
   onLinked: () => void;
   onStatus?: (text: string) => void;
+  sourceFlowName?: string;
 };
 
 const API_BASE = getApiBase();
@@ -26,6 +27,7 @@ export function BackgroundLciAssociationSection({
   language,
   onLinked,
   onStatus,
+  sourceFlowName,
 }: Props) {
   const connectProvider = useLcaGraphStore((state) => state.connectIntermediateProvider);
   const [providers, setProviders] = useState<ProviderCandidate[]>([]);
@@ -70,6 +72,26 @@ export function BackgroundLciAssociationSection({
     setLoading(true);
     setError("");
     try {
+      if (
+        provider.reference_product_flow_uuid
+        && targetFlowUuid
+        && provider.reference_product_flow_uuid !== targetFlowUuid
+      ) {
+        const sourceLabel = provider.source || t("所选数据源", "the selected source");
+        const message = convertedTargetFlowUuid
+          ? t(
+            `${sourceLabel} 的参考产品与转换目标不匹配，无法关联。`,
+            `${sourceLabel} reference product does not match the conversion target; cannot link.`,
+          )
+          : t(
+            `当前输入与 ${sourceLabel} 的参考产品或单位不一致，需先完成转换。`,
+            `The current input differs from ${sourceLabel} reference product or unit; conversion is required before linking.`,
+          );
+        setError(message);
+        onStatus?.(message);
+        setLoading(false);
+        return;
+      }
       const response = await fetch(`${API_BASE}/reference/processes/import`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -82,10 +104,17 @@ export function BackgroundLciAssociationSection({
       if (!response.ok) throw new Error(`Provider import failed (${response.status})`);
       const rows = parseImportedRows(await response.json(), "locked", language, "lci_dataset");
       if (!rows[0] || !connectProvider(consumerNodeId, port.id, rows[0])) {
-        throw new Error(t(
-          "无法关联：未转换的输入仅可直接关联单位一致的 HiQLCD 背景 LCI。",
-          "Cannot link: an unconverted input can directly use only a HiQLCD background LCI with the same unit.",
-        ));
+        const sourceLabel = provider.source || t("所选数据源", "the selected source");
+        const message = convertedTargetFlowUuid
+          ? t(
+            `${sourceLabel} 的参考产品与转换目标不匹配，无法关联。`,
+            `${sourceLabel} reference product does not match the conversion target; cannot link.`,
+          )
+          : t(
+            `当前输入与 ${sourceLabel} 的参考产品或单位不一致，需先完成转换。`,
+            `The current input differs from ${sourceLabel} reference product or unit; conversion is required before linking.`,
+          );
+        throw new Error(message);
       }
       onStatus?.(t(
         `已关联背景 LCI：${provider.process_name}。该 provider 仅参与计算，不显示为画布节点。`,
@@ -178,7 +207,9 @@ export function BackgroundLciAssociationSection({
         open={pickerOpen}
         busy={loading}
         providers={providers}
-        sourceFlowName={getLocalizedText(port.name, language, port.name)}
+        sourceFlowName={sourceFlowName || (language === "en"
+          ? (port.flowNameEn || port.displayNameEn || getLocalizedText(port.name, "en", port.name))
+          : getLocalizedText(port.name, language, port.name))}
         targetFlowUuid={targetFlowUuid}
         language={language}
         onClose={() => setPickerOpen(false)}

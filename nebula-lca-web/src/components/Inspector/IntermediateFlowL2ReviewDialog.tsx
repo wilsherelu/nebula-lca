@@ -15,6 +15,7 @@ type Props = {
   language: "zh" | "en";
   onClose: () => void;
   onConfirm: (portIds: string[]) => void;
+  getSourceDisplayName?: (port: FlowPort) => string;
 };
 
 export function IntermediateFlowL2ReviewDialog({
@@ -24,6 +25,7 @@ export function IntermediateFlowL2ReviewDialog({
   language,
   onClose,
   onConfirm,
+  getSourceDisplayName,
 }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const t = (zh: string, en: string) => (language === "zh" ? zh : en);
@@ -44,12 +46,12 @@ export function IntermediateFlowL2ReviewDialog({
         className="overlay-panel intermediate-flow-l2-review-dialog"
         role="dialog"
         aria-modal="true"
-        aria-label={t("确认待核对的转换", "Confirm conversions needing review")}
+        aria-label={t("确认转换", "Confirm conversions")}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="overlay-head intermediate-flow-link-dialog-head">
           <div className="intermediate-flow-link-title">
-            <strong>{t("确认待核对的转换", "Confirm conversions needing review")}</strong>
+            <strong>{t("确认转换", "Confirm conversions")}</strong>
             <span>{items.length}</span>
           </div>
           <button type="button" className="drawer-close-btn" disabled={busy} onClick={onClose}>
@@ -58,8 +60,8 @@ export function IntermediateFlowL2ReviewDialog({
         </header>
         <div className="intermediate-flow-l2-review-note">
           {t(
-            "这些转换的单位兼容，但产品语义可能更宽或更窄。请核对目标后再批量确认。",
-            "These conversions are unit-compatible, but product meaning may be broader or narrower. Review targets before confirming.",
+            "请核对转换目标后确认。",
+            "Review conversion targets before confirming.",
           )}
         </div>
         <div className="intermediate-flow-l2-review-select-all">
@@ -83,12 +85,16 @@ export function IntermediateFlowL2ReviewDialog({
           <span>{t("来源流", "Source flow")}</span>
           <span>{t("转换目标", "Conversion target")}</span>
           <span>{t("单位", "Unit")}</span>
-          <span>{t("核对", "Review")}</span>
+          <span>{t("状态", "Status")}</span>
         </div>
         <div className="intermediate-flow-l2-review-list">
           {items.map(({ port, resolution }) => {
             const checked = selected.has(port.id);
-            const sourceName = getLocalizedText(port.name, language, port.name);
+            const sourceName = getSourceDisplayName
+              ? getSourceDisplayName(port)
+              : (language === "en"
+                ? (port.flowNameEn || port.displayNameEn || getLocalizedText(port.name, "en", port.name))
+                : getLocalizedText(port.name, language, port.name));
             const targetName = language === "zh"
               ? resolution.target_flow_name || resolution.target_flow_name_en || resolution.target_flow_uuid
               : resolution.target_flow_name_en || resolution.target_flow_name || resolution.target_flow_uuid;
@@ -116,7 +122,7 @@ export function IntermediateFlowL2ReviewDialog({
                 </span>
                 <span className="intermediate-flow-l2-review-unit">{resolution.source_unit} → {resolution.target_unit}</span>
                 <span className="intermediate-flow-l2-risk" title={(resolution.warnings ?? []).join(" · ")}>
-                  {t("需核对产品范围和限定词", "Review product scope and qualifiers")}
+                  {t("待核对", "Review needed")}
                 </span>
               </label>
             );
