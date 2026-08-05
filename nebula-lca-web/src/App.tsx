@@ -448,7 +448,7 @@ const readProjectTargetProductConfig = (graph?: LcaGraphPayload | null): Project
   };
 };
 
-const reconcileProjectTargetProductConfig = (
+export const reconcileProjectTargetProductConfig = (
   graph: LcaGraphPayload,
   config: ProjectTargetProductConfig | null,
 ): ProjectTargetProductConfig | null => {
@@ -465,14 +465,17 @@ const reconcileProjectTargetProductConfig = (
         nodeKind: String(node.node_kind ?? ""),
       })),
   );
-  if (candidates.some((item) => item.processUuid === config.processUuid && item.flowUuid === config.flowUuid)) {
+  const foregroundCandidates = candidates.filter(
+    (item) => !item.hidden && item.nodeKind !== "lci_dataset",
+  );
+  if (foregroundCandidates.some((item) => item.processUuid === config.processUuid && item.flowUuid === config.flowUuid)) {
     return config;
   }
-  const visibleFlowMatches = candidates.filter(
-    (item) => !item.hidden && item.nodeKind !== "lci_dataset" && item.flowUuid === config.flowUuid,
+  const visibleFlowMatches = foregroundCandidates.filter(
+    (item) => item.flowUuid === config.flowUuid,
   );
   if (visibleFlowMatches.length !== 1) {
-    return config;
+    return null;
   }
   return { ...config, processUuid: visibleFlowMatches[0].processUuid };
 };
@@ -4978,6 +4981,16 @@ export default function App() {
     return map;
   }, [canvases.root?.nodes]);
 
+  const foregroundProductProcessUuids = useMemo(
+    () => new Set(
+      (canvases.root?.nodes ?? [])
+        .filter((node) => !node.hidden && node.data.nodeKind !== "lci_dataset")
+        .map((node) => String(node.data.processUuid ?? "").trim())
+        .filter(Boolean),
+    ),
+    [canvases.root?.nodes],
+  );
+
   const productColumns = useMemo(() => {
     if (!lastRun) {
       return [] as ProductResultRow[];
@@ -5100,8 +5113,8 @@ export default function App() {
           : undefined,
         ptsProcessName,
       };
-    });
-  }, [lastRun, ptsResultContextByUuid, rootProductPortsByFlowUuid, rootProductPortsByMatchKey, rootProductPortByPortKey, uiLanguage]);
+    }).filter((item) => foregroundProductProcessUuids.has(item.processUuid));
+  }, [foregroundProductProcessUuids, lastRun, ptsResultContextByUuid, rootProductPortsByFlowUuid, rootProductPortsByMatchKey, rootProductPortByPortKey, uiLanguage]);
 
   const effectiveTargetProductKey = useMemo(
     () => selectedProductKey || productColumns[0]?.matchKey || "",
@@ -5403,6 +5416,9 @@ export default function App() {
   const targetProductCandidates = useMemo(() => {
     const rootNodes = canvases.root?.nodes ?? [];
     return rootNodes.flatMap((node) => {
+      if (node.hidden || node.data.nodeKind === "lci_dataset") {
+        return [];
+      }
       const outputs = node.data.outputs ?? [];
       return outputs
         .filter((port) => {

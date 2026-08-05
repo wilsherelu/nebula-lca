@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LcaGraphPayload } from "./model/exchange";
-import { normalizeGraphPayload } from "./App";
+import { normalizeGraphPayload, reconcileProjectTargetProductConfig } from "./App";
 import { useLcaGraphStore } from "./store/lcaGraphStore";
 
 describe("normalizeGraphPayload", () => {
@@ -91,5 +91,64 @@ describe("normalizeGraphPayload", () => {
     useLcaGraphStore.getState().importGraph(normalized);
     expect(useLcaGraphStore.getState().edges).toHaveLength(1);
     expect(useLcaGraphStore.getState().exportGraph().exchanges).toHaveLength(1);
+  });
+
+  it("rejects a hidden LCI product as the configured target", () => {
+    const graph = {
+      functionalUnit: "1 kg product",
+      nodes: [
+        {
+          id: "foreground",
+          node_kind: "unit_process",
+          process_uuid: "foreground-process",
+          name: "foreground",
+          location: "CN",
+          reference_product: "foreground product",
+          inputs: [],
+          outputs: [{
+            id: "foreground-output",
+            name: "foreground product",
+            flowUuid: "foreground-flow",
+            direction: "output",
+            type: "technosphere",
+            amount: 1,
+            unit: "kg",
+            showOnNode: true,
+            isProduct: true,
+          }],
+        },
+        {
+          id: "background",
+          node_kind: "lci_dataset",
+          lci_role: "provider",
+          process_uuid: "background-process",
+          name: "background",
+          location: "GLO",
+          reference_product: "electricity",
+          hidden: true,
+          inputs: [],
+          outputs: [{
+            id: "background-output",
+            name: "electricity",
+            flowUuid: "background-flow",
+            direction: "output",
+            type: "technosphere",
+            amount: 1,
+            unit: "kWh",
+            showOnNode: true,
+            isProduct: true,
+          }],
+        },
+      ],
+      exchanges: [],
+      metadata: {},
+    } as LcaGraphPayload;
+
+    expect(reconcileProjectTargetProductConfig(graph, {
+      processUuid: "background-process",
+      flowUuid: "background-flow",
+      quantityMode: "custom",
+      quantity: 1,
+    })).toBeNull();
   });
 });

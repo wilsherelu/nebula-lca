@@ -698,6 +698,8 @@ def _build_product_result_view_from_graph(
     products_by_process: dict[str, list[dict]] = {}
     seen_keys: set[str] = set()
     for node in graph.nodes:
+        if bool(node.hidden) or node.node_kind == "lci_dataset":
+            continue
         process_uuid = str(node.process_uuid or "")
         process_name = str(node.name or process_uuid or node.id)
         process_location = str(node.location or "")
