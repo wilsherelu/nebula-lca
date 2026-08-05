@@ -134,10 +134,13 @@ function parseHandlePortId(handle: string | undefined | null, prefix: string): s
   if (!handle) {
     return undefined;
   }
-  if (!handle.startsWith(prefix)) {
-    return undefined;
+  const prefixes = prefix === "in:" ? ["in:", "inl:", "inr:"] : ["out:", "outl:", "outr:"];
+  for (const candidate of prefixes) {
+    if (handle.startsWith(candidate)) {
+      return handle.slice(candidate.length);
+    }
   }
-  return handle.slice(prefix.length);
+  return undefined;
 }
 
 function findOutputPortForFlow(node: Node<LcaNodeData>, flowUuid: string): FlowPort | undefined {
@@ -459,11 +462,11 @@ function FlowSection({
                     disabled={readOnly || plainReadOnly || (lockFields && !allowLinkWhenLocked)}
                     onClick={() => onLink(port)}
                   >
-                    <span className="link-btn-default">{getLinkLabel?.(port) ?? t("关联", "Link")}</span>
-                    <span className="link-btn-hover">{t("点击切换", "Click to switch")}</span>
+                    <span>{getLinkLabel?.(port) ?? t("关联", "Link")}</span>
                   </button>
                   {tooltipContent && (
                     <div className="inventory-link-tooltip" role="tooltip">
+                      <div className="inventory-link-tooltip-action">{t("点击切换", "Click to switch")}</div>
                       {tooltipContent}
                     </div>
                   )}

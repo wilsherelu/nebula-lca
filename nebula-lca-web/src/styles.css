@@ -2234,8 +2234,8 @@ body,
 .inventory-grid-header,
 .inventory-grid-row {
   display: grid;
-  grid-template-columns: 44px minmax(260px, 1fr) 92px 84px 76px 92px 64px 72px;
-  gap: 8px;
+  grid-template-columns: 44px minmax(260px, 1fr) 92px 84px 76px 52px 52px 104px;
+  gap: 6px;
   align-items: center;
   padding: 8px 10px;
 }
@@ -2863,20 +2863,6 @@ body,
   align-items: center;
 }
 
-.inventory-link-wrapper .link-btn-hover {
-  display: none;
-}
-
-.inventory-link-wrapper .link-btn.linked:hover .link-btn-default,
-.inventory-link-wrapper .link-btn.linked:focus-within .link-btn-default {
-  display: none;
-}
-
-.inventory-link-wrapper .link-btn.linked:hover .link-btn-hover,
-.inventory-link-wrapper .link-btn.linked:focus-within .link-btn-hover {
-  display: inline;
-}
-
 .inventory-link-wrapper .link-btn.linked {
   color: #1a7f37;
   border-color: #1a7f37;
@@ -2902,6 +2888,14 @@ body,
   white-space: normal;
   text-align: left;
   pointer-events: none;
+}
+
+.inventory-link-tooltip-action {
+  margin-bottom: 5px;
+  color: #0c84ff;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 700;
 }
 
 .inventory-link-tooltip-row {
@@ -6616,7 +6610,7 @@ body,
 }
 
 .intermediate-flow-l2-review-columns,
-.intermediate-flow-l2-review-row {
+label.intermediate-flow-l2-review-row {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr) 76px minmax(0, 0.8fr);
   gap: 12px;
@@ -6636,6 +6630,9 @@ body,
 }
 
 .intermediate-flow-l2-review-row {
+  display: grid;
+  margin-bottom: 0;
+  font-size: 12px;
   min-height: 44px;
   border-bottom: 1px solid #e8eef2;
   cursor: pointer;
@@ -7270,7 +7267,7 @@ body,
     display: none;
   }
 
-  .intermediate-flow-l2-review-row {
+  label.intermediate-flow-l2-review-row {
     grid-template-columns: 28px minmax(0, 1fr);
   }
 
