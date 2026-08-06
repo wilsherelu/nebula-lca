@@ -16,6 +16,10 @@ from sqlalchemy import func as sqla_func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
+from ..flow_unit_semantics import (
+    collect_flow_default_unit_conversion_violations,
+    normalize_graph_flow_unit_switches,
+)
 from ..models import Model, ModelVersion, PtsResource, RunJob
 from ..schemas import (
     DeleteProjectResponse,
@@ -48,6 +52,8 @@ from ..services.graph_contract import (
 from ..services.graph_storage import (
     compute_graph_hash_from_slim_graph,
     hydrate_graph_for_api,
+    repair_impossible_flow_units,
+    repair_tidas_product_flags,
     slim_graph_for_storage,
 )
 from ..schemas import HybridGraph
@@ -327,6 +333,20 @@ def create_project_version(
     validate_graph_contract(payload.graph, require_non_empty=True, allow_pts_nodes=True)
     validate_graph_flow_type_contract(payload.graph, db=db, stage="save_version")
     validate_graph_port_names_against_flow_catalog(payload.graph, db=db, stage="save_version")
+    repair_impossible_flow_units(payload.graph, db)
+    normalize_graph_flow_unit_switches(payload.graph, db)
+    flow_default_unit_violations = collect_flow_default_unit_conversion_violations(payload.graph, db)
+    if flow_default_unit_violations:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "FLOW_DEFAULT_UNIT_CONVERSION_REQUIRED",
+                "message": "Unit mismatch cannot be repaired deterministically; re-import the source package.",
+                "repairable_by_save": False,
+                "action": "reimport_required",
+                "violations": flow_default_unit_violations,
+            },
+        )
 
     # Phase 1: source-policy validation
     model = db.query(Model).filter(Model.id == project_id).first()
@@ -471,6 +491,8 @@ def get_project_version(
     raw_graph = hydrate_graph_for_api(
         record.hybrid_graph_json if isinstance(record.hybrid_graph_json, dict) else {}, db=db
     )
+    if str(model.description or "").startswith("Imported from TIDAS"):
+        repair_tidas_product_flags(raw_graph)
     graph = HybridGraph.model_validate(raw_graph)
     normalize_graph_product_flags(graph)
     _get_pts_helpers["_project_pts_external_ports_into_graph"](db=db, project_id=model.id, graph=graph)
@@ -543,6 +565,8 @@ def get_project_latest_by_id(
     raw_graph = hydrate_graph_for_api(
         latest_row.hybrid_graph_json if isinstance(latest_row.hybrid_graph_json, dict) else {}, db=db
     )
+    if str(model.description or "").startswith("Imported from TIDAS"):
+        repair_tidas_product_flags(raw_graph)
     graph = HybridGraph.model_validate(raw_graph)
     normalize_graph_product_flags(graph)
     _get_pts_helpers["_project_pts_external_ports_into_graph"](db=db, project_id=model.id, graph=graph)

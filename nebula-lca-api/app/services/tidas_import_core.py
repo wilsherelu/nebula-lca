@@ -20,9 +20,12 @@ from ..schemas import (
     ProcessImportReportResponse,
     ProcessImportWarning,
     TidasImportReportResponse,
+    flow_semantic_to_exchange_type,
+    is_elementary_flow_semantic,
 )
 from .catalog_cache import invalidate_management_caches
 from .project_versions import _create_project_version_from_graph_json
+from .graph_storage import repair_tidas_product_flags
 from .reference_catalog import (
     _filter_exchanges_with_evidence,
     _flow_uuid_set_cached,
@@ -170,7 +173,7 @@ def _infer_unit_defaults_from_flow_dataset(flow_dataset: dict) -> tuple[str, str
         if text_value:
             hint_texts.append(text_value.lower())
     hint_blob = " ".join(hint_texts)
-    if "energy" in hint_blob:
+    if "energy" in hint_blob or "calorific" in hint_blob:
         return "MJ", "Units of energy"
     if "volume" in hint_blob:
         return "m3", "Units of volume"
@@ -210,13 +213,7 @@ def _exchange_unit_text(row: dict) -> str:
 
 
 def _exchange_is_allocated_product(row: dict) -> bool:
-    return bool(
-        row.get("is_allocated_product")
-        or row.get("is_product")
-        or row.get("isProduct")
-        or row.get("productOutput")
-        or _numeric_value(row.get("allocatedFraction"), 0.0) > 0
-    )
+    return row.get("allocationFactor") is not None or row.get("allocation_factor") is not None
 
 
 def _is_protected_builtin_flow(row: FlowRecord) -> bool:
@@ -315,6 +312,9 @@ def _normalize_exchange(row: dict) -> dict:
         amount = row.get("meanValue", 0)
     # Ensure amount is numeric
     amount = _numeric_value(amount)
+    allocation_factor = row.get("allocationFactor")
+    if allocation_factor is None:
+        allocation_factor = row.get("allocation_factor")
 
     return {
         "exchange_internal_id": _safe_str(row.get("exchange_internal_id") or row.get("@dataSetInternalID") or row.get("dataSetInternalID")),
@@ -325,7 +325,8 @@ def _normalize_exchange(row: dict) -> dict:
         "unit": _exchange_unit_text(row),
         "is_allocated_product": _exchange_is_allocated_product(row),
         "is_reference_flow": bool(row.get("is_reference_flow")),
-        "isProduct": bool(row.get("isProduct") or row.get("is_reference_flow") or _exchange_is_allocated_product(row)),
+        "isProduct": bool(row.get("is_reference_flow") or allocation_factor is not None),
+        "allocationFactor": (_numeric_value(allocation_factor) if allocation_factor is not None else None),
     }
 
 
@@ -388,11 +389,20 @@ def _graph_from_payload(payload: dict) -> dict | None:
 def _extract_tidas_model_record(row: dict) -> tuple[dict | None, str | None]:
     payload = _payload_from_row(row)
     graph = _graph_from_payload(row) or _graph_from_payload(payload)
-    model_dataset = _extract_dataset(row, "lifeCycleModelDataSet")
-    model_uuid = _safe_str(payload.get("model_uuid") or model_dataset.get("UUID") or row.get("uuid") or row.get("id"))
+    model_dataset = row.get("lifeCycleModelDataSet") if isinstance(row.get("lifeCycleModelDataSet"), dict) else {}
+    model_info = model_dataset.get("lifeCycleModelInformation") if isinstance(model_dataset.get("lifeCycleModelInformation"), dict) else {}
+    data_info = model_info.get("dataSetInformation") if isinstance(model_info.get("dataSetInformation"), dict) else {}
+    model_uuid = _safe_str(
+        payload.get("model_uuid")
+        or data_info.get("common:UUID")
+        or model_dataset.get("UUID")
+        or row.get("uuid")
+        or row.get("id")
+    )
     if not model_uuid:
         return None, "model missing UUID/id"
-    model_name = _safe_str(payload.get("model_name") or payload.get("name") or row.get("name") or model_uuid)
+    name_zh, name_en = _extract_ilcd_name(data_info.get("name"))
+    model_name = _safe_str(payload.get("model_name") or payload.get("name") or row.get("name") or name_zh or name_en or model_uuid)
     process_refs: set[str] = set()
     if graph:
         for node in _as_list(graph.get("nodes")):
@@ -404,12 +414,27 @@ def _extract_tidas_model_record(row: dict) -> tuple[dict | None, str | None]:
         text = _safe_str(ref)
         if text:
             process_refs.add(text)
+    technology = model_info.get("technology") if isinstance(model_info.get("technology"), dict) else {}
+    processes = technology.get("processes") if isinstance(technology.get("processes"), dict) else {}
+    for instance in _as_list(processes.get("processInstance")):
+        if not isinstance(instance, dict):
+            continue
+        ref = instance.get("referenceToProcess") if isinstance(instance.get("referenceToProcess"), dict) else {}
+        process_uuid = _safe_str(ref.get("@refObjectId") or ref.get("refObjectId"))
+        if process_uuid:
+            process_refs.add(process_uuid)
+    json_tg = row.get("json_tg") if isinstance(row.get("json_tg"), dict) else {}
+    xflow = json_tg.get("xflow") if isinstance(json_tg.get("xflow"), dict) else {}
+    xflow_nodes = [item for item in _as_list(xflow.get("nodes")) if isinstance(item, dict)]
+    xflow_edges = [item for item in _as_list(xflow.get("edges")) if isinstance(item, dict)]
     return {
         "model_uuid": model_uuid,
         "model_name": model_name,
         "process_refs": sorted(process_refs),
-        "topology_empty": not bool(graph and graph.get("nodes")),
+        "topology_empty": not bool((graph and graph.get("nodes")) or xflow_nodes),
         "graph_json": graph,
+        "xflow_nodes": xflow_nodes,
+        "xflow_edges": xflow_edges,
         "raw": payload,
     }, None
 
@@ -423,7 +448,16 @@ def _build_tidas_graph_from_model_record(
 ) -> tuple[dict | None, list[dict]]:
     graph_json = model_record.get("graph_json") if isinstance(model_record.get("graph_json"), dict) else None
     if graph_json is not None:
+        repair_tidas_product_flags(graph_json)
         return graph_json, []
+    xflow_nodes = [item for item in list(model_record.get("xflow_nodes") or []) if isinstance(item, dict)]
+    if xflow_nodes:
+        return _build_tidas_graph_from_xflow_record(
+            db=db,
+            model_record=model_record,
+            process_json_by_uuid=process_json_by_uuid or {},
+            display_lang=display_lang,
+        )
     unresolved: list[dict] = []
     nodes: list[dict] = []
     process_json_by_uuid = process_json_by_uuid or {}
@@ -451,6 +485,195 @@ def _build_tidas_graph_from_model_record(
     if not nodes:
         return None, unresolved
     return {"functionalUnit": "1 unit", "nodes": nodes, "exchanges": [], "metadata": {"source": "tidas_import"}}, unresolved
+
+
+def _build_tidas_graph_from_xflow_record(
+    *,
+    db: Session,
+    model_record: dict,
+    process_json_by_uuid: dict[str, dict],
+    display_lang: str,
+) -> tuple[dict | None, list[dict]]:
+    """Rebuild a Nebula graph from the TIDAS XFlow extension.
+
+    Process JSON remains authoritative for exchanges and quantitative
+    references. XFlow contributes node identity, layout, and topology only.
+    """
+    xflow_nodes = [item for item in list(model_record.get("xflow_nodes") or []) if isinstance(item, dict)]
+    xflow_edges = [item for item in list(model_record.get("xflow_edges") or []) if isinstance(item, dict)]
+    flow_uuids = {
+        _safe_str(exchange.get("flow_uuid"))
+        for process_json in process_json_by_uuid.values()
+        for exchange in list(process_json.get("exchanges") or [])
+        if isinstance(exchange, dict) and _safe_str(exchange.get("flow_uuid"))
+    }
+    flow_meta: dict[str, tuple[str, str, str, str | None]] = {}
+    if flow_uuids:
+        rows = db.query(
+            FlowRecord.flow_uuid,
+            FlowRecord.flow_name,
+            FlowRecord.default_unit,
+            FlowRecord.unit_group,
+            FlowRecord.flow_type,
+        ).filter(FlowRecord.flow_uuid.in_(flow_uuids)).all()
+        flow_meta = {
+            str(row.flow_uuid): (
+                str(row.flow_name or row.flow_uuid),
+                str(row.default_unit or "kg"),
+                str(row.unit_group or "Units of mass"),
+                row.flow_type,
+            )
+            for row in rows
+        }
+
+    nodes: list[dict] = []
+    node_ids: set[str] = set()
+    positions: dict[str, dict[str, float]] = {}
+    unresolved: list[dict] = []
+    seen_names: dict[str, int] = {}
+    for index, xnode in enumerate(xflow_nodes):
+        data = xnode.get("data") if isinstance(xnode.get("data"), dict) else {}
+        node_id = _safe_str(xnode.get("id")) or f"node_tidas_xflow_{index}"
+        process_uuid = _safe_str(data.get("id") or xnode.get("process_uuid"))
+        source = process_json_by_uuid.get(process_uuid)
+        if source is None:
+            row = db.get(ReferenceProcess, process_uuid) if process_uuid else None
+            source = row.process_json if row is not None and isinstance(row.process_json, dict) else None
+        if source is None:
+            unresolved.append({
+                "model_uuid": model_record.get("model_uuid"),
+                "type": "missing_process_reference",
+                "process_uuid": process_uuid,
+                "node_id": node_id,
+                "reason": "xflow node process not found",
+            })
+            continue
+
+        inputs: list[dict] = []
+        outputs: list[dict] = []
+        seen_port_ids: set[str] = set()
+        reference_flow_uuid = ""
+        for exchange in list(source.get("exchanges") or []):
+            if not isinstance(exchange, dict):
+                continue
+            flow_uuid = _safe_str(exchange.get("flow_uuid"))
+            meta = flow_meta.get(flow_uuid)
+            if not flow_uuid or meta is None:
+                continue
+            direction = "output" if _safe_str(exchange.get("direction")).lower() == "output" else "input"
+            prefix = "OUTPUT" if direction == "output" else "INPUT"
+            base_port_id = f"{prefix}:{flow_uuid}"
+            port_id = base_port_id
+            if port_id in seen_port_ids:
+                internal_id = _safe_str(exchange.get("exchange_internal_id")) or str(len(seen_port_ids) + 1)
+                port_id = f"{base_port_id}:{internal_id}"
+            seen_port_ids.add(port_id)
+            is_product = bool(exchange.get("isProduct"))
+            if is_product and bool(exchange.get("is_reference_flow")):
+                reference_flow_uuid = flow_uuid
+            port = {
+                "id": port_id,
+                "flowUuid": flow_uuid,
+                "name": meta[0],
+                "unit": meta[1],
+                "unitGroup": meta[2],
+                "amount": float(exchange.get("amount") or 0.0),
+                "type": flow_semantic_to_exchange_type(meta[3]),
+                "direction": direction,
+                "showOnNode": not is_elementary_flow_semantic(meta[3]),
+                "internalExposed": not is_elementary_flow_semantic(meta[3]),
+                "isProduct": is_product,
+                "allocationFactor": exchange.get("allocationFactor"),
+            }
+            (outputs if direction == "output" else inputs).append(port)
+
+        label = data.get("label") if isinstance(data.get("label"), dict) else {}
+        preferred = ("en", "zh") if _safe_str(display_lang).lower() == "en" else ("zh", "en")
+        name = (
+            _pick_localized_text(label.get("baseName"), preferred_langs=preferred)
+            or _safe_str(source.get("process_name_en") if preferred[0] == "en" else source.get("process_name_zh"))
+            or _safe_str(source.get("process_name"))
+            or process_uuid
+        )
+        name_count = seen_names.get(name, 0) + 1
+        seen_names[name] = name_count
+        if name_count > 1:
+            name = f"{name}({name_count})"
+        reference_port = next((port for port in outputs if port.get("flowUuid") == reference_flow_uuid), None)
+        node = {
+            "id": node_id,
+            "node_kind": "unit_process",
+            "mode": "normalized",
+            "process_uuid": process_uuid,
+            "name": name,
+            "location": _safe_str(source.get("location")) or "GLO",
+            "reference_product": _safe_str((reference_port or {}).get("name")),
+            "reference_product_flow_uuid": reference_flow_uuid or None,
+            "reference_product_direction": "output" if reference_flow_uuid else None,
+            "inputs": inputs,
+            "outputs": outputs,
+            "emissions": [],
+        }
+        nodes.append(node)
+        node_ids.add(node_id)
+        position = xnode.get("position") if isinstance(xnode.get("position"), dict) else {}
+        if position:
+            positions[node_id] = {
+                "x": _numeric_value(position.get("x")),
+                "y": _numeric_value(position.get("y")),
+            }
+
+    edges: list[dict] = []
+    for index, xedge in enumerate(xflow_edges, start=1):
+        source = xedge.get("source") if isinstance(xedge.get("source"), dict) else {}
+        target = xedge.get("target") if isinstance(xedge.get("target"), dict) else {}
+        from_node = _safe_str(source.get("cell"))
+        to_node = _safe_str(target.get("cell"))
+        if from_node not in node_ids or to_node not in node_ids:
+            continue
+        source_port = _safe_str(source.get("port"))
+        target_port = _safe_str(target.get("port"))
+        flow_uuid = source_port.split(":", 1)[1] if ":" in source_port else ""
+        meta = flow_meta.get(flow_uuid)
+        if not flow_uuid or meta is None:
+            continue
+        data = xedge.get("data") if isinstance(xedge.get("data"), dict) else {}
+        connection = data.get("connection") if isinstance(data.get("connection"), dict) else {}
+        amount = _numeric_value(connection.get("exchangeAmount"), default=1.0)
+        if amount <= 0:
+            amount = 1.0
+        edges.append({
+            "id": _safe_str(xedge.get("id")) or f"edge_tidas_xflow_{index}",
+            "fromNode": from_node,
+            "toNode": to_node,
+            "sourceHandle": f"out:{source_port}",
+            "targetHandle": f"in:{target_port}",
+            "sourcePortId": source_port,
+            "targetPortId": target_port,
+            "flowUuid": flow_uuid,
+            "flowName": meta[0],
+            "quantityMode": "dual",
+            "amount": amount,
+            "providerAmount": amount,
+            "consumerAmount": amount,
+            "unit": meta[1],
+            "type": "technosphere",
+        })
+
+    if not nodes:
+        return None, unresolved
+    graph = {
+        "functionalUnit": _safe_str(model_record.get("model_name")) or "1 unit",
+        "nodes": nodes,
+        "exchanges": edges,
+        "metadata": {
+            "source": "tidas_model_import",
+            "tidas_model_uuid": _safe_str(model_record.get("model_uuid")),
+            "node_positions": positions,
+        },
+    }
+    repair_tidas_product_flags(graph)
+    return graph, unresolved
 
 
 def _parse_tidas_json_payload(*, source_name: str, raw_text: str) -> tuple[list[dict], list[str]]:
@@ -987,6 +1210,7 @@ def import_tidas_model_rows(
             report["failed"] += 1
             report["errors"].append(f"{model_uuid}: HybridGraph payload is missing or cannot be derived from TIDAS model")
             continue
+        repair_tidas_product_flags(graph_json)
         try:
             graph = HybridGraph.model_validate(graph_json)
         except Exception as exc:  # noqa: BLE001

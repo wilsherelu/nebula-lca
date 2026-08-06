@@ -532,6 +532,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     direction: "output",
     port: null,
   });
+  const [associationTab, setAssociationTab] = useState<"background" | "existing">("existing");
   const [saleDialog, setSaleDialog] = useState<{ open: boolean; portId: string | null; value: number }>({
     open: false,
     portId: null,
@@ -2020,7 +2021,13 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
 
   const openAssociationDialog = (direction: AssocDirection, port: FlowPort) => {
     setAssocDialog({ open: true, direction, port });
+    setAssociationTab(direction === "input" ? "background" : "existing");
     setSelectedNodeId("");
+  };
+
+  const closeAssociationDialog = () => {
+    setAssocDialog({ open: false, direction: "output", port: null });
+    setAssociationTab("existing");
   };
 
   const applyAssociation = () => {
@@ -2040,7 +2047,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
       }
       upsertOutputLink(sourceNode.id, sourcePort.id, node.id, assocDialog.port.id);
     }
-    setAssocDialog({ open: false, direction: "output", port: null });
+    closeAssociationDialog();
   };
 
   const linkedInputNames = (port: FlowPort): string[] => {
@@ -2821,57 +2828,82 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
 
       {assocDialog.open && assocDialog.port && (
         <div className="overlay-modal">
-          <div className="overlay-panel small">
+          <div className="overlay-panel small association-panel">
             <div className="overlay-head">
-              <strong>{t("关联过程", "Link Process")}</strong>
+              <strong>{t("关联数据", "Link Data")}</strong>
               <button
                 type="button"
                 className="drawer-close-btn"
-                onClick={() => setAssocDialog({ open: false, direction: "output", port: null })}
+                onClick={closeAssociationDialog}
               >
                 {t("关闭", "Close")}
               </button>
             </div>
             <div className="overlay-filters">
               <div className="flow-name-readonly" title={getPortDisplayName(assocDialog.port)}>{getPortDisplayName(assocDialog.port)}</div>
-              {assocLinkedItems.length > 0 ? (
-                <div className="linked-process-list">
-                  {assocLinkedItems.map((item, idx) => (
-                    <div key={`${item}_${idx}`} className="linked-process-item" title={item}>
-                      {item}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="table-empty">{t("当前未关联过程", "No linked processes")}</div>
-              )}
-              <select value={selectedNodeId} onChange={(e) => setSelectedNodeId(e.target.value)}>
-                <option value="">{t("选择已有过程", "Select Existing Process")}</option>
-                {settingCandidates.map((candidate) => (
-                  <option key={candidate.id} value={candidate.id}>
-                    {candidate.data.name}
-                  </option>
-                ))}
-              </select>
               {assocDialog.direction === "input" && (
+                <div className="tabs association-tabs" role="tablist" aria-label={t("关联类型", "Association type")}>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={associationTab === "background"}
+                    className={associationTab === "background" ? "active" : ""}
+                    onClick={() => setAssociationTab("background")}
+                  >
+                    {t("背景数据库", "Background Database")}
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={associationTab === "existing"}
+                    className={associationTab === "existing" ? "active" : ""}
+                    onClick={() => setAssociationTab("existing")}
+                  >
+                    {t("已有过程", "Existing Process")}
+                  </button>
+                </div>
+              )}
+              {assocDialog.direction === "input" && associationTab === "background" ? (
                 <BackgroundLciAssociationSection
                   consumerNodeId={node.id}
                   port={assocDialog.port}
                   language={uiLanguage}
                   onStatus={onStatus}
-                  onLinked={() => setAssocDialog({ open: false, direction: "output", port: null })}
+                  onLinked={closeAssociationDialog}
                   sourceFlowName={getPortDisplayName(assocDialog.port)}
                 />
+              ) : (
+                <>
+                  {assocLinkedItems.length > 0 ? (
+                    <div className="linked-process-list">
+                      {assocLinkedItems.map((item, idx) => (
+                        <div key={`${item}_${idx}`} className="linked-process-item" title={item}>
+                          {item}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="table-empty">{t("当前未关联已有过程", "No linked existing process")}</div>
+                  )}
+                  <select value={selectedNodeId} onChange={(e) => setSelectedNodeId(e.target.value)}>
+                    <option value="">{t("选择已有过程", "Select Existing Process")}</option>
+                    {settingCandidates.map((candidate) => (
+                      <option key={candidate.id} value={candidate.id}>
+                        {candidate.data.name}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="assoc-actions">
+                    <button type="button" className="flow-link-button secondary" onClick={closeAssociationDialog}>
+                      {t("取消", "Cancel")}
+                    </button>
+                    <button type="button" className="flow-link-button primary" onClick={applyAssociation} disabled={!selectedNodeId}>
+                      {t("关联", "Link")}
+                    </button>
+                  </div>
+                  <div className="mode-lock-hint">{t("也可关闭弹窗后，在建模界面手动画线完成关联。", "You can also close this dialog and draw the connection manually on the modeling canvas.")}</div>
+                </>
               )}
-              <div className="assoc-actions">
-                <button type="button" className="flow-link-button secondary" onClick={() => setAssocDialog({ open: false, direction: "output", port: null })}>
-                  {t("取消", "Cancel")}
-                </button>
-                <button type="button" className="flow-link-button primary" onClick={applyAssociation} disabled={!selectedNodeId}>
-                  {t("关联", "Link")}
-                </button>
-              </div>
-              <div className="mode-lock-hint">{t("也可关闭弹窗后，在建模界面手动画线完成关联。", "You can also close this dialog and draw the connection manually on the modeling canvas.")}</div>
             </div>
           </div>
         </div>

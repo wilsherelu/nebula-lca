@@ -202,6 +202,7 @@ _compute_graph_hash_from_slim_graph = _gs.compute_graph_hash_from_slim_graph
 _compute_graph_hash_from_graph = _gs.compute_graph_hash_from_graph
 _slim_graph_for_storage = _gs.slim_graph_for_storage
 _hydrate_graph_for_api = _gs.hydrate_graph_for_api
+_repair_impossible_flow_units = _gs.repair_impossible_flow_units
 STORAGE_SLIM_VERSION = _gs._STORAGE_SLIM_VERSION
 _FLOWPORT_DERIVED_KEYS = _gs._FLOWPORT_DERIVED_KEYS
 _slim_flowport_for_storage = _gs.slim_flowport_for_storage
@@ -3606,7 +3607,20 @@ def create_model(payload: ModelCreateRequest, db: Session = Depends(get_db)) -> 
     validate_graph_intermediate_flow_links(db, payload.graph)
     validate_graph_flow_type_contract(payload.graph, db=db, stage="save_model")
     validate_graph_port_names_against_flow_catalog(payload.graph, db=db, stage="save_model")
+    _repair_impossible_flow_units(payload.graph, db)
     normalize_graph_flow_unit_switches(payload.graph, db)
+    flow_default_unit_violations = collect_flow_default_unit_conversion_violations(payload.graph, db)
+    if flow_default_unit_violations:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "FLOW_DEFAULT_UNIT_CONVERSION_REQUIRED",
+                "message": "Unit mismatch cannot be repaired deterministically; re-import the source package.",
+                "repairable_by_save": False,
+                "action": "reimport_required",
+                "violations": flow_default_unit_violations,
+            },
+        )
 
     normalized_graph = _normalize_graph_json_for_storage(payload.graph.model_dump(mode="python"))
     slim_graph = _slim_graph_for_storage(normalized_graph)
@@ -4514,6 +4528,19 @@ def run_model(payload: RunRequest, db: Session = Depends(get_db)) -> RunResponse
     validate_graph_intermediate_flow_links(db, payload.graph)
     validate_graph_flow_type_contract(payload.graph, db=db, stage="run_model")
     validate_graph_port_names_against_flow_catalog(payload.graph, db=db, stage="run_model")
+    repair_probe = payload.graph.model_copy(deep=True)
+    available_repairs = _repair_impossible_flow_units(repair_probe, db)
+    if available_repairs:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "FLOW_UNIT_REPAIR_AVAILABLE",
+                "message": "Saved unit group and modelling unit are inconsistent; save to create a repaired version.",
+                "repairable_by_save": True,
+                "action": "save_and_repair",
+                "repairs": available_repairs,
+            },
+        )
     flow_default_unit_violations = collect_flow_default_unit_conversion_violations(payload.graph, db)
     if flow_default_unit_violations:
         raise HTTPException(
@@ -4524,10 +4551,9 @@ def run_model(payload: RunRequest, db: Session = Depends(get_db)) -> RunResponse
                 "violations": flow_default_unit_violations,
             },
         )
-    raise_for_multi_product_unit_group_violations(payload.graph)
-
     # Resolve project_id for source-policy checks (prefer payload project_id, fall back to model_version lookup)
     project_id = resolve_project_id_for_run(payload, db) if payload.model_version_id else getattr(payload, "project_id", None)
+    raise_for_multi_product_unit_group_violations(payload.graph)
 
     # Phase 1: source-policy LCIA scope validation
     if project_id:

@@ -280,7 +280,11 @@ def _mark_reference_product_exchange(
     warnings: list[str] = []
     reference_flow_internal_id = _to_stripped(process_json.get("reference_flow_internal_id"))
     matched_output: dict | None = None
-    allocation_outputs = [ex for ex in exchanges if _is_output_direction(ex.get("direction")) and bool(ex.get("is_allocated_product"))]
+    allocation_outputs = [
+        ex for ex in exchanges
+        if _is_output_direction(ex.get("direction"))
+        and (ex.get("allocationFactor") is not None or ex.get("allocation_factor") is not None)
+    ]
 
     if reference_flow_internal_id:
         for ex in exchanges:
@@ -305,7 +309,11 @@ def _mark_reference_product_exchange(
 
     for ex in exchanges:
         ex["is_reference_flow"] = ex is matched_output
-        ex["isProduct"] = bool(ex is matched_output or ex.get("is_allocated_product"))
+        ex["isProduct"] = bool(
+            ex is matched_output
+            or ex.get("allocationFactor") is not None
+            or ex.get("allocation_factor") is not None
+        )
 
     flow_uuid = _to_stripped(matched_output.get("flow_uuid"))
     if not flow_uuid:

@@ -190,6 +190,146 @@ def slim_graph_for_storage(graph_json: dict) -> dict:
 # ── Hydrate helpers ──────────────────────────────────────────────────────
 
 
+def repair_impossible_flow_units(graph: Any, db: Any) -> list[dict[str, str]]:
+    """Repair units that cannot belong to their saved unit group.
+
+    The Flow catalog unit group is authoritative. A repair is made only when
+    there is no explicit unit-group switch, the saved port group conflicts
+    with the Flow group or its unit is not a member of that group, and the
+    Flow default unit is a valid member.
+    """
+    if db is None:
+        return []
+    nodes = graph.get("nodes", []) if isinstance(graph, dict) else getattr(graph, "nodes", [])
+    ports: list[Any] = []
+    flow_uuids: set[str] = set()
+    for node in nodes or []:
+        for bucket in ("inputs", "outputs", "emissions"):
+            bucket_ports = node.get(bucket, []) if isinstance(node, dict) else getattr(node, bucket, [])
+            for port in bucket_ports or []:
+                ports.append(port)
+                flow_uuid = str(
+                    (port.get("flowUuid") or port.get("flow_uuid") or "")
+                    if isinstance(port, dict)
+                    else (getattr(port, "flowUuid", None) or getattr(port, "flow_uuid", None) or "")
+                ).strip()
+                if flow_uuid:
+                    flow_uuids.add(flow_uuid)
+    if not flow_uuids:
+        return []
+
+    from ..models import FlowRecord, UnitDefinition
+
+    flow_meta: dict[str, tuple[str, str]] = {}
+    for start in range(0, len(flow_uuids), 500):
+        batch = list(flow_uuids)[start:start + 500]
+        for row in (
+            db.query(FlowRecord.flow_uuid, FlowRecord.unit_group, FlowRecord.default_unit)
+            .filter(FlowRecord.flow_uuid.in_(batch))
+            .all()
+        ):
+            flow_meta[str(row.flow_uuid)] = (str(row.unit_group or "").strip(), str(row.default_unit or "").strip())
+    units_by_group: dict[str, set[str]] = {}
+    for row in db.query(UnitDefinition.unit_group, UnitDefinition.unit_name).all():
+        group = str(row.unit_group or "").strip().casefold()
+        unit = str(row.unit_name or "").strip().casefold()
+        if group and unit:
+            units_by_group.setdefault(group, set()).add(unit)
+
+    repairs: list[dict[str, str]] = []
+    for port in ports:
+        get_value = port.get if isinstance(port, dict) else lambda key, default=None: getattr(port, key, default)
+        flow_uuid = str(get_value("flowUuid") or get_value("flow_uuid") or "").strip()
+        flow_group, default_unit = flow_meta.get(flow_uuid, ("", ""))
+        current_group = str(get_value("unitGroup") or get_value("unit_group") or "").strip()
+        current_unit = str(get_value("unit") or "").strip()
+        switch = get_value("unitGroupSwitch") or get_value("unit_group_switch")
+        flow_group_units = units_by_group.get(flow_group.casefold(), set())
+        group_conflicts = bool(current_group) and current_group.casefold() != flow_group.casefold()
+        unit_conflicts = bool(current_unit) and current_unit.casefold() not in flow_group_units
+        if (
+            not switch
+            and flow_group
+            and current_unit
+            and default_unit
+            and flow_group_units
+            and (group_conflicts or unit_conflicts)
+            and default_unit.casefold() in flow_group_units
+        ):
+            if isinstance(port, dict):
+                port["unit"] = default_unit
+                port["unitGroup"] = flow_group
+            else:
+                setattr(port, "unit", default_unit)
+                setattr(port, "unitGroup", flow_group)
+            repairs.append({
+                "port_id": str(get_value("id") or ""),
+                "flow_uuid": flow_uuid,
+                "from_unit": current_unit,
+                "to_unit": default_unit,
+                "unit_group": flow_group,
+            })
+    return repairs
+
+
+def repair_tidas_product_flags(graph: Any) -> list[dict[str, str]]:
+    """Map TIDAS quantitative references to Nebula product flags.
+
+    ILCD/TIDAS output markers are not Nebula product definitions. A port is a
+    product only when it is the exact quantitative-reference output or carries
+    an explicit allocation factor.
+    """
+    nodes = graph.get("nodes", []) if isinstance(graph, dict) else getattr(graph, "nodes", [])
+    repairs: list[dict[str, str]] = []
+    for node in nodes or []:
+        get_node = node.get if isinstance(node, dict) else lambda key, default=None: getattr(node, key, default)
+        outputs = get_node("outputs", []) or []
+        if not outputs:
+            continue
+        reference_uuid = str(
+            get_node("reference_product_flow_uuid")
+            or get_node("referenceProductFlowUuid")
+            or ""
+        ).strip()
+        def port_value(port: Any, key: str, fallback: str | None = None) -> Any:
+            if isinstance(port, dict):
+                return port.get(key, port.get(fallback)) if fallback else port.get(key)
+            return getattr(port, key, getattr(port, fallback, None) if fallback else None)
+
+        candidates = [
+            port for port in outputs
+            if reference_uuid and str(port_value(port, "flowUuid", "flow_uuid") or "").strip() == reference_uuid
+        ]
+        if len(candidates) != 1:
+            continue
+        reference_port = candidates[0]
+        reference_flow_uuid = str(port_value(reference_port, "flowUuid", "flow_uuid") or "").strip()
+        changed = False
+        for port in outputs:
+            allocation_factor = port_value(port, "allocationFactor", "allocation_factor")
+            should_be_product = port is reference_port or allocation_factor is not None
+            current = bool(port_value(port, "isProduct", "is_product"))
+            if current == should_be_product:
+                continue
+            if isinstance(port, dict):
+                port["isProduct"] = should_be_product
+            else:
+                setattr(port, "isProduct", should_be_product)
+            changed = True
+        if isinstance(node, dict):
+            node["reference_product_flow_uuid"] = reference_flow_uuid
+            node["reference_product_direction"] = "output"
+        else:
+            setattr(node, "reference_product_flow_uuid", reference_flow_uuid)
+            setattr(node, "reference_product_direction", "output")
+        if changed:
+            repairs.append({
+                "node_id": str(get_node("id") or ""),
+                "reference_product_flow_uuid": reference_flow_uuid,
+            })
+    return repairs
+
+
 def hydrate_graph_for_api(graph_json: dict, db: Any) -> dict:
     """Restore display fields into a slim-stored graph for API responses.
 
@@ -250,7 +390,11 @@ def hydrate_graph_for_api(graph_json: dict, db: Any) -> dict:
                 batch = flow_uuids[i:i + batch_size]
                 try:
                     rows = (
-                        db.query(FlowRecord.flow_uuid, FlowRecord.flow_name_en, FlowRecord.unit_group)
+                        db.query(
+                            FlowRecord.flow_uuid,
+                            FlowRecord.flow_name_en,
+                            FlowRecord.unit_group,
+                        )
                         .filter(FlowRecord.flow_uuid.in_(batch))
                         .all()
                     )
