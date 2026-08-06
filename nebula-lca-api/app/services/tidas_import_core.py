@@ -22,6 +22,7 @@ from ..schemas import (
     TidasImportReportResponse,
     flow_semantic_to_exchange_type,
     is_elementary_flow_semantic,
+    normalize_flow_semantic,
 )
 from .catalog_cache import invalidate_management_caches
 from .project_versions import _create_project_version_from_graph_json
@@ -156,6 +157,32 @@ def _extract_ilcd_flow_compartment(classification_obj: object) -> str | None:
     return ";".join(parts) if parts else None
 
 
+def _extract_ilcd_flow_type(flow_dataset: dict) -> str:
+    modelling = flow_dataset.get("modellingAndValidation")
+    lci_method = modelling.get("LCIMethod") if isinstance(modelling, dict) else None
+    raw_type = lci_method.get("typeOfDataSet") if isinstance(lci_method, dict) else None
+    canonical_by_semantic = {
+        "elementary_flow": "Elementary flow",
+        "product_flow": "Product flow",
+        "waste_flow": "Waste flow",
+    }
+    return canonical_by_semantic.get(normalize_flow_semantic(raw_type), "")
+
+
+def _misclassified_elementary_port_uuids(graph_json: dict, elementary_flow_uuids: set[str]) -> list[str]:
+    mismatched: set[str] = set()
+    for node in list(graph_json.get("nodes") or []):
+        if not isinstance(node, dict):
+            continue
+        for port in [*list(node.get("inputs") or []), *list(node.get("outputs") or [])]:
+            if not isinstance(port, dict):
+                continue
+            flow_uuid = _safe_str(port.get("flowUuid") or port.get("flow_uuid"))
+            if flow_uuid in elementary_flow_uuids and _safe_str(port.get("type")) != "biosphere":
+                mismatched.add(flow_uuid)
+    return sorted(mismatched)
+
+
 def _infer_unit_defaults_from_flow_dataset(flow_dataset: dict) -> tuple[str, str]:
     flow_info = flow_dataset.get("flowInformation") if isinstance(flow_dataset.get("flowInformation"), dict) else {}
     ref_unit = _safe_str(flow_info.get("referenceUnit"))
@@ -239,9 +266,15 @@ def _extract_tidas_flow_record(row: dict) -> tuple[dict | None, str | None]:
     flow_name_en = _safe_str(name_en or row.get("name_en"))
     classification = info.get("classificationInformation") if isinstance(info.get("classificationInformation"), dict) else {}
     compartment = _extract_ilcd_flow_compartment(classification)
-    flow_type = _safe_str(row.get("flow_type"))
+    # The standard ILCD type is authoritative. Product classifications also
+    # use common:classification, so a non-empty classification path alone must
+    # not turn a product flow into an elementary flow.
+    flow_type = _extract_ilcd_flow_type(flow_dataset)
     if not flow_type:
-        flow_type = "Elementary flow" if compartment else "Product flow"
+        flow_type = _safe_str(row.get("flow_type"))
+    if not flow_type:
+        elementary = classification.get("common:elementaryFlowCategorization")
+        flow_type = "Elementary flow" if isinstance(elementary, dict) else "Product flow"
     default_unit = _safe_str(row.get("default_unit"))
     unit_group = _safe_str(row.get("unit_group"))
     inferred_unit, inferred_group = _infer_unit_defaults_from_flow_dataset(flow_dataset)
@@ -416,6 +449,7 @@ def _extract_tidas_model_record(row: dict) -> tuple[dict | None, str | None]:
             process_refs.add(text)
     technology = model_info.get("technology") if isinstance(model_info.get("technology"), dict) else {}
     processes = technology.get("processes") if isinstance(technology.get("processes"), dict) else {}
+    model_instances: list[dict] = []
     for instance in _as_list(processes.get("processInstance")):
         if not isinstance(instance, dict):
             continue
@@ -423,6 +457,27 @@ def _extract_tidas_model_record(row: dict) -> tuple[dict | None, str | None]:
         process_uuid = _safe_str(ref.get("@refObjectId") or ref.get("refObjectId"))
         if process_uuid:
             process_refs.add(process_uuid)
+        output_connections: list[dict] = []
+        connections = instance.get("connections") if isinstance(instance.get("connections"), dict) else {}
+        for output in _as_list(connections.get("outputExchange")):
+            if not isinstance(output, dict):
+                continue
+            flow_uuid = _safe_str(output.get("@flowUUID") or output.get("flowUUID"))
+            for downstream in _as_list(output.get("downstreamProcess")):
+                if not isinstance(downstream, dict):
+                    continue
+                downstream_id = _safe_str(downstream.get("@id") or downstream.get("id"))
+                if flow_uuid and downstream_id:
+                    output_connections.append({
+                        "flow_uuid": flow_uuid,
+                        "downstream_instance_id": downstream_id,
+                        "downstream_flow_uuid": _safe_str(downstream.get("@flowUUID") or downstream.get("flowUUID")) or flow_uuid,
+                    })
+        model_instances.append({
+            "instance_id": _safe_str(instance.get("@dataSetInternalID") or instance.get("dataSetInternalID")),
+            "process_uuid": process_uuid,
+            "output_connections": output_connections,
+        })
     json_tg = row.get("json_tg") if isinstance(row.get("json_tg"), dict) else {}
     xflow = json_tg.get("xflow") if isinstance(json_tg.get("xflow"), dict) else {}
     xflow_nodes = [item for item in _as_list(xflow.get("nodes")) if isinstance(item, dict)]
@@ -431,10 +486,11 @@ def _extract_tidas_model_record(row: dict) -> tuple[dict | None, str | None]:
         "model_uuid": model_uuid,
         "model_name": model_name,
         "process_refs": sorted(process_refs),
-        "topology_empty": not bool((graph and graph.get("nodes")) or xflow_nodes),
+        "topology_empty": not bool((graph and graph.get("nodes")) or xflow_nodes or model_instances),
         "graph_json": graph,
         "xflow_nodes": xflow_nodes,
         "xflow_edges": xflow_edges,
+        "model_instances": model_instances,
         "raw": payload,
     }, None
 
@@ -458,6 +514,48 @@ def _build_tidas_graph_from_model_record(
             process_json_by_uuid=process_json_by_uuid or {},
             display_lang=display_lang,
         )
+    model_instances = [item for item in list(model_record.get("model_instances") or []) if isinstance(item, dict)]
+    if model_instances:
+        node_id_by_instance = {
+            _safe_str(item.get("instance_id")): f"node-tidas-instance-{_safe_str(item.get('instance_id'))}"
+            for item in model_instances
+            if _safe_str(item.get("instance_id"))
+        }
+        synthesized_nodes = [
+            {
+                "id": node_id_by_instance[instance_id],
+                "data": {"id": _safe_str(item.get("process_uuid"))},
+            }
+            for item in model_instances
+            if (instance_id := _safe_str(item.get("instance_id"))) in node_id_by_instance
+        ]
+        synthesized_edges: list[dict] = []
+        for item in model_instances:
+            source_id = node_id_by_instance.get(_safe_str(item.get("instance_id")))
+            if not source_id:
+                continue
+            for connection in list(item.get("output_connections") or []):
+                if not isinstance(connection, dict):
+                    continue
+                target_id = node_id_by_instance.get(_safe_str(connection.get("downstream_instance_id")))
+                source_flow_uuid = _safe_str(connection.get("flow_uuid"))
+                target_flow_uuid = _safe_str(connection.get("downstream_flow_uuid")) or source_flow_uuid
+                if not target_id or not source_flow_uuid or source_flow_uuid != target_flow_uuid:
+                    continue
+                synthesized_edges.append({
+                    "id": f"edge-tidas-standard-{len(synthesized_edges) + 1}",
+                    "source": {"cell": source_id, "port": f"OUTPUT:{source_flow_uuid}"},
+                    "target": {"cell": target_id, "port": f"INPUT:{target_flow_uuid}"},
+                })
+        synthesized_record = dict(model_record)
+        synthesized_record["xflow_nodes"] = synthesized_nodes
+        synthesized_record["xflow_edges"] = synthesized_edges
+        return _build_tidas_graph_from_xflow_record(
+            db=db,
+            model_record=synthesized_record,
+            process_json_by_uuid=process_json_by_uuid or {},
+            display_lang=display_lang,
+        )
     unresolved: list[dict] = []
     nodes: list[dict] = []
     process_json_by_uuid = process_json_by_uuid or {}
@@ -477,6 +575,7 @@ def _build_tidas_graph_from_model_record(
                 "process_uuid": process_uuid,
                 "name": _safe_str(name or process_json.get("process_name") or process_uuid),
                 "location": _safe_str(process_json.get("location")),
+                "reference_product": "",
                 "inputs": [],
                 "outputs": [],
                 "emissions": [],
@@ -623,6 +722,14 @@ def _build_tidas_graph_from_xflow_record(
                 "y": _numeric_value(position.get("y")),
             }
 
+    output_port_ids_by_node = {
+        str(node.get("id")): {str(port.get("id")) for port in list(node.get("outputs") or [])}
+        for node in nodes
+    }
+    input_port_ids_by_node = {
+        str(node.get("id")): {str(port.get("id")) for port in list(node.get("inputs") or [])}
+        for node in nodes
+    }
     edges: list[dict] = []
     for index, xedge in enumerate(xflow_edges, start=1):
         source = xedge.get("source") if isinstance(xedge.get("source"), dict) else {}
@@ -633,6 +740,17 @@ def _build_tidas_graph_from_xflow_record(
             continue
         source_port = _safe_str(source.get("port"))
         target_port = _safe_str(target.get("port"))
+        if (
+            source_port not in output_port_ids_by_node.get(from_node, set())
+            or target_port not in input_port_ids_by_node.get(to_node, set())
+        ):
+            unresolved.append({
+                "model_uuid": model_record.get("model_uuid"),
+                "type": "invalid_process_connection",
+                "edge_id": _safe_str(xedge.get("id")) or f"edge_tidas_xflow_{index}",
+                "reason": "connection flow is not exposed by the referenced source output and target input",
+            })
+            continue
         flow_uuid = source_port.split(":", 1)[1] if ":" in source_port else ""
         meta = flow_meta.get(flow_uuid)
         if not flow_uuid or meta is None:

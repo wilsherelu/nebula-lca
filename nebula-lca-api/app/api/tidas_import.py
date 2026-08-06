@@ -57,6 +57,7 @@ def _ensure_tidas_helpers():
         _parse_tidas_bundle_zip,
         _read_uploaded_bytes,
         _build_tidas_graph_from_model_record,
+        _misclassified_elementary_port_uuids,
         _build_tidas_base_report as _btbr,
         _finalize_tidas_report as _ftr,
         _persist_tidas_import_report as _ptir,
@@ -84,6 +85,7 @@ def _ensure_tidas_helpers():
         "_parse_tidas_bundle_zip": _parse_tidas_bundle_zip,
         "_read_uploaded_bytes": _read_uploaded_bytes,
         "_build_tidas_graph_from_model_record": _build_tidas_graph_from_model_record,
+        "_misclassified_elementary_port_uuids": _misclassified_elementary_port_uuids,
         "_build_tidas_base_report": _btbr,
         "_finalize_tidas_report": _ftr,
         "_persist_tidas_import_report": _ptir,
@@ -704,6 +706,7 @@ async def import_tidas_bundle(
     _mark = _h("_mark_reference_product_exchange")
     _top_miss = _h("_top_missing_flow_uuids")
     _build_graph = _h("_build_tidas_graph_from_model_record")
+    _misclassified_elementary = _h("_misclassified_elementary_port_uuids")
     _create_version = _h("_create_project_version_from_graph_json")
     _invalidate = _h("_invalidate_management_caches")
     TIDAS_BUNDLE_SRC = _h("TIDAS_BUNDLE_FLOW_IMPORT_SOURCE")
@@ -741,6 +744,7 @@ async def import_tidas_bundle(
         )
 
     bundle_flow_uuids: set[str] = set()
+    bundle_elementary_flow_uuids: set[str] = set()
     seen_flow_uuids_in_batch: set[str] = set()
     for source_entry, rows, parse_errors in flow_items:
         report["errors"].extend(parse_errors)
@@ -759,6 +763,8 @@ async def import_tidas_bundle(
                 continue
             seen_flow_uuids_in_batch.add(flow_uuid)
             bundle_flow_uuids.add(flow_uuid)
+            if str(flow_record.get("flow_type") or "") == "Elementary flow":
+                bundle_elementary_flow_uuids.add(flow_uuid)
             existing = db.get(FlowRecord, flow_uuid)
             if existing is not None and payload.upsert_mode == "skip":
                 report["skipped"] += 1
@@ -919,18 +925,9 @@ async def import_tidas_bundle(
                 report["unresolved_items"].extend(unresolved_items)
                 report["unresolved_count"] = len(report["unresolved_items"])
 
-            report["inserted"] += 1
             if payload.dry_run:
+                report["inserted"] += 1
                 continue
-            now = datetime.utcnow()
-            model_row = Model(
-                name=str(model_record.get("model_name") or model_uuid),
-                description=f"Imported from TIDAS bundle ZIP (source_model_uuid={model_uuid})",
-                updated_at=now,
-            )
-            db.add(model_row)
-            db.flush()
-            report["created_projects"].append({"project_id": str(model_row.id), "name": str(model_row.name)})
             graph_json, graph_unresolved = _build_graph(
                 db=db,
                 model_record=model_record,
@@ -940,6 +937,25 @@ async def import_tidas_bundle(
             if graph_unresolved:
                 report["unresolved_items"].extend(graph_unresolved)
                 report["unresolved_count"] = len(report["unresolved_items"])
+            if graph_json is not None:
+                mismatched_elementary = _misclassified_elementary(graph_json, bundle_elementary_flow_uuids)
+                if mismatched_elementary:
+                    report["failed"] += 1
+                    report["errors"].append(
+                        f"{model_uuid}: imported elementary flows were not emitted as biosphere ports: "
+                        + ", ".join(mismatched_elementary[:10])
+                    )
+                    continue
+            report["inserted"] += 1
+            now = datetime.utcnow()
+            model_row = Model(
+                name=str(model_record.get("model_name") or model_uuid),
+                description=f"Imported from TIDAS bundle ZIP (source_model_uuid={model_uuid})",
+                updated_at=now,
+            )
+            db.add(model_row)
+            db.flush()
+            report["created_projects"].append({"project_id": str(model_row.id), "name": str(model_row.name)})
             if graph_json is not None:
                 _create_version(
                     db=db,
