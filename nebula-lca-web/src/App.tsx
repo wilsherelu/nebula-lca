@@ -1926,6 +1926,9 @@ const formatApiError = (raw: unknown): string => {
       }
       return "当前端口缺少单位组切换规则：请打开相关产品行的“切换”，确认换算系数后保存。";
     }
+    if (payload.code === "FLOW_UNIT_REPAIR_AVAILABLE") {
+      return "检测到旧导入数据的单位与单位组不一致。请点击“保存并修复”，系统将按单位组默认单位生成新版本。";
+    }
     return payload.message ? `${payload.message}` : text;
   } catch {
     return text;
@@ -2116,6 +2119,7 @@ export default function App() {
   const [projects, setProjects] = useState<ProjectResponse[]>([]);
   const [busy, setBusy] = useState(false);
   const [statusText, setStatusText] = useState("");
+  const [unitRepairRequired, setUnitRepairRequired] = useState(false);
   const [ptsHistoryOpen, setPtsHistoryOpen] = useState(false);
   const [ptsHistoryLoading, setPtsHistoryLoading] = useState(false);
   const [ptsCompileHistory, setPtsCompileHistory] = useState<PtsVersionItem[]>([]);
@@ -3456,7 +3460,12 @@ export default function App() {
           }),
         );
         lastSavedFingerprintRef.current = currentFingerprint;
+        const repairedUnits = unitRepairRequired;
+        setUnitRepairRequired(false);
         void refreshProjects();
+        if (repairedUnits) {
+          await loadProjectGraph(payload.project_id, projectNameForMessage);
+        }
 
         if (mode === "manual") {
           const ptsCompileCount = Number(payload.pts_compile_count ?? 0);
@@ -3479,7 +3488,9 @@ export default function App() {
           }
           const ptsStatusText = ptsStatusParts.length > 0 ? `。${ptsStatusParts.join("；")}` : "";
           setStatusText(
-            nonBlockingWarnings.length > 0
+            repairedUnits
+              ? `已按单位组默认单位修复并保存项目 ${projectNameForMessage}: version=${payload.version}`
+              : nonBlockingWarnings.length > 0
               ? `已保存项目 ${projectNameForMessage}: version=${payload.version}${ptsStatusText}。警告：${nonBlockingWarnings.join("；")}`
               : `已保存项目 ${projectNameForMessage}: version=${payload.version}${ptsStatusText}`,
           );
@@ -3505,6 +3516,7 @@ export default function App() {
       getBalancedWarningsForCanvas,
       getBalancedWarnings,
       getMarketWarnings,
+      loadProjectGraph,
       persistPtsResource,
       projectId,
       projectName,
@@ -3514,6 +3526,7 @@ export default function App() {
       selectedProductKey,
       targetProductQuantity,
       targetProductQuantityMode,
+      unitRepairRequired,
       versionTraveling,
     ],
   );
@@ -3816,6 +3829,9 @@ export default function App() {
       setShowRunAnalysis(true);
       setStatusText(APP_DEBUG ? `运行完成: run_id=${payload.run_id}` : "运行完成");
     } catch (error) {
+      if (String(error).includes("FLOW_UNIT_REPAIR_AVAILABLE")) {
+        setUnitRepairRequired(true);
+      }
       setStatusText(`运行失败: ${formatApiError(error)}`);
     } finally {
       setBusy(false);
@@ -5628,7 +5644,11 @@ export default function App() {
             </>
           ) : (
             <>
-              <button onClick={() => void persistModel("manual")} disabled={busy}>{i18n.save}</button>
+              <button onClick={() => void persistModel("manual")} disabled={busy}>
+                {unitRepairRequired
+                  ? uiLanguage === "zh" ? "保存并修复" : "Save and Repair"
+                  : i18n.save}
+              </button>
               <button
                 onClick={async () => {
                   setDraftLciaMethodSelection(lciaMethodSelection);

@@ -22,9 +22,11 @@ from app.main import app
 from app.services.graph_storage import (
     slim_graph_for_storage,
     hydrate_graph_for_api,
+    repair_impossible_flow_units,
+    repair_tidas_product_flags,
 )
 from app.database import Base, engine, SessionLocal
-from app.models import Model, ModelVersion
+from app.models import FlowRecord, Model, ModelVersion, UnitDefinition, UnitGroup
 from app.schemas import HybridGraph
 from tests.conftest import _TEST_DB
 
@@ -204,6 +206,26 @@ def _make_pts_internal_canvas():
 
 
 class TestSlimUnit:
+
+    def test_tidas_product_flags_follow_quantitative_reference_and_explicit_allocation(self):
+        graph = {
+            "nodes": [{
+                "id": "process-1",
+                "reference_product_flow_uuid": "ethylene",
+                "outputs": [
+                    {"flowUuid": "ethylene", "name": "ethylene", "isProduct": True, "allocationFactor": None},
+                    {"flowUuid": "propylene", "name": "propylene", "isProduct": True, "allocationFactor": None},
+                    {"flowUuid": "fuel-gas", "name": "fuel gas", "isProduct": False, "allocationFactor": 0.2},
+                ],
+            }],
+        }
+
+        repairs = repair_tidas_product_flags(graph)
+
+        assert repairs == [{"node_id": "process-1", "reference_product_flow_uuid": "ethylene"}]
+        assert [port["isProduct"] for port in graph["nodes"][0]["outputs"]] == [True, False, True]
+        assert graph["nodes"][0]["reference_product_flow_uuid"] == "ethylene"
+        assert graph["nodes"][0]["reference_product_direction"] == "output"
     """Unit tests for slim/hydrate logic."""
 
     def test_slim_drops_display_fields_only(self):
@@ -461,6 +483,89 @@ class TestSlimUnit:
         hydrated = hydrate_graph_for_api(graph_dict, db=None)
 
         assert hydrated["nodes"][0]["outputs"][0]["unitGroup"] == "Units of energy"
+
+    def test_repair_only_impossible_legacy_flow_unit_pair(self):
+        db = _db_module.SessionLocal()
+        flow_uuid = f"legacy-energy-{uuid.uuid4()}"
+        try:
+            if db.get(UnitGroup, "Units of energy") is None:
+                db.add(UnitGroup(name="Units of energy", reference_unit="MJ"))
+                db.flush()
+            for unit, factor, is_reference in (("MJ", 1.0, True), ("kWh", 3.6, False)):
+                exists = (
+                    db.query(UnitDefinition)
+                    .filter(UnitDefinition.unit_group == "Units of energy", UnitDefinition.unit_name == unit)
+                    .first()
+                )
+                if exists is None:
+                    db.add(UnitDefinition(
+                        unit_group="Units of energy",
+                        unit_name=unit,
+                        factor_to_reference=factor,
+                        is_reference=is_reference,
+                    ))
+            db.add(FlowRecord(
+                flow_uuid=flow_uuid,
+                flow_name="electricity",
+                flow_name_en="electricity",
+                flow_type="Product flow",
+                default_unit="MJ",
+                unit_group="Units of energy",
+            ))
+            db.commit()
+
+            graph_dict = {
+                "functionalUnit": "test",
+                "nodes": [{
+                    **_make_simple_graph_node("legacy-process", "Legacy process"),
+                    "inputs": [
+                        {
+                            "id": "legacy-invalid",
+                            "flowUuid": flow_uuid,
+                            "name": "electricity",
+                            "unit": "kg",
+                            "unitGroup": "Units of energy",
+                            "amount": 1,
+                            "type": "technosphere",
+                            "direction": "input",
+                        },
+                        {
+                            "id": "valid-same-group",
+                            "flowUuid": flow_uuid,
+                            "name": "electricity",
+                            "unit": "kWh",
+                            "unitGroup": "Units of energy",
+                            "amount": 1,
+                            "type": "technosphere",
+                            "direction": "input",
+                        },
+                        {
+                            "id": "legacy-wrong-group",
+                            "flowUuid": flow_uuid,
+                            "name": "electricity",
+                            "unit": "kg",
+                            "unitGroup": "Units of mass",
+                            "amount": 1,
+                            "type": "technosphere",
+                            "direction": "input",
+                        },
+                    ],
+                }],
+                "exchanges": [],
+                "metadata": {"storage_schema_version": "graph_slim_v1"},
+            }
+
+            repair_impossible_flow_units(graph_dict, db=db)
+
+            assert graph_dict["nodes"][0]["inputs"][0]["unit"] == "MJ"
+            assert graph_dict["nodes"][0]["inputs"][0]["unitGroup"] == "Units of energy"
+            assert graph_dict["nodes"][0]["inputs"][1]["unit"] == "kWh"
+            assert graph_dict["nodes"][0]["inputs"][2]["unit"] == "MJ"
+            assert graph_dict["nodes"][0]["inputs"][2]["unitGroup"] == "Units of energy"
+        finally:
+            db.query(FlowRecord).filter(FlowRecord.flow_uuid == flow_uuid).delete()
+            db.commit()
+            db.close()
 
     def test_slim_node_positions_preserved_when_some_missing_position(self):
         """If any node lacks inline position, node_positions is kept as-is."""

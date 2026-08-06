@@ -24,6 +24,7 @@ from ..services.graph_storage import (
     compute_graph_hash_from_graph_json,
     compute_graph_hash_from_slim_graph,
     hydrate_graph_for_api,
+    repair_impossible_flow_units,
     slim_graph_for_storage,
 )
 
@@ -191,6 +192,7 @@ def _create_project_version_from_graph_json(*, db: Session, project_id: str, gra
     validate_graph_contract(graph, require_non_empty=True, allow_pts_nodes=True)
     validate_graph_flow_type_contract(graph, db=db, stage="import_model")
     validate_graph_port_names_against_flow_catalog(graph, db=db, stage="import_model")
+    repair_impossible_flow_units(graph, db)
     normalize_graph_flow_unit_switches(graph, db)
     _bind_pts_published_versions_for_graph(db=db, project_id=project_id, graph=graph)
 

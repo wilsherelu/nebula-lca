@@ -2686,6 +2686,22 @@ body,
   cursor: pointer;
 }
 
+.overlay-panel.small.association-panel {
+  width: min(720px, 92vw);
+}
+
+.association-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 0;
+}
+
+.association-tabs button {
+  width: 100%;
+  border-radius: 8px;
+}
+
 .process-info-body {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
