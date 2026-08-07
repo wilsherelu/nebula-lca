@@ -276,8 +276,9 @@ def repair_tidas_product_flags(graph: Any) -> list[dict[str, str]]:
     """Map TIDAS quantitative references to Nebula product flags.
 
     ILCD/TIDAS output markers are not Nebula product definitions. A port is a
-    product only when it is the exact quantitative-reference output or carries
-    an explicit allocation factor.
+    product only when it is the exact quantitative-reference output, carries
+    an explicit allocation factor, or was identified by the TIDAS import policy
+    for quantity allocation.
     """
     nodes = graph.get("nodes", []) if isinstance(graph, dict) else getattr(graph, "nodes", [])
     repairs: list[dict[str, str]] = []
@@ -307,7 +308,15 @@ def repair_tidas_product_flags(graph: Any) -> list[dict[str, str]]:
         changed = False
         for port in outputs:
             allocation_factor = port_value(port, "allocationFactor", "allocation_factor")
-            should_be_product = port is reference_port or allocation_factor is not None
+            allocation_basis = port_value(port, "allocationBasis", "allocation_basis")
+            allocation_method = str(
+                allocation_basis.get("method") if isinstance(allocation_basis, dict) else ""
+            ).strip()
+            should_be_product = (
+                port is reference_port
+                or allocation_factor is not None
+                or allocation_method in {"quantity", "manual_factor"}
+            )
             current = bool(port_value(port, "isProduct", "is_product"))
             if current == should_be_product:
                 continue

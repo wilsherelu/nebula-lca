@@ -215,6 +215,7 @@ class TestSlimUnit:
                 "outputs": [
                     {"flowUuid": "ethylene", "name": "ethylene", "isProduct": True, "allocationFactor": None},
                     {"flowUuid": "propylene", "name": "propylene", "isProduct": True, "allocationFactor": None},
+                    {"flowUuid": "butylene", "name": "butylene", "isProduct": True, "allocationFactor": None, "allocationBasis": {"method": "quantity"}},
                     {"flowUuid": "fuel-gas", "name": "fuel gas", "isProduct": False, "allocationFactor": 0.2},
                 ],
             }],
@@ -223,7 +224,7 @@ class TestSlimUnit:
         repairs = repair_tidas_product_flags(graph)
 
         assert repairs == [{"node_id": "process-1", "reference_product_flow_uuid": "ethylene"}]
-        assert [port["isProduct"] for port in graph["nodes"][0]["outputs"]] == [True, False, True]
+        assert [port["isProduct"] for port in graph["nodes"][0]["outputs"]] == [True, False, True, True]
         assert graph["nodes"][0]["reference_product_flow_uuid"] == "ethylene"
         assert graph["nodes"][0]["reference_product_direction"] == "output"
     """Unit tests for slim/hydrate logic."""
