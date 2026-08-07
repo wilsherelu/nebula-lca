@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LcaGraphPayload } from "./model/exchange";
-import { normalizeGraphPayload, reconcileProjectTargetProductConfig } from "./App";
+import { normalizeGraphPayload, prepareGraphForRun, reconcileProjectTargetProductConfig } from "./App";
 import { useLcaGraphStore } from "./store/lcaGraphStore";
 
 describe("normalizeGraphPayload", () => {
@@ -91,6 +91,62 @@ describe("normalizeGraphPayload", () => {
     useLcaGraphStore.getState().importGraph(normalized);
     expect(useLcaGraphStore.getState().edges).toHaveLength(1);
     expect(useLcaGraphStore.getState().exportGraph().exchanges).toHaveLength(1);
+  });
+
+  it("preserves authoritative unit groups when preparing a converted graph for calculation", () => {
+    const graph = {
+      functionalUnit: "1 kg product",
+      nodes: [
+        {
+          id: "provider",
+          node_kind: "lci_dataset",
+          process_uuid: "provider-process",
+          name: "ecoinvent electricity provider",
+          location: "GLO",
+          reference_product: "electricity, low voltage",
+          inputs: [],
+          outputs: [{
+            id: "provider-output",
+            name: "electricity, low voltage",
+            flowUuid: "ecoinvent-electricity",
+            direction: "output",
+            type: "technosphere",
+            amount: 1,
+            unit: "kWh",
+            unitGroup: "energy",
+            showOnNode: true,
+            isProduct: true,
+          }],
+        },
+        {
+          id: "foreground",
+          node_kind: "unit_process",
+          process_uuid: "foreground-process",
+          name: "foreground",
+          location: "CN",
+          reference_product: "product",
+          inputs: [{
+            id: "consumer-input",
+            name: "直流电",
+            flowUuid: "tidas-electricity",
+            direction: "input",
+            type: "technosphere",
+            amount: 3.6,
+            unit: "MJ",
+            unitGroup: "Units of energy",
+            showOnNode: true,
+          }],
+          outputs: [],
+        },
+      ],
+      exchanges: [],
+      metadata: {},
+    } as LcaGraphPayload;
+
+    const prepared = prepareGraphForRun(graph, null);
+
+    expect(prepared.nodes[0].outputs?.[0].unitGroup).toBe("energy");
+    expect(prepared.nodes[1].inputs?.[0].unitGroup).toBe("Units of energy");
   });
 
   it("rejects a hidden LCI product as the configured target", () => {
