@@ -22,6 +22,7 @@ Note: ``_derive_reference_flow_display`` exists in main.py but is dead code
 from __future__ import annotations
 
 import ast
+import copy
 import uuid
 from collections import Counter
 from datetime import datetime
@@ -406,6 +407,24 @@ def _mark_reference_product_exchange(
     return flow_uuid, warnings
 
 
+def _materialize_process_exchanges_for_graph(
+    *,
+    process_uuid: str,
+    process_json: dict,
+    exchanges: list[dict],
+    allocation_policy: str = "quantity",
+) -> tuple[list[dict], str | None, list[str]]:
+    """Clone raw catalog exchanges and apply graph-only product semantics."""
+    graph_exchanges = copy.deepcopy(exchanges)
+    reference_flow_uuid, warnings = _mark_reference_product_exchange(
+        process_uuid=process_uuid,
+        process_json=process_json,
+        exchanges=graph_exchanges,
+        allocation_policy=allocation_policy,
+    )
+    return graph_exchanges, reference_flow_uuid, warnings
+
+
 def _build_imported_process_ports(
     *,
     exchanges: list[dict],
@@ -450,6 +469,8 @@ def _build_imported_process_ports(
             amount=amount,
             direction=direction,
             is_product=bool(ex.get("isProduct") or ex.get("is_reference_flow")),
+            allocation_factor=ex.get("allocationFactor"),
+            allocation_basis=ex.get("allocationBasis"),
         )
 
         if direction == "input":

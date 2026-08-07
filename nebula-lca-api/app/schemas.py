@@ -727,6 +727,8 @@ class ImportedProcessPortItem(BaseModel):
     amount: float = 0.0
     direction: str
     is_product: bool = False
+    allocation_factor: float | None = None
+    allocation_basis: dict | None = None
 
 
 class ImportedProcessDetail(BaseModel):
@@ -757,6 +759,7 @@ class ImportReferenceProcessesRequest(BaseModel):
     import_mode: ProcessImportMode = "locked"
     target_kind: ProcessTargetKind = "unit_process"
     replace_existing: bool = True
+    allocation_policy: Literal["quantity", "tidas"] = "quantity"
 
     @field_validator("target_kind", mode="before")
     @classmethod

@@ -3798,6 +3798,21 @@ body,
   gap: 6px;
 }
 
+.import-mode-group .allocation-policy-control {
+  gap: 6px;
+}
+
+.allocation-policy-control select {
+  height: 30px;
+  min-width: 132px;
+  border: 1px solid #cddbe2;
+  border-radius: 6px;
+  background: #fff;
+  color: #2f5262;
+  padding: 0 8px;
+  font-size: 13px;
+}
+
 @media (max-width: 1200px) {
   .api-toolbar {
     grid-template-columns: repeat(4, minmax(120px, 1fr));

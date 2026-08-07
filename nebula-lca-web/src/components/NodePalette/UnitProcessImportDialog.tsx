@@ -43,6 +43,10 @@ type ProcessExchange = {
   is_product?: boolean;
   isProduct?: boolean;
   is_reference_flow?: boolean;
+  allocation_factor?: number | null;
+  allocationFactor?: number | null;
+  allocation_basis?: FlowPort["allocationBasis"];
+  allocationBasis?: FlowPort["allocationBasis"];
 };
 
 type ProcessDetailResponse = {
@@ -117,6 +121,8 @@ const toPort = (
     unitGroup: String(ex.unit_group ?? ex.unitGroup ?? "").trim() || undefined,
     amount: Number.isFinite(Number(ex.amount)) ? Number(ex.amount) : 0,
     isProduct: Boolean(ex.is_product ?? ex.isProduct),
+    allocationFactor: ex.allocation_factor ?? ex.allocationFactor,
+    allocationBasis: ex.allocation_basis ?? ex.allocationBasis,
     type: mapExchangeType(ex.flow_type ?? ex.type),
     direction,
     showOnNode: true,
@@ -160,7 +166,7 @@ export const parseImportedRows = (
       const outputPorts = outputs.length > 0 ? outputs : fallbackOutputs;
       const nextOutputs = outputPorts.map((port) => ({
         ...port,
-        isProduct: referenceFlow ? port.flowUuid === referenceFlow : Boolean(port.isProduct),
+        isProduct: Boolean(port.isProduct || (referenceFlow && port.flowUuid === referenceFlow)),
       }));
       if (referenceFlow && !nextOutputs.some((port) => port.flowUuid === referenceFlow)) {
         nextOutputs.unshift({
@@ -405,6 +411,7 @@ export function UnitProcessImportDialog() {
   const [loading, setLoading] = useState(false);
   const [errorText, setErrorText] = useState("");
   const [importMode, setImportMode] = useState<ProcessImportMode>("locked");
+  const [allocationPolicy, setAllocationPolicy] = useState<"quantity" | "tidas">("quantity");
   const [importing, setImporting] = useState(false);
 
   const [detailOpen, setDetailOpen] = useState(false);
@@ -488,6 +495,7 @@ export function UnitProcessImportDialog() {
   useEffect(() => {
     if (!dialog.open) {
       setImportMode("locked");
+      setAllocationPolicy("quantity");
       setPage(1);
       setQueryInput("");
       setQuery("");
@@ -563,6 +571,7 @@ export function UnitProcessImportDialog() {
         import_mode: importMode,
         target_kind: targetKind,
         process_uuids: row.process_uuid ? [row.process_uuid] : [],
+        allocation_policy: allocationPolicy,
       };
       const resp = await fetch(`${API_BASE}/reference/processes/import`, {
         method: "POST",
@@ -654,6 +663,18 @@ export function UnitProcessImportDialog() {
               {zh ? "从已有过程库中选择并导入到当前画布" : "Select from process library and import into current canvas"}
             </span>
             <div className="import-mode-group">
+              {targetKind === "unit_process" && (
+                <label className="allocation-policy-control">
+                  <span>{zh ? "多产品分配" : "Multi-product"}</span>
+                  <select
+                    value={allocationPolicy}
+                    onChange={(event) => setAllocationPolicy(event.target.value as "quantity" | "tidas")}
+                  >
+                    <option value="quantity">{zh ? "优先按产量" : "Prefer quantity"}</option>
+                    <option value="tidas">{zh ? "采用 TIDAS 系数" : "Use TIDAS factors"}</option>
+                  </select>
+                </label>
+              )}
               <label>
                 <input type="radio" name="import_mode" checked={importMode === "locked"} onChange={() => setImportMode("locked")} />
                 {zh ? "锁定编辑" : "Locked"}

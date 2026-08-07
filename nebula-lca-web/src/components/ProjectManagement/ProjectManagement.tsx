@@ -1179,7 +1179,7 @@ function TidasImportModal(props: {
       if (tab === "models") {
         body.append("display_lang", uiLanguage);
       }
-      if (tab !== "flows") {
+      if (tab === "models") {
         body.append("allocation_policy", allocationPolicy);
       }
       const endpoint =
@@ -1303,7 +1303,7 @@ function TidasImportModal(props: {
               />
             </div>
           </label>
-          {tab !== "flows" && (
+          {tab === "models" && (
             <label className="span-2">
               <span>{zh ? "多产品分配" : "Multi-product Allocation"}</span>
               <select
@@ -1330,7 +1330,7 @@ function TidasImportModal(props: {
               : "Supports a single process JSON and ZIP bundles with manifest.json + flow/ + process/. ZIP imports flows first, then processes."}
           </div>
         )}
-        {tab !== "flows" && (
+        {tab === "models" && (
           <div className="pm-help-text">
             {zh
               ? "共同产品跨单位组时将自动采用 TIDAS 分配系数；包内系数不完整则停止导入。"

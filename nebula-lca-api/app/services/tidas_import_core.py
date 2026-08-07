@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import copy
 import uuid
 import zipfile
 from collections import Counter
@@ -31,7 +32,7 @@ from .reference_catalog import (
     TidasAllocationImportError,
     _filter_exchanges_with_evidence,
     _flow_uuid_set_cached,
-    _mark_reference_product_exchange,
+    _materialize_process_exchanges_for_graph,
 )
 
 TIDAS_FLOW_IMPORT_SOURCE = "tidas_import"
@@ -429,6 +430,27 @@ def _hydrate_exchange_flow_semantics(
             exchange["unit"] = str(default_unit)
 
 
+def _reference_flow_uuid_from_quantitative_reference(
+    process_json: dict,
+    exchanges: list[dict],
+) -> tuple[str | None, list[str]]:
+    warnings: list[str] = []
+    reference_internal_id = _safe_str(process_json.get("reference_flow_internal_id"))
+    if not reference_internal_id:
+        return _safe_str(process_json.get("reference_flow_source_uuid")) or None, warnings
+    for exchange in exchanges:
+        if not isinstance(exchange, dict):
+            continue
+        if _safe_str(exchange.get("exchange_internal_id")) != reference_internal_id:
+            continue
+        if _safe_str(exchange.get("direction")).lower() != "output":
+            warnings.append("reference_flow_internal_id matched non-output exchange")
+            return None, warnings
+        return _safe_str(exchange.get("flow_uuid")) or None, warnings
+    warnings.append("reference output exchange not found after flow filtering")
+    return None, warnings
+
+
 def _extract_tidas_process_record(row: dict) -> tuple[dict | None, str | None]:
     payload = _payload_from_row(row)
     if "process_uuid" in payload or "exchanges" in payload:
@@ -567,6 +589,7 @@ def _build_tidas_graph_from_model_record(
     model_record: dict,
     process_json_by_uuid: dict[str, dict] | None = None,
     display_lang: str = "zh",
+    allocation_policy: str = "quantity",
 ) -> tuple[dict | None, list[dict]]:
     graph_json = model_record.get("graph_json") if isinstance(model_record.get("graph_json"), dict) else None
     if graph_json is not None:
@@ -579,6 +602,7 @@ def _build_tidas_graph_from_model_record(
             model_record=model_record,
             process_json_by_uuid=process_json_by_uuid or {},
             display_lang=display_lang,
+            allocation_policy=allocation_policy,
         )
     model_instances = [item for item in list(model_record.get("model_instances") or []) if isinstance(item, dict)]
     if model_instances:
@@ -621,6 +645,7 @@ def _build_tidas_graph_from_model_record(
             model_record=synthesized_record,
             process_json_by_uuid=process_json_by_uuid or {},
             display_lang=display_lang,
+            allocation_policy=allocation_policy,
         )
     unresolved: list[dict] = []
     nodes: list[dict] = []
@@ -658,6 +683,7 @@ def _build_tidas_graph_from_xflow_record(
     model_record: dict,
     process_json_by_uuid: dict[str, dict],
     display_lang: str,
+    allocation_policy: str,
 ) -> tuple[dict | None, list[dict]]:
     """Rebuild a Nebula graph from the TIDAS XFlow extension.
 
@@ -666,9 +692,19 @@ def _build_tidas_graph_from_xflow_record(
     """
     xflow_nodes = [item for item in list(model_record.get("xflow_nodes") or []) if isinstance(item, dict)]
     xflow_edges = [item for item in list(model_record.get("xflow_edges") or []) if isinstance(item, dict)]
+    resolved_process_json_by_uuid = dict(process_json_by_uuid)
+    for xnode in xflow_nodes:
+        data = xnode.get("data") if isinstance(xnode.get("data"), dict) else {}
+        process_uuid = _safe_str(data.get("id") or xnode.get("process_uuid"))
+        if not process_uuid or process_uuid in resolved_process_json_by_uuid:
+            continue
+        row = db.get(ReferenceProcess, process_uuid)
+        if row is not None and isinstance(row.process_json, dict):
+            resolved_process_json_by_uuid[process_uuid] = row.process_json
+
     flow_uuids = {
         _safe_str(exchange.get("flow_uuid"))
-        for process_json in process_json_by_uuid.values()
+        for process_json in resolved_process_json_by_uuid.values()
         for exchange in list(process_json.get("exchanges") or [])
         if isinstance(exchange, dict) and _safe_str(exchange.get("flow_uuid"))
     }
@@ -695,15 +731,13 @@ def _build_tidas_graph_from_xflow_record(
     node_ids: set[str] = set()
     positions: dict[str, dict[str, float]] = {}
     unresolved: list[dict] = []
+    materialization_warnings: list[str] = []
     seen_names: dict[str, int] = {}
     for index, xnode in enumerate(xflow_nodes):
         data = xnode.get("data") if isinstance(xnode.get("data"), dict) else {}
         node_id = _safe_str(xnode.get("id")) or f"node_tidas_xflow_{index}"
         process_uuid = _safe_str(data.get("id") or xnode.get("process_uuid"))
-        source = process_json_by_uuid.get(process_uuid)
-        if source is None:
-            row = db.get(ReferenceProcess, process_uuid) if process_uuid else None
-            source = row.process_json if row is not None and isinstance(row.process_json, dict) else None
+        source = resolved_process_json_by_uuid.get(process_uuid)
         if source is None:
             unresolved.append({
                 "model_uuid": model_record.get("model_uuid"),
@@ -714,11 +748,30 @@ def _build_tidas_graph_from_xflow_record(
             })
             continue
 
+        source_exchanges = copy.deepcopy(
+            [exchange for exchange in list(source.get("exchanges") or []) if isinstance(exchange, dict)]
+        )
+        for exchange in source_exchanges:
+            meta = flow_meta.get(_safe_str(exchange.get("flow_uuid")))
+            if meta is None:
+                continue
+            exchange["flow_type"] = meta[3]
+            exchange["unit_group"] = meta[2]
+            if not _safe_str(exchange.get("unit")):
+                exchange["unit"] = meta[1]
+        graph_exchanges, materialized_reference_flow_uuid, product_warnings = _materialize_process_exchanges_for_graph(
+            process_uuid=process_uuid,
+            process_json=source,
+            exchanges=source_exchanges,
+            allocation_policy=allocation_policy,
+        )
+        materialization_warnings.extend(f"{process_uuid}: {warning}" for warning in product_warnings)
+
         inputs: list[dict] = []
         outputs: list[dict] = []
         seen_port_ids: set[str] = set()
-        reference_flow_uuid = ""
-        for exchange in list(source.get("exchanges") or []):
+        reference_flow_uuid = materialized_reference_flow_uuid or ""
+        for exchange in graph_exchanges:
             if not isinstance(exchange, dict):
                 continue
             flow_uuid = _safe_str(exchange.get("flow_uuid"))
@@ -734,8 +787,6 @@ def _build_tidas_graph_from_xflow_record(
                 port_id = f"{base_port_id}:{internal_id}"
             seen_port_ids.add(port_id)
             is_product = bool(exchange.get("isProduct"))
-            if is_product and bool(exchange.get("is_reference_flow")):
-                reference_flow_uuid = flow_uuid
             port = {
                 "id": port_id,
                 "flowUuid": flow_uuid,
@@ -788,6 +839,25 @@ def _build_tidas_graph_from_xflow_record(
                 "x": _numeric_value(position.get("x")),
                 "y": _numeric_value(position.get("y")),
             }
+
+    if len(positions) < len(nodes):
+        column_count = 6
+        column_y = [100.0] * column_count
+        for index, node in enumerate(nodes):
+            node_id = _safe_str(node.get("id"))
+            if node_id in positions:
+                continue
+            column = min(range(column_count), key=column_y.__getitem__)
+            position = {"x": 120.0 + column * 430.0, "y": column_y[column]}
+            positions[node_id] = position
+            node["position"] = dict(position)
+            visible_port_count = sum(
+                1
+                for port in [*list(node.get("inputs") or []), *list(node.get("outputs") or [])]
+                if isinstance(port, dict) and bool(port.get("showOnNode"))
+            )
+            estimated_height = max(220.0, 150.0 + visible_port_count * 30.0)
+            column_y[column] += estimated_height + 100.0
 
     output_port_ids_by_node = {
         str(node.get("id")): {str(port.get("id")) for port in list(node.get("outputs") or [])}
@@ -855,6 +925,7 @@ def _build_tidas_graph_from_xflow_record(
             "source": "tidas_model_import",
             "tidas_model_uuid": _safe_str(model_record.get("model_uuid")),
             "node_positions": positions,
+            "product_allocation_warnings": materialization_warnings,
         },
     }
     repair_tidas_product_flags(graph)
@@ -1206,7 +1277,6 @@ def import_tidas_process_rows(
     valid_flow_uuids: set[str] | None = None,
     persist_report: bool = True,
     with_transaction: bool = False,
-    allocation_policy: str = "quantity",
 ) -> TidasImportReportResponse:
     """Import process rows from TIDAS/ILCD format.
 
@@ -1246,12 +1316,7 @@ def import_tidas_process_rows(
             valid_flow_uuids=valid_flow_uuids,
         )
         _hydrate_exchange_flow_semantics(db, kept_exchanges)
-        reference_flow_uuid, product_warnings = _mark_reference_product_exchange(
-            process_uuid=process_uuid,
-            process_json=process_record,
-            exchanges=kept_exchanges,
-            allocation_policy=allocation_policy,
-        )
+        reference_flow_uuid, product_warnings = _reference_flow_uuid_from_quantitative_reference(process_record, kept_exchanges)
         report["warnings"].extend([f"{process_uuid}: {msg}" for msg in product_warnings])
         report["filtered_exchanges"].extend([item.model_dump(mode="python") for item in filtered])
         report["filtered_exchange_count"] = len(report["filtered_exchanges"])
@@ -1344,6 +1409,7 @@ def import_tidas_model_rows(
     project_name: str | None = None,
     persist_report: bool = True,
     with_transaction: bool = False,
+    allocation_policy: str = "quantity",
 ) -> TidasImportReportResponse:
     """Import model rows from TIDAS/ILCD format.
 
@@ -1391,6 +1457,7 @@ def import_tidas_model_rows(
             model_record=model_record,
             process_json_by_uuid=process_json_by_uuid,
             display_lang=(_safe_str(display_lang) or "zh").lower(),
+            allocation_policy=allocation_policy,
         )
         if graph_unresolved:
             report["unresolved_items"].extend(graph_unresolved)
