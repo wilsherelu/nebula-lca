@@ -1085,6 +1085,11 @@ export const normalizeGraphPayload = (graph: LcaGraphPayload): LcaGraphPayload =
   };
 };
 
+export const prepareGraphForRun = (
+  graph: LcaGraphPayload,
+  config: ProjectTargetProductConfig | null,
+): LcaGraphPayload => applyProjectTargetProductConfig(normalizeGraphPayload(graph), config);
+
 const normalizePortIdMap = (raw: unknown): Record<string, string> => {
   if (!raw || typeof raw !== "object") {
     return {};
@@ -1549,53 +1554,6 @@ const getUnitProcessProductUnitGroupIssues = (graph: LcaGraphPayload): string[] 
   }
   return issues;
 };
-
-const CURRENT_UNIT_GROUP_BY_UNIT: Record<string, string> = {
-  pg: "Units of mass",
-  ng: "Units of mass",
-  ug: "Units of mass",
-  mg: "Units of mass",
-  g: "Units of mass",
-  kg: "Units of mass",
-  t: "Units of mass",
-  m: "Units of length",
-  km: "Units of length",
-  mm: "Units of length",
-  cm: "Units of length",
-  m2: "Units of area",
-  "m²": "Units of area",
-  l: "Units of volume",
-  ml: "Units of volume",
-  m3: "Units of volume",
-  "m³": "Units of volume",
-  j: "Units of energy",
-  kj: "Units of energy",
-  mj: "Units of energy",
-  gj: "Units of energy",
-  wh: "Units of energy",
-  kwh: "Units of energy",
-};
-
-const normalizeCurrentPortUnitGroups = (graph: LcaGraphPayload): LcaGraphPayload => ({
-  ...graph,
-  nodes: (graph.nodes ?? []).map((node) => ({
-    ...node,
-    inputs: (node.inputs ?? []).map((port) => ({
-      ...port,
-      unitGroup:
-        String(port.unitGroupSwitch?.targetUnitGroup ?? "").trim()
-        || CURRENT_UNIT_GROUP_BY_UNIT[String(port.unit ?? "").trim().toLowerCase()]
-        || port.unitGroup,
-    })),
-    outputs: (node.outputs ?? []).map((port) => ({
-      ...port,
-      unitGroup:
-        String(port.unitGroupSwitch?.targetUnitGroup ?? "").trim()
-        || CURRENT_UNIT_GROUP_BY_UNIT[String(port.unit ?? "").trim().toLowerCase()]
-        || port.unitGroup,
-    })),
-  })),
-});
 
 const getDuplicateProcessUuidIssues = (graph: LcaGraphPayload): string[] => {
   const rows = graph.nodes ?? [];
@@ -3705,8 +3663,8 @@ export default function App() {
 
   const runModel = useCallback(async (methodSelection = lciaMethodSelection) => {
     repairRootEdgeHandles();
-    const graph = normalizeCurrentPortUnitGroups(applyProjectTargetProductConfig(
-      normalizeGraphPayload(exportGraph()),
+    const graph = prepareGraphForRun(
+      exportGraph(),
       selectedProductKey
         ? {
           processUuid: selectedProductKey.split("::")[0] ?? "",
@@ -3715,7 +3673,7 @@ export default function App() {
           quantity: parseTargetProductQuantity(targetProductQuantity),
         }
         : null,
-    ));
+    );
     const nodesMissingProduct = (graph.nodes ?? [])
       .filter((node) => node.node_kind === "unit_process" && !String(node.process_uuid ?? "").startsWith("market_"))
       .filter((node) => {
