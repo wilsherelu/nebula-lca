@@ -48,6 +48,21 @@ _CACHE_TTL_REFERENCE_PROCESS_CATALOG_SECONDS = 30.0
 _CACHE_TTL_REFERENCE_PROCESS_REPORT_SECONDS = 1800.0
 
 
+class TidasAllocationImportError(ValueError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        message_zh: str,
+        process_uuid: str,
+        details: dict[str, Any] | None = None,
+    ):
+        super().__init__(message)
+        self.message_zh = message_zh
+        self.process_uuid = process_uuid
+        self.details = details or {}
+
+
 # ---------------------------------------------------------------------------
 # Utility helpers
 # ---------------------------------------------------------------------------
@@ -276,15 +291,23 @@ def _mark_reference_product_exchange(
     process_uuid: str,
     process_json: dict,
     exchanges: list[dict],
+    allocation_policy: str = "quantity",
 ) -> tuple[str | None, list[str]]:
     warnings: list[str] = []
     reference_flow_internal_id = _to_stripped(process_json.get("reference_flow_internal_id"))
     matched_output: dict | None = None
-    allocation_outputs = [
+    explicit_allocation_outputs = [
         ex for ex in exchanges
         if _is_output_direction(ex.get("direction"))
         and (ex.get("allocationFactor") is not None or ex.get("allocation_factor") is not None)
     ]
+    tidas_allocation_outputs = [
+        ex for ex in exchanges
+        if _is_output_direction(ex.get("direction"))
+        and bool(ex.get("tidasAllocationPresent"))
+        and str(ex.get("flow_type") or "").strip().casefold() == "product flow"
+    ]
+    allocation_outputs = tidas_allocation_outputs or explicit_allocation_outputs
 
     if reference_flow_internal_id:
         for ex in exchanges:
@@ -307,13 +330,74 @@ def _mark_reference_product_exchange(
         warnings.append("reference_flow_internal_id missing and no allocated product output found; product cannot be auto-detected")
         return None, warnings
 
+    product_outputs: list[dict] = [matched_output]
+    for ex in allocation_outputs:
+        if all(ex is not product for product in product_outputs):
+            product_outputs.append(ex)
+
+    ignored_nested_count = sum(
+        1
+        for ex in exchanges
+        if bool(ex.get("tidasAllocationPresent"))
+        and all(ex is not product for product in tidas_allocation_outputs)
+    )
+    if ignored_nested_count:
+        warnings.append(
+            f"ignored {ignored_nested_count} allocatedFraction exchange(s) that are not output Product flows"
+        )
+
+    if len(product_outputs) > 1 and tidas_allocation_outputs:
+        unit_groups = {str(ex.get("unit_group") or "").strip() for ex in product_outputs}
+        if "" in unit_groups:
+            raise TidasAllocationImportError(
+                "TIDAS product allocation is missing authoritative Flow unit-group metadata",
+                message_zh="共同产品缺少权威 Flow 单位组，无法确定分配方式。",
+                process_uuid=process_uuid,
+                details={"product_flow_uuids": [ex.get("flow_uuid") for ex in product_outputs]},
+            )
+        effective_policy = "tidas" if len(unit_groups) > 1 else allocation_policy
+        if len(unit_groups) > 1 and allocation_policy != "tidas":
+            warnings.append("product unit groups differ; TIDAS allocation factors were required automatically")
+        if effective_policy == "tidas":
+            raw_factors: dict[str, float] = {}
+            for ex in product_outputs:
+                raw = ex.get("tidasAllocatedFraction")
+                if raw is None:
+                    raise TidasAllocationImportError(
+                        "TIDAS product allocation factors are incomplete",
+                        message_zh="TIDAS 包内共同产品分配系数不完整，已停止导入。",
+                        process_uuid=process_uuid,
+                        details={"flow_uuid": ex.get("flow_uuid")},
+                    )
+                raw_factors[str(ex.get("exchange_internal_id") or ex.get("flow_uuid") or "")] = float(raw)
+            total = sum(raw_factors.values())
+            if total <= 0:
+                raise TidasAllocationImportError(
+                    "TIDAS product allocation factors must contain a positive value",
+                    message_zh="TIDAS 包内共同产品分配系数没有有效正值，已停止导入。",
+                    process_uuid=process_uuid,
+                    details={"raw_factors": raw_factors},
+                )
+            for ex in product_outputs:
+                raw = float(ex.get("tidasAllocatedFraction") or 0.0)
+                ex["allocationFactor"] = raw / total
+                ex["allocationBasis"] = {
+                    "method": "manual_factor",
+                    "source": "tidas_allocated_fraction",
+                    "rawValue": raw,
+                }
+        else:
+            for ex in product_outputs:
+                ex["allocationFactor"] = None
+                ex["allocationBasis"] = {
+                    "method": "quantity",
+                    "source": "tidas_import_policy",
+                }
+
+    product_ids = {id(ex) for ex in product_outputs}
     for ex in exchanges:
         ex["is_reference_flow"] = ex is matched_output
-        ex["isProduct"] = bool(
-            ex is matched_output
-            or ex.get("allocationFactor") is not None
-            or ex.get("allocation_factor") is not None
-        )
+        ex["isProduct"] = id(ex) in product_ids
 
     flow_uuid = _to_stripped(matched_output.get("flow_uuid"))
     if not flow_uuid:

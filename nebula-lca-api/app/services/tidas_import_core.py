@@ -28,6 +28,7 @@ from .catalog_cache import invalidate_management_caches
 from .project_versions import _create_project_version_from_graph_json
 from .graph_storage import repair_tidas_product_flags
 from .reference_catalog import (
+    TidasAllocationImportError,
     _filter_exchanges_with_evidence,
     _flow_uuid_set_cached,
     _mark_reference_product_exchange,
@@ -243,6 +244,36 @@ def _exchange_is_allocated_product(row: dict) -> bool:
     return row.get("allocationFactor") is not None or row.get("allocation_factor") is not None
 
 
+def _tidas_allocated_fraction(row: dict) -> float | None:
+    allocations = row.get("allocations")
+    if not isinstance(allocations, dict):
+        return None
+    candidates = _as_list(allocations.get("allocation"))
+    values: list[float] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        raw = candidate.get("@allocatedFraction")
+        if raw is None:
+            raw = candidate.get("allocatedFraction")
+        if raw is None:
+            continue
+        try:
+            parsed = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if parsed >= 0:
+            values.append(parsed)
+    if not values:
+        return None
+    return sum(values)
+
+
+def _has_tidas_allocation(row: dict) -> bool:
+    allocations = row.get("allocations")
+    return isinstance(allocations, dict) and allocations.get("allocation") is not None
+
+
 def _is_protected_builtin_flow(row: FlowRecord) -> bool:
     return not bool(row.is_custom) and _safe_str(row.source) in PROTECTED_BUILTIN_FLOW_SOURCES
 
@@ -348,6 +379,7 @@ def _normalize_exchange(row: dict) -> dict:
     allocation_factor = row.get("allocationFactor")
     if allocation_factor is None:
         allocation_factor = row.get("allocation_factor")
+    tidas_allocated_fraction = _tidas_allocated_fraction(row)
 
     return {
         "exchange_internal_id": _safe_str(row.get("exchange_internal_id") or row.get("@dataSetInternalID") or row.get("dataSetInternalID")),
@@ -360,7 +392,41 @@ def _normalize_exchange(row: dict) -> dict:
         "is_reference_flow": bool(row.get("is_reference_flow")),
         "isProduct": bool(row.get("is_reference_flow") or allocation_factor is not None),
         "allocationFactor": (_numeric_value(allocation_factor) if allocation_factor is not None else None),
+        "tidasAllocationPresent": _has_tidas_allocation(row),
+        "tidasAllocatedFraction": tidas_allocated_fraction,
     }
+
+
+def _hydrate_exchange_flow_semantics(
+    db: Session,
+    exchanges: list[dict],
+    staged_flow_records: dict[str, dict] | None = None,
+) -> None:
+    staged = staged_flow_records or {}
+    flow_uuids = {
+        _safe_str(exchange.get("flow_uuid"))
+        for exchange in exchanges
+        if isinstance(exchange, dict) and _safe_str(exchange.get("flow_uuid"))
+    }
+    stored = {
+        str(row.flow_uuid): row
+        for row in db.query(FlowRecord).filter(FlowRecord.flow_uuid.in_(flow_uuids)).all()
+    } if flow_uuids else {}
+    for exchange in exchanges:
+        if not isinstance(exchange, dict):
+            continue
+        flow_uuid = _safe_str(exchange.get("flow_uuid"))
+        staged_row = staged.get(flow_uuid) or {}
+        stored_row = stored.get(flow_uuid)
+        flow_type = staged_row.get("flow_type") or getattr(stored_row, "flow_type", None)
+        unit_group = staged_row.get("unit_group") or getattr(stored_row, "unit_group", None)
+        default_unit = staged_row.get("default_unit") or getattr(stored_row, "default_unit", None)
+        if flow_type:
+            exchange["flow_type"] = str(flow_type)
+        if unit_group:
+            exchange["unit_group"] = str(unit_group)
+        if not _safe_str(exchange.get("unit")) and default_unit:
+            exchange["unit"] = str(default_unit)
 
 
 def _extract_tidas_process_record(row: dict) -> tuple[dict | None, str | None]:
@@ -683,6 +749,7 @@ def _build_tidas_graph_from_xflow_record(
                 "internalExposed": not is_elementary_flow_semantic(meta[3]),
                 "isProduct": is_product,
                 "allocationFactor": exchange.get("allocationFactor"),
+                "allocationBasis": exchange.get("allocationBasis"),
             }
             (outputs if direction == "output" else inputs).append(port)
 
@@ -1139,6 +1206,7 @@ def import_tidas_process_rows(
     valid_flow_uuids: set[str] | None = None,
     persist_report: bool = True,
     with_transaction: bool = False,
+    allocation_policy: str = "quantity",
 ) -> TidasImportReportResponse:
     """Import process rows from TIDAS/ILCD format.
 
@@ -1177,10 +1245,12 @@ def import_tidas_process_rows(
             exchanges=list(process_record.get("exchanges") or []),
             valid_flow_uuids=valid_flow_uuids,
         )
+        _hydrate_exchange_flow_semantics(db, kept_exchanges)
         reference_flow_uuid, product_warnings = _mark_reference_product_exchange(
             process_uuid=process_uuid,
             process_json=process_record,
             exchanges=kept_exchanges,
+            allocation_policy=allocation_policy,
         )
         report["warnings"].extend([f"{process_uuid}: {msg}" for msg in product_warnings])
         report["filtered_exchanges"].extend([item.model_dump(mode="python") for item in filtered])

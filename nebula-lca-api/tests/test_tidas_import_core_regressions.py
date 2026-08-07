@@ -5,6 +5,8 @@ from app.services.tidas_import_core import (
     _misclassified_elementary_port_uuids,
     _normalize_exchange,
 )
+from app.services.reference_catalog import TidasAllocationImportError, _mark_reference_product_exchange
+import pytest
 
 
 def _flow_row(flow_type: str, classification: dict) -> dict:
@@ -174,3 +176,98 @@ def test_normalize_exchange_uses_only_explicit_allocation_factor() -> None:
     assert allocated["isProduct"] is True
     assert allocated["allocationFactor"] == 0.25
     assert marker_only["isProduct"] is False
+
+
+def _allocated_output(internal_id: str, flow_uuid: str, fraction: float, unit_group: str) -> dict:
+    return {
+        "exchange_internal_id": internal_id,
+        "flow_uuid": flow_uuid,
+        "direction": "output",
+        "flow_type": "Product flow",
+        "unit_group": unit_group,
+        "amount": 10.0,
+        "tidasAllocationPresent": True,
+        "tidasAllocatedFraction": fraction,
+    }
+
+
+def test_normalize_exchange_preserves_standard_tidas_allocated_fraction() -> None:
+    exchange = _normalize_exchange({
+        "flow_uuid": "flow-1",
+        "exchangeDirection": "Output",
+        "allocations": {"allocation": {"@allocatedFraction": "25"}},
+    })
+
+    assert exchange["tidasAllocatedFraction"] == 25.0
+    assert exchange["tidasAllocationPresent"] is True
+    assert exchange["allocationFactor"] is None
+
+
+def test_same_group_import_policy_selects_quantity_or_tidas_factors() -> None:
+    for policy, expected_method in (("quantity", "quantity"), ("tidas", "manual_factor")):
+        exchanges = [
+            _allocated_output("1", "flow-a", 1, "Units of mass"),
+            _allocated_output("2", "flow-b", 3, "Units of mass"),
+        ]
+
+        _mark_reference_product_exchange(
+            process_uuid="process-1",
+            process_json={"reference_flow_internal_id": "1"},
+            exchanges=exchanges,
+            allocation_policy=policy,
+        )
+
+        assert [row["isProduct"] for row in exchanges] == [True, True]
+        assert {row["allocationBasis"]["method"] for row in exchanges} == {expected_method}
+        if policy == "tidas":
+            assert [row["allocationFactor"] for row in exchanges] == [0.25, 0.75]
+        else:
+            assert [row["allocationFactor"] for row in exchanges] == [None, None]
+
+
+def test_cross_group_import_requires_complete_tidas_factors() -> None:
+    exchanges = [
+        _allocated_output("1", "flow-a", 2, "Units of mass"),
+        _allocated_output("2", "flow-b", 3, "Units of energy"),
+    ]
+
+    _, warnings = _mark_reference_product_exchange(
+        process_uuid="process-1",
+        process_json={"reference_flow_internal_id": "1"},
+        exchanges=exchanges,
+        allocation_policy="quantity",
+    )
+
+    assert [row["allocationFactor"] for row in exchanges] == [0.4, 0.6]
+    assert any("required automatically" in warning for warning in warnings)
+
+    exchanges[1]["tidasAllocatedFraction"] = None
+    with pytest.raises(TidasAllocationImportError):
+        _mark_reference_product_exchange(
+            process_uuid="process-1",
+            process_json={"reference_flow_internal_id": "1"},
+            exchanges=exchanges,
+            allocation_policy="quantity",
+        )
+
+
+def test_allocated_non_product_exchange_is_not_defined_as_product() -> None:
+    reference = _allocated_output("1", "flow-a", 1, "Units of mass")
+    elementary = {
+        "exchange_internal_id": "2",
+        "flow_uuid": "flow-emission",
+        "direction": "output",
+        "flow_type": "Elementary flow",
+        "unit_group": "Units of mass",
+        "tidasAllocatedFraction": 1,
+    }
+
+    _mark_reference_product_exchange(
+        process_uuid="process-1",
+        process_json={"reference_flow_internal_id": "1"},
+        exchanges=[reference, elementary],
+        allocation_policy="tidas",
+    )
+
+    assert reference["isProduct"] is True
+    assert elementary["isProduct"] is False

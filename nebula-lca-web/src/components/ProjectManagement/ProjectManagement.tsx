@@ -1011,6 +1011,7 @@ function TidasImportModal(props: {
   const [result, setResult] = useState<TidasImportResult | null>(null);
   const [reportBusy, setReportBusy] = useState(false);
   const [reportPayload, setReportPayload] = useState<Record<string, unknown> | null>(null);
+  const [allocationPolicy, setAllocationPolicy] = useState<"quantity" | "tidas">("quantity");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -1022,6 +1023,7 @@ function TidasImportModal(props: {
       setReportBusy(false);
       setReportPayload(null);
       setSelectedFile(null);
+      setAllocationPolicy("quantity");
     }
   }, [importKind, open]);
 
@@ -1177,6 +1179,9 @@ function TidasImportModal(props: {
       if (tab === "models") {
         body.append("display_lang", uiLanguage);
       }
+      if (tab !== "flows") {
+        body.append("allocation_policy", allocationPolicy);
+      }
       const endpoint =
         tab === "models" && selectedFile.name.toLowerCase().endsWith(".zip")
           ? `${API_BASE}/import/tidas/bundle`
@@ -1186,8 +1191,14 @@ function TidasImportModal(props: {
         body,
       });
       if (!resp.ok) {
-        const err = (await resp.json().catch(() => ({}))) as { message?: string };
-        throw new Error(err.message ?? `HTTP ${resp.status}`);
+        const err = (await resp.json().catch(() => ({}))) as {
+          message?: string;
+          detail?: string | { message?: string; message_zh?: string };
+        };
+        const detailMessage = typeof err.detail === "string"
+          ? err.detail
+          : (zh ? err.detail?.message_zh : err.detail?.message) ?? err.detail?.message;
+        throw new Error(detailMessage ?? err.message ?? `HTTP ${resp.status}`);
       }
       const payload = (await resp.json()) as Record<string, unknown>;
       const nextResult = parseResult(payload);
@@ -1292,6 +1303,18 @@ function TidasImportModal(props: {
               />
             </div>
           </label>
+          {tab !== "flows" && (
+            <label className="span-2">
+              <span>{zh ? "多产品分配" : "Multi-product Allocation"}</span>
+              <select
+                value={allocationPolicy}
+                onChange={(event) => setAllocationPolicy(event.target.value as "quantity" | "tidas")}
+              >
+                <option value="quantity">{zh ? "优先按产量自动分配" : "Prefer quantity allocation"}</option>
+                <option value="tidas">{zh ? "采用 TIDAS 分配系数" : "Use TIDAS allocation factors"}</option>
+              </select>
+            </label>
+          )}
         </div>
         {tab === "models" && (
           <div className="pm-help-text">
@@ -1305,6 +1328,13 @@ function TidasImportModal(props: {
             {zh
               ? "支持单个 process JSON，也支持包含 manifest.json + flow/ + process/ 的 ZIP。ZIP 会先导入 flow，再导入 process。"
               : "Supports a single process JSON and ZIP bundles with manifest.json + flow/ + process/. ZIP imports flows first, then processes."}
+          </div>
+        )}
+        {tab !== "flows" && (
+          <div className="pm-help-text">
+            {zh
+              ? "共同产品跨单位组时将自动采用 TIDAS 分配系数；包内系数不完整则停止导入。"
+              : "TIDAS factors are required automatically when co-products use different unit groups; incomplete factors block import."}
           </div>
         )}
         {errorText && <div className="pm-error">{errorText}</div>}
