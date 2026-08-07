@@ -52,6 +52,7 @@ def _ensure_tidas_helpers():
         _extract_tidas_flow_record,
         _extract_tidas_process_record,
         _hydrate_exchange_flow_semantics,
+        _reference_flow_uuid_from_quantitative_reference,
         _extract_tidas_model_record,
         _parse_tidas_uploaded_json,
         _parse_tidas_json_payload,
@@ -63,7 +64,6 @@ def _ensure_tidas_helpers():
         _finalize_tidas_report as _ftr,
         _persist_tidas_import_report as _ptir,
         _filter_exchanges_with_evidence,
-        _mark_reference_product_exchange,
         TidasAllocationImportError,
         _flow_uuid_set_cached,
         _refresh_flow_runtime_caches_for_current_request,
@@ -82,6 +82,7 @@ def _ensure_tidas_helpers():
         "_extract_tidas_flow_record": _extract_tidas_flow_record,
         "_extract_tidas_process_record": _extract_tidas_process_record,
         "_hydrate_exchange_flow_semantics": _hydrate_exchange_flow_semantics,
+        "_reference_flow_uuid_from_quantitative_reference": _reference_flow_uuid_from_quantitative_reference,
         "_extract_tidas_model_record": _extract_tidas_model_record,
         "_parse_tidas_uploaded_json": _parse_tidas_uploaded_json,
         "_parse_tidas_json_payload": _parse_tidas_json_payload,
@@ -93,7 +94,6 @@ def _ensure_tidas_helpers():
         "_finalize_tidas_report": _ftr,
         "_persist_tidas_import_report": _ptir,
         "_filter_exchanges_with_evidence": _filter_exchanges_with_evidence,
-        "_mark_reference_product_exchange": _mark_reference_product_exchange,
         "TidasAllocationImportError": TidasAllocationImportError,
         "_flow_uuid_set_cached": _flow_uuid_set_cached,
         "_refresh_flow_runtime_caches_for_current_request": _refresh_flow_runtime_caches_for_current_request,
@@ -321,7 +321,6 @@ async def import_tidas_processes(
     dry_run: bool | str | None = Form(default=None),
     upsert_mode: str | None = Form(default=None),
     strict_mode: bool | str | None = Form(default=None),
-    allocation_policy: str | None = Form(default=None),
     db: Session = Depends(get_db),
 ) -> TidasImportReportResponse:
     _coerce = _h("_coerce_form_bool")
@@ -338,8 +337,7 @@ async def import_tidas_processes(
     _refresh = _h("_refresh_flow_runtime_caches_for_current_request")
     _persist = _h("_persist_tidas_import_report")
     _filter = _h("_filter_exchanges_with_evidence")
-    _mark = _h("_mark_reference_product_exchange")
-    AllocationError = _h("TidasAllocationImportError")
+    _reference_flow = _h("_reference_flow_uuid_from_quantitative_reference")
     _top_miss = _h("_top_missing_flow_uuids")
     _invalidate = _h("_invalidate_management_caches")
     TIDAS_BUNDLE_SRC = _h("TIDAS_BUNDLE_FLOW_IMPORT_SOURCE")
@@ -349,9 +347,6 @@ async def import_tidas_processes(
         upsert_mode=str(upsert_mode or "update").strip() or "update",
         strict_mode=_coerce(strict_mode, default=False),
     )
-    normalized_allocation_policy = str(allocation_policy or "quantity").strip().lower()
-    if normalized_allocation_policy not in {"quantity", "tidas"}:
-        raise HTTPException(status_code=422, detail={"code": "TIDAS_ALLOCATION_POLICY_INVALID"})
     report = _build_base(import_type="processes", payload=payload)
     source_name, raw_bytes = await _read(file)
     report["source_path"] = f"upload://{source_name}"
@@ -476,25 +471,7 @@ async def import_tidas_processes(
                 valid_flow_uuids=valid_flow_uuids,
             )
             _hydrate_semantics(db, kept_exchanges, staged_flow_records)
-            try:
-                reference_flow_uuid, product_warnings = _mark(
-                    process_uuid=process_uuid,
-                    process_json=process_record,
-                    exchanges=kept_exchanges,
-                    allocation_policy=normalized_allocation_policy,
-                )
-            except AllocationError as exc:
-                db.rollback()
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "code": "TIDAS_ALLOCATION_IMPORT_BLOCKED",
-                        "message": str(exc),
-                        "message_zh": exc.message_zh,
-                        "process_uuid": exc.process_uuid,
-                        "details": exc.details,
-                    },
-                ) from exc
+            reference_flow_uuid, product_warnings = _reference_flow(process_record, kept_exchanges)
             report["warnings"].extend([f"{process_uuid}: {msg}" for msg in product_warnings])
             report["filtered_exchanges"].extend([item.model_dump(mode="python") for item in filtered])
             report["filtered_exchange_count"] = len(report["filtered_exchanges"])
@@ -601,6 +578,7 @@ async def import_tidas_models(
     dry_run: bool | str | None = Form(default=None),
     strict_mode: bool | str | None = Form(default=None),
     display_lang: str | None = Form(default=None),
+    allocation_policy: str | None = Form(default=None),
     db: Session = Depends(get_db),
 ) -> TidasImportReportResponse:
     _coerce = _h("_coerce_form_bool")
@@ -610,6 +588,7 @@ async def import_tidas_models(
     _extract = _h("_extract_tidas_model_record")
     _persist = _h("_persist_tidas_import_report")
     _build_graph = _h("_build_tidas_graph_from_model_record")
+    AllocationError = _h("TidasAllocationImportError")
     _create_version = _h("_create_project_version_from_graph_json")
     _invalidate = _h("_invalidate_management_caches")
 
@@ -617,6 +596,9 @@ async def import_tidas_models(
         dry_run=_coerce(dry_run, default=False),
         strict_mode=_coerce(strict_mode, default=False),
     )
+    normalized_allocation_policy = str(allocation_policy or "quantity").strip().lower()
+    if normalized_allocation_policy not in {"quantity", "tidas"}:
+        raise HTTPException(status_code=422, detail={"code": "TIDAS_ALLOCATION_POLICY_INVALID"})
     report = _build_base(import_type="models", payload=payload)
     source_name, rows, parse_errors = await _parse(file)
     source_items: list[tuple[str, list[dict], list[str]]] = [(source_name, rows, parse_errors)]
@@ -667,11 +649,25 @@ async def import_tidas_models(
             db.add(model_row)
             db.flush()
             report["created_projects"].append({"project_id": str(model_row.id), "name": str(model_row.name)})
-            graph_json, graph_unresolved = _build_graph(
-                db=db,
-                model_record=model_record,
-                display_lang=(_safe(display_lang) or "").lower() or "zh",
-            )
+            try:
+                graph_json, graph_unresolved = _build_graph(
+                    db=db,
+                    model_record=model_record,
+                    display_lang=(_safe(display_lang) or "").lower() or "zh",
+                    allocation_policy=normalized_allocation_policy,
+                )
+            except AllocationError as exc:
+                db.rollback()
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "code": "TIDAS_ALLOCATION_IMPORT_BLOCKED",
+                        "message": str(exc),
+                        "message_zh": exc.message_zh,
+                        "process_uuid": exc.process_uuid,
+                        "details": exc.details,
+                    },
+                ) from exc
             if graph_unresolved:
                 report["unresolved_items"].extend(graph_unresolved)
                 report["unresolved_count"] = len(report["unresolved_items"])
@@ -733,7 +729,7 @@ async def import_tidas_bundle(
     _refresh = _h("_refresh_flow_runtime_caches_for_current_request")
     _persist = _h("_persist_tidas_import_report")
     _filter = _h("_filter_exchanges_with_evidence")
-    _mark = _h("_mark_reference_product_exchange")
+    _reference_flow = _h("_reference_flow_uuid_from_quantitative_reference")
     AllocationError = _h("TidasAllocationImportError")
     _top_miss = _h("_top_missing_flow_uuids")
     _build_graph = _h("_build_tidas_graph_from_model_record")
@@ -854,25 +850,7 @@ async def import_tidas_bundle(
                 valid_flow_uuids=valid_flow_uuids,
             )
             _hydrate_semantics(db, kept_exchanges, staged_flow_records)
-            try:
-                reference_flow_uuid, product_warnings = _mark(
-                    process_uuid=process_uuid,
-                    process_json=process_record,
-                    exchanges=kept_exchanges,
-                    allocation_policy=normalized_allocation_policy,
-                )
-            except AllocationError as exc:
-                db.rollback()
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "code": "TIDAS_ALLOCATION_IMPORT_BLOCKED",
-                        "message": str(exc),
-                        "message_zh": exc.message_zh,
-                        "process_uuid": exc.process_uuid,
-                        "details": exc.details,
-                    },
-                ) from exc
+            reference_flow_uuid, product_warnings = _reference_flow(process_record, kept_exchanges)
             report["warnings"].extend([f"{process_uuid}: {msg}" for msg in product_warnings])
             report["filtered_exchanges"].extend([item.model_dump(mode="python") for item in filtered])
             report["filtered_exchange_count"] = len(report["filtered_exchanges"])
@@ -979,12 +957,26 @@ async def import_tidas_bundle(
             if payload.dry_run:
                 report["inserted"] += 1
                 continue
-            graph_json, graph_unresolved = _build_graph(
-                db=db,
-                model_record=model_record,
-                process_json_by_uuid=bundle_process_json_by_uuid,
-                display_lang=(_safe(display_lang) or "").lower() or "zh",
-            )
+            try:
+                graph_json, graph_unresolved = _build_graph(
+                    db=db,
+                    model_record=model_record,
+                    process_json_by_uuid=bundle_process_json_by_uuid,
+                    display_lang=(_safe(display_lang) or "").lower() or "zh",
+                    allocation_policy=normalized_allocation_policy,
+                )
+            except AllocationError as exc:
+                db.rollback()
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "code": "TIDAS_ALLOCATION_IMPORT_BLOCKED",
+                        "message": str(exc),
+                        "message_zh": exc.message_zh,
+                        "process_uuid": exc.process_uuid,
+                        "details": exc.details,
+                    },
+                ) from exc
             if graph_unresolved:
                 report["unresolved_items"].extend(graph_unresolved)
                 report["unresolved_count"] = len(report["unresolved_items"])

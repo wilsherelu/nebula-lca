@@ -5,7 +5,11 @@ from app.services.tidas_import_core import (
     _misclassified_elementary_port_uuids,
     _normalize_exchange,
 )
-from app.services.reference_catalog import TidasAllocationImportError, _mark_reference_product_exchange
+from app.services.reference_catalog import (
+    TidasAllocationImportError,
+    _mark_reference_product_exchange,
+    _materialize_process_exchanges_for_graph,
+)
 import pytest
 
 
@@ -223,6 +227,26 @@ def test_same_group_import_policy_selects_quantity_or_tidas_factors() -> None:
             assert [row["allocationFactor"] for row in exchanges] == [0.25, 0.75]
         else:
             assert [row["allocationFactor"] for row in exchanges] == [None, None]
+
+
+def test_graph_materialization_does_not_mutate_raw_process_exchanges() -> None:
+    raw_exchanges = [
+        _allocated_output("1", "flow-a", 1, "Units of mass"),
+        _allocated_output("2", "flow-b", 3, "Units of mass"),
+    ]
+
+    graph_exchanges, reference_flow_uuid, _warnings = _materialize_process_exchanges_for_graph(
+        process_uuid="process-1",
+        process_json={"reference_flow_internal_id": "1"},
+        exchanges=raw_exchanges,
+        allocation_policy="tidas",
+    )
+
+    assert reference_flow_uuid == "flow-a"
+    assert all("isProduct" not in row for row in raw_exchanges)
+    assert all("allocationBasis" not in row for row in raw_exchanges)
+    assert [row["isProduct"] for row in graph_exchanges] == [True, True]
+    assert [row["allocationFactor"] for row in graph_exchanges] == [0.25, 0.75]
 
 
 def test_cross_group_import_requires_complete_tidas_factors() -> None:

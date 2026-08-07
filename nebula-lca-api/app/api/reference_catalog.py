@@ -191,7 +191,7 @@ def import_reference_processes(
     _to_stripped = _rc._to_stripped
     _validate_target_kind_or_400 = _rc._validate_target_kind_or_400
     _filter_exchanges_with_evidence = _rc._filter_exchanges_with_evidence
-    _mark_reference_product_exchange = _rc._mark_reference_product_exchange
+    _materialize_process_exchanges_for_graph = _rc._materialize_process_exchanges_for_graph
     _build_imported_process_ports = _rc._build_imported_process_ports
     _restore_exchange_amounts_from_lineage = _rc._restore_exchange_amounts_from_lineage
     _flow_meta_by_uuid_cached = _rc._flow_meta_by_uuid_cached
@@ -290,10 +290,11 @@ def import_reference_processes(
         )
         filtered_exchanges.extend(filtered)
         declared_reference_flow_uuid = _safe_str(cloned_json.get("reference_flow_uuid")) or _safe_str(cloned_json.get("reference_product_id")) or _safe_str(source_row.reference_flow_uuid)
-        marked_reference_flow_uuid, product_warnings = _mark_reference_product_exchange(
+        kept_exchanges, marked_reference_flow_uuid, product_warnings = _materialize_process_exchanges_for_graph(
             process_uuid=target_uuid,
             process_json=cloned_json,
             exchanges=kept_exchanges,
+            allocation_policy=payload.allocation_policy,
         )
         reference_flow_uuid = marked_reference_flow_uuid or declared_reference_flow_uuid
         if reference_flow_uuid:
