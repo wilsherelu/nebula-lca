@@ -21,6 +21,7 @@ const port: FlowPort = {
   type: "technosphere",
   amount: 1,
   unit: "MJ",
+  unitGroup: "Units of energy",
   showOnNode: true,
 };
 
@@ -76,7 +77,44 @@ describe("L3UserProxyModal", () => {
     fireEvent.click(screen.getByRole("button", { name: "确认转换" }));
 
     await waitFor(() => {
-      expect(createUserProxyRule).toHaveBeenCalledWith("source-flow", "eco-flow", "");
+      expect(createUserProxyRule).toHaveBeenCalledWith("source-flow", "eco-flow", "", undefined);
+      expect(onConfirm).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("requires an explicit factor for a cross-unit-group conversion", async () => {
+    vi.mocked(searchEcoIntermediateFlows).mockResolvedValue([{
+      flow_uuid: "eco-mass-flow",
+      flow_name: "hard coal",
+      flow_name_en: "hard coal",
+      default_unit: "kg",
+      unit_group: "mass",
+    }]);
+    const onConfirm = vi.fn();
+    render(
+      <L3UserProxyModal
+        open
+        busy={false}
+        port={port}
+        language="zh"
+        onClose={vi.fn()}
+        onConfirm={onConfirm}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("输入流名称搜索"), { target: { value: "coal" } });
+    fireEvent.click(screen.getByRole("button", { name: "搜索" }));
+    await screen.findByText("hard coal");
+    fireEvent.click(screen.getByRole("button", { name: "选择" }));
+
+    const confirmButton = screen.getByRole("button", { name: "确认转换" }) as HTMLButtonElement;
+    expect(confirmButton.disabled).toBe(true);
+    fireEvent.change(screen.getByPlaceholderText("请输入大于 0 的换算系数"), { target: { value: "0.04" } });
+    expect(confirmButton.disabled).toBe(false);
+    fireEvent.click(confirmButton);
+
+    await waitFor(() => {
+      expect(createUserProxyRule).toHaveBeenCalledWith("source-flow", "eco-mass-flow", "", 0.04);
       expect(onConfirm).toHaveBeenCalledTimes(1);
     });
   });

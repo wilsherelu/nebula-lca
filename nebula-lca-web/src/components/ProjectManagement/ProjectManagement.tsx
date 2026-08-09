@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from "react";
 import { CreateFlowDialog } from "../CreateFlowDialog";
 import Ef31ImportJobPanel from "../Ef31ImportJobPanel";
 import { ExternalPlatformAccounts } from "../ExternalPlatformAccounts";
-import { HiqlcdLciCatalog } from "../HiqlcdLciCatalog";
 import { FlowAllocationPropertiesModal, type FlowAllocationProperty } from "../FlowAllocationPropertiesModal";
 import { TidasLocationCascade, normalizeTidasLocationValue } from "../TidasLocationCascade";
 import { useTianGongFlowRefresh } from "../../services/tiangongFlowRefresh";
@@ -173,7 +172,7 @@ const getDisplayProcessName = (
 };
 
 type NavModule = "project" | "process" | "flow" | "platform";
-type NavItem = "recent_projects" | "all_projects" | "all_processes" | "all_flows" | "external_platforms" | "hiqlcd_lci";
+type NavItem = "recent_projects" | "all_projects" | "all_processes" | "all_flows" | "external_platforms";
 export type TidasRepairTarget = Record<string, unknown> & {
   desired_inspector_tab?: "external_in" | "external_out";
   desired_process_modal?: "metadata";
@@ -2389,16 +2388,6 @@ export function ProjectManagement(props: Props) {
             >
               {zh ? "账号绑定" : "Accounts"}
             </button>
-            <button
-              type="button"
-              className={`pm-nav-item ${activeItem === "hiqlcd_lci" ? "active" : ""}`}
-              onClick={() => {
-                setActiveModule("platform");
-                setActiveItem("hiqlcd_lci");
-              }}
-            >
-              {zh ? "HiQLCD 背景 LCI" : "HiQLCD Background LCI"}
-            </button>
           </div>
         </aside>
 
@@ -2766,9 +2755,7 @@ export function ProjectManagement(props: Props) {
           )}
 
           {activeModule === "platform" && (
-            activeItem === "hiqlcd_lci"
-              ? <HiqlcdLciCatalog uiLanguage={uiLanguage} onStatus={onStatus} />
-              : <ExternalPlatformAccounts uiLanguage={uiLanguage} onStatus={onStatus} />
+            <ExternalPlatformAccounts uiLanguage={uiLanguage} onStatus={onStatus} />
           )}
         </main>
       </div>

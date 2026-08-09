@@ -105,6 +105,29 @@ const remoteKinds: RemoteKind[] = ["flows", "processes", "models"];
 const flowTypeOptions = ["all", "Product flow", "Elementary flow", "Waste flow", "Other flow"] as const;
 const processTypeOptions = ["all", "Unit process, single operation", "Unit process, black box", "LCI result", "Partly terminated system", "Avoided product system"] as const;
 
+const remoteKindLabel = (kind: RemoteKind, zh: boolean): string => {
+  if (kind === "flows") return zh ? "流" : "Flow";
+  if (kind === "processes") return zh ? "过程" : "Process";
+  return zh ? "模型" : "Model";
+};
+
+const datasetTypeLabel = (value: string, zh: boolean): string => {
+  if (!zh) return value;
+  const labels: Record<string, string> = {
+    "Product flow": "产品流",
+    "Elementary flow": "基本流",
+    "Waste flow": "废物流",
+    "Other flow": "其他流",
+    "Unit process, single operation": "单元过程（单一操作）",
+    "Unit process, black box": "单元过程（黑箱）",
+    "LCI result": "清单结果",
+    "Partly terminated system": "部分终止系统",
+    "Avoided product system": "避免产品系统",
+    Model: "模型",
+  };
+  return labels[value] ?? value;
+};
+
 const formatTime = (value?: string | null): string => {
   if (!value) return "-";
   const date = new Date(value);
@@ -459,7 +482,10 @@ export function ExternalPlatformAccounts(props: Props) {
     if (!zh) return item.flow_name_en ?? item.process_name_en ?? item.model_name_en ?? item.flow_name ?? item.process_name ?? item.model_name ?? item.remote_id;
     return item.flow_name ?? item.process_name ?? item.model_name ?? item.remote_id;
   };
-  const itemType = (item: RemoteItem): string => item.flow_type ?? item.process_type ?? (remoteKind === "models" ? "Model" : "-");
+  const itemType = (item: RemoteItem): string => datasetTypeLabel(
+    item.flow_type ?? item.process_type ?? (remoteKind === "models" ? "Model" : "-"),
+    zh,
+  );
   const itemSummary = (item: RemoteItem): string => {
     const classification = typeof item.metadata?.classification === "string" ? item.metadata.classification : "";
     if (classification) return classification;
@@ -524,7 +550,7 @@ export function ExternalPlatformAccounts(props: Props) {
                 setRemotePreview(null);
               }}
             >
-              {kind === "flows" ? "Flow" : kind === "processes" ? "Process" : "Model"}
+              {remoteKindLabel(kind, zh)}
             </button>
           ))}
           <input
@@ -543,14 +569,14 @@ export function ExternalPlatformAccounts(props: Props) {
           {remoteKind === "flows" && (
             <select value={remoteFlowType} onChange={(event) => setRemoteFlowType(event.target.value)}>
               {flowTypeOptions.map((value) => (
-                <option key={value} value={value}>{value === "all" ? (zh ? "全部流类型" : "All flow types") : value}</option>
+                <option key={value} value={value}>{value === "all" ? (zh ? "全部流类型" : "All flow types") : datasetTypeLabel(value, zh)}</option>
               ))}
             </select>
           )}
           {remoteKind === "processes" && (
             <select value={remoteProcessType} onChange={(event) => setRemoteProcessType(event.target.value)}>
               {processTypeOptions.map((value) => (
-                <option key={value} value={value}>{value === "all" ? (zh ? "全部数据集类型" : "All dataset types") : value}</option>
+                <option key={value} value={value}>{value === "all" ? (zh ? "全部数据集类型" : "All dataset types") : datasetTypeLabel(value, zh)}</option>
               ))}
             </select>
           )}
@@ -586,7 +612,7 @@ export function ExternalPlatformAccounts(props: Props) {
                     </td>
                     <td>
                       <span>{itemType(item)}</span>
-                      {itemType(item) === "LCI result" && (
+                      {(item.process_type === "LCI result") && (
                         <span className="pm-lci-result-badge" title={zh ? "清单结果（背景 LCI 数据集）" : "LCI result (background LCI dataset)"}>LCI</span>
                       )}
                     </td>

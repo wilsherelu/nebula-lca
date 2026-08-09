@@ -234,7 +234,10 @@ def _validate_resolution_records(
         return "SOURCE_UNIT_GROUP_DRIFT"
     if resolution.target_unit_group and _unit_group_key(target.unit_group) != _unit_group_key(resolution.target_unit_group):
         return "TARGET_UNIT_GROUP_DRIFT"
-    if _unit_group_key(source.unit_group) != _unit_group_key(target.unit_group):
+    if (
+        _unit_group_key(source.unit_group) != _unit_group_key(target.unit_group)
+        and resolution.rule_origin != "user"
+    ):
         return "UNIT_GROUP_MISMATCH"
     if str(source.default_unit or "") != resolution.source_unit:
         return "SOURCE_UNIT_DRIFT"

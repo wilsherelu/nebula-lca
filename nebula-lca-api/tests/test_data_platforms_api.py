@@ -203,6 +203,99 @@ def _create_hiqlcd_account(client: TestClient) -> str:
     return response.json()["id"]
 
 
+def test_tiangong_process_rerank_excludes_general_comment_only_hits():
+    from app.services.data_platform_connectors import _rerank_tiangong_rows
+
+    rows = [
+        {
+            "name": "Wheat production",
+            "json": {
+                "processDataSet": {
+                    "processInformation": {
+                        "dataSetInformation": {
+                            "name": [{"@xml:lang": "en", "#text": "Wheat production"}],
+                            "common:generalComment": [{"@xml:lang": "en", "#text": "Diesel is used by agricultural machinery."}],
+                        }
+                    }
+                }
+            },
+        },
+        {
+            "name": "Market for diesel",
+            "json": {
+                "processDataSet": {
+                    "processInformation": {
+                            "dataSetInformation": {"name": [{"@xml:lang": "en", "#text": "Market for diesel"}]}
+                    }
+                }
+            },
+        },
+    ]
+
+    matched = _rerank_tiangong_rows("process", rows, "diesel")
+
+    assert [row["name"] for row in matched] == ["Market for diesel"]
+
+
+def test_tiangong_process_rerank_prefers_base_name_over_name_modifier():
+    from app.services.data_platform_connectors import _rerank_tiangong_rows
+
+    transport = {
+        "id": "transport",
+        "json": {
+            "processDataSet": {
+                "processInformation": {
+                    "dataSetInformation": {
+                        "name": {
+                            "baseName": [{"@xml:lang": "en", "#text": "Rigid truck transport"}],
+                            "treatmentStandardsRoutes": [{"@xml:lang": "en", "#text": "diesel driven"}],
+                        }
+                    }
+                }
+            }
+        },
+    }
+    refinery = {
+        "id": "refinery",
+        "json": {
+            "processDataSet": {
+                "processInformation": {
+                    "dataSetInformation": {
+                        "name": {
+                            "baseName": [{"@xml:lang": "en", "#text": "Crude oil refining for diesel oil"}],
+                        }
+                    }
+                }
+            }
+        },
+    }
+
+    matched = _rerank_tiangong_rows("process", [transport, refinery], "diesel")
+
+    assert [row["id"] for row in matched] == ["refinery", "transport"]
+
+
+def test_process_search_terms_expand_exact_localized_flow_name():
+    from app.api.data_platforms import _process_search_terms
+
+    db = _db_module.SessionLocal()
+    try:
+        db.add(FlowRecord(
+            flow_uuid="localized-search-flow",
+            flow_name="本地燃料名",
+            flow_name_en="Localized fuel name",
+            flow_type="Product flow",
+            default_unit="kg",
+            unit_group="Units of mass",
+            source="tiangong",
+        ))
+        db.commit()
+
+        assert _process_search_terms(db, "本地燃料名") == ["本地燃料名", "Localized fuel name"]
+    finally:
+        db.close()
+
+
 class _FakeSupabaseResponse:
     def __init__(self, payload):
         self.payload = payload

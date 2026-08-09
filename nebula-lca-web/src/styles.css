@@ -7195,6 +7195,29 @@ label.intermediate-flow-l2-review-row {
   gap: 4px;
 }
 
+.l3-proxy-modal-factor {
+  display: grid;
+  gap: 6px;
+}
+
+.l3-proxy-modal-factor label {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 2fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.l3-proxy-modal-factor input {
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 10px;
+  border: 1px solid #c3d2db;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #193a48;
+  font: inherit;
+}
+
 .l3-proxy-modal-reason label > span {
   font-size: 12px;
   font-weight: 600;

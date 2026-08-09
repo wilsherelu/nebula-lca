@@ -762,9 +762,18 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
                     status_code=new_exc.status_code,
                 ) from new_exc
         rows, total = _tiangong_rows_and_total(raw)
+        remote_page_count = len(rows)
         rows = _rerank_tiangong_rows(kind, rows, normalized_query)
         items = [mapper(row) for row in rows if isinstance(row, dict)]
-        return RemotePageDTO(items=items, total=total if total is not None else len(items), page=page, page_size=page_size, has_more=(page * page_size) < (total if total is not None else len(items)))
+        filtered = len(rows) != remote_page_count
+        effective_total = len(items) if filtered else (total if total is not None else len(items))
+        return RemotePageDTO(
+            items=items,
+            total=effective_total,
+            page=page,
+            page_size=page_size,
+            has_more=False if filtered else (page * page_size) < effective_total,
+        )
 
     def test_connection(self) -> tuple[bool, str]:
         self._access_token()
@@ -1216,20 +1225,42 @@ def _classification_text(payload: dict[str, Any], kind: str) -> str:
     return " ".join(_localized_values(classification))
 
 
+def _localized_title_values(*values: Any) -> list[str]:
+    titles: list[str] = []
+    for value in values:
+        for language in ("zh", "en", None):
+            title = _localized_name(value, language)
+            if title and title not in titles:
+                titles.append(title)
+    return titles
+
+
+def _localized_name_modifiers(value: Any) -> list[str]:
+    if not isinstance(value, dict):
+        return []
+    modifiers: list[str] = []
+    for key in ("mixAndLocationTypes", "treatmentStandardsRoutes", "functionalUnitFlowProperties"):
+        modifiers.extend(_localized_values(value.get(key)))
+    return modifiers
+
+
 def _row_search_texts(kind: str, row: dict[str, Any]) -> tuple[list[str], list[str], str]:
     payload = _extract_json_payload(row)
     if kind == "flow":
         info = payload.get("flowDataSet", {}).get("flowInformation", {}).get("dataSetInformation", {}) if isinstance(payload.get("flowDataSet"), dict) else {}
-        title_values = _localized_values(row.get("name") or row.get("flow_name")) + _localized_values(info.get("name") if isinstance(info, dict) else None)
-        secondary = _localized_values(info.get("common:synonyms") if isinstance(info, dict) else None)
+        name_node = info.get("name") if isinstance(info, dict) else None
+        title_values = _localized_title_values(row.get("name") or row.get("flow_name"), name_node)
+        secondary = _localized_values(info.get("common:synonyms") if isinstance(info, dict) else None) + _localized_name_modifiers(name_node)
     elif kind == "process":
         info = payload.get("processDataSet", {}).get("processInformation", {}).get("dataSetInformation", {}) if isinstance(payload.get("processDataSet"), dict) else {}
-        title_values = _localized_values(row.get("name") or row.get("process_name")) + _localized_values(info.get("name") if isinstance(info, dict) else None)
-        secondary = _localized_values(info.get("common:generalComment") if isinstance(info, dict) else None)
+        name_node = info.get("name") if isinstance(info, dict) else None
+        title_values = _localized_title_values(row.get("name") or row.get("process_name"), name_node)
+        secondary = _localized_values(info.get("common:synonyms") if isinstance(info, dict) else None) + _localized_name_modifiers(name_node)
     else:
         info = payload.get("lifeCycleModelDataSet", {}).get("lifeCycleModelInformation", {}).get("dataSetInformation", {}) if isinstance(payload.get("lifeCycleModelDataSet"), dict) else {}
-        title_values = _localized_values(row.get("name") or row.get("model_name")) + _localized_values(info.get("name") if isinstance(info, dict) else None)
-        secondary = _localized_values(info.get("common:generalComment") if isinstance(info, dict) else None)
+        name_node = info.get("name") if isinstance(info, dict) else None
+        title_values = _localized_title_values(row.get("name") or row.get("model_name"), name_node)
+        secondary = _localized_values(info.get("common:synonyms") if isinstance(info, dict) else None) + _localized_name_modifiers(name_node)
     return title_values, secondary, _classification_text(payload, kind)
 
 
@@ -1256,10 +1287,9 @@ def _rerank_tiangong_rows(kind: str, rows: list[dict[str, Any]], query: str) -> 
     if not query.strip() or not rows:
         return rows
     ranked = [(_rank_tiangong_row(kind, row, query), index, row) for index, row in enumerate(rows)]
-    if any(score > 0 for score, _, _ in ranked):
-        ranked.sort(key=lambda item: (-item[0], item[1]))
-        return [row for _, _, row in ranked]
-    return rows
+    matched = [item for item in ranked if item[0] > 0]
+    matched.sort(key=lambda item: (-item[0], item[1]))
+    return [row for _, _, row in matched]
 
 
 def _tiangong_flow_from_row(row: dict[str, Any]) -> RemoteFlowDTO:

@@ -162,6 +162,7 @@ export async function createUserProxyRule(
   sourceFlowUuid: string,
   targetFlowUuid: string,
   mappingReason: string,
+  amountFactor?: number,
 ): Promise<IntermediateFlowLink> {
   const response = await fetch(`${API_BASE}/intermediate-flow-links/user-rules`, {
     method: "POST",
@@ -170,9 +171,16 @@ export async function createUserProxyRule(
       source_flow_uuid: sourceFlowUuid,
       target_flow_uuid: targetFlowUuid,
       mapping_reason: mappingReason,
+      amount_factor: amountFactor,
     }),
   });
-  if (!response.ok) throw new Error(`User proxy creation failed (${response.status})`);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({})) as {
+      detail?: { code?: string; message?: string } | string;
+    };
+    const detail = typeof payload.detail === "string" ? payload.detail : payload.detail?.message ?? payload.detail?.code;
+    throw new Error(detail || `User proxy creation failed (${response.status})`);
+  }
   const raw = (await response.json()) as RawResolution & { id: string };
   return toIntermediateFlowLink({
     ...raw,

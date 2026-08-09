@@ -708,3 +708,61 @@ def test_resolve_and_provider_apis_keep_provider_choice_explicit():
         deactivated = client.delete(f"/api/intermediate-flow-links/user-rules/{created.json()['id']}")
         assert deactivated.status_code == 200
         assert deactivated.json()["status"] == "inactive"
+
+
+def test_user_rule_accepts_explicit_cross_group_factor():
+    Base.metadata.create_all(app_engine)
+    source_uuid = "test-cross-group-source"
+    target_uuid = "test-cross-group-target"
+    session = SessionLocal()
+    try:
+        session.merge(FlowRecord(
+            flow_uuid=source_uuid,
+            flow_name="Raw fuel",
+            flow_type="Product flow",
+            default_unit="MJ",
+            unit_group="Units of energy",
+            source="tidas_bundle_import",
+        ))
+        session.merge(FlowRecord(
+            flow_uuid=target_uuid,
+            flow_name="Fuel mass",
+            flow_type="Product flow",
+            default_unit="kg",
+            unit_group="mass",
+            source="ecoinvent_3.11",
+        ))
+        session.commit()
+    finally:
+        session.close()
+
+    with TestClient(app) as client:
+        missing_factor = client.post("/api/intermediate-flow-links/user-rules", json={
+            "source_flow_uuid": source_uuid,
+            "target_flow_uuid": target_uuid,
+        })
+        assert missing_factor.status_code == 422
+        assert missing_factor.json()["detail"]["code"] == "CROSS_GROUP_FACTOR_REQUIRED"
+
+        created = client.post("/api/intermediate-flow-links/user-rules", json={
+            "source_flow_uuid": source_uuid,
+            "target_flow_uuid": target_uuid,
+            "amount_factor": 0.04,
+            "mapping_reason": "Declared heating-value conversion",
+        })
+        assert created.status_code == 201
+        payload = created.json()
+        assert payload["amount_factor"] == pytest.approx(0.04)
+        assert payload["source_unit_group"] == "Units of energy"
+        assert payload["target_unit_group"] == "mass"
+
+        resolved = client.post("/api/intermediate-flow-links/resolve-batch", json={
+            "items": [{
+                "port_id": "input-cross-group",
+                "flow_uuid": source_uuid,
+                "direction": "input",
+                "exchange_type": "technosphere",
+            }],
+        })
+        assert resolved.status_code == 200
+        assert resolved.json()["items"][0]["status"] == "L3"
