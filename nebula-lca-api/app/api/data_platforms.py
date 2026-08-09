@@ -61,6 +61,7 @@ from ..services.data_platform_connectors import (
     RemoteFlowDTO,
     RemoteFlowPublishReferenceDTO,
     RemoteModelDTO,
+    RemotePageDTO,
     RemoteProcessDTO,
     RemoteUnitGroupDTO,
     connector_for_account,
@@ -79,6 +80,48 @@ api_router = APIRouter(prefix="/api/data-platforms", tags=["data-platforms"])
 
 def _safe_str(value: object) -> str:
     return str(value or "").strip()
+
+
+def _process_search_terms(db: Session, query: str) -> list[str]:
+    primary = _safe_str(query)
+    if not primary:
+        return [""]
+    terms = [primary]
+    rows = (
+        db.query(FlowRecord.flow_name_en)
+        .filter(FlowRecord.flow_name == primary)
+        .distinct()
+        .limit(5)
+        .all()
+    )
+    for (localized_name,) in rows:
+        candidate = _safe_str(localized_name)
+        if candidate and candidate.casefold() not in {item.casefold() for item in terms}:
+            terms.append(candidate)
+    return terms
+
+
+def _merge_remote_pages(pages: list[RemotePageDTO], *, page: int, page_size: int) -> RemotePageDTO:
+    items: list[Any] = []
+    seen: set[tuple[str, str]] = set()
+    for result in pages:
+        for item in result.items:
+            identity = (_safe_str(getattr(item, "remote_id", "")), _safe_str(getattr(item, "remote_version", "")))
+            if identity in seen:
+                continue
+            seen.add(identity)
+            items.append(item)
+            if len(items) >= page_size:
+                break
+        if len(items) >= page_size:
+            break
+    return RemotePageDTO(
+        items=items,
+        total=max(len(items), max((result.total for result in pages), default=0)),
+        page=page,
+        page_size=page_size,
+        has_more=any(result.has_more for result in pages),
+    )
 
 
 def _credential_config_error(exc: CredentialError) -> HTTPException:
@@ -1434,7 +1477,22 @@ def search_remote_processes(
     account = _account_or_404(db, account_id)
     effective_state_code = None if state_scope == "all" else state_code
     try:
-        result = connector_for_account(_account_context(account, db)).search_processes(q, page=page, page_size=page_size, data_source=data_source, state_code=effective_state_code, process_type=process_type)
+        connector = connector_for_account(_account_context(account, db))
+        result = _merge_remote_pages(
+            [
+                connector.search_processes(
+                    term,
+                    page=page,
+                    page_size=page_size,
+                    data_source=data_source,
+                    state_code=effective_state_code,
+                    process_type=process_type,
+                )
+                for term in _process_search_terms(db, q)
+            ],
+            page=page,
+            page_size=page_size,
+        )
     except ConnectorError as exc:
         raise _connector_error(exc) from exc
     for item in result.items:

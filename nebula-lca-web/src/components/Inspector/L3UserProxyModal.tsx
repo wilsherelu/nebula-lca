@@ -28,6 +28,7 @@ export function L3UserProxyModal({
 }: Props) {
   const [query, setQuery] = useState("");
   const [reason, setReason] = useState("");
+  const [amountFactor, setAmountFactor] = useState("");
   const [flows, setFlows] = useState<EcoIntermediateFlow[]>([]);
   const [selectedFlowUuid, setSelectedFlowUuid] = useState("");
   const [searchState, setSearchState] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -39,6 +40,7 @@ export function L3UserProxyModal({
     if (!open) return;
     setQuery("");
     setReason("");
+    setAmountFactor("");
     setFlows([]);
     setSelectedFlowUuid("");
     setSearchState("idle");
@@ -48,7 +50,23 @@ export function L3UserProxyModal({
 
   const canSearch = query.trim().length > 0 && !busy && !confirming;
   const selectedFlow = flows.find((flow) => flow.flow_uuid === selectedFlowUuid) ?? null;
-  const canConfirm = Boolean(selectedFlow) && !busy && !confirming;
+  const unitGroupKey = (value: string | undefined) => String(value ?? "")
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/^units? of\s+/, "")
+    .replace(/\s+/g, " ");
+  const needsCustomFactor = Boolean(
+    selectedFlow
+    && unitGroupKey(port?.unitGroup)
+    && unitGroupKey(selectedFlow.unit_group)
+    && unitGroupKey(port?.unitGroup) !== unitGroupKey(selectedFlow.unit_group),
+  );
+  const parsedAmountFactor = Number(amountFactor);
+  const canConfirm = Boolean(selectedFlow)
+    && (!needsCustomFactor || (Number.isFinite(parsedAmountFactor) && parsedAmountFactor > 0))
+    && !busy
+    && !confirming;
 
   const runSearch = async () => {
     if (!canSearch) return;
@@ -70,7 +88,12 @@ export function L3UserProxyModal({
     if (!port || !selectedFlow || !canConfirm) return;
     setConfirming(true);
     try {
-      const link = await createUserProxyRule(port.flowUuid, selectedFlow.flow_uuid, reason.trim());
+      const link = await createUserProxyRule(
+        port.flowUuid,
+        selectedFlow.flow_uuid,
+        reason.trim(),
+        needsCustomFactor ? parsedAmountFactor : undefined,
+      );
       onConfirm(port, link);
     } catch (error) {
       const message = error instanceof Error ? error.message : t("保存手动转换失败", "Failed to save manual conversion");
@@ -195,6 +218,31 @@ export function L3UserProxyModal({
           )}
         </div>
 
+        {needsCustomFactor && selectedFlow && (
+          <div className="l3-proxy-modal-factor">
+            <label>
+              <span>
+                {t(
+                  `换算系数（${selectedFlow.default_unit} / ${port.unit}）`,
+                  `Conversion factor (${selectedFlow.default_unit} / ${port.unit})`,
+                )}
+              </span>
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={amountFactor}
+                disabled={busy || confirming}
+                placeholder={t("请输入大于 0 的换算系数", "Enter a conversion factor greater than 0")}
+                onChange={(event) => setAmountFactor(event.target.value)}
+              />
+            </label>
+            <span className="muted-text">
+              {t("源流与目标流单位组不同，需要明确换算系数。", "Source and target unit groups differ, so an explicit factor is required.")}
+            </span>
+          </div>
+        )}
+
         <div className="l3-proxy-modal-reason">
           <label>
             <span>{t("选择说明（选填）", "Selection note (optional)")}</span>
@@ -216,6 +264,7 @@ export function L3UserProxyModal({
             onClick={() => {
               setQuery("");
               setReason("");
+              setAmountFactor("");
               setFlows([]);
               setSelectedFlowUuid("");
               setSearchState("idle");

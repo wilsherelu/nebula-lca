@@ -231,13 +231,23 @@ def create_user_rule(payload: UserRuleCreateRequest, db: Session = Depends(get_d
     target_type = "waste" if "waste" in target.flow_type.casefold() else "product"
     if source_type != target_type:
         raise HTTPException(status_code=422, detail={"code": "FLOW_TYPE_MISMATCH"})
-    if _unit_group_key(source.unit_group) != _unit_group_key(target.unit_group):
-        raise HTTPException(status_code=422, detail={"code": "UNIT_GROUP_MISMATCH"})
-    amount_factor = deterministic_default_unit_factor(db, source, target)
-    if amount_factor is None:
-        raise HTTPException(status_code=422, detail={"code": "UNIT_CONVERSION_NOT_DETERMINISTIC"})
-    if payload.amount_factor is not None and abs(payload.amount_factor - amount_factor) > 1e-12:
-        raise HTTPException(status_code=422, detail={"code": "UNIT_FACTOR_MISMATCH", "expected": amount_factor})
+    same_unit_group = _unit_group_key(source.unit_group) == _unit_group_key(target.unit_group)
+    if same_unit_group:
+        amount_factor = deterministic_default_unit_factor(db, source, target)
+        if amount_factor is None:
+            raise HTTPException(status_code=422, detail={"code": "UNIT_CONVERSION_NOT_DETERMINISTIC"})
+        if payload.amount_factor is not None and abs(payload.amount_factor - amount_factor) > 1e-12:
+            raise HTTPException(status_code=422, detail={"code": "UNIT_FACTOR_MISMATCH", "expected": amount_factor})
+    else:
+        if payload.amount_factor is None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "CROSS_GROUP_FACTOR_REQUIRED",
+                    "message": "A positive conversion factor is required when source and target unit groups differ.",
+                },
+            )
+        amount_factor = payload.amount_factor
     existing = (
         db.query(IntermediateFlowLinkRule)
         .filter(

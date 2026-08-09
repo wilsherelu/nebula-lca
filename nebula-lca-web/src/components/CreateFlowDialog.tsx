@@ -576,8 +576,8 @@ export function CreateFlowDialog({
 
         <div className="pm-help-text" style={{ marginBottom: "12px" }}>
           {zh
-            ? "自定义 Flow 仅用于产品流和废物流。基本流请通过 ecoinvent、HIQLCD、TIDAS 等导入来源维护。"
-            : "Custom flows are only for product and waste flows. For elementary flows, please import from ecoinvent, HIQLCD, TIDAS, etc."}
+            ? "自定义 Flow 仅用于产品流和废物流。基本流请通过 ecoinvent、TIDAS 等导入来源维护。"
+            : "Custom flows are only for product and waste flows. For elementary flows, please import from ecoinvent, TIDAS, etc."}
         </div>
 
         <div className="pm-modal-grid" style={{ display: "grid", gap: "12px" }}>
