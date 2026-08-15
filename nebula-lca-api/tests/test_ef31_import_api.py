@@ -21,7 +21,7 @@ import app.database as _db_module
 from app.main import app
 from app.database import Base
 from app.lci_vector_codec import pack_lci_vector
-from app.models import DebugDiagnostic, ExternalDataSyncRecord, FlowRecord, LciBiosphereFlowKey, LciProcessVector, ReferenceProcess
+from app.models import DebugDiagnostic, ExternalDataSyncRecord, FlowRecord, LciBiosphereFlowKey, LciProcessVector, ReferenceProcess, UnitDefinition, UnitGroup
 from app.services.catalog_cache import invalidate_management_caches
 from app.services.reference_catalog import _localized_display_text, _restore_exchange_amounts_from_lineage
 
@@ -330,6 +330,69 @@ def test_reference_process_import_repairs_amounts_from_sync_lineage(client):
         assert db.get(ReferenceProcess, "lineage-source-process").process_json["exchanges"][0]["amount"] == 4302
     finally:
         db.close()
+
+
+def test_reference_process_import_repairs_unit_outside_authoritative_flow_group(client):
+    flow_uuid = "authoritative-energy-flow"
+    process_uuid = "authoritative-unit-process"
+    unit_group = "Test authoritative energy"
+    db = _db_module.SessionLocal()
+    try:
+        db.add(UnitGroup(name=unit_group, reference_unit="MJ"))
+        db.add(UnitDefinition(unit_group=unit_group, unit_name="MJ", factor_to_reference=1.0, is_reference=True))
+        db.add(UnitDefinition(unit_group=unit_group, unit_name="kWh", factor_to_reference=3.6, is_reference=False))
+        db.add(FlowRecord(
+            flow_uuid=flow_uuid,
+            flow_name="Test electricity",
+            flow_type="Product flow",
+            default_unit="MJ",
+            unit_group=unit_group,
+        ))
+        db.add(ReferenceProcess(
+            process_uuid=process_uuid,
+            process_name="Test process",
+            process_type="unit_process",
+            reference_flow_uuid=flow_uuid,
+            import_mode="locked",
+            process_json={
+                "reference_flow_uuid": flow_uuid,
+                "exchanges": [{
+                    "flow_uuid": flow_uuid,
+                    "flow_name": "Test electricity",
+                    "direction": "output",
+                    "amount": 1,
+                    "unit": "kg",
+                    "is_reference_flow": True,
+                    "isProduct": True,
+                }],
+            },
+        ))
+        db.commit()
+    finally:
+        db.close()
+    invalidate_management_caches(flows=True, reference_processes=True)
+
+    response = client.post("/api/reference/processes/import", json={
+        "target_kind": "unit_process",
+        "import_mode": "locked",
+        "process_uuids": [process_uuid],
+    })
+
+    assert response.status_code == 200, response.json()
+    output = response.json()["imported_processes"][0]["outputs"][0]
+    assert output["unit_group"] == unit_group
+    assert output["unit"] == "MJ"
+
+    db = _db_module.SessionLocal()
+    try:
+        db.query(ReferenceProcess).filter(ReferenceProcess.process_uuid == process_uuid).delete()
+        db.query(FlowRecord).filter(FlowRecord.flow_uuid == flow_uuid).delete()
+        db.query(UnitDefinition).filter(UnitDefinition.unit_group == unit_group).delete()
+        db.query(UnitGroup).filter(UnitGroup.name == unit_group).delete()
+        db.commit()
+    finally:
+        db.close()
+    invalidate_management_caches(flows=True, reference_processes=True)
 
 
 def test_reference_process_import_accepts_lci_dataset_target(client):

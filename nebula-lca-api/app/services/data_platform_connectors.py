@@ -825,6 +825,37 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
             ) from last_error
         rows, total = _tiangong_rows_and_total(raw)
         rows = _rerank_tiangong_rows(kind, rows, normalized_query)
+        query_parts = list(dict.fromkeys(part for part in normalized_query.split() if len(part) >= 2))
+        if not rows and page == 1 and len(query_parts) > 1:
+            fallback_rows: dict[str, dict[str, Any]] = {}
+            for query_part in reversed(query_parts):
+                fallback_raw: Any | None = None
+                for endpoint_name, endpoint_payload, is_function in candidates:
+                    fallback_payload = dict(endpoint_payload)
+                    if "query" in fallback_payload:
+                        fallback_payload["query"] = query_part
+                    if "query_text" in fallback_payload:
+                        fallback_payload["query_text"] = query_part
+                    if "query_terms" in fallback_payload:
+                        fallback_payload["query_terms"] = [query_part]
+                    fallback_payload["page_current"] = 1
+                    fallback_payload["page_size"] = max(page_size, 20)
+                    try:
+                        fallback_raw = self._invoke_function(endpoint_name, fallback_payload) if is_function else self._rpc(endpoint_name, fallback_payload)
+                        break
+                    except ConnectorError:
+                        continue
+                if fallback_raw is None:
+                    continue
+                candidate_rows, _candidate_total = _tiangong_rows_and_total(fallback_raw)
+                for candidate_row in candidate_rows:
+                    row_id = str(candidate_row.get("id") or candidate_row.get("uuid") or getattr(mapper(candidate_row), "remote_id", "")).strip()
+                    if row_id:
+                        fallback_rows[row_id] = candidate_row
+                rows = _rerank_tiangong_rows(kind, list(fallback_rows.values()), normalized_query)
+                if rows:
+                    total = len(rows)
+                    break
         items = [mapper(row) for row in rows if isinstance(row, dict)]
         effective_total = total if total is not None else len(items)
         return RemotePageDTO(
@@ -1373,8 +1404,11 @@ def _rank_tiangong_row(kind: str, row: dict[str, Any], query: str) -> int:
     classification_text = classification.lower()
     if token in title_text:
         return 300
-    if all(part and part in title_text for part in token.split()):
+    parts = token.split()
+    if all(part and part in title_text for part in parts):
         return 240
+    if len(parts) > 1 and all(part in f"{title_text} {secondary_text}" for part in parts):
+        return 200
     if token in secondary_text:
         return 120
     if token in classification_text:
