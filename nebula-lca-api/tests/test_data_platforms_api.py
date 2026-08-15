@@ -7,6 +7,7 @@ from pathlib import Path
 import tempfile
 from datetime import datetime, timedelta
 from urllib.error import HTTPError
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi.testclient import TestClient
@@ -42,6 +43,15 @@ from app.services.data_platform_connectors import (
     encrypt_credential,
 )
 from app.api.data_platforms import _upsert_sync_record
+
+
+def _postgrest_requested_ids(url: str) -> list[str]:
+    raw = parse_qs(urlparse(url).query).get("id", [""])[0]
+    if raw.startswith("in.(") and raw.endswith(")"):
+        return [item for item in raw[4:-1].split(",") if item]
+    if raw.startswith("eq."):
+        return [raw[3:]]
+    return []
 
 
 def test_tiangong_flow_without_resolved_unit_metadata_does_not_fallback_to_mass():
@@ -115,6 +125,61 @@ def test_tiangong_process_display_name_includes_ilcd_name_parts():
     )
 
     assert process.process_name == "自卸卡车; 消费混合，面向终端消费者; 柴油驱动，货运"
+
+
+def test_tiangong_process_detail_batches_flow_dependencies(monkeypatch):
+    connector = TianGongSupabaseConnector(
+        PlatformAccountContext(
+            account_id="tg-1",
+            platform="tiangong",
+            alias="TianGong",
+            base_url="https://tg.example",
+            auth_type="bearer",
+            credential={"token": "test-token"},
+            metadata={"publishable_key": "pub-key"},
+        )
+    )
+    calls: list[str] = []
+    process_row = {
+        "id": "process-1",
+        "name": "Remote process",
+        "version": "1",
+        "json": {
+            "processDataSet": {
+                "exchanges": {
+                    "exchange": [
+                        {"meanAmount": "1", "exchangeDirection": "Input", "@dataSetInternalID": "0", "referenceToFlowDataSet": {"@refObjectId": "flow-1", "@version": "1"}},
+                        {"meanAmount": "1", "exchangeDirection": "Output", "@dataSetInternalID": "1", "referenceToFlowDataSet": {"@refObjectId": "flow-2", "@version": "1"}},
+                    ]
+                },
+                "processInformation": {"quantitativeReference": {"referenceToReferenceFlow": "1"}},
+            }
+        },
+    }
+
+    def fake_request(_method, path, **_kwargs):
+        calls.append(path)
+        if "/rest/v1/processes" in path:
+            return [process_row]
+        if "/rest/v1/flows" in path:
+            return [_flow_row("flow-1"), _flow_row("flow-2")]
+        if "/rest/v1/flowproperties" in path:
+            return [_flowproperty_row()]
+        if "/rest/v1/unitgroups" in path:
+            return [_unitgroup_row()]
+        raise AssertionError(path)
+
+    monkeypatch.setattr(connector, "_request_json", fake_request)
+
+    detail = connector.get_process_detail("process-1", "1")
+
+    assert [flow.flow_uuid for flow in detail.flows] == ["flow-1", "flow-2"]
+    assert [path.split("?")[0] for path in calls] == [
+        "/rest/v1/processes",
+        "/rest/v1/flows",
+        "/rest/v1/flowproperties",
+        "/rest/v1/unitgroups",
+    ]
 
 
 @pytest.fixture(autouse=True)
@@ -1747,15 +1812,17 @@ def test_process_sync_stores_plain_string_exchange_names(client, monkeypatch):
             return _FakeSupabaseResponse([_process_with_localized_exchanges()])
         if "/rest/v1/flows" in url:
             # Return flow detail for exchange resolution
-            flow_id = "flow-bread-1" if "flow-bread-1" in url else ("flow-electricity-1" if "flow-electricity-1" in url else "flow-1")
-            return _FakeSupabaseResponse([{
-                "id": flow_id,
-                "name": "Flow",
-                "version": "1",
-                "default_unit": "kg",
-                "unit_group": "Units of mass",
-                "json": {"flowDataSet": {"flowInformation": {"dataSetInformation": {"common:name": "Flow"}}}},
-            }])
+            return _FakeSupabaseResponse([
+                {
+                    "id": flow_id,
+                    "name": "Flow",
+                    "version": "1",
+                    "default_unit": "kg",
+                    "unit_group": "Units of mass",
+                    "json": {"flowDataSet": {"flowInformation": {"dataSetInformation": {"common:name": "Flow"}}}},
+                }
+                for flow_id in _postgrest_requested_ids(url)
+            ])
         raise AssertionError(f"Unexpected URL {url}")
 
     monkeypatch.setattr("app.services.data_platform_connectors.url_request.urlopen", fake_urlopen)
@@ -1912,13 +1979,16 @@ def test_tiangong_lci_result_sync_derives_vector_from_elementary_exchanges(clien
             return _FakeSupabaseResponse({"access_token": _jwt(), "refresh_token": "rt", "expires_in": 3600, "token_type": "bearer"})
         if "/rest/v1/processes" in url and "tg-lci-result" in url:
             return _FakeSupabaseResponse([_lci_result_row()])
-        for flow_id, flow_type in (
-            ("lci-reference-product", "Product flow"),
-            ("lci-elementary-input", "Elementary flow"),
-            ("lci-elementary-output", "Elementary flow"),
-        ):
-            if "/rest/v1/flows" in url and flow_id in url:
-                return _FakeSupabaseResponse([_lci_flow_row(flow_id, flow_type)])
+        if "/rest/v1/flows" in url:
+            flow_types = {
+                "lci-reference-product": "Product flow",
+                "lci-elementary-input": "Elementary flow",
+                "lci-elementary-output": "Elementary flow",
+            }
+            return _FakeSupabaseResponse([
+                _lci_flow_row(flow_id, flow_types[flow_id])
+                for flow_id in _postgrest_requested_ids(url)
+            ])
         raise AssertionError(f"Unexpected URL {url}")
 
     monkeypatch.setattr("app.services.data_platform_connectors.url_request.urlopen", fake_urlopen)
@@ -1962,10 +2032,13 @@ def test_tiangong_process_sync_preserves_quantitative_reference_and_units(client
             return _FakeSupabaseResponse({"access_token": _jwt(), "refresh_token": "rt", "expires_in": 3600, "token_type": "bearer"})
         if "/rest/v1/processes" in url and "tg-process-ref" in url:
             return _FakeSupabaseResponse([_process_row_with_reference("2")])
-        if "/rest/v1/flows" in url and "flow-product-energy" in url:
-            return _FakeSupabaseResponse([_flow_row_with_unit("flow-product-energy", "Output electricity", "kWh", "Units of energy")])
-        if "/rest/v1/flows" in url and "flow-input-energy" in url:
-            return _FakeSupabaseResponse([_flow_row_with_unit("flow-input-energy", "Input electricity", "MJ", "Units of energy")])
+        if "/rest/v1/flows" in url:
+            return _FakeSupabaseResponse([
+                _flow_row_with_unit(flow_id, "Output electricity", "kWh", "Units of energy")
+                if flow_id == "flow-product-energy"
+                else _flow_row_with_unit(flow_id, "Input electricity", "MJ", "Units of energy")
+                for flow_id in _postgrest_requested_ids(url)
+            ])
         raise AssertionError(f"Unexpected URL {url}")
 
     monkeypatch.setattr("app.services.data_platform_connectors.url_request.urlopen", fake_urlopen)
@@ -2002,10 +2075,13 @@ def test_tiangong_process_sync_warns_when_reference_points_to_input(client, monk
             return _FakeSupabaseResponse({"access_token": _jwt(), "refresh_token": "rt", "expires_in": 3600, "token_type": "bearer"})
         if "/rest/v1/processes" in url and "tg-process-ref" in url:
             return _FakeSupabaseResponse([_process_row_with_reference("1")])
-        if "/rest/v1/flows" in url and "flow-product-energy" in url:
-            return _FakeSupabaseResponse([_flow_row_with_unit("flow-product-energy", "Output electricity", "kWh", "Units of energy")])
-        if "/rest/v1/flows" in url and "flow-input-energy" in url:
-            return _FakeSupabaseResponse([_flow_row_with_unit("flow-input-energy", "Input electricity", "MJ", "Units of energy")])
+        if "/rest/v1/flows" in url:
+            return _FakeSupabaseResponse([
+                _flow_row_with_unit(flow_id, "Output electricity", "kWh", "Units of energy")
+                if flow_id == "flow-product-energy"
+                else _flow_row_with_unit(flow_id, "Input electricity", "MJ", "Units of energy")
+                for flow_id in _postgrest_requested_ids(url)
+            ])
         raise AssertionError(f"Unexpected URL {url}")
 
     monkeypatch.setattr("app.services.data_platform_connectors.url_request.urlopen", fake_urlopen)
@@ -2242,12 +2318,15 @@ def test_refresh_imports_reports_partial_failures(client, monkeypatch):
         url = req.full_url
         if "/auth/v1/token?grant_type=password" in url:
             return _FakeSupabaseResponse({"access_token": _jwt(), "refresh_token": "rt", "expires_in": 3600, "token_type": "bearer"})
-        if "/rest/v1/flows" in url and "mock-flow-1" in url:
-            return _FakeSupabaseResponse([_flow_row("mock-flow-1")])
         if "/rest/v1/flows" in url:
-            # Simulate failure for some flows
-            from urllib.error import HTTPError
-            raise HTTPError(url, 500, "Internal error", hdrs=None, fp=None)
+            flow_ids = _postgrest_requested_ids(url)
+            if "some-fail-flow" in flow_ids:
+                raise HTTPError(url, 500, "Internal error", hdrs=None, fp=None)
+            return _FakeSupabaseResponse([_flow_row(flow_id) for flow_id in flow_ids])
+        if "/rest/v1/flowproperties" in url:
+            return _FakeSupabaseResponse([_flowproperty_row()])
+        if "/rest/v1/unitgroups" in url:
+            return _FakeSupabaseResponse([_unitgroup_row()])
         if "/rest/v1/processes" in url:
             return _FakeSupabaseResponse([
                 {
@@ -2313,7 +2392,7 @@ def test_refresh_imports_reports_partial_failures(client, monkeypatch):
     assert data["total"] >= 3
     # Check that we have a mix of statuses
     statuses = [item["status"] for item in data["items"]]
-    assert "refreshed" in statuses
+    assert "refreshed" in statuses, data
     assert "failed" in statuses
     # Verify response contains no secrets
     response_text = json.dumps(data)

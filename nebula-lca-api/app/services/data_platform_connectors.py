@@ -10,7 +10,6 @@ import logging
 import os
 import re
 import secrets
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -510,6 +509,7 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
     def __init__(self, account: PlatformAccountContext):
         super().__init__(account)
         self._runtime_access_token: str | None = None
+        self._table_cache: dict[tuple[str, str, str], dict[str, Any]] = {}
 
     def _publishable_key(self) -> str:
         key = str(self.account.metadata.get("publishable_key") or "").strip()
@@ -669,6 +669,10 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
         return {"data": payload}
 
     def _table_one(self, table: str, remote_id: str, remote_version: str | None = None) -> dict[str, Any]:
+        cache_key = (table, remote_id, remote_version or "")
+        cached = self._table_cache.get(cache_key)
+        if cached is not None:
+            return cached
         params = {"select": "*", "id": f"eq.{remote_id}"}
         if remote_version:
             params["version"] = f"eq.{remote_version}"
@@ -680,7 +684,40 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
         row = rows[0]
         if not isinstance(row, dict):
             raise ConnectorError(f"TianGong {table} detail row must be an object.")
+        self._table_cache[cache_key] = row
+        actual_version = _row_version(row)
+        if actual_version:
+            self._table_cache[(table, remote_id, actual_version)] = row
         return row
+
+    def _table_many(self, table: str, references: list[tuple[str, str | None]]) -> dict[tuple[str, str | None], dict[str, Any]]:
+        requested = list(dict.fromkeys((remote_id, version) for remote_id, version in references if remote_id))
+        resolved: dict[tuple[str, str | None], dict[str, Any]] = {}
+        for offset in range(0, len(requested), 25):
+            chunk = requested[offset:offset + 25]
+            ids = list(dict.fromkeys(remote_id for remote_id, _version in chunk))
+            params = {"select": "*", "id": f"in.({','.join(ids)})"}
+            path = f"/rest/v1/{url_parse.quote(table, safe='')}?{url_parse.urlencode(params)}"
+            payload = self._request_json("GET", path, headers=self._headers())
+            rows = [row for row in payload if isinstance(row, dict)] if isinstance(payload, list) else []
+            by_id: dict[str, list[dict[str, Any]]] = {}
+            for row in rows:
+                row_id = str(row.get("id") or "").strip()
+                if not row_id:
+                    continue
+                by_id.setdefault(row_id, []).append(row)
+                actual_version = _row_version(row)
+                if actual_version:
+                    self._table_cache[(table, row_id, actual_version)] = row
+            for remote_id, version in chunk:
+                candidates = by_id.get(remote_id, [])
+                selected = next((row for row in candidates if version and _row_version(row) == version), None)
+                if selected is None and not version and candidates:
+                    selected = candidates[0]
+                if selected is not None:
+                    resolved[(remote_id, version)] = selected
+                    self._table_cache[(table, remote_id, version or "")] = selected
+        return resolved
 
     def _search_rpc(
         self,
@@ -836,31 +873,30 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
         if not resolve_flows:
             flows = flow_stubs
         elif flow_stubs:
-            resolved: dict[tuple[str, str | None], RemoteFlowDTO] = {}
-            failures: dict[tuple[str, str | None], ConnectorError] = {}
-
-            def fetch_flow(flow_stub: RemoteFlowDTO) -> RemoteFlowDTO:
-                return self.get_flow_detail(flow_stub.flow_uuid, flow_stub.remote_version)
-
-            with ThreadPoolExecutor(max_workers=min(4, len(flow_stubs))) as executor:
-                pending = {executor.submit(fetch_flow, flow_stub): flow_stub for flow_stub in flow_stubs}
-                for future in as_completed(pending):
-                    flow_stub = pending[future]
-                    identity = (flow_stub.flow_uuid, flow_stub.remote_version)
-                    try:
-                        resolved[identity] = future.result()
-                    except ConnectorError as exc:
-                        failures[identity] = exc
+            flow_refs = [(flow_stub.flow_uuid, flow_stub.remote_version) for flow_stub in flow_stubs]
+            flow_rows = self._table_many("flows", flow_refs)
+            flow_property_refs: list[tuple[str, str | None]] = []
+            for flow_row in flow_rows.values():
+                flow_property_ref = _extract_flow_property_reference(flow_row)
+                if flow_property_ref:
+                    flow_property_refs.append((flow_property_ref["id"], flow_property_ref.get("version")))
+            flow_property_rows = self._table_many("flowproperties", flow_property_refs)
+            unit_group_refs: list[tuple[str, str | None]] = []
+            for flow_property_row in flow_property_rows.values():
+                unit_group_ref = _extract_unit_group_reference(flow_property_row)
+                if unit_group_ref:
+                    unit_group_refs.append((unit_group_ref["id"], unit_group_ref.get("version")))
+            self._table_many("unitgroups", unit_group_refs)
 
             for flow_stub in flow_stubs:
                 identity = (flow_stub.flow_uuid, flow_stub.remote_version)
-                if identity in resolved:
-                    flows.append(resolved[identity])
+                flow_row = flow_rows.get(identity)
+                if flow_row is None:
+                    flow_warnings.append(f"could not resolve flow {flow_stub.flow_uuid}: TianGong flows detail not found.")
+                    failed_flow_uuids.append(flow_stub.flow_uuid)
+                    flows.append(flow_stub)
                     continue
-                exc = failures[identity]
-                flow_warnings.append(f"could not resolve flow {flow_stub.flow_uuid}: {exc}")
-                failed_flow_uuids.append(flow_stub.flow_uuid)
-                flows.append(flow_stub)
+                flows.append(self._resolve_flow_dependencies(_tiangong_flow_from_row(flow_row)))
         process_json = _tiangong_process_json_from_row(row, process, flows)
         return RemoteProcessDetailDTO(
             process=process,
