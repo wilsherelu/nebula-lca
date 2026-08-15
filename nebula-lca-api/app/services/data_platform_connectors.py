@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import secrets
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -786,17 +787,15 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
                 status_code=last_error.status_code,
             ) from last_error
         rows, total = _tiangong_rows_and_total(raw)
-        remote_page_count = len(rows)
         rows = _rerank_tiangong_rows(kind, rows, normalized_query)
         items = [mapper(row) for row in rows if isinstance(row, dict)]
-        filtered = len(rows) != remote_page_count
-        effective_total = len(items) if filtered else (total if total is not None else len(items))
+        effective_total = total if total is not None else len(items)
         return RemotePageDTO(
             items=items,
             total=effective_total,
             page=page,
             page_size=page_size,
-            has_more=False if filtered else (page * page_size) < effective_total,
+            has_more=(page * page_size) < effective_total,
         )
 
     def test_connection(self) -> tuple[bool, str]:
@@ -819,19 +818,46 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
     def get_process_detail(self, remote_process_id: str, remote_version: str | None = None, *, resolve_flows: bool = True) -> RemoteProcessDetailDTO:
         row = self._table_one("processes", remote_process_id, remote_version)
         process = _tiangong_process_from_row(row)
-        flow_stubs = [_tiangong_flow_from_exchange(exchange) for exchange in _extract_process_exchanges(row)]
+        flow_stubs: list[RemoteFlowDTO] = []
+        seen_flow_refs: set[tuple[str, str | None]] = set()
+        for exchange in _extract_process_exchanges(row):
+            flow_stub = _tiangong_flow_from_exchange(exchange)
+            if flow_stub is None:
+                continue
+            identity = (flow_stub.flow_uuid, flow_stub.remote_version)
+            if identity in seen_flow_refs:
+                continue
+            seen_flow_refs.add(identity)
+            flow_stubs.append(flow_stub)
         flows: list[RemoteFlowDTO] = []
         flow_warnings: list[str] = []
         failed_flow_uuids: list[str] = []
-        for flow_stub in flow_stubs:
-            if flow_stub is None:
-                continue
-            if not resolve_flows:
-                flows.append(flow_stub)
-                continue
-            try:
-                flows.append(self.get_flow_detail(flow_stub.flow_uuid, flow_stub.remote_version))
-            except ConnectorError as exc:
+
+        if not resolve_flows:
+            flows = flow_stubs
+        elif flow_stubs:
+            resolved: dict[tuple[str, str | None], RemoteFlowDTO] = {}
+            failures: dict[tuple[str, str | None], ConnectorError] = {}
+
+            def fetch_flow(flow_stub: RemoteFlowDTO) -> RemoteFlowDTO:
+                return self.get_flow_detail(flow_stub.flow_uuid, flow_stub.remote_version)
+
+            with ThreadPoolExecutor(max_workers=min(4, len(flow_stubs))) as executor:
+                pending = {executor.submit(fetch_flow, flow_stub): flow_stub for flow_stub in flow_stubs}
+                for future in as_completed(pending):
+                    flow_stub = pending[future]
+                    identity = (flow_stub.flow_uuid, flow_stub.remote_version)
+                    try:
+                        resolved[identity] = future.result()
+                    except ConnectorError as exc:
+                        failures[identity] = exc
+
+            for flow_stub in flow_stubs:
+                identity = (flow_stub.flow_uuid, flow_stub.remote_version)
+                if identity in resolved:
+                    flows.append(resolved[identity])
+                    continue
+                exc = failures[identity]
                 flow_warnings.append(f"could not resolve flow {flow_stub.flow_uuid}: {exc}")
                 failed_flow_uuids.append(flow_stub.flow_uuid)
                 flows.append(flow_stub)
@@ -1024,6 +1050,8 @@ def _tiangong_rows_and_total(payload: Any) -> tuple[list[dict[str, Any]], int | 
     if not isinstance(rows, list):
         rows = [payload]
     total_raw = payload.get("total") or payload.get("count") or payload.get("total_count")
+    if total_raw is None and rows and isinstance(rows[0], dict):
+        total_raw = rows[0].get("total_count")
     try:
         total = int(total_raw) if total_raw is not None else None
     except (TypeError, ValueError):
@@ -1268,6 +1296,17 @@ def _localized_name_modifiers(value: Any) -> list[str]:
     return modifiers
 
 
+def _localized_full_name(value: Any, preferred_language: str) -> str:
+    if not isinstance(value, dict):
+        return _localized_name(value, preferred_language)
+    parts: list[str] = []
+    for key in ("baseName", "mixAndLocationTypes", "treatmentStandardsRoutes", "functionalUnitFlowProperties"):
+        text = _localized_name(value.get(key), preferred_language)
+        if text and text not in parts:
+            parts.append(text)
+    return "; ".join(parts) or _localized_name(value, preferred_language)
+
+
 def _row_search_texts(kind: str, row: dict[str, Any]) -> tuple[list[str], list[str], str]:
     payload = _extract_json_payload(row)
     if kind == "flow":
@@ -1365,8 +1404,8 @@ def _tiangong_process_from_row(row: dict[str, Any]) -> RemoteProcessDTO:
     process_uuid = str(row.get("id") or row.get("process_uuid") or row.get("uuid") or _nested_text(payload, "processDataSet", "processInformation", "dataSetInformation", "common:UUID")).strip()
     info = payload.get("processDataSet", {}).get("processInformation", {}).get("dataSetInformation", {}) if isinstance(payload.get("processDataSet"), dict) else {}
     name_node = info.get("name") if isinstance(info, dict) else None
-    name = _localized_name(name_node, "zh") or _localized_name(row.get("name") or row.get("process_name"), "zh") or _localized_name(name_node) or _localized_name(row.get("name") or row.get("process_name")) or process_uuid
-    name_en = _localized_name(name_node, "en") or _localized_name(row.get("name_en"), "en") or None
+    name = _localized_full_name(name_node, "zh") or _localized_name(row.get("name") or row.get("process_name"), "zh") or _localized_name(name_node) or _localized_name(row.get("name") or row.get("process_name")) or process_uuid
+    name_en = _localized_full_name(name_node, "en") or _localized_name(row.get("name_en"), "en") or None
     process_type = str(
         row.get("process_type")
         or row.get("type")
