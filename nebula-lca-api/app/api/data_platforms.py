@@ -562,15 +562,27 @@ def _upsert_sync_record(
     remote_version: str | None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    existing = (
-        db.query(ExternalDataSyncRecord)
-        .filter(
-            ExternalDataSyncRecord.account_id == account.id,
-            ExternalDataSyncRecord.local_kind == local_kind,
-            ExternalDataSyncRecord.local_uuid == local_uuid,
-        )
-        .first()
+    existing = next(
+        (
+            row
+            for row in db.new
+            if isinstance(row, ExternalDataSyncRecord)
+            and row.account_id == account.id
+            and row.local_kind == local_kind
+            and row.local_uuid == local_uuid
+        ),
+        None,
     )
+    if existing is None:
+        existing = (
+            db.query(ExternalDataSyncRecord)
+            .filter(
+                ExternalDataSyncRecord.account_id == account.id,
+                ExternalDataSyncRecord.local_kind == local_kind,
+                ExternalDataSyncRecord.local_uuid == local_uuid,
+            )
+            .first()
+        )
     if existing is None:
         existing = ExternalDataSyncRecord(
             account_id=account.id,
@@ -1478,21 +1490,20 @@ def search_remote_processes(
     effective_state_code = None if state_scope == "all" else state_code
     try:
         connector = connector_for_account(_account_context(account, db))
-        result = _merge_remote_pages(
-            [
-                connector.search_processes(
-                    term,
-                    page=page,
-                    page_size=page_size,
-                    data_source=data_source,
-                    state_code=effective_state_code,
-                    process_type=process_type,
-                )
-                for term in _process_search_terms(db, q)
-            ],
-            page=page,
-            page_size=page_size,
-        )
+        pages: list[RemotePageDTO] = []
+        for term in _process_search_terms(db, q):
+            current = connector.search_processes(
+                term,
+                page=page,
+                page_size=page_size,
+                data_source=data_source,
+                state_code=effective_state_code,
+                process_type=process_type,
+            )
+            pages.append(current)
+            if current.items:
+                break
+        result = _merge_remote_pages(pages, page=page, page_size=page_size)
     except ConnectorError as exc:
         raise _connector_error(exc) from exc
     for item in result.items:

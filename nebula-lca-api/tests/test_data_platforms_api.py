@@ -34,11 +34,14 @@ from app.models import (
 from app.services.data_platform_connectors import (
     ConnectorError,
     PlatformAccountContext,
+    RemotePageDTO,
+    RemoteProcessDTO,
     TianGongSupabaseConnector,
     _tiangong_flow_from_row,
     _tiangong_process_from_row,
     encrypt_credential,
 )
+from app.api.data_platforms import _upsert_sync_record
 
 
 def test_tiangong_flow_without_resolved_unit_metadata_does_not_fallback_to_mass():
@@ -89,6 +92,29 @@ def test_tiangong_process_preserves_localized_chinese_and_english_names():
 
     assert process.process_name == "原铝液"
     assert process.process_name_en == "Aluminium, primary, liquid"
+
+
+def test_tiangong_process_display_name_includes_ilcd_name_parts():
+    process = _tiangong_process_from_row(
+        {
+            "id": "33333333-3333-4333-8333-333333333333",
+            "json": {
+                "processDataSet": {
+                    "processInformation": {
+                        "dataSetInformation": {
+                            "name": {
+                                "baseName": [{"#text": "自卸卡车", "@xml:lang": "zh"}],
+                                "mixAndLocationTypes": [{"#text": "消费混合，面向终端消费者", "@xml:lang": "zh"}],
+                                "treatmentStandardsRoutes": [{"#text": "柴油驱动，货运", "@xml:lang": "zh"}],
+                            }
+                        }
+                    }
+                }
+            },
+        }
+    )
+
+    assert process.process_name == "自卸卡车; 消费混合，面向终端消费者; 柴油驱动，货运"
 
 
 @pytest.fixture(autouse=True)
@@ -1011,6 +1037,62 @@ def test_tiangong_search_prefers_current_hybrid_function_contract(client, monkey
     assert not any("/rest/v1/rpc/search_flows_latest" in call["url"] for call in calls)
 
 
+def test_tiangong_search_keeps_remote_total_after_local_rerank(monkeypatch):
+    connector = TianGongSupabaseConnector(
+        PlatformAccountContext(
+            account_id="tg-1",
+            platform="tiangong",
+            alias="TianGong",
+            base_url="https://tg.example",
+            auth_type="bearer",
+            credential={"token": "test-token"},
+            metadata={"publishable_key": "pub-key"},
+        )
+    )
+    monkeypatch.setattr(
+        connector,
+        "_invoke_function",
+        lambda _name, _payload: {
+            "data": [
+                {"id": "process-1", "name": "Diesel process", "version": "1", "total_count": 200},
+                {"id": "process-2", "name": "Unrelated process", "version": "1", "total_count": 200},
+            ]
+        },
+    )
+
+    result = connector.search_processes("diesel", page=1, page_size=10)
+
+    assert len(result.items) == 1
+    assert result.total == 200
+    assert result.has_more is True
+
+
+def test_process_search_skips_localized_fallback_when_primary_has_results(client, monkeypatch):
+    account_id = _create_mock_account(client)
+    calls: list[str] = []
+
+    class FakeConnector:
+        def search_processes(self, term, **_kwargs):
+            calls.append(term)
+            return RemotePageDTO(
+                items=[RemoteProcessDTO(remote_id="process-1", process_uuid="process-1", process_name="Primary result")],
+                total=200,
+                page=1,
+                page_size=10,
+                has_more=True,
+            )
+
+    monkeypatch.setattr("app.api.data_platforms._process_search_terms", lambda _db, _q: ["primary", "fallback"])
+    monkeypatch.setattr("app.api.data_platforms.connector_for_account", lambda _account: FakeConnector())
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/processes/search?q=primary&page_size=10")
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 200
+    assert response.json()["has_more"] is True
+    assert calls == ["primary"]
+
+
 def test_tiangong_search_v1_fallback_uses_exact_six_parameter_contract(client, monkeypatch):
     calls = _install_fake_tiangong_http(monkeypatch, legacy_search_404=True, indexed_search_404=True)
     account_id = _create_tiangong_account(client)
@@ -1164,6 +1246,37 @@ def test_sync_process_writes_catalog_and_is_idempotent(client):
         assert db.query(FlowRecord).count() == 2
         assert db.query(DataPlatformSyncJob).count() == 2
         assert db.query(ExternalDataSyncRecord).count() == 3
+    finally:
+        db.close()
+
+
+def test_sync_record_upsert_reuses_pending_record(client):
+    account_id = _create_mock_account(client)
+    db = _db_module.SessionLocal()
+    try:
+        account = db.get(DataPlatformAccount, account_id)
+        first = _upsert_sync_record(
+            db,
+            account=account,
+            local_kind="unit_group",
+            local_uuid="Units of mass",
+            remote_id="unit-group-1",
+            remote_version="1",
+        )
+        second = _upsert_sync_record(
+            db,
+            account=account,
+            local_kind="unit_group",
+            local_uuid="Units of mass",
+            remote_id="unit-group-1",
+            remote_version="2",
+        )
+        db.commit()
+
+        assert first["local_uuid"] == second["local_uuid"]
+        rows = db.query(ExternalDataSyncRecord).filter(ExternalDataSyncRecord.local_kind == "unit_group").all()
+        assert len(rows) == 1
+        assert rows[0].remote_version == "2"
     finally:
         db.close()
 
