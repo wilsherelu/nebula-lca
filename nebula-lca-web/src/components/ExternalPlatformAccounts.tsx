@@ -80,6 +80,7 @@ type RemoteSyncResponse = {
 };
 
 type RemoteSyncError = Error & {
+  code?: string;
   failedFlowUuid?: string | null;
   rolledBack?: boolean;
 };
@@ -151,12 +152,13 @@ const requestJson = async <T,>(url: string, init?: RequestInit): Promise<T> => {
   const resp = await fetch(url, init);
   if (!resp.ok) {
     const payload = (await resp.json().catch(() => ({}))) as {
-      detail?: { message?: string; failed_flow_uuid?: string | null; rolled_back?: boolean } | string;
+      detail?: { code?: string; message?: string; failed_flow_uuid?: string | null; rolled_back?: boolean } | string;
       message?: string;
     };
     const detail = typeof payload.detail === "string" ? payload.detail : payload.detail?.message;
     const error = new Error(detail ?? payload.message ?? `HTTP ${resp.status}`) as RemoteSyncError;
     if (typeof payload.detail === "object" && payload.detail !== null) {
+      error.code = payload.detail.code;
       error.failedFlowUuid = payload.detail.failed_flow_uuid;
       error.rolledBack = payload.detail.rolled_back;
     }
@@ -379,8 +381,13 @@ export function ExternalPlatformAccounts(props: Props) {
       setRemotePreview(null);
       setRemotePage(payload.page);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "search failed";
-      setErrorText(zh ? `远程查询失败：${message}` : `Remote search failed: ${message}`);
+      const requestError = error as RemoteSyncError;
+      if (requestError.code === "DATA_PLATFORM_CONNECTOR_ERROR") {
+        setErrorText(zh ? "天工远程检索暂时不可用，请稍后重试。" : "TianGong remote search is temporarily unavailable. Please retry later.");
+      } else {
+        const message = error instanceof Error ? error.message : "search failed";
+        setErrorText(zh ? `远程查询失败：${message}` : `Remote search failed: ${message}`);
+      }
     } finally {
       setRemoteLoading(false);
     }

@@ -431,7 +431,16 @@ def _unitgroup_row():
     }
 
 
-def _install_fake_tiangong_http(monkeypatch, *, invalid_model: bool = False, refresh_fails: bool = False, new_search_404: bool = False, legacy_search_404: bool = False):
+def _install_fake_tiangong_http(
+    monkeypatch,
+    *,
+    invalid_model: bool = False,
+    refresh_fails: bool = False,
+    hybrid_search_404: bool = True,
+    indexed_search_404: bool = False,
+    v1_search_404: bool = False,
+    legacy_search_404: bool = False,
+):
     calls = []
 
     def fake_urlopen(req, timeout=20):  # noqa: ARG001
@@ -446,6 +455,11 @@ def _install_fake_tiangong_http(monkeypatch, *, invalid_model: bool = False, ref
         if "/functions/v1/app_dataset_create" in url:
             body = json.loads(req.data.decode("utf-8")) if req.data else {}
             return _FakeSupabaseResponse({"id": body.get("id"), "version": "01.01.000", "table": body.get("table"), "state_code": 0, "rule_verification": body.get("ruleVerification")})
+        if any(f"/functions/v1/{name}" in url for name in ("flow_hybrid_search", "process_hybrid_search", "lifecyclemodel_hybrid_search")):
+            if hybrid_search_404:
+                raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
+            kind = "flow" if "flow_hybrid_search" in url else "process" if "process_hybrid_search" in url else "model"
+            return _FakeSupabaseResponse({"data": [{"id": f"{kind}-1", "name": f"Remote {kind}", "version": "1", "total_count": 1}]})
         if "/rest/v1/rpc/get_latest_flow_versions" in url:
             return _FakeSupabaseResponse([{"id": "flow-1", "name": "Remote flow", "version": "1", "total_count": 1}])
         if "/rest/v1/rpc/get_latest_process_versions" in url:
@@ -453,15 +467,27 @@ def _install_fake_tiangong_http(monkeypatch, *, invalid_model: bool = False, ref
         if "/rest/v1/rpc/get_latest_lifecyclemodel_versions" in url:
             return _FakeSupabaseResponse([{"id": "model-1", "name": "Remote model", "version": "1", "total_count": 1}])
         if "/rest/v1/rpc/pgroonga_search_flows_v1" in url:
-            if new_search_404:
+            if v1_search_404:
                 raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
             return _FakeSupabaseResponse([{"id": "flow-1", "name": "Remote flow", "version": "1", "total_count": 1}])
         if "/rest/v1/rpc/pgroonga_search_processes_v1" in url:
-            if new_search_404:
+            if v1_search_404:
                 raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
             return _FakeSupabaseResponse([{"id": "process-1", "name": "Remote process", "version": "1", "total_count": 1}])
         if "/rest/v1/rpc/pgroonga_search_lifecyclemodels_v1" in url:
-            if new_search_404:
+            if v1_search_404:
+                raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
+            return _FakeSupabaseResponse([{"id": "model-1", "name": "Remote model", "version": "1", "total_count": 1}])
+        if "/rest/v1/rpc/pgroonga_search_flows_latest" in url:
+            if indexed_search_404:
+                raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
+            return _FakeSupabaseResponse([{"id": "flow-1", "name": "Remote flow", "version": "1", "total_count": 1}])
+        if "/rest/v1/rpc/pgroonga_search_processes_latest" in url:
+            if indexed_search_404:
+                raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
+            return _FakeSupabaseResponse([{"id": "process-1", "name": "Remote process", "version": "1", "total_count": 1}])
+        if "/rest/v1/rpc/pgroonga_search_lifecyclemodels_latest" in url:
+            if indexed_search_404:
                 raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
             return _FakeSupabaseResponse([{"id": "model-1", "name": "Remote model", "version": "1", "total_count": 1}])
         if "/rest/v1/rpc/search_flows_latest" in url:
@@ -953,7 +979,7 @@ def test_tiangong_preview_reads_detail_without_importing(client, monkeypatch):
         db.close()
 
 
-def test_tiangong_search_falls_back_to_pgroonga_rpc_on_latest_search_rpc_404(client, monkeypatch):
+def test_tiangong_search_falls_back_to_indexed_latest_rpc_on_latest_search_rpc_404(client, monkeypatch):
     calls = _install_fake_tiangong_http(monkeypatch, legacy_search_404=True)
     account_id = _create_tiangong_account(client)
 
@@ -962,19 +988,61 @@ def test_tiangong_search_falls_back_to_pgroonga_rpc_on_latest_search_rpc_404(cli
     assert response.status_code == 200
     assert response.json()["items"][0]["flow_uuid"] == "flow-1"
     assert any("/rest/v1/rpc/search_flows_latest" in call["url"] for call in calls)
-    assert any("/rest/v1/rpc/pgroonga_search_flows_v1" in call["url"] for call in calls)
+    assert any("/rest/v1/rpc/pgroonga_search_flows_latest" in call["url"] for call in calls)
 
 
-def test_tiangong_search_reports_attempted_rpcs_when_all_search_rpcs_fail(client, monkeypatch):
-    _install_fake_tiangong_http(monkeypatch, new_search_404=True, legacy_search_404=True)
+def test_tiangong_search_prefers_current_hybrid_function_contract(client, monkeypatch):
+    calls = _install_fake_tiangong_http(monkeypatch, hybrid_search_404=False)
+    account_id = _create_tiangong_account(client)
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/flows/search?q=remote&page=2&page_size=10")
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["flow_uuid"] == "flow-1"
+    search_call = next(call for call in calls if "/functions/v1/flow_hybrid_search" in call["url"])
+    assert json.loads(search_call["body"]) == {
+        "query": "remote",
+        "filter_condition": {},
+        "data_source": "tg",
+        "page_size": 10,
+        "page_current": 2,
+        "state_code": 100,
+    }
+    assert not any("/rest/v1/rpc/search_flows_latest" in call["url"] for call in calls)
+
+
+def test_tiangong_search_v1_fallback_uses_exact_six_parameter_contract(client, monkeypatch):
+    calls = _install_fake_tiangong_http(monkeypatch, legacy_search_404=True, indexed_search_404=True)
+    account_id = _create_tiangong_account(client)
+
+    response = client.get(f"/api/data-platforms/accounts/{account_id}/flows/search?q=remote&page=1&page_size=10")
+
+    assert response.status_code == 200
+    search_call = next(call for call in calls if "/rest/v1/rpc/pgroonga_search_flows_v1" in call["url"])
+    assert json.loads(search_call["body"]) == {
+        "query_text": "remote",
+        "filter_condition": "{}",
+        "order_by": "{}",
+        "page_size": 10,
+        "page_current": 1,
+        "data_source": "tg",
+    }
+
+
+def test_tiangong_search_returns_concise_error_when_all_search_endpoints_fail(client, monkeypatch):
+    _install_fake_tiangong_http(
+        monkeypatch,
+        indexed_search_404=True,
+        v1_search_404=True,
+        legacy_search_404=True,
+    )
     account_id = _create_tiangong_account(client)
 
     response = client.get(f"/api/data-platforms/accounts/{account_id}/flows/search?q=remote&page=1&page_size=10")
 
     assert response.status_code == 502
     assert response.json()["detail"]["code"] == "DATA_PLATFORM_CONNECTOR_ERROR"
-    assert "search_flows_latest" in response.json()["detail"]["message"]
-    assert "pgroonga_search_flows_v1" in response.json()["detail"]["message"]
+    assert response.json()["detail"]["message"] == "TianGong remote search is temporarily unavailable. Please retry later."
 
 
 def test_tiangong_expired_session_refreshes_then_falls_back_to_password(client, monkeypatch):
