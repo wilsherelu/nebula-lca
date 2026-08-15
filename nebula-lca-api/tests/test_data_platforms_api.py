@@ -1132,6 +1132,57 @@ def test_tiangong_search_keeps_remote_total_after_local_rerank(monkeypatch):
     assert result.has_more is True
 
 
+def test_tiangong_search_retries_query_parts_when_remote_page_has_no_full_match(monkeypatch):
+    connector = TianGongSupabaseConnector(
+        PlatformAccountContext(
+            account_id="tg-1",
+            platform="tiangong",
+            alias="TianGong",
+            base_url="https://tg.example",
+            auth_type="bearer",
+            credential={"token": "test-token"},
+            metadata={"publishable_key": "pub-key"},
+        )
+    )
+    queries: list[str] = []
+
+    def fake_search(_name, payload):
+        query = str(payload["query"])
+        queries.append(query)
+        if query == "交流电生产 水力发电":
+            return {"data": [{"id": "unrelated", "name": "交流电生产; 燃煤发电", "version": "1", "total_count": 96}]}
+        if query == "水力发电":
+            return {
+                "data": [
+                    {
+                        "id": "hydro",
+                        "version": "1",
+                        "json": {
+                            "processDataSet": {
+                                "processInformation": {
+                                    "dataSetInformation": {
+                                        "name": {
+                                            "baseName": [{"@xml:lang": "zh", "#text": "交流电生产"}],
+                                            "treatmentStandardsRoutes": [{"@xml:lang": "zh", "#text": "水力发电"}],
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                    }
+                ]
+            }
+        return {"data": []}
+
+    monkeypatch.setattr(connector, "_invoke_function", fake_search)
+
+    result = connector.search_processes("交流电生产; 水力发电", page=1, page_size=10)
+
+    assert [item.process_uuid for item in result.items] == ["hydro"]
+    assert result.total == 1
+    assert queries == ["交流电生产 水力发电", "水力发电"]
+
+
 def test_process_search_skips_localized_fallback_when_primary_has_results(client, monkeypatch):
     account_id = _create_mock_account(client)
     calls: list[str] = []

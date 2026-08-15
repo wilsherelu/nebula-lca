@@ -429,6 +429,7 @@ def _build_imported_process_ports(
     *,
     exchanges: list[dict],
     flow_meta_by_uuid: dict[str, tuple[str | None, str | None, str | None, str | None, str | None]],
+    unit_names_by_group: dict[str, set[str]] | None = None,
 ) -> tuple[list[ImportedProcessPortItem], list[ImportedProcessPortItem]]:
     from ..schemas import flow_semantic_to_exchange_type
 
@@ -452,6 +453,9 @@ def _build_imported_process_ports(
             unit = unit or db_unit
             flow_type = flow_type or db_flow_type
             unit_group = _safe_str(db_unit_group)
+            valid_units = (unit_names_by_group or {}).get((unit_group or "").casefold(), set())
+            if unit and db_unit and valid_units and unit.casefold() not in valid_units:
+                unit = db_unit
 
         try:
             amount = float(ex.get("amount") or 0.0)

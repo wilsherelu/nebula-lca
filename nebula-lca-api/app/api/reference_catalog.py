@@ -20,7 +20,7 @@ from sqlalchemy import func as func_raw
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import ExternalDataSyncRecord, FlowRecord, LciProcessVector, ReferenceProcess
+from ..models import ExternalDataSyncRecord, FlowRecord, LciProcessVector, ReferenceProcess, UnitDefinition
 from ..schemas import (
     FilteredExchangeEvidence,
     ImportedProcessDetail,
@@ -214,6 +214,12 @@ def import_reference_processes(
 
     valid_flow_uuids = _rc._flow_uuid_set_cached(db)
     flow_meta_by_uuid = _flow_meta_by_uuid_cached(db)
+    unit_names_by_group: dict[str, set[str]] = {}
+    for row in db.query(UnitDefinition.unit_group, UnitDefinition.unit_name).all():
+        unit_group = str(row.unit_group or "").strip().casefold()
+        unit_name = str(row.unit_name or "").strip().casefold()
+        if unit_group and unit_name:
+            unit_names_by_group.setdefault(unit_group, set()).add(unit_name)
     imported_process_count = 0
     filtered_exchanges: list[FilteredExchangeEvidence] = []
     warning_by_process: dict[str, list[str]] = {}
@@ -360,6 +366,7 @@ def import_reference_processes(
         inputs, outputs = _build_imported_process_ports(
             exchanges=kept_exchanges,
             flow_meta_by_uuid=flow_meta_by_uuid,
+            unit_names_by_group=unit_names_by_group,
         )
         imported_processes.append(
             ImportedProcessDetail(
