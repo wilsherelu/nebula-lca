@@ -1,0 +1,11 @@
+{
+  "dataset_version": "1.0.0",
+  "elementary_mapping_count": 9764,
+  "forbidden_public_fields": 0,
+  "intermediate_mapping_count": 1379,
+  "l1_bilateral_uniqueness": true,
+  "l3_included": false,
+  "status": "passed",
+  "tiangong_uuid_uniqueness_per_scope": true,
+  "total_mapping_count": 11143
+}

@@ -1,0 +1,33 @@
+{
+  "dataset_version": "1.0.0",
+  "elementary": {
+    "file": "data/elementary-flow-mappings.v1.jsonl",
+    "global_l1_collision_rows_demoted_to_l2": 54,
+    "mapping_count": 9764,
+    "mapping_levels": {
+      "L1": 6354,
+      "L2": 3410
+    },
+    "sha256": "131644486ea0da02fc8585d33a292aeadb0be154924d92263e4f394cf6d2a4e8"
+  },
+  "forbidden_content_included": false,
+  "intermediate": {
+    "file": "data/intermediate-flow-mappings.v1.jsonl",
+    "global_l1_collision_rows_demoted_to_l2": 30,
+    "mapping_count": 1379,
+    "mapping_levels": {
+      "L1": 147,
+      "L2": 1232
+    },
+    "sha256": "9b5c09b084664b24ae7d579fd8df408d011d58408655fae968120e4f0adc6a88"
+  },
+  "l3_included": false,
+  "license": "CC-BY-4.0",
+  "mapping_direction": "TIANGONG_TO_ECOINVENT",
+  "release_date": "2026-08-05",
+  "schema_version": "nebula-flow-mapping-release.v1",
+  "source_compatibility": {
+    "ecoinvent_release": "3.11",
+    "internal_certification_release": "2.19.0"
+  }
+}

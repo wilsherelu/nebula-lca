@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 from dataclasses import dataclass, replace
 from difflib import SequenceMatcher
@@ -25,14 +23,13 @@ from ..models import (
 )
 from ..schemas import HybridGraph, IntermediateFlowLink
 from ..source_policy import SOURCE_SPACE_TIANGONG, classify_flow_source
-
-
-DEFAULT_PACKAGE_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "data"
-    / "flow_mappings"
-    / "intermediate_tiangong_to_ecoinvent_v2.json"
+from .public_flow_mapping_service import (
+    DEFAULT_PUBLIC_MAPPING_ROOT,
+    PublicFlowMappingRegistry,
 )
+
+
+DEFAULT_PACKAGE_PATH = DEFAULT_PUBLIC_MAPPING_ROOT
 
 
 def _normalized_name(value: object) -> str:
@@ -99,102 +96,43 @@ class IntermediateFlowResolution:
 
 class IntermediateFlowLinkRegistry:
     def __init__(self, path: Path = DEFAULT_PACKAGE_PATH):
-        raw = path.read_bytes()
-        payload = json.loads(raw.decode("utf-8"))
-        direction = payload.get("link_direction") or payload.get("direction")
-        if direction != "tiangong_to_ecoinvent":
-            raise ValueError("intermediate-flow package has an unsupported direction")
-        rows = payload.get("rules") or payload.get("mappings")
-        if not isinstance(rows, list) or not rows:
-            raise ValueError("intermediate-flow package contains no rules")
-        unit_group_contracts = payload.get("unit_group_contracts")
-        if not isinstance(unit_group_contracts, dict) or not unit_group_contracts:
-            raise ValueError("intermediate-flow package contains no unit-group contracts")
-        indexed: dict[str, dict[str, Any]] = {}
-        for row in rows:
-            if not isinstance(row, dict) or row.get("review_status") not in {"approved", "approved_with_warning"}:
-                raise ValueError("intermediate-flow package contains an unapproved rule")
-            mapping_level = str(row.get("mapping_level") or "")
-            application_mode = str(row.get("application_mode") or "strict_identity")
-            if mapping_level == "L1" and application_mode != "strict_identity":
-                raise ValueError("L1 intermediate-flow rules must use strict_identity")
-            if mapping_level == "L2" and application_mode != "auto_compatible":
-                raise ValueError("L2 intermediate-flow rules must use auto_compatible")
-            if mapping_level not in {"L1", "L2"}:
-                raise ValueError("built-in intermediate-flow rules must be L1 or L2")
-            if mapping_level == "L2" and not row.get("warnings"):
-                raise ValueError("auto-compatible intermediate-flow rules require warnings")
-            source_uuid = str(row.get("source_flow_uuid") or "").strip()
-            target_uuid = str(row.get("target_flow_uuid") or "").strip()
-            if not source_uuid or not target_uuid or source_uuid in indexed:
-                raise ValueError("intermediate-flow package has invalid or duplicate UUIDs")
-            source_flow_type = _flow_type_key(row.get("source_flow_type"))
-            target_flow_type = _flow_type_key(row.get("target_flow_type"))
-            flow_subtype_override = bool(row.get("flow_subtype_override"))
-            if source_flow_type != target_flow_type:
-                if (
-                    mapping_level != "L2"
-                    or not flow_subtype_override
-                    or "FLOW_SUBTYPE_OVERRIDE" not in (row.get("warnings") or [])
-                    or not re.fullmatch(
-                        r"[0-9a-f]{64}",
-                        str(row.get("evidence_sha256") or ""),
-                    )
-                ):
-                    raise ValueError(f"flow type mismatch in rule {row.get('rule_id')}")
-            elif flow_subtype_override:
-                raise ValueError(f"unnecessary flow subtype override in rule {row.get('rule_id')}")
-            unit_dimension = str(row.get("unit_dimension") or "").strip()
-            contract = unit_group_contracts.get(unit_dimension)
-            if not isinstance(contract, dict):
-                raise ValueError(f"unit-group contract missing in rule {row.get('rule_id')}")
-            source_unit_group = str(contract.get("source_unit_group") or "").strip()
-            target_unit_group = str(contract.get("target_unit_group") or "").strip()
-            if not source_unit_group or not target_unit_group:
-                raise ValueError(f"unit group missing in rule {row.get('rule_id')}")
-            if _unit_group_key(source_unit_group) != _unit_group_key(target_unit_group):
-                raise ValueError(f"unit group mismatch in rule {row.get('rule_id')}")
-            if float(row.get("amount_factor") or 0) <= 0:
-                raise ValueError(f"invalid amount factor in rule {row.get('rule_id')}")
-            indexed[source_uuid] = {
-                **row,
-                "source_unit_group": source_unit_group,
-                "target_unit_group": target_unit_group,
-            }
+        public = PublicFlowMappingRegistry(path)
         self.path = path
-        self.package_id = str(payload["package_id"])
-        self.package_version = str(payload.get("package_version") or payload.get("version"))
-        self.package_hash = hashlib.sha256(raw).hexdigest()
-        self.rules = indexed
+        self.package_id = public.package_id
+        self.package_version = public.package_version
+        self.package_hash = public.package_hash
+        self.rules = public.intermediate
+        self._public = public
 
     def resolve(self, flow_uuid: str) -> IntermediateFlowResolution | None:
-        row = self.rules.get(str(flow_uuid or "").strip())
+        row = self._public.resolve_intermediate(flow_uuid)
         if row is None:
             return None
+        is_l2 = row.mapping_level == "L2"
         return IntermediateFlowResolution(
-            source_flow_uuid=str(row["source_flow_uuid"]),
-            target_flow_uuid=str(row["target_flow_uuid"]),
-            amount_factor=float(row["amount_factor"]),
-            source_unit=str(row["source_unit"]),
-            target_unit=str(row["target_unit"]),
-            source_unit_group=str(row["source_unit_group"]),
-            target_unit_group=str(row["target_unit_group"]),
-            source_flow_type=str(row["source_flow_type"]),
-            target_flow_type=str(row["target_flow_type"]),
-            mapping_level=str(row["mapping_level"]),
+            source_flow_uuid=row.tiangong_flow_uuid,
+            target_flow_uuid=row.ecoinvent_flow_uuid,
+            amount_factor=row.amount_factor,
+            source_unit=row.source_unit,
+            target_unit=row.target_unit,
+            source_unit_group=None,
+            target_unit_group=None,
+            source_flow_type=None,
+            target_flow_type=None,
+            mapping_level=row.mapping_level,
             mapping_reason=(
                 "approved_one_way_reference_product_link"
-                if row["mapping_level"] == "L1"
+                if row.mapping_level == "L1"
                 else "approved_one_way_compatible_reference_product_link"
             ),
-            rule_id=str(row["rule_id"]),
+            rule_id=f"nebula-flow-mapping-v1:intermediate:{row.tiangong_flow_uuid}",
             rule_origin="builtin",
             package_id=self.package_id,
             package_version=self.package_version,
             package_hash=self.package_hash,
-            application_mode=str(row.get("application_mode") or "strict_identity"),
-            flow_subtype_override=bool(row.get("flow_subtype_override")),
-            warnings=tuple(str(item) for item in row.get("warnings") or []),
+            application_mode="auto_compatible" if is_l2 else "strict_identity",
+            flow_subtype_override=is_l2,
+            warnings=("MANUAL_CONFIRMATION_RECOMMENDED",) if is_l2 else (),
         )
 
 
@@ -393,8 +331,14 @@ def validate_intermediate_flow_link(
             or (
                 expected.flow_subtype_override
                 and (
-                    link.source_flow_type != expected.source_flow_type
-                    or link.target_flow_type != expected.target_flow_type
+                    (
+                        expected.source_flow_type is not None
+                        and link.source_flow_type != expected.source_flow_type
+                    )
+                    or (
+                        expected.target_flow_type is not None
+                        and link.target_flow_type != expected.target_flow_type
+                    )
                 )
             )
             or tuple(link.warnings) != expected.warnings

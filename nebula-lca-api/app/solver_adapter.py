@@ -10,6 +10,7 @@ from urllib import request, error
 from .config import WORKSPACE_ROOT, settings
 from .schemas import HybridGraph
 from .solver import to_tiangong_like
+from .services.public_flow_mapping_service import apply_elementary_mappings_to_snapshot
 
 
 def _ensure_embedded_solver_core() -> None:
@@ -169,14 +170,17 @@ def run_tiangong_lcia(
         flow_type_by_uuid=flow_type_by_uuid,
         flow_source_by_uuid=flow_source_by_uuid,
     )
+    elementary_mapping_trace = apply_elementary_mappings_to_snapshot(snapshot)
     payload = json.dumps(
         {"snapshot": snapshot, "lcia_methods": lcia_methods or ["EF v3.1"]},
         ensure_ascii=False,
     ).encode("utf-8")
     if settings.desktop_mode:
+        solver_output = _run_embedded_lcia(snapshot, lcia_methods or ["EF v3.1"])
+        solver_output["elementary_flow_mappings"] = elementary_mapping_trace
         return {
             "tiangong_like_input": snapshot,
-            "solver_output": _run_embedded_lcia(snapshot, lcia_methods or ["EF v3.1"]),
+            "solver_output": solver_output,
         }
     api_url = settings.nebula_lca_solver_api_url.rstrip("/") + "/v1/lcia"
     req = request.Request(
@@ -196,7 +200,7 @@ def run_tiangong_lcia(
 
     return {
         "tiangong_like_input": snapshot,
-        "solver_output": data,
+        "solver_output": {**data, "elementary_flow_mappings": elementary_mapping_trace},
     }
 
 

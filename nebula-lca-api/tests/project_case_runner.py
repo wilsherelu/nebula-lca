@@ -28,6 +28,7 @@ from app.models import (
     UnitGroup,
 )
 from app.services.catalog_cache import invalidate_management_caches
+from app.services.public_flow_mapping_service import get_public_flow_mapping_registry
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -336,7 +337,14 @@ def solver_server(runtime_root: Path):
     legacy_dir = LEGACY_EF31_DIR
     eco_dir = runtime_root / "eco"
     eco_dir.mkdir(parents=True, exist_ok=True)
-    _write_runtime(eco_dir, {"flow-eco-ch4": 27.0}, method_name="EF v3.1")
+    _write_runtime(
+        eco_dir,
+        {
+            "349b29d1-3e58-4c66-98b9-9d1a076efd2e": 1.0,
+            "flow-eco-ch4": 27.0,
+        },
+        method_name="EF v3.1",
+    )
 
     port = _free_port()
     env = {
@@ -395,7 +403,9 @@ def assert_case_result(result: dict) -> None:
     assert len(snapshot["processes"]) == snap_expected.get(snapshot_process_key, snap_expected.get("process_count", 0))
     assert len(snapshot["links"]) == snap_expected.get("link_count", 0)
     for flow_uuid in snap_expected.get("required_flow_uuids", []):
-        assert any(flow.get("flow_uuid") == flow_uuid for flow in snapshot["flows"])
+        mapping = get_public_flow_mapping_registry().resolve_elementary(flow_uuid)
+        expected_flow_uuid = mapping.ecoinvent_flow_uuid if mapping is not None else flow_uuid
+        assert any(flow.get("flow_uuid") == expected_flow_uuid for flow in snapshot["flows"])
 
     climate_index = _indicator_index_by_category(lci_result["indicator_index"], "climate change")
     process_index = lci_result["process_index"]
