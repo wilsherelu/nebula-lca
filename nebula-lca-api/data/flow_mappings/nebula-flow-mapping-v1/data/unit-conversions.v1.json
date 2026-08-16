@@ -1,0 +1,21 @@
+{
+  "conversions": [
+    {
+      "conversion_rule_id": "energy-mj-to-kwh",
+      "dimension": "energy",
+      "multiplier": 0.2777777777777778,
+      "source_unit": "MJ",
+      "target_unit": "kWh"
+    },
+    {
+      "conversion_rule_id": "freight-kgkm-to-metric-ton-km",
+      "dimension": "freight_transport_work",
+      "multiplier": 0.001,
+      "source_unit": "kg*km",
+      "target_unit": "metric ton*km"
+    }
+  ],
+  "license": "CC-BY-4.0",
+  "schema_version": "nebula-standard-unit-conversions.v1",
+  "scope": "independently maintained standard physical unit conversions"
+}

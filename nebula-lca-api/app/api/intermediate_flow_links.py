@@ -22,11 +22,6 @@ from ..services.intermediate_flow_linking_service import (
     resolve_intermediate_flow,
     validate_intermediate_flow_link,
 )
-from ..services.intermediate_flow_canonical_service import (
-    get_intermediate_flow_canonical_registry,
-)
-
-
 api_router = APIRouter(prefix="/api/intermediate-flow-links", tags=["intermediate-flow-links"])
 
 
@@ -191,24 +186,6 @@ def get_providers(
         "total": len(providers),
         "auto_selected": False,
     }
-
-
-@api_router.get("/canonical/{flow_uuid}")
-def get_canonical_tidas_flow(flow_uuid: str) -> dict[str, Any]:
-    try:
-        registry = get_intermediate_flow_canonical_registry()
-    except (OSError, ValueError) as exc:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "INTERMEDIATE_FLOW_CANONICAL_PACKAGE_UNAVAILABLE", "message": str(exc)},
-        ) from exc
-    resolution = registry.resolve(flow_uuid)
-    if resolution is None:
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "INTERMEDIATE_FLOW_CANONICAL_MAPPING_MISSING", "flow_uuid": flow_uuid},
-        )
-    return resolution.to_dict()
 
 
 @api_router.get("/user-rules")

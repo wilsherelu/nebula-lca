@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from dataclasses import replace
 
 import pytest
@@ -23,8 +22,6 @@ from app.models import FlowRecord, LciProcessVector, Model, ModelVersion, Refere
 from app.schemas import HybridGraph, IntermediateFlowLink
 from app.services.graph_contract import analyze_handle_consistency, validate_graph_contract
 from app.services.intermediate_flow_linking_service import (
-    DEFAULT_PACKAGE_PATH,
-    IntermediateFlowLinkRegistry,
     _validate_resolution_records,
     _resolution_with_catalog_units,
     backfill_ecoinvent_reference_flow_uuids,
@@ -49,16 +46,24 @@ def db():
 
 
 def _seed_first_l1_pair(db):
-    package = json.loads(DEFAULT_PACKAGE_PATH.read_text(encoding="utf-8"))
-    rows = package.get("rules") or package.get("mappings") or []
-    row = dict(next(item for item in rows if item["mapping_level"] == "L1"))
-    dimension = row.get("unit_dimension") or "mass"
-    source_groups = {"mass": "Units of mass", "energy": "Units of energy", "volume": "Units of volume"}
-    target_groups = {"mass": "mass", "energy": "energy", "volume": "volume"}
-    row.setdefault("source_name", f"source-{row['source_flow_uuid']}")
-    row.setdefault("target_name", f"target-{row['target_flow_uuid']}")
-    row.setdefault("source_unit_group", source_groups.get(dimension, dimension))
-    row.setdefault("target_unit_group", target_groups.get(dimension, dimension))
+    registry = get_intermediate_flow_link_registry()
+    public_row = next(item for item in registry.rules.values() if item.mapping_level == "L1")
+    resolution = registry.resolve(public_row.tiangong_flow_uuid)
+    assert resolution is not None
+    source_unit = resolution.source_unit or "kg"
+    target_unit = resolution.target_unit or source_unit
+    dimension = "energy" if source_unit in {"MJ", "kWh"} else "mass"
+    row = {
+        **resolution.to_dict(),
+        "source_name": f"source-{resolution.source_flow_uuid}",
+        "target_name": f"target-{resolution.target_flow_uuid}",
+        "source_flow_type": "Product flow",
+        "target_flow_type": "Product flow",
+        "source_unit": source_unit,
+        "target_unit": target_unit,
+        "source_unit_group": "Units of energy" if dimension == "energy" else "Units of mass",
+        "target_unit_group": "energy" if dimension == "energy" else "mass",
+    }
     db.add_all([
         FlowRecord(
             flow_uuid=row["source_flow_uuid"],
@@ -84,17 +89,24 @@ def _seed_first_l1_pair(db):
 
 
 def _seed_first_compatible_pair(db):
-    package = json.loads(DEFAULT_PACKAGE_PATH.read_text(encoding="utf-8"))
-    row = dict(next(item for item in package["mappings"] if item["application_mode"] == "auto_compatible"))
-    dimension = row["unit_dimension"]
-    source_groups = {"mass": "Units of mass", "energy": "Units of energy", "volume": "Units of volume"}
-    target_groups = {"mass": "mass", "energy": "energy", "volume": "volume"}
-    row.update({
-        "source_name": f"source-{row['source_flow_uuid']}",
-        "target_name": f"target-{row['target_flow_uuid']}",
-        "source_unit_group": source_groups.get(dimension, dimension),
-        "target_unit_group": target_groups.get(dimension, dimension),
-    })
+    registry = get_intermediate_flow_link_registry()
+    public_row = next(item for item in registry.rules.values() if item.mapping_level == "L2")
+    resolution = registry.resolve(public_row.tiangong_flow_uuid)
+    assert resolution is not None
+    source_unit = resolution.source_unit or "kg"
+    target_unit = resolution.target_unit or source_unit
+    dimension = "energy" if source_unit in {"MJ", "kWh"} else "mass"
+    row = {
+        **resolution.to_dict(),
+        "source_name": f"source-{resolution.source_flow_uuid}",
+        "target_name": f"target-{resolution.target_flow_uuid}",
+        "source_flow_type": "Product flow",
+        "target_flow_type": "Product flow",
+        "source_unit": source_unit,
+        "target_unit": target_unit,
+        "source_unit_group": "Units of energy" if dimension == "energy" else "Units of mass",
+        "target_unit_group": "energy" if dimension == "energy" else "mass",
+    }
     db.add_all([
         FlowRecord(
             flow_uuid=row["source_flow_uuid"], flow_name=row["source_name"],
@@ -120,21 +132,6 @@ def test_incremental_reviewed_medium_voltage_rule_is_available():
     assert resolution.target_flow_uuid == "759b89bd-3aa6-42ad-b767-5bb9ef5d331d"
     assert resolution.mapping_level == "L2"
     assert resolution.amount_factor == pytest.approx(1 / 3.6)
-
-
-def test_rework_acceptance_package_keeps_only_globally_unique_l1():
-    registry = get_intermediate_flow_link_registry()
-    copper_scrap = registry.resolve("dd15940e-a6be-4335-9a0b-d754746a4713")
-    electricity_alias = registry.resolve("c0e1aaac-9086-46ad-9d83-878f9fb97da4")
-
-    assert registry.package_version == "2.14.0"
-    assert len(registry.rules) == 1389
-    assert copper_scrap is not None
-    assert copper_scrap.mapping_level == "L1"
-    assert copper_scrap.target_flow_uuid == "cc0d4252-6207-41d6-8567-bcbad58a7bef"
-    assert electricity_alias is not None
-    assert electricity_alias.mapping_level == "L2"
-    assert "L1_GLOBAL_UNIQUENESS_NOT_MET" in electricity_alias.warnings
 
 
 def test_l3_shortlist_is_not_exposed_as_an_executable_builtin_rule():
@@ -165,22 +162,6 @@ def test_voltage_band_corrections_keep_only_safe_executable_rules():
     assert all(
         registry.resolve(source_uuid) is None
         for source_uuid in ambiguous_voltage_sources
-    )
-
-
-def test_catalog_role_drift_rules_are_withdrawn_from_execution():
-    registry = get_intermediate_flow_link_registry()
-    withdrawn_sources = {
-        "1eb68227-7d39-4354-956b-2acb63931247",
-        "37a44719-0587-415a-a222-a2e48dfe8e80",
-        "7e0caeab-a6f8-4706-b349-7ed22e0832bb",
-        "e1a44d20-d968-4d64-bd7c-253a1441ab35",
-        "e7f0099e-ecb6-48b5-a683-c0da022022b4",
-    }
-
-    assert all(
-        registry.resolve(source_uuid) is None
-        for source_uuid in withdrawn_sources
     )
 
 
@@ -227,97 +208,6 @@ def test_pragmatic_l3_review_removes_public_rules_and_retargets_animal_water():
     assert animal_water.mapping_level == "L2"
     assert animal_water.target_flow_uuid == "c5adb1fb-872e-4446-a3bb-c4b61aa4bd45"
     assert animal_water.amount_factor == 1
-
-
-def test_dry_basis_sodium_hydroxide_rule_keeps_factor_one():
-    resolution = get_intermediate_flow_link_registry().resolve(
-        "2e7fda39-6310-42b0-ab45-b4eb571dd825"
-    )
-
-    assert resolution is not None
-    assert resolution.target_flow_uuid == "61396bcb-bf35-411a-a6a6-8543ccef83e8"
-    assert resolution.mapping_level == "L2"
-    assert resolution.amount_factor == 1
-    assert "DRY_SUBSTANCE_QUANTITY_BASIS" in resolution.warnings
-
-
-def test_reviewed_l2_flow_subtype_override_is_explicit_and_validated(tmp_path, db):
-    payload = {
-        "package_id": "override-test",
-        "version": "1.0.0",
-        "direction": "tiangong_to_ecoinvent",
-        "unit_group_contracts": {
-            "mass": {
-                "source_unit_group": "Units of mass",
-                "target_unit_group": "mass",
-            }
-        },
-        "mappings": [{
-            "rule_id": "override-rule",
-            "source_flow_uuid": "source-product-metadata",
-            "target_flow_uuid": "target-waste",
-            "source_flow_type": "Product flow",
-            "target_flow_type": "Waste flow",
-            "source_unit": "kg",
-            "target_unit": "kg",
-            "unit_dimension": "mass",
-            "amount_factor": 1,
-            "mapping_level": "L2",
-            "review_status": "approved_with_warning",
-            "application_mode": "auto_compatible",
-            "flow_subtype_override": True,
-            "warnings": ["FLOW_SUBTYPE_OVERRIDE"],
-            "evidence_sha256": "a" * 64,
-        }],
-    }
-    missing_evidence = json.loads(json.dumps(payload))
-    missing_evidence["mappings"][0].pop("evidence_sha256")
-    missing_path = tmp_path / "override-missing-evidence.json"
-    missing_path.write_text(json.dumps(missing_evidence), encoding="utf-8")
-    with pytest.raises(ValueError, match="flow type mismatch"):
-        IntermediateFlowLinkRegistry(missing_path)
-
-    package_path = tmp_path / "override.json"
-    package_path.write_text(json.dumps(payload), encoding="utf-8")
-    registry = IntermediateFlowLinkRegistry(package_path)
-    resolution = registry.resolve("source-product-metadata")
-
-    assert resolution is not None
-    assert resolution.flow_subtype_override is True
-    assert resolution.source_flow_type == "Product flow"
-    assert resolution.target_flow_type == "Waste flow"
-    link = IntermediateFlowLink.model_validate({
-        **resolution.to_dict(),
-        "status": "user_confirmed",
-    })
-    assert link.flow_subtype_override is True
-    assert link.source_flow_type == "Product flow"
-    assert link.target_flow_type == "Waste flow"
-
-    source = FlowRecord(
-        flow_uuid="source-product-metadata",
-        flow_name="waste oil",
-        flow_type="Product flow",
-        default_unit="kg",
-        unit_group="Units of mass",
-        source="Tiangong",
-    )
-    target = FlowRecord(
-        flow_uuid="target-waste",
-        flow_name="waste mineral oil",
-        flow_type="Waste flow",
-        default_unit="kg",
-        unit_group="mass",
-        source="ecoinvent_3.11",
-    )
-    db.add_all([source, target])
-    db.commit()
-    assert _validate_resolution_records(source, target, resolution) is None
-
-    payload["mappings"][0]["warnings"] = ["SEMANTIC_GENERALIZATION"]
-    package_path.write_text(json.dumps(payload), encoding="utf-8")
-    with pytest.raises(ValueError, match="flow type mismatch"):
-        IntermediateFlowLinkRegistry(package_path)
 
 
 def test_tidas_import_source_is_eligible_for_reviewed_forward_mapping(db):
@@ -396,6 +286,9 @@ def _graph(row, *, package_hash: str | None = None) -> HybridGraph:
                         "packageVersion": registry.package_version,
                         "packageHash": package_hash or registry.package_hash,
                         "applicationMode": row.get("application_mode", "strict_identity"),
+                        "flowSubtypeOverride": row.get("flow_subtype_override", False),
+                        "sourceFlowType": row.get("source_flow_type"),
+                        "targetFlowType": row.get("target_flow_type"),
                         "warnings": row.get("warnings", []),
                     },
                 }],

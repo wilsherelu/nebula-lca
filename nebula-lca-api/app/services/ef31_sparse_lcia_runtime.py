@@ -17,6 +17,7 @@ from .ef31_runtime_csv import ACTIVE_MANIFEST_NAME, DEFAULT_EF31_RUNTIME_ROOT
 from .lci_runtime import expand_graph_lci_inventory, load_process_vectors
 from ..models import FlowRecord, LciBiosphereFlowKey
 from ..schemas import HybridGraph
+from .public_flow_mapping_service import apply_elementary_mappings_to_snapshot
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,7 @@ def try_run_hybrid_sparse_lcia(
         flow_type_by_uuid=flow_type_by_uuid,
         flow_source_by_uuid=flow_source_by_uuid,
     )
+    elementary_mapping_trace = apply_elementary_mappings_to_snapshot(snapshot)
     lci_process_set = set(process_uuids)
     if any(str(link.get("consumer_process_uuid") or "") in lci_process_set for link in snapshot.get("links", [])):
         return None
@@ -196,6 +198,7 @@ def try_run_hybrid_sparse_lcia(
         "issues": issues,
         "missing_ef31_flow_uuids": missing_flow_uuids,
         "missing_ef31_flows": missing_flows,
+        "elementary_flow_mappings": elementary_mapping_trace,
         "indicator_index": [
             {"indicator_index": index, **indicator_lookup.get(index, {})}
             for index in c_matrix["rows"]

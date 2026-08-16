@@ -1,0 +1,66 @@
+{
+  "$id": "https://nebula-flow-mapping.invalid/schema/public-flow-identifier-mapping.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "conversion_required": {
+      "type": "boolean"
+    },
+    "conversion_rule_id": {
+      "enum": [
+        null,
+        "energy-mj-to-kwh",
+        "freight-kgkm-to-metric-ton-km"
+      ],
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ecoinvent_flow_uuid": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "flow_scope": {
+      "enum": [
+        "INTERMEDIATE",
+        "ELEMENTARY"
+      ]
+    },
+    "manual_confirmation_recommended": {
+      "type": "boolean"
+    },
+    "mapping_direction": {
+      "const": "TIANGONG_TO_ECOINVENT"
+    },
+    "mapping_level": {
+      "enum": [
+        "L1",
+        "L2"
+      ]
+    },
+    "relationship": {
+      "enum": [
+        "STRICT_IDENTITY",
+        "REVIEWED_COMPATIBILITY"
+      ]
+    },
+    "tiangong_flow_uuid": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "conversion_required",
+    "conversion_rule_id",
+    "ecoinvent_flow_uuid",
+    "flow_scope",
+    "manual_confirmation_recommended",
+    "mapping_direction",
+    "mapping_level",
+    "relationship",
+    "tiangong_flow_uuid"
+  ],
+  "title": "Nebula public Flow identifier mapping",
+  "type": "object"
+}

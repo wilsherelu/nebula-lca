@@ -39,6 +39,7 @@ nebula-lca-api/dist/
 nebula-lca-desktop/resources/api/
 nebula-lca-desktop/resources/web/
 nebula-lca-desktop/release/
+nebula-lca-desktop/release-*/
 exports/
 outputs/
 reports/
