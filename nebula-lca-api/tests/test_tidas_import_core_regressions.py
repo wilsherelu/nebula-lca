@@ -64,7 +64,7 @@ def test_import_contract_detects_elementary_flow_emitted_as_technosphere() -> No
 
 def test_extract_model_record_reads_standard_dataset_and_xflow() -> None:
     row = {
-        "lifeCycleModelDataSet": {
+        "json": {"lifeCycleModelDataSet": {
             "lifeCycleModelInformation": {
                 "dataSetInformation": {
                     "common:UUID": "model-1",
@@ -78,7 +78,7 @@ def test_extract_model_record_reads_standard_dataset_and_xflow() -> None:
                     }
                 },
             }
-        },
+        }},
         "json_tg": {
             "xflow": {
                 "nodes": [{"id": "node-1", "data": {"id": "process-1"}}],

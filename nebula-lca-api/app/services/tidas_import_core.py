@@ -508,9 +508,16 @@ def _graph_from_payload(payload: dict) -> dict | None:
 
 
 def _extract_tidas_model_record(row: dict) -> tuple[dict | None, str | None]:
-    payload = _payload_from_row(row)
+    payload = next(
+        (
+            candidate
+            for candidate in (row.get("json_ordered"), row.get("json"), row)
+            if isinstance(candidate, dict) and isinstance(candidate.get("lifeCycleModelDataSet"), dict)
+        ),
+        _payload_from_row(row),
+    )
     graph = _graph_from_payload(row) or _graph_from_payload(payload)
-    model_dataset = row.get("lifeCycleModelDataSet") if isinstance(row.get("lifeCycleModelDataSet"), dict) else {}
+    model_dataset = payload.get("lifeCycleModelDataSet") if isinstance(payload.get("lifeCycleModelDataSet"), dict) else {}
     model_info = model_dataset.get("lifeCycleModelInformation") if isinstance(model_dataset.get("lifeCycleModelInformation"), dict) else {}
     data_info = model_info.get("dataSetInformation") if isinstance(model_info.get("dataSetInformation"), dict) else {}
     model_uuid = _safe_str(
@@ -834,6 +841,8 @@ def _build_tidas_graph_from_xflow_record(
         nodes.append(node)
         node_ids.add(node_id)
         position = xnode.get("position") if isinstance(xnode.get("position"), dict) else {}
+        if not position and (xnode.get("x") is not None or xnode.get("y") is not None):
+            position = {"x": xnode.get("x"), "y": xnode.get("y")}
         if position:
             positions[node_id] = {
                 "x": _numeric_value(position.get("x")),
@@ -877,6 +886,28 @@ def _build_tidas_graph_from_xflow_record(
             continue
         source_port = _safe_str(source.get("port"))
         target_port = _safe_str(target.get("port"))
+        data = xedge.get("data") if isinstance(xedge.get("data"), dict) else {}
+        connection = data.get("connection") if isinstance(data.get("connection"), dict) else {}
+        output_exchange = connection.get("outputExchange") if isinstance(connection.get("outputExchange"), dict) else {}
+        connection_flow_uuid = _safe_str(output_exchange.get("@flowUUID") or output_exchange.get("flowUUID"))
+        if connection_flow_uuid and not source_port:
+            source_port = next(
+                (
+                    port_id
+                    for port_id in output_port_ids_by_node.get(from_node, set())
+                    if port_id == f"OUTPUT:{connection_flow_uuid}" or port_id.startswith(f"OUTPUT:{connection_flow_uuid}:")
+                ),
+                "",
+            )
+        if connection_flow_uuid and not target_port:
+            target_port = next(
+                (
+                    port_id
+                    for port_id in input_port_ids_by_node.get(to_node, set())
+                    if port_id == f"INPUT:{connection_flow_uuid}" or port_id.startswith(f"INPUT:{connection_flow_uuid}:")
+                ),
+                "",
+            )
         if (
             source_port not in output_port_ids_by_node.get(from_node, set())
             or target_port not in input_port_ids_by_node.get(to_node, set())
@@ -892,8 +923,6 @@ def _build_tidas_graph_from_xflow_record(
         meta = flow_meta.get(flow_uuid)
         if not flow_uuid or meta is None:
             continue
-        data = xedge.get("data") if isinstance(xedge.get("data"), dict) else {}
-        connection = data.get("connection") if isinstance(data.get("connection"), dict) else {}
         amount = _numeric_value(connection.get("exchangeAmount"), default=1.0)
         if amount <= 0:
             amount = 1.0

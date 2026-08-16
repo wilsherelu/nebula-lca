@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -421,6 +423,27 @@ def _model_process_instances(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return [item for item in _as_list(raw) if isinstance(item, dict)]
 
 
+def _standard_model_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    for candidate in (payload.get("json_ordered"), payload.get("json"), payload):
+        if isinstance(candidate, dict) and isinstance(candidate.get("lifeCycleModelDataSet"), dict):
+            return candidate
+    return payload
+
+
+def _model_process_references(payload: dict[str, Any]) -> list[tuple[str, str | None]]:
+    references: list[tuple[str, str | None]] = []
+    seen: set[tuple[str, str | None]] = set()
+    for instance in _model_process_instances(_standard_model_payload(payload)):
+        ref = instance.get("referenceToProcess") if isinstance(instance.get("referenceToProcess"), dict) else {}
+        process_uuid = _safe_str(ref.get("@refObjectId") or ref.get("refObjectId"))
+        process_version = _safe_str(ref.get("@version") or ref.get("version")) or None
+        identity = (process_uuid, process_version)
+        if process_uuid and identity not in seen:
+            seen.add(identity)
+            references.append(identity)
+    return references
+
+
 def _preview_from_flow(account: DataPlatformAccount, flow: RemoteFlowDTO) -> DataPlatformRemotePreviewResponse:
     row = flow.metadata.get("row") if isinstance(flow.metadata, dict) and isinstance(flow.metadata.get("row"), dict) else {}
     payload = _remote_raw_row(flow.metadata, row)
@@ -497,7 +520,7 @@ def _preview_from_process(account: DataPlatformAccount, detail: Any) -> DataPlat
 
 def _preview_from_model(account: DataPlatformAccount, detail: Any) -> DataPlatformRemotePreviewResponse:
     model = detail.model
-    payload = detail.model_json if isinstance(detail.model_json, dict) else {}
+    payload = _standard_model_payload(detail.model_json) if isinstance(detail.model_json, dict) else {}
     data_info = _dataset_info(payload, "lifeCycleModelDataSet", "lifeCycleModelInformation")
     instances = _model_process_instances(payload)
     samples = []
@@ -514,7 +537,7 @@ def _preview_from_model(account: DataPlatformAccount, detail: Any) -> DataPlatfo
         remote_kind="model",
         remote_id=model.remote_id,
         remote_version=model.remote_version,
-        title=model.model_name or _dataset_name(data_info, model.model_uuid),
+        title=_dataset_name(data_info, model.model_uuid) or model.model_name,
         description=_dataset_comment(data_info),
         summary={
             "uuid": model.model_uuid,
@@ -550,6 +573,117 @@ def _write_cache(db: Session, *, account: DataPlatformAccount, remote_kind: str,
         existing.query_key = query_key
         existing.payload_json = payload
         existing.cached_at = datetime.utcnow()
+
+
+def _search_cache_identity(remote_kind: str, parameters: dict[str, Any]) -> tuple[str, str, str]:
+    query_key = json.dumps(parameters, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    remote_id = hashlib.sha256(query_key.encode("utf-8")).hexdigest()
+    return f"search_{remote_kind}", remote_id, query_key
+
+
+def _read_search_cache(
+    db: Session,
+    *,
+    account: DataPlatformAccount,
+    remote_kind: str,
+    parameters: dict[str, Any],
+) -> DataPlatformSearchResponse | None:
+    cache_kind, remote_id, _query_key = _search_cache_identity(remote_kind, parameters)
+    row = (
+        db.query(DataPlatformRemoteCache)
+        .filter(
+            DataPlatformRemoteCache.account_id == account.id,
+            DataPlatformRemoteCache.remote_kind == cache_kind,
+            DataPlatformRemoteCache.remote_id == remote_id,
+            DataPlatformRemoteCache.expires_at > datetime.utcnow(),
+        )
+        .first()
+    )
+    if row is None:
+        return None
+    try:
+        return DataPlatformSearchResponse.model_validate(row.payload_json)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _write_search_cache(
+    db: Session,
+    *,
+    account: DataPlatformAccount,
+    remote_kind: str,
+    parameters: dict[str, Any],
+    response: DataPlatformSearchResponse,
+) -> None:
+    cache_kind, remote_id, query_key = _search_cache_identity(remote_kind, parameters)
+    _write_cache(
+        db,
+        account=account,
+        remote_kind=cache_kind,
+        query_key=query_key,
+        remote_id=remote_id,
+        payload=response.model_dump(mode="json"),
+    )
+    db.flush()
+    row = (
+        db.query(DataPlatformRemoteCache)
+        .filter(
+            DataPlatformRemoteCache.account_id == account.id,
+            DataPlatformRemoteCache.remote_kind == cache_kind,
+            DataPlatformRemoteCache.remote_id == remote_id,
+        )
+        .first()
+    )
+    if row is not None:
+        row.expires_at = datetime.utcnow() + timedelta(minutes=10)
+
+
+def _cached_remote_flow(
+    db: Session,
+    *,
+    account: DataPlatformAccount,
+    remote_id: str,
+    remote_version: str | None,
+) -> RemoteFlowDTO | None:
+    row = (
+        db.query(DataPlatformRemoteCache)
+        .filter(
+            DataPlatformRemoteCache.account_id == account.id,
+            DataPlatformRemoteCache.remote_kind == "flow",
+            DataPlatformRemoteCache.remote_id == remote_id,
+        )
+        .first()
+    )
+    if row is None:
+        return None
+    try:
+        item = RemoteFlowItem.model_validate(row.payload_json)
+    except Exception:  # noqa: BLE001
+        return None
+    if remote_version and item.remote_version != remote_version:
+        return None
+    if not item.default_unit or not item.unit_group:
+        raw_row = item.metadata.get("row") if isinstance(item.metadata, dict) else None
+        raw_payload = raw_row.get("json", raw_row) if isinstance(raw_row, dict) else None
+        if not isinstance(raw_payload, dict) or not isinstance(raw_payload.get("flowDataSet"), dict):
+            return None
+    return RemoteFlowDTO(
+        remote_id=item.remote_id,
+        flow_uuid=item.flow_uuid,
+        flow_name=item.flow_name,
+        flow_name_en=item.flow_name_en,
+        flow_type=item.flow_type,
+        default_unit=item.default_unit,
+        unit_group=item.unit_group,
+        source=item.source,
+        remote_version=item.remote_version,
+        metadata=item.metadata,
+    )
+
+
+def _resolve_cached_flow(connector: Any, flow: RemoteFlowDTO) -> RemoteFlowDTO:
+    resolver = getattr(connector, "resolve_flow_detail", None)
+    return resolver(flow) if callable(resolver) else flow
 
 
 def _upsert_sync_record(
@@ -1203,6 +1337,14 @@ def _tidas_report_summary(report: Any) -> dict[str, Any]:
     }
 
 
+def _dedupe_synced_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: dict[tuple[str, str], dict[str, Any]] = {}
+    for record in records:
+        identity = (_safe_str(record.get("local_kind")), _safe_str(record.get("local_uuid")))
+        deduped[identity] = record
+    return list(deduped.values())
+
+
 @api_router.get("/accounts", response_model=list[DataPlatformAccountOut])
 def list_data_platform_accounts(db: Session = Depends(get_db)) -> list[DataPlatformAccountOut]:
     rows = db.query(DataPlatformAccount).order_by(DataPlatformAccount.updated_at.desc()).all()
@@ -1455,14 +1597,24 @@ def search_remote_flows(
 ) -> DataPlatformSearchResponse:
     account = _account_or_404(db, account_id)
     effective_state_code = None if state_scope == "all" else state_code
+    cache_parameters = {
+        "q": q,
+        "page": page,
+        "page_size": page_size,
+        "data_source": data_source,
+        "state_code": effective_state_code,
+        "flow_type": flow_type,
+    }
+    cached = _read_search_cache(db, account=account, remote_kind="flow", parameters=cache_parameters)
+    if cached is not None:
+        return cached
     try:
         result = connector_for_account(_account_context(account, db)).search_flows(q, page=page, page_size=page_size, data_source=data_source, state_code=effective_state_code, flow_type=flow_type)
     except ConnectorError as exc:
         raise _connector_error(exc) from exc
     for item in result.items:
         _write_cache(db, account=account, remote_kind="flow", query_key=q, remote_id=item.remote_id, payload=_remote_flow_item(item).model_dump(mode="python"))
-    db.commit()
-    return DataPlatformSearchResponse(
+    response = DataPlatformSearchResponse(
         account_id=account.id,
         platform=account.platform,
         query=q,
@@ -1472,6 +1624,9 @@ def search_remote_flows(
         total=result.total,
         items=[_remote_flow_item(item) for item in result.items],
     )
+    _write_search_cache(db, account=account, remote_kind="flow", parameters=cache_parameters, response=response)
+    db.commit()
+    return response
 
 
 @api_router.get("/accounts/{account_id}/processes/search", response_model=DataPlatformSearchResponse)
@@ -1488,6 +1643,17 @@ def search_remote_processes(
 ) -> DataPlatformSearchResponse:
     account = _account_or_404(db, account_id)
     effective_state_code = None if state_scope == "all" else state_code
+    cache_parameters = {
+        "q": q,
+        "page": page,
+        "page_size": page_size,
+        "data_source": data_source,
+        "state_code": effective_state_code,
+        "process_type": process_type,
+    }
+    cached = _read_search_cache(db, account=account, remote_kind="process", parameters=cache_parameters)
+    if cached is not None:
+        return cached
     try:
         connector = connector_for_account(_account_context(account, db))
         pages: list[RemotePageDTO] = []
@@ -1508,8 +1674,7 @@ def search_remote_processes(
         raise _connector_error(exc) from exc
     for item in result.items:
         _write_cache(db, account=account, remote_kind="process", query_key=q, remote_id=item.remote_id, payload=_remote_process_item(item).model_dump(mode="python"))
-    db.commit()
-    return DataPlatformSearchResponse(
+    response = DataPlatformSearchResponse(
         account_id=account.id,
         platform=account.platform,
         query=q,
@@ -1519,6 +1684,9 @@ def search_remote_processes(
         total=result.total,
         items=[_remote_process_item(item) for item in result.items],
     )
+    _write_search_cache(db, account=account, remote_kind="process", parameters=cache_parameters, response=response)
+    db.commit()
+    return response
 
 
 @api_router.get("/accounts/{account_id}/models/search", response_model=DataPlatformSearchResponse)
@@ -1534,14 +1702,23 @@ def search_remote_models(
 ) -> DataPlatformSearchResponse:
     account = _account_or_404(db, account_id)
     effective_state_code = None if state_scope == "all" else state_code
+    cache_parameters = {
+        "q": q,
+        "page": page,
+        "page_size": page_size,
+        "data_source": data_source,
+        "state_code": effective_state_code,
+    }
+    cached = _read_search_cache(db, account=account, remote_kind="model", parameters=cache_parameters)
+    if cached is not None:
+        return cached
     try:
         result = connector_for_account(_account_context(account, db)).search_models(q, page=page, page_size=page_size, data_source=data_source, state_code=effective_state_code)
     except ConnectorError as exc:
         raise _connector_error(exc) from exc
     for item in result.items:
         _write_cache(db, account=account, remote_kind="model", query_key=q, remote_id=item.remote_id, payload=_remote_model_item(item).model_dump(mode="python"))
-    db.commit()
-    return DataPlatformSearchResponse(
+    response = DataPlatformSearchResponse(
         account_id=account.id,
         platform=account.platform,
         query=q,
@@ -1551,6 +1728,9 @@ def search_remote_models(
         total=result.total,
         items=[_remote_model_item(item) for item in result.items],
     )
+    _write_search_cache(db, account=account, remote_kind="model", parameters=cache_parameters, response=response)
+    db.commit()
+    return response
 
 
 @api_router.get("/accounts/{account_id}/flows/{remote_id}/preview", response_model=DataPlatformRemotePreviewResponse)
@@ -1562,7 +1742,23 @@ def preview_remote_flow(
 ) -> DataPlatformRemotePreviewResponse:
     account = _account_or_404(db, account_id)
     try:
-        flow = connector_for_account(_account_context(account, db)).get_flow_detail(remote_id, remote_version)
+        connector = connector_for_account(_account_context(account, db))
+        cached = _cached_remote_flow(
+            db,
+            account=account,
+            remote_id=remote_id,
+            remote_version=remote_version,
+        )
+        flow = _resolve_cached_flow(connector, cached) if cached is not None else connector.get_flow_detail(remote_id, remote_version)
+        _write_cache(
+            db,
+            account=account,
+            remote_kind="flow",
+            query_key="preview",
+            remote_id=flow.remote_id,
+            payload=_remote_flow_item(flow).model_dump(mode="python"),
+        )
+        db.commit()
         return _preview_from_flow(account, flow)
     except ConnectorError as exc:
         raise _connector_error(exc) from exc
@@ -1611,7 +1807,13 @@ def sync_remote_flow(account_id: str, payload: DataPlatformSyncFlowRequest, db: 
     job_id = job.id
     try:
         connector = connector_for_account(_account_context(account, db))
-        flow = connector.get_flow_detail(payload.remote_flow_id, payload.remote_version)
+        cached = _cached_remote_flow(
+            db,
+            account=account,
+            remote_id=payload.remote_flow_id,
+            remote_version=payload.remote_version,
+        )
+        flow = _resolve_cached_flow(connector, cached) if cached is not None else connector.get_flow_detail(payload.remote_flow_id, payload.remote_version)
         synced, warnings, tidas_report = _import_single_flow(
             db, connector, account, flow, upsert_mode="update" if payload.overwrite else "skip", source_label=account.platform,
         )
@@ -1701,6 +1903,7 @@ def sync_remote_process(account_id: str, payload: DataPlatformSyncProcessRequest
             )
             synced.extend(flow_synced)
             warnings.extend(flow_warnings)
+            db.flush()
         dependency_flow_uuid = None
         # Import process atomically (no commit)
         process = detail.process
@@ -1793,6 +1996,7 @@ def sync_remote_process(account_id: str, payload: DataPlatformSyncProcessRequest
         if vector_payload and _upsert_lci_vector(db, account=account, process_uuid=process.process_uuid, vector_payload=vector_payload, warnings=warnings):
             synced.append(_upsert_sync_record(db, account=account, local_kind="vector", local_uuid=process.process_uuid, remote_id=process.remote_id, remote_version=process.remote_version, metadata={"vector": True, "source_dataset_type": process.process_type}))
         # Commit all at once
+        synced = _dedupe_synced_records(synced)
         job.status = "completed"
         job.phase = "done"
         job.finished_at = datetime.utcnow()
@@ -1851,30 +2055,112 @@ def sync_remote_model(account_id: str, payload: DataPlatformSyncModelRequest, db
         except Exception as exc:  # noqa: BLE001
             warnings.append(f"model HybridGraph will be validated by TIDAS import core: {exc}")
         job.phase = "dependencies"
+        process_references = _model_process_references(detail.model_json)
+        get_process_many = getattr(connector, "get_process_details", None)
+        if callable(get_process_many):
+            process_details_by_reference = get_process_many(process_references)
+        else:
+            process_details_by_reference = {
+                reference: connector.get_process_detail(*reference)
+                for reference in process_references
+            }
+        process_details: list[Any] = []
+        flows_by_uuid: dict[str, RemoteFlowDTO] = {}
+        for process_uuid, process_version in process_references:
+            process_detail = process_details_by_reference.get((process_uuid, process_version))
+            if process_detail is None:
+                raise ConnectorError(f"Could not fetch referenced process: {process_uuid}")
+            failed_flow_uuids = (
+                process_detail.import_report.get("failed_flow_uuids", [])
+                if isinstance(process_detail.import_report, dict)
+                else []
+            )
+            if failed_flow_uuids:
+                dependency_flow_uuid = _safe_str(failed_flow_uuids[0])
+                raise ConnectorError(f"Could not fetch referenced flow: {dependency_flow_uuid}")
+            process_details.append(process_detail)
+            for flow in process_detail.flows:
+                if flow.flow_uuid:
+                    flows_by_uuid[flow.flow_uuid] = flow
         if graph_json is not None:
-            for flow_uuid in _graph_flow_uuids(graph_json):
-                # Fetch sequentially, fail immediately on any error
+            flow_uuids = _graph_flow_uuids(graph_json)
+            references = [(flow_uuid, None) for flow_uuid in flow_uuids]
+            get_many = getattr(connector, "get_flow_details", None)
+            if callable(get_many):
+                dependency_flow_uuid = flow_uuids[0] if flow_uuids else None
+                flow_details = get_many(references)
+            else:
+                flow_details = {}
+                for reference in references:
+                    dependency_flow_uuid = reference[0]
+                    flow_details[reference] = connector.get_flow_detail(*reference)
+            for flow_uuid in flow_uuids:
                 dependency_flow_uuid = flow_uuid
-                flow = connector.get_flow_detail(flow_uuid)
-                flow_synced, flow_warnings, flow_report = _import_single_flow(
-                    db,
-                    connector,
-                    account,
-                    flow,
-                    upsert_mode="update",
-                    source_label=account.platform,
-                    expected_uuid=flow_uuid,
-                )
-                synced.extend(flow_synced)
-                warnings.extend(flow_warnings)
+                flow = flow_details.get((flow_uuid, None))
+                if flow is None:
+                    raise ConnectorError(f"Could not fetch referenced flow: {flow_uuid}")
+                flows_by_uuid[flow_uuid] = flow
+        for flow_uuid, flow in flows_by_uuid.items():
+            dependency_flow_uuid = flow_uuid
+            flow_synced, flow_warnings, _ = _import_single_flow(
+                db,
+                connector,
+                account,
+                flow,
+                upsert_mode="update" if payload.overwrite else "skip",
+                source_label=account.platform,
+                expected_uuid=flow_uuid,
+            )
+            synced.extend(flow_synced)
+            warnings.extend(flow_warnings)
+            db.flush()
         dependency_flow_uuid = None
         job.phase = "upsert"
+        process_json_by_uuid: dict[str, dict[str, Any]] = {}
+        for process_detail in process_details:
+            process = process_detail.process
+            process_row = process_detail.process_json or {
+                "process_uuid": process.process_uuid,
+                "process_name": process.process_name,
+                "reference_flow_uuid": process.reference_flow_uuid,
+                "exchanges": [],
+            }
+            process_report = import_tidas_process_rows(
+                db,
+                [process_row],
+                source_path=f"{account.platform}://processes/{process.remote_id}",
+                upsert_mode="update" if payload.overwrite else "skip",
+                valid_flow_uuids=set(flows_by_uuid),
+                with_transaction=True,
+            )
+            if process_report.failed:
+                raise ConnectorError(f"TIDAS process import failed: {process_report.errors[:3]}")
+            db.flush()
+            local_process = db.get(ReferenceProcess, process.process_uuid)
+            if local_process is None or not isinstance(local_process.process_json, dict):
+                raise ConnectorError(f"Imported TianGong process is unavailable locally: {process.process_uuid}")
+            process_json_by_uuid[process.process_uuid] = dict(local_process.process_json)
+            synced.append(
+                _upsert_sync_record(
+                    db,
+                    account=account,
+                    local_kind="process",
+                    local_uuid=process.process_uuid,
+                    remote_id=process.remote_id,
+                    remote_version=process.remote_version,
+                    metadata=process.metadata,
+                )
+            )
         model_row = _remote_raw_row(detail.lineage, detail.model_json or {"id": detail.model.model_uuid, "name": detail.model.model_name})
+        model_payload = _standard_model_payload(detail.model_json)
+        model_data_info = _dataset_info(model_payload, "lifeCycleModelDataSet", "lifeCycleModelInformation")
+        model_name = _dataset_name(model_data_info, detail.model.model_uuid) or detail.model.model_name or detail.model.model_uuid
         model_report = import_tidas_model_rows(
             db,
             [model_row],
             source_path=f"{account.platform}://models/{detail.model.remote_id}",
-            project_name=(payload.project_name or detail.model.model_name or detail.model.model_uuid).strip(),
+            project_name=(payload.project_name or model_name).strip(),
+            process_json_by_uuid=process_json_by_uuid,
             with_transaction=True,
         )
         if model_report.failed:
@@ -1895,11 +2181,12 @@ def sync_remote_model(account_id: str, payload: DataPlatformSyncModelRequest, db
                 metadata={**detail.lineage, "model_uuid": detail.model.model_uuid},
             )
         )
+        synced = _dedupe_synced_records(synced)
         job.status = "completed"
         job.phase = "done"
         job.finished_at = datetime.utcnow()
         report_summary = _tidas_report_summary(model_report)
-        flow_count = len(_graph_flow_uuids(graph_json)) if graph_json is not None else 0
+        flow_count = len(flows_by_uuid)
         job.stats_json = {"remote_kind": "model", "project_id": project_id, "version": version_value, "flow_count": flow_count, "warnings": warnings, "synced_count": len(synced), "tidas_import": report_summary}
         db.commit()
         return DataPlatformSyncModelResponse(

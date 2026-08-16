@@ -553,7 +553,7 @@ def _build_run_job_request_json(payload) -> dict:
 
     graph = payload.graph
     nodes = graph.nodes if hasattr(graph, "nodes") else []
-    edges = graph.edges if hasattr(graph, "edges") else []
+    edges = graph.exchanges if hasattr(graph, "exchanges") else []
 
     functional_unit = None
     reference_product = None

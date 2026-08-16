@@ -3453,10 +3453,12 @@ export default function App() {
               : `已保存项目 ${projectNameForMessage}: version=${payload.version}${ptsStatusText}`,
           );
         }
+        return payload;
       } catch (error) {
         if (mode === "manual") {
           setStatusText(`保存失败: ${formatApiError(error)}`);
         }
+        return null;
       } finally {
         if (backgroundSave) {
           backgroundSaveInFlightRef.current = false;
@@ -3661,7 +3663,10 @@ export default function App() {
     [autoConnectByUuid, exportGraph, importGraphWithLoadKey, persistRootModelSnapshot, projectId],
   );
 
-  const runModel = useCallback(async (methodSelection = lciaMethodSelection) => {
+  const runModel = useCallback(async (
+    methodSelection = lciaMethodSelection,
+    savedSnapshot?: ModelCreateResponse,
+  ) => {
     repairRootEdgeHandles();
     const graph = prepareGraphForRun(
       exportGraph(),
@@ -3750,10 +3755,12 @@ export default function App() {
     setLastRun(null);
     try {
       const lciaMethods = [methodSelection || "EF v3.1"];
+      const runProjectId = savedSnapshot?.project_id ?? projectId;
+      const runVersion = savedSnapshot?.version != null ? String(savedSnapshot.version) : version;
       const body = JSON.stringify({
         graph,
-        model_version_id: projectId && version ? `${projectId}:${version}` : undefined,
-        project_id: projectId || undefined,
+        model_version_id: runProjectId && runVersion ? `${runProjectId}:${runVersion}` : undefined,
+        project_id: runProjectId || undefined,
         lcia_methods: lciaMethods,
       });
       const runCandidates = [`${API_BASE}/model/run`, `${API_BASE_NO_PREFIX}/model/run`];
@@ -6101,10 +6108,14 @@ export default function App() {
               </button>
               <button
                 type="button"
-                onClick={() => {
+                onClick={async () => {
                   setLciaMethodSelection(draftLciaMethodSelection);
                   setShowRunConfigDialog(false);
-                  void runModel(draftLciaMethodSelection);
+                  const saved = await persistModel("manual");
+                  if (!saved) {
+                    return;
+                  }
+                  await runModel(draftLciaMethodSelection, saved);
                 }}
                 disabled={busy || lciaRunBlockedByStrictSource || lciaRunBlockedByMissingEcoRuntime}
               >

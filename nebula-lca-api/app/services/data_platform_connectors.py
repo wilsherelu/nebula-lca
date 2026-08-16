@@ -272,8 +272,31 @@ class BaseDataPlatformConnector:
     def get_flow_detail(self, remote_flow_id: str, remote_version: str | None = None) -> RemoteFlowDTO:
         raise NotImplementedError
 
+    def get_flow_details(
+        self,
+        references: list[tuple[str, str | None]],
+    ) -> dict[tuple[str, str | None], RemoteFlowDTO]:
+        return {
+            reference: self.get_flow_detail(*reference)
+            for reference in dict.fromkeys(references)
+        }
+
+    def resolve_flow_detail(self, flow: RemoteFlowDTO) -> RemoteFlowDTO:
+        return flow
+
     def get_process_detail(self, remote_process_id: str, remote_version: str | None = None, *, resolve_flows: bool = True) -> RemoteProcessDetailDTO:
         raise NotImplementedError
+
+    def get_process_details(
+        self,
+        references: list[tuple[str, str | None]],
+        *,
+        resolve_flows: bool = True,
+    ) -> dict[tuple[str, str | None], RemoteProcessDetailDTO]:
+        return {
+            reference: self.get_process_detail(*reference, resolve_flows=resolve_flows)
+            for reference in dict.fromkeys(references)
+        }
 
     def get_model_detail(self, remote_model_id: str, remote_version: str | None = None) -> RemoteModelDetailDTO:
         raise NotImplementedError
@@ -779,6 +802,7 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
             search_payload["type_of_data_set_filter"] = normalized_process_type if normalized_process_type and normalized_process_type != "all" else "all"
         hybrid_payload: dict[str, Any] = {
             "query": normalized_query,
+            "filter": filter_condition,
             "filter_condition": filter_condition,
             "data_source": data_source,
             "page_size": page_size,
@@ -798,9 +822,8 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
         }
         candidates: list[tuple[str, dict[str, Any], bool]] = [
             (hybrid_function, hybrid_payload, True),
-            (search_rpc, {**search_payload, "query_terms": [normalized_query]}, False),
-            (indexed_rpc, search_payload, False),
             (search_rpc, search_payload, False),
+            (indexed_rpc, search_payload, False),
             (v1_rpc, v1_payload, False),
         ]
         tried: list[str] = []
@@ -824,40 +847,11 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
                 status_code=last_error.status_code,
             ) from last_error
         rows, total = _tiangong_rows_and_total(raw)
+        remote_row_count = len(rows)
         rows = _rerank_tiangong_rows(kind, rows, normalized_query)
-        query_parts = list(dict.fromkeys(part for part in normalized_query.split() if len(part) >= 2))
-        if not rows and page == 1 and len(query_parts) > 1:
-            fallback_rows: dict[str, dict[str, Any]] = {}
-            for query_part in reversed(query_parts):
-                fallback_raw: Any | None = None
-                for endpoint_name, endpoint_payload, is_function in candidates:
-                    fallback_payload = dict(endpoint_payload)
-                    if "query" in fallback_payload:
-                        fallback_payload["query"] = query_part
-                    if "query_text" in fallback_payload:
-                        fallback_payload["query_text"] = query_part
-                    if "query_terms" in fallback_payload:
-                        fallback_payload["query_terms"] = [query_part]
-                    fallback_payload["page_current"] = 1
-                    fallback_payload["page_size"] = max(page_size, 20)
-                    try:
-                        fallback_raw = self._invoke_function(endpoint_name, fallback_payload) if is_function else self._rpc(endpoint_name, fallback_payload)
-                        break
-                    except ConnectorError:
-                        continue
-                if fallback_raw is None:
-                    continue
-                candidate_rows, _candidate_total = _tiangong_rows_and_total(fallback_raw)
-                for candidate_row in candidate_rows:
-                    row_id = str(candidate_row.get("id") or candidate_row.get("uuid") or getattr(mapper(candidate_row), "remote_id", "")).strip()
-                    if row_id:
-                        fallback_rows[row_id] = candidate_row
-                rows = _rerank_tiangong_rows(kind, list(fallback_rows.values()), normalized_query)
-                if rows:
-                    total = len(rows)
-                    break
         items = [mapper(row) for row in rows if isinstance(row, dict)]
-        effective_total = total if total is not None else len(items)
+        filtered_current_page = len(items) < remote_row_count
+        effective_total = len(items) if filtered_current_page else (total if total is not None else len(items))
         return RemotePageDTO(
             items=items,
             total=effective_total,
@@ -877,78 +871,136 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
         return self._search_rpc(kind="process", query=query, page=page, page_size=page_size, data_source=data_source, state_code=state_code, process_type=process_type)
 
     def search_models(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
+        if data_source == "tg":
+            params = {
+                "select": "id,version,modified_at,name:json->lifeCycleModelDataSet->lifeCycleModelInformation->dataSetInformation->name",
+                "order": "modified_at.desc",
+                "limit": "1000",
+            }
+            if state_code is not None:
+                params["state_code"] = f"eq.{state_code}"
+            path = f"/rest/v1/lifecyclemodels?{url_parse.urlencode(params)}"
+            payload = self._request_json("GET", path, headers=self._headers())
+            rows = [row for row in payload if isinstance(row, dict)] if isinstance(payload, list) else []
+            latest_rows: dict[str, dict[str, Any]] = {}
+            for row in rows:
+                remote_id = str(row.get("id") or "").strip()
+                if remote_id and remote_id not in latest_rows:
+                    latest_rows[remote_id] = row
+            rows = list(latest_rows.values())
+            normalized_query = " ".join(re.sub(r"[;；]+", " ", query).split())
+            ranked_rows = _rerank_tiangong_rows("model", rows, normalized_query) if normalized_query else rows
+            total = len(ranked_rows)
+            start = (page - 1) * page_size
+            page_rows = ranked_rows[start:start + page_size]
+            return RemotePageDTO(
+                items=[_tiangong_model_from_row(row) for row in page_rows],
+                total=total,
+                page=page,
+                page_size=page_size,
+                has_more=(page * page_size) < total,
+            )
         return self._search_rpc(kind="model", query=query, page=page, page_size=page_size, data_source=data_source, state_code=state_code)
 
     def get_flow_detail(self, remote_flow_id: str, remote_version: str | None = None) -> RemoteFlowDTO:
         flow = _tiangong_flow_from_row(self._table_one("flows", remote_flow_id, remote_version))
         return self._resolve_flow_dependencies(flow)
 
-    def get_process_detail(self, remote_process_id: str, remote_version: str | None = None, *, resolve_flows: bool = True) -> RemoteProcessDetailDTO:
-        row = self._table_one("processes", remote_process_id, remote_version)
-        process = _tiangong_process_from_row(row)
-        flow_stubs: list[RemoteFlowDTO] = []
-        seen_flow_refs: set[tuple[str, str | None]] = set()
-        for exchange in _extract_process_exchanges(row):
-            flow_stub = _tiangong_flow_from_exchange(exchange)
-            if flow_stub is None:
-                continue
-            identity = (flow_stub.flow_uuid, flow_stub.remote_version)
-            if identity in seen_flow_refs:
-                continue
-            seen_flow_refs.add(identity)
-            flow_stubs.append(flow_stub)
-        flows: list[RemoteFlowDTO] = []
-        flow_warnings: list[str] = []
-        failed_flow_uuids: list[str] = []
+    def get_flow_details(
+        self,
+        references: list[tuple[str, str | None]],
+    ) -> dict[tuple[str, str | None], RemoteFlowDTO]:
+        requested = list(dict.fromkeys(reference for reference in references if reference[0]))
+        flow_rows = self._table_many("flows", requested)
+        flow_property_refs: list[tuple[str, str | None]] = []
+        for flow_row in flow_rows.values():
+            flow_property_ref = _extract_flow_property_reference(flow_row)
+            if flow_property_ref:
+                flow_property_refs.append((flow_property_ref["id"], flow_property_ref.get("version")))
+        flow_property_rows = self._table_many("flowproperties", flow_property_refs)
+        unit_group_refs: list[tuple[str, str | None]] = []
+        for flow_property_row in flow_property_rows.values():
+            unit_group_ref = _extract_unit_group_reference(flow_property_row)
+            if unit_group_ref:
+                unit_group_refs.append((unit_group_ref["id"], unit_group_ref.get("version")))
+        self._table_many("unitgroups", unit_group_refs)
+        return {
+            reference: self._resolve_flow_dependencies(_tiangong_flow_from_row(flow_row))
+            for reference, flow_row in flow_rows.items()
+        }
 
-        if not resolve_flows:
-            flows = flow_stubs
-        elif flow_stubs:
-            flow_refs = [(flow_stub.flow_uuid, flow_stub.remote_version) for flow_stub in flow_stubs]
-            flow_rows = self._table_many("flows", flow_refs)
-            flow_property_refs: list[tuple[str, str | None]] = []
-            for flow_row in flow_rows.values():
-                flow_property_ref = _extract_flow_property_reference(flow_row)
-                if flow_property_ref:
-                    flow_property_refs.append((flow_property_ref["id"], flow_property_ref.get("version")))
-            flow_property_rows = self._table_many("flowproperties", flow_property_refs)
-            unit_group_refs: list[tuple[str, str | None]] = []
-            for flow_property_row in flow_property_rows.values():
-                unit_group_ref = _extract_unit_group_reference(flow_property_row)
-                if unit_group_ref:
-                    unit_group_refs.append((unit_group_ref["id"], unit_group_ref.get("version")))
-            self._table_many("unitgroups", unit_group_refs)
+    def resolve_flow_detail(self, flow: RemoteFlowDTO) -> RemoteFlowDTO:
+        return self._resolve_flow_dependencies(flow)
 
-            for flow_stub in flow_stubs:
-                identity = (flow_stub.flow_uuid, flow_stub.remote_version)
-                flow_row = flow_rows.get(identity)
-                if flow_row is None:
-                    flow_warnings.append(f"could not resolve flow {flow_stub.flow_uuid}: TianGong flows detail not found.")
-                    failed_flow_uuids.append(flow_stub.flow_uuid)
-                    flows.append(flow_stub)
+    def get_process_details(
+        self,
+        references: list[tuple[str, str | None]],
+        *,
+        resolve_flows: bool = True,
+    ) -> dict[tuple[str, str | None], RemoteProcessDetailDTO]:
+        requested = list(dict.fromkeys(reference for reference in references if reference[0]))
+        process_rows = self._table_many("processes", requested)
+        process_flows: dict[tuple[str, str | None], list[RemoteFlowDTO]] = {}
+        flow_references: list[tuple[str, str | None]] = []
+        for reference, row in process_rows.items():
+            stubs: list[RemoteFlowDTO] = []
+            seen: set[tuple[str, str | None]] = set()
+            for exchange in _extract_process_exchanges(row):
+                flow_stub = _tiangong_flow_from_exchange(exchange)
+                if flow_stub is None:
                     continue
-                flows.append(self._resolve_flow_dependencies(_tiangong_flow_from_row(flow_row)))
-        process_json = _tiangong_process_json_from_row(row, process, flows)
-        return RemoteProcessDetailDTO(
-            process=process,
-            flows=flows,
-            process_json=process_json,
-            import_report={
-                "source": "tiangong",
-                "remote_id": process.remote_id,
-                "remote_version": process.remote_version,
-                "warnings": flow_warnings,
-                "failed_flow_uuids": failed_flow_uuids,
-            },
-            vector=_extract_process_vector(row),
-        )
+                identity = (flow_stub.flow_uuid, flow_stub.remote_version)
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                stubs.append(flow_stub)
+                flow_references.append(identity)
+            process_flows[reference] = stubs
+        resolved_flows = self.get_flow_details(flow_references) if resolve_flows else {}
+        details: dict[tuple[str, str | None], RemoteProcessDetailDTO] = {}
+        for reference, row in process_rows.items():
+            process = _tiangong_process_from_row(row)
+            flows: list[RemoteFlowDTO] = []
+            warnings: list[str] = []
+            failed_flow_uuids: list[str] = []
+            for flow_stub in process_flows.get(reference, []):
+                identity = (flow_stub.flow_uuid, flow_stub.remote_version)
+                flow = resolved_flows.get(identity) if resolve_flows else flow_stub
+                if flow is None:
+                    warnings.append(f"could not resolve flow {flow_stub.flow_uuid}: TianGong flows detail not found.")
+                    failed_flow_uuids.append(flow_stub.flow_uuid)
+                    flow = flow_stub
+                flows.append(flow)
+            details[reference] = RemoteProcessDetailDTO(
+                process=process,
+                flows=flows,
+                process_json=_tiangong_process_json_from_row(row, process, flows),
+                import_report={
+                    "source": "tiangong",
+                    "remote_id": process.remote_id,
+                    "remote_version": process.remote_version,
+                    "warnings": warnings,
+                    "failed_flow_uuids": failed_flow_uuids,
+                },
+                vector=_extract_process_vector(row),
+            )
+        return details
+
+    def get_process_detail(self, remote_process_id: str, remote_version: str | None = None, *, resolve_flows: bool = True) -> RemoteProcessDetailDTO:
+        reference = (remote_process_id, remote_version)
+        detail = self.get_process_details([reference], resolve_flows=resolve_flows).get(reference)
+        if detail is None:
+            raise ConnectorError("TianGong processes detail not found.")
+        return detail
 
     def get_model_detail(self, remote_model_id: str, remote_version: str | None = None) -> RemoteModelDetailDTO:
         row = self._table_one("lifecyclemodels", remote_model_id, remote_version)
         model = _tiangong_model_from_row(row)
         return RemoteModelDetailDTO(
             model=model,
-            model_json=_extract_json_payload(row),
+            # Preserve the complete TianGong row: the standard ILCD model lives
+            # in json/json_ordered, while json_tg only carries XFlow layout.
+            model_json=dict(row),
             lineage={"source": "tiangong", "remote_id": model.remote_id, "remote_version": model.remote_version, "row": row},
         )
 
@@ -1010,6 +1062,10 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
         return self._invoke_function("app_dataset_create", body)
 
     def _resolve_flow_dependencies(self, flow: RemoteFlowDTO) -> RemoteFlowDTO:
+        dependencies = flow.metadata.get("dependencies") if isinstance(flow.metadata, dict) else None
+        cached_unit_group = dependencies.get("unit_group") if isinstance(dependencies, dict) else None
+        if isinstance(cached_unit_group, dict) and _unit_group_from_payload(cached_unit_group) is not None:
+            return flow
         flow_property_ref = _extract_flow_property_reference(flow.metadata.get("row") if isinstance(flow.metadata, dict) else {})
         if not flow_property_ref:
             return flow
@@ -1516,8 +1572,8 @@ def _tiangong_model_from_row(row: dict[str, Any]) -> RemoteModelDTO:
     model_uuid = str(row.get("id") or row.get("model_uuid") or row.get("uuid") or payload.get("id") or _nested_text(payload, "lifeCycleModelDataSet", "lifeCycleModelInformation", "dataSetInformation", "common:UUID") or "").strip()
     info = payload.get("lifeCycleModelDataSet", {}).get("lifeCycleModelInformation", {}).get("dataSetInformation", {}) if isinstance(payload.get("lifeCycleModelDataSet"), dict) else {}
     name_node = info.get("name") if isinstance(info, dict) else payload.get("name") or payload.get("title")
-    name = _localized_name(name_node, "zh") or _localized_name(row.get("name") or row.get("model_name"), "zh") or _localized_name(name_node) or _localized_name(row.get("name") or row.get("model_name")) or model_uuid
-    name_en = _localized_name(name_node, "en") or _localized_name(row.get("name_en"), "en") or None
+    name = _localized_full_name(name_node, "zh") or _localized_name(row.get("name") or row.get("model_name"), "zh") or _localized_full_name(name_node, "en") or _localized_name(row.get("name") or row.get("model_name")) or model_uuid
+    name_en = _localized_full_name(name_node, "en") or _localized_name(row.get("name_en"), "en") or None
     return RemoteModelDTO(
         remote_id=str(row.get("id") or model_uuid).strip(),
         model_uuid=model_uuid,
