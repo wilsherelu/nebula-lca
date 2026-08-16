@@ -1132,19 +1132,21 @@ def test_tiangong_preview_reads_detail_without_importing(client, monkeypatch):
         db.close()
 
 
-def test_tiangong_search_falls_back_to_indexed_latest_rpc_on_latest_search_rpc_404(client, monkeypatch):
+def test_tiangong_search_fails_closed_when_exact_rpc_is_unavailable(client, monkeypatch):
     calls = _install_fake_tiangong_http(monkeypatch, legacy_search_404=True)
     account_id = _create_tiangong_account(client)
 
     response = client.get(f"/api/data-platforms/accounts/{account_id}/flows/search?q=remote&page=1&page_size=10")
 
-    assert response.status_code == 200
-    assert response.json()["items"][0]["flow_uuid"] == "flow-1"
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "DATA_PLATFORM_CONNECTOR_ERROR"
+    assert response.json()["detail"]["message"] == "TianGong exact search contract is unavailable. Check the TianGong database connection."
     assert any("/rest/v1/rpc/search_flows_latest" in call["url"] for call in calls)
-    assert any("/rest/v1/rpc/pgroonga_search_flows_latest" in call["url"] for call in calls)
+    assert not any("/functions/v1/flow_hybrid_search" in call["url"] for call in calls)
+    assert not any("/rest/v1/rpc/pgroonga_search_flows" in call["url"] for call in calls)
 
 
-def test_tiangong_search_prefers_current_hybrid_function_contract(client, monkeypatch):
+def test_tiangong_search_prefers_same_exact_rpc_as_tiangong_platform(client, monkeypatch):
     calls = _install_fake_tiangong_http(monkeypatch, hybrid_search_404=False)
     account_id = _create_tiangong_account(client)
 
@@ -1152,128 +1154,19 @@ def test_tiangong_search_prefers_current_hybrid_function_contract(client, monkey
 
     assert response.status_code == 200
     assert response.json()["items"][0]["flow_uuid"] == "flow-1"
-    search_call = next(call for call in calls if "/functions/v1/flow_hybrid_search" in call["url"])
+    search_call = next(call for call in calls if "/rest/v1/rpc/search_flows_latest" in call["url"])
     assert json.loads(search_call["body"]) == {
-        "query": "remote",
-        "filter": {},
+        "query_text": "remote",
         "filter_condition": {},
+        "order_by": {},
         "data_source": "tg",
         "page_size": 10,
         "page_current": 2,
-        "state_code": 100,
+        "this_user_id": "user-1",
+        "team_id_filter": None,
+        "state_code_filter": 100,
     }
-    assert not any("/rest/v1/rpc/search_flows_latest" in call["url"] for call in calls)
-
-
-def test_tiangong_search_corrects_remote_total_after_local_rerank(monkeypatch):
-    connector = TianGongSupabaseConnector(
-        PlatformAccountContext(
-            account_id="tg-1",
-            platform="tiangong",
-            alias="TianGong",
-            base_url="https://tg.example",
-            auth_type="bearer",
-            credential={"token": "test-token"},
-            metadata={"publishable_key": "pub-key"},
-        )
-    )
-    monkeypatch.setattr(
-        connector,
-        "_invoke_function",
-        lambda _name, _payload: {
-            "data": [
-                {"id": "process-1", "name": "Diesel process", "version": "1", "total_count": 200},
-                {"id": "process-2", "name": "Unrelated process", "version": "1", "total_count": 200},
-            ]
-        },
-    )
-
-    result = connector.search_processes("diesel", page=1, page_size=10)
-
-    assert len(result.items) == 1
-    assert result.total == 1
-    assert result.has_more is False
-
-
-def test_tiangong_search_corrects_total_when_complete_remote_page_is_filtered(monkeypatch):
-    connector = TianGongSupabaseConnector(
-        PlatformAccountContext(
-            account_id="tg-1",
-            platform="tiangong",
-            alias="TianGong",
-            base_url="https://tg.example",
-            auth_type="bearer",
-            credential={"token": "test-token"},
-            metadata={"publishable_key": "pub-key"},
-        )
-    )
-    monkeypatch.setattr(
-        connector,
-        "_invoke_function",
-        lambda _name, _payload: {
-            "data": [
-                {"id": "flow-1", "name": "Hydrogenated naphtha", "version": "1", "total_count": 2},
-                {"id": "flow-2", "name": "Unrelated flow", "version": "1", "total_count": 2},
-            ]
-        },
-    )
-
-    result = connector.search_flows("Hydrogenated naphtha", page=1, page_size=10)
-
-    assert len(result.items) == 1
-    assert result.total == 1
-    assert result.has_more is False
-
-
-def test_tiangong_search_does_not_repeat_query_parts_when_remote_page_has_no_full_match(monkeypatch):
-    connector = TianGongSupabaseConnector(
-        PlatformAccountContext(
-            account_id="tg-1",
-            platform="tiangong",
-            alias="TianGong",
-            base_url="https://tg.example",
-            auth_type="bearer",
-            credential={"token": "test-token"},
-            metadata={"publishable_key": "pub-key"},
-        )
-    )
-    queries: list[str] = []
-
-    def fake_search(_name, payload):
-        query = str(payload["query"])
-        queries.append(query)
-        if query == "交流电生产 水力发电":
-            return {"data": [{"id": "unrelated", "name": "交流电生产; 燃煤发电", "version": "1", "total_count": 96}]}
-        if query == "水力发电":
-            return {
-                "data": [
-                    {
-                        "id": "hydro",
-                        "version": "1",
-                        "json": {
-                            "processDataSet": {
-                                "processInformation": {
-                                    "dataSetInformation": {
-                                        "name": {
-                                            "baseName": [{"@xml:lang": "zh", "#text": "交流电生产"}],
-                                            "treatmentStandardsRoutes": [{"@xml:lang": "zh", "#text": "水力发电"}],
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                    }
-                ]
-            }
-        return {"data": []}
-
-    monkeypatch.setattr(connector, "_invoke_function", fake_search)
-
-    result = connector.search_processes("交流电生产; 水力发电", page=1, page_size=10)
-
-    assert result.items == []
-    assert result.total == 0
-    assert queries == ["交流电生产 水力发电"]
+    assert not any("/functions/v1/flow_hybrid_search" in call["url"] for call in calls)
 
 
 def test_process_search_skips_localized_fallback_when_primary_has_results(client, monkeypatch):
@@ -1302,24 +1195,6 @@ def test_process_search_skips_localized_fallback_when_primary_has_results(client
     assert calls == ["primary"]
 
 
-def test_tiangong_search_v1_fallback_uses_exact_six_parameter_contract(client, monkeypatch):
-    calls = _install_fake_tiangong_http(monkeypatch, legacy_search_404=True, indexed_search_404=True)
-    account_id = _create_tiangong_account(client)
-
-    response = client.get(f"/api/data-platforms/accounts/{account_id}/flows/search?q=remote&page=1&page_size=10")
-
-    assert response.status_code == 200
-    search_call = next(call for call in calls if "/rest/v1/rpc/pgroonga_search_flows_v1" in call["url"])
-    assert json.loads(search_call["body"]) == {
-        "query_text": "remote",
-        "filter_condition": "{}",
-        "order_by": "{}",
-        "page_size": 10,
-        "page_current": 1,
-        "data_source": "tg",
-    }
-
-
 def test_tiangong_search_returns_concise_error_when_all_search_endpoints_fail(client, monkeypatch):
     _install_fake_tiangong_http(
         monkeypatch,
@@ -1333,7 +1208,7 @@ def test_tiangong_search_returns_concise_error_when_all_search_endpoints_fail(cl
 
     assert response.status_code == 502
     assert response.json()["detail"]["code"] == "DATA_PLATFORM_CONNECTOR_ERROR"
-    assert response.json()["detail"]["message"] == "TianGong remote search is temporarily unavailable. Please retry later."
+    assert response.json()["detail"]["message"] == "TianGong exact search contract is unavailable. Check the TianGong database connection."
 
 
 def test_tiangong_expired_session_refreshes_then_falls_back_to_password(client, monkeypatch):

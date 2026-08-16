@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import secrets
+import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -755,11 +756,11 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
         process_type: str | None = None,
     ) -> RemotePageDTO:
         if kind == "flow":
-            hybrid_function, v1_rpc, indexed_rpc, latest_rpc, search_rpc, mapper = "flow_hybrid_search", "pgroonga_search_flows_v1", "pgroonga_search_flows_latest", "get_latest_flow_versions", "search_flows_latest", _tiangong_flow_from_row
+            latest_rpc, search_rpc, mapper = "get_latest_flow_versions", "search_flows_latest", _tiangong_flow_from_row
         elif kind == "process":
-            hybrid_function, v1_rpc, indexed_rpc, latest_rpc, search_rpc, mapper = "process_hybrid_search", "pgroonga_search_processes_v1", "pgroonga_search_processes_latest", "get_latest_process_versions", "search_processes_latest", _tiangong_process_from_row
+            latest_rpc, search_rpc, mapper = "get_latest_process_versions", "search_processes_latest", _tiangong_process_from_row
         else:
-            hybrid_function, v1_rpc, indexed_rpc, latest_rpc, search_rpc, mapper = "lifecyclemodel_hybrid_search", "pgroonga_search_lifecyclemodels_v1", "pgroonga_search_lifecyclemodels_latest", "get_latest_lifecyclemodel_versions", "search_lifecyclemodels_latest", _tiangong_model_from_row
+            latest_rpc, search_rpc, mapper = "get_latest_lifecyclemodel_versions", "search_lifecyclemodels_latest", _tiangong_model_from_row
         normalized_query = " ".join(re.sub(r"[;；]+", " ", query).split())
         user_id = self._current_user_id()
         filter_condition: dict[str, Any] = {}
@@ -800,58 +801,35 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
         }
         if kind == "process":
             search_payload["type_of_data_set_filter"] = normalized_process_type if normalized_process_type and normalized_process_type != "all" else "all"
-        hybrid_payload: dict[str, Any] = {
-            "query": normalized_query,
-            "filter": filter_condition,
-            "filter_condition": filter_condition,
-            "data_source": data_source,
-            "page_size": page_size,
-            "page_current": page,
-        }
-        if state_code is not None:
-            hybrid_payload["state_code"] = state_code
-        if kind == "process" and normalized_process_type and normalized_process_type != "all":
-            hybrid_payload["type_of_data_set"] = normalized_process_type
-        v1_payload: dict[str, Any] = {
-            "query_text": normalized_query,
-            "filter_condition": json.dumps(filter_condition, ensure_ascii=False, separators=(",", ":")),
-            "order_by": "{}",
-            "page_size": page_size,
-            "page_current": page,
-            "data_source": data_source,
-        }
-        candidates: list[tuple[str, dict[str, Any], bool]] = [
-            (hybrid_function, hybrid_payload, True),
-            (search_rpc, search_payload, False),
-            (indexed_rpc, search_payload, False),
-            (v1_rpc, v1_payload, False),
-        ]
-        tried: list[str] = []
-        attempt_errors: list[str] = []
-        last_error: ConnectorError | None = None
-        for endpoint_name, endpoint_payload, is_function in candidates:
-            tried.append(endpoint_name)
-            try:
-                raw = self._invoke_function(endpoint_name, endpoint_payload) if is_function else self._rpc(endpoint_name, endpoint_payload)
-                break
-            except ConnectorError as exc:
-                if exc.status_code not in {404, 500}:
-                    raise
-                last_error = exc
-                attempt_errors.append(f"{endpoint_name}: {exc}")
-        else:
-            assert last_error is not None
-            logger.warning("TianGong search endpoint attempts failed: %s", " | ".join(attempt_errors))
+        search_started_at = time.perf_counter()
+        try:
+            raw = self._rpc(search_rpc, search_payload)
+        except ConnectorError as exc:
+            logger.warning("TianGong %s exact search endpoint=%s failed: %s", kind, search_rpc, exc)
             raise ConnectorError(
-                "TianGong remote search is temporarily unavailable. Please retry later.",
-                status_code=last_error.status_code,
-            ) from last_error
+                "TianGong exact search contract is unavailable. Check the TianGong database connection.",
+                status_code=exc.status_code,
+            ) from exc
+        logger.info(
+            "TianGong %s search endpoint=%s elapsed_ms=%d",
+            kind,
+            search_rpc,
+            round((time.perf_counter() - search_started_at) * 1000),
+        )
         rows, total = _tiangong_rows_and_total(raw)
         remote_row_count = len(rows)
-        rows = _rerank_tiangong_rows(kind, rows, normalized_query)
         items = [mapper(row) for row in rows if isinstance(row, dict)]
         filtered_current_page = len(items) < remote_row_count
         effective_total = len(items) if filtered_current_page else (total if total is not None else len(items))
+        logger.info(
+            "TianGong %s search complete endpoint=%s elapsed_ms=%d remote_rows=%d returned_rows=%d remote_total=%s",
+            kind,
+            search_rpc,
+            round((time.perf_counter() - search_started_at) * 1000),
+            remote_row_count,
+            len(items),
+            total,
+        )
         return RemotePageDTO(
             items=items,
             total=effective_total,

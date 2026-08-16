@@ -302,7 +302,7 @@ export function ExternalPlatformAccounts(props: Props) {
           body: JSON.stringify(body),
         });
       }
-      onStatus?.(zh ? "天工账号已绑定到星云。" : "TianGong account bound to Nebula.");
+      onStatus?.(zh ? "已连接天工数据库。" : "Connected to the TianGong database.");
       resetForm();
       await loadAccounts();
     } catch (error) {
@@ -339,7 +339,7 @@ export function ExternalPlatformAccounts(props: Props) {
     try {
       await requestJson(`${API_BASE}/data-platforms/accounts/${encodeURIComponent(accountId)}`, { method: "DELETE" });
       if (editingId === accountId) resetForm();
-      onStatus?.(zh ? "天工账号已删除。" : "TianGong account deleted.");
+      onStatus?.(zh ? "天工数据库连接已删除。" : "TianGong database connection deleted.");
       await loadAccounts();
     } catch (error) {
       const message = error instanceof Error ? error.message : "delete failed";
@@ -351,7 +351,7 @@ export function ExternalPlatformAccounts(props: Props) {
 
   const searchRemote = async (nextPage = remotePage) => {
     if (!selectedAccount) {
-      setErrorText(zh ? "请先绑定天工账号。" : "Bind a TianGong account first.");
+      setErrorText(zh ? "请先连接天工数据库。" : "Connect to the TianGong database first.");
       return;
     }
     setRemoteLoading(true);
@@ -528,7 +528,7 @@ export function ExternalPlatformAccounts(props: Props) {
           <span className={`pm-connection-pill ${selectedAccount?.last_validation_status === "ok" ? "connected" : ""}`}>
             {selectedAccount
               ? `${selectedAccount.alias} · ${accountValidationLabel(selectedAccount, zh)}`
-              : (zh ? "未绑定" : "Not bound")}
+              : (zh ? "未连接" : "Not connected")}
           </span>
           {selectedAccount && (
             <button type="button" className="pm-ghost-btn" onClick={() => void testAccount(selectedAccount.id)} disabled={testingId === selectedAccount.id}>
@@ -536,7 +536,7 @@ export function ExternalPlatformAccounts(props: Props) {
             </button>
           )}
           <button type="button" className="pm-ghost-btn" onClick={() => selectedAccount ? editAccount(selectedAccount) : openNewAccountDialog()}>
-            {selectedAccount ? (zh ? "账号设置" : "Account") : (zh ? "绑定账号" : "Bind Account")}
+            {selectedAccount ? (zh ? "连接设置" : "Connection") : (zh ? "连接天工数据库" : "Connect TianGong")}
           </button>
         </div>
       </div>
@@ -592,7 +592,7 @@ export function ExternalPlatformAccounts(props: Props) {
           </button>
           {!selectedAccount && (
             <button type="button" className="pm-primary-btn" onClick={openNewAccountDialog}>
-              {zh ? "绑定天工账号" : "Bind TianGong Account"}
+              {zh ? "连接天工数据库" : "Connect TianGong"}
             </button>
           )}
         </div>
@@ -700,7 +700,7 @@ export function ExternalPlatformAccounts(props: Props) {
         }}>
           <div className="pm-account-dialog" role="dialog" aria-modal="true">
             <div className="pm-dialog-head">
-              <h3>{editingId ? (zh ? "编辑天工账号" : "Edit TianGong Account") : (zh ? "绑定天工账号" : "Bind TianGong Account")}</h3>
+              <h3>{editingId ? (zh ? "编辑天工数据库连接" : "Edit TianGong Connection") : (zh ? "连接天工数据库" : "Connect TianGong")}</h3>
               <button type="button" className="pm-icon-btn" onClick={resetForm}>×</button>
             </div>
             <div className="pm-platform-form pm-platform-form--dialog">
@@ -734,7 +734,7 @@ export function ExternalPlatformAccounts(props: Props) {
             <div className="pm-dialog-actions">
               {editingId && (
                 <button type="button" className="pm-ghost-btn danger" onClick={() => void deleteAccount(editingId)} disabled={saving}>
-                  {zh ? "删除绑定" : "Delete Binding"}
+                  {zh ? "删除连接" : "Delete Connection"}
                 </button>
               )}
               <button type="button" className="pm-ghost-btn" onClick={resetForm}>{zh ? "取消" : "Cancel"}</button>
@@ -750,7 +750,7 @@ export function ExternalPlatformAccounts(props: Props) {
         }}>
           <div className="pm-validation-dialog" role="dialog" aria-modal="true">
             <div className="pm-dialog-head">
-              <h3>{zh ? "天工账号校验" : "TianGong Account Check"}</h3>
+              <h3>{zh ? "天工数据库连接校验" : "TianGong Connection Check"}</h3>
               <button type="button" className="pm-icon-btn" onClick={() => setValidationDialog(null)}>×</button>
             </div>
             <div className="pm-validation-body">
