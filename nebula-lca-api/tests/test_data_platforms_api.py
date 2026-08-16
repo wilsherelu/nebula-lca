@@ -182,6 +182,25 @@ def test_tiangong_process_detail_batches_flow_dependencies(monkeypatch):
     ]
 
 
+def test_tiangong_rest_requests_use_current_api_schema():
+    connector = TianGongSupabaseConnector(
+        PlatformAccountContext(
+            account_id="tg-1",
+            platform="tiangong",
+            alias="TianGong",
+            base_url="https://tg.example",
+            auth_type="bearer",
+            credential={"token": "test-token"},
+            metadata={"publishable_key": "pub-key"},
+        )
+    )
+
+    headers = connector._headers()
+
+    assert headers["Accept-Profile"] == "api"
+    assert headers["Content-Profile"] == "api"
+
+
 def test_tiangong_flow_details_batch_dependencies(monkeypatch):
     connector = TianGongSupabaseConnector(
         PlatformAccountContext(
@@ -230,10 +249,10 @@ def test_tiangong_model_summary_search_filters_open_state(monkeypatch):
             metadata={"publishable_key": "pub-key"},
         )
     )
-    paths: list[str] = []
+    calls: list[tuple[str, dict]] = []
 
-    def fake_request(_method, path, **_kwargs):
-        paths.append(path)
+    def fake_request(_method, path, **kwargs):
+        calls.append((path, kwargs.get("body") or {}))
         return [{"id": "model-1", "version": "1", "name": "Remote model"}]
 
     monkeypatch.setattr(connector, "_request_json", fake_request)
@@ -241,7 +260,8 @@ def test_tiangong_model_summary_search_filters_open_state(monkeypatch):
     result = connector.search_models("Remote", state_code=100)
 
     assert result.total == 1
-    assert parse_qs(urlparse(paths[0]).query)["state_code"] == ["eq.100"]
+    assert calls[0][0] == "/rest/v1/rpc/search_lifecyclemodels"
+    assert calls[0][1]["state_code_filter"] == 100
 
 
 @pytest.fixture(autouse=True)
