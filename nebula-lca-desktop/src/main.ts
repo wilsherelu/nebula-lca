@@ -7,6 +7,7 @@ import { resolveDesktopPaths } from "./paths.js";
 app.setName("nebula-lca-desktop");
 
 let apiHandle: ApiProcessHandle | null = null;
+let mainWindow: BrowserWindow | null = null;
 const smokeMode = process.argv.includes("--smoke");
 let quitting = false;
 const rendererLogPath = path.join(resolveDesktopPaths().logs, "renderer.log");
@@ -44,6 +45,10 @@ async function createWindow(): Promise<void> {
       nodeIntegration: false,
       sandbox: false,
     },
+  });
+  mainWindow = win;
+  win.on("closed", () => {
+    if (mainWindow === win) mainWindow = null;
   });
 
   win.loadURL(loadingHtml("Starting local API..."));
@@ -83,7 +88,21 @@ async function createWindow(): Promise<void> {
   }
 }
 
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+}
+
 app.whenReady().then(async () => {
+  if (!hasSingleInstanceLock) return;
   const paths = resolveDesktopPaths();
   ipcMain.handle("desktop:openLogs", () => shell.openPath(paths.logs));
   ipcMain.handle("desktop:getDiagnostics", () => ({

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import time
 from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Any
@@ -78,6 +80,7 @@ from ..services.tidas_import_core import (
 
 
 api_router = APIRouter(prefix="/api/data-platforms", tags=["data-platforms"])
+logger = logging.getLogger(__name__)
 
 
 def _safe_str(value: object) -> str:
@@ -1800,6 +1803,7 @@ def preview_remote_model(
 
 @api_router.post("/accounts/{account_id}/flows/sync", response_model=DataPlatformSyncFlowResponse)
 def sync_remote_flow(account_id: str, payload: DataPlatformSyncFlowRequest, db: Session = Depends(get_db)) -> DataPlatformSyncFlowResponse:
+    sync_started_at = time.perf_counter()
     account = _account_or_404(db, account_id)
     job = DataPlatformSyncJob(account_id=account.id, platform=account.platform, remote_process_id=payload.remote_flow_id, status="running", phase="fetch", stats_json={"remote_kind": "flow"})
     db.add(job)
@@ -1824,6 +1828,13 @@ def sync_remote_flow(account_id: str, payload: DataPlatformSyncFlowRequest, db: 
         job.stats_json = {"remote_kind": "flow", "warnings": warnings, "synced_count": len(synced), "tidas_import": report_summary}
         db.commit()
         invalidate_management_caches(flows=True, stats=True)
+        logger.info(
+            "TianGong flow import complete account_id=%s remote_id=%s elapsed_ms=%d cached_search_row=%s",
+            account.id,
+            payload.remote_flow_id,
+            round((time.perf_counter() - sync_started_at) * 1000),
+            cached is not None,
+        )
         return DataPlatformSyncFlowResponse(
             job_id=job.id,
             account_id=account.id,

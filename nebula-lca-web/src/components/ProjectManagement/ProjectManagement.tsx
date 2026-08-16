@@ -2377,7 +2377,7 @@ export function ProjectManagement(props: Props) {
           </div>
 
           <div className="pm-sidebar-section">
-            <div className="pm-sidebar-title">{zh ? "外部平台" : "External Platforms"}</div>
+            <div className="pm-sidebar-title">{zh ? "天工数据库" : "TianGong Database"}</div>
             <button
               type="button"
               className={`pm-nav-item ${activeItem === "external_platforms" ? "active" : ""}`}
@@ -2386,7 +2386,7 @@ export function ProjectManagement(props: Props) {
                 setActiveItem("external_platforms");
               }}
             >
-              {zh ? "账号绑定" : "Accounts"}
+              {zh ? "数据接入" : "Data Access"}
             </button>
           </div>
         </aside>
