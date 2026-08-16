@@ -681,6 +681,8 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
             "apikey": key,
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
+            "Accept-Profile": "api",
+            "Content-Profile": "api",
         }
 
     def _rpc(self, name: str, payload: dict[str, Any]) -> Any:
@@ -850,35 +852,6 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
         return self._search_rpc(kind="process", query=query, page=page, page_size=page_size, data_source=data_source, state_code=state_code, process_type=process_type)
 
     def search_models(self, query: str, *, page: int = 1, page_size: int = 20, data_source: str = "tg", state_code: int | None = 100) -> RemotePageDTO:
-        if data_source == "tg":
-            params = {
-                "select": "id,version,modified_at,name:json->lifeCycleModelDataSet->lifeCycleModelInformation->dataSetInformation->name",
-                "order": "modified_at.desc",
-                "limit": "1000",
-            }
-            if state_code is not None:
-                params["state_code"] = f"eq.{state_code}"
-            path = f"/rest/v1/lifecyclemodels?{url_parse.urlencode(params)}"
-            payload = self._request_json("GET", path, headers=self._headers())
-            rows = [row for row in payload if isinstance(row, dict)] if isinstance(payload, list) else []
-            latest_rows: dict[str, dict[str, Any]] = {}
-            for row in rows:
-                remote_id = str(row.get("id") or "").strip()
-                if remote_id and remote_id not in latest_rows:
-                    latest_rows[remote_id] = row
-            rows = list(latest_rows.values())
-            normalized_query = " ".join(re.sub(r"[;；]+", " ", query).split())
-            ranked_rows = _rerank_tiangong_rows("model", rows, normalized_query) if normalized_query else rows
-            total = len(ranked_rows)
-            start = (page - 1) * page_size
-            page_rows = ranked_rows[start:start + page_size]
-            return RemotePageDTO(
-                items=[_tiangong_model_from_row(row) for row in page_rows],
-                total=total,
-                page=page,
-                page_size=page_size,
-                has_more=(page * page_size) < total,
-            )
         return self._search_rpc(kind="model", query=query, page=page, page_size=page_size, data_source=data_source, state_code=state_code)
 
     def get_flow_detail(self, remote_flow_id: str, remote_version: str | None = None) -> RemoteFlowDTO:
