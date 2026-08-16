@@ -182,7 +182,7 @@ def test_tiangong_process_detail_batches_flow_dependencies(monkeypatch):
     ]
 
 
-def test_tiangong_rest_requests_use_current_api_schema():
+def test_tiangong_rest_requests_separate_rpc_and_detail_schemas():
     connector = TianGongSupabaseConnector(
         PlatformAccountContext(
             account_id="tg-1",
@@ -195,10 +195,16 @@ def test_tiangong_rest_requests_use_current_api_schema():
         )
     )
 
-    headers = connector._headers()
+    rpc_headers = connector._headers("api")
+    detail_headers = connector._headers("public")
+    function_headers = connector._headers()
 
-    assert headers["Accept-Profile"] == "api"
-    assert headers["Content-Profile"] == "api"
+    assert rpc_headers["Accept-Profile"] == "api"
+    assert rpc_headers["Content-Profile"] == "api"
+    assert detail_headers["Accept-Profile"] == "public"
+    assert detail_headers["Content-Profile"] == "public"
+    assert "Accept-Profile" not in function_headers
+    assert "Content-Profile" not in function_headers
 
 
 def test_tiangong_flow_details_batch_dependencies(monkeypatch):
