@@ -1,10 +1,13 @@
 from app.services.tidas_import_core import (
+    _build_tidas_graph_from_xflow_record,
     _extract_tidas_flow_record,
     _extract_tidas_model_record,
     _infer_unit_defaults_from_flow_dataset,
     _misclassified_elementary_port_uuids,
     _normalize_exchange,
 )
+from app.database import Base, SessionLocal, engine
+from app.models import ReferenceProcess
 from app.services.reference_catalog import (
     TidasAllocationImportError,
     _mark_reference_product_exchange,
@@ -140,6 +143,57 @@ def test_extract_model_record_preserves_standard_ilcd_connections() -> None:
         "downstream_instance_id": "1",
         "downstream_flow_uuid": "flow-a",
     }]
+
+
+def test_xflow_reused_process_is_materialized_as_unique_node_instance() -> None:
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        source_uuid = "process-reused"
+        source_json = {
+            "process_uuid": source_uuid,
+            "process_name": "Reused process",
+            "exchanges": [],
+        }
+        db.add(ReferenceProcess(
+            process_uuid=source_uuid,
+            process_name="Reused process",
+            process_type="unit_process",
+            process_json=source_json,
+            import_mode="locked",
+        ))
+        db.flush()
+
+        graph, unresolved = _build_tidas_graph_from_xflow_record(
+            db=db,
+            model_record={
+                "model_uuid": "model-reused",
+                "model_name": "Repeated process model",
+                "xflow_nodes": [
+                    {"id": "0", "data": {"id": source_uuid}},
+                    {"id": "2", "data": {"id": source_uuid}},
+                ],
+                "xflow_edges": [],
+            },
+            process_json_by_uuid={source_uuid: source_json},
+            display_lang="en",
+            allocation_policy="quantity",
+        )
+
+        assert graph is not None
+        assert unresolved == []
+        process_uuids = [node["process_uuid"] for node in graph["nodes"]]
+        assert process_uuids[0] == source_uuid
+        assert process_uuids[1] != source_uuid
+        assert len(set(process_uuids)) == 2
+        db.flush()
+        alias = db.get(ReferenceProcess, process_uuids[1])
+        assert alias is not None
+        assert alias.source_process_uuid == source_uuid
+        assert alias.process_json["source_process_uuid"] == source_uuid
+    finally:
+        db.rollback()
+        db.close()
 
 
 def test_calorific_flow_property_resolves_to_energy_default() -> None:

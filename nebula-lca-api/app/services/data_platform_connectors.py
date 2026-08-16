@@ -674,19 +674,21 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
             return ""
         return str(payload.get("sub") or payload.get("user_id") or "").strip()
 
-    def _headers(self) -> dict[str, str]:
+    def _headers(self, schema: str | None = None) -> dict[str, str]:
         token = self._access_token()
         key = self._publishable_key()
-        return {
+        headers = {
             "apikey": key,
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
-            "Accept-Profile": "api",
-            "Content-Profile": "api",
         }
+        if schema:
+            headers["Accept-Profile"] = schema
+            headers["Content-Profile"] = schema
+        return headers
 
     def _rpc(self, name: str, payload: dict[str, Any]) -> Any:
-        return self._request_json("POST", f"/rest/v1/rpc/{url_parse.quote(name, safe='')}", headers=self._headers(), body=payload)
+        return self._request_json("POST", f"/rest/v1/rpc/{url_parse.quote(name, safe='')}", headers=self._headers("api"), body=payload)
 
     def _invoke_function(self, name: str, body: dict[str, Any]) -> dict[str, Any]:
         payload = self._request_json("POST", f"/functions/v1/{url_parse.quote(name, safe='')}", headers=self._headers(), body=body)
@@ -703,7 +705,7 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
         if remote_version:
             params["version"] = f"eq.{remote_version}"
         path = f"/rest/v1/{url_parse.quote(table, safe='')}?{url_parse.urlencode(params)}"
-        payload = self._request_json("GET", path, headers=self._headers())
+        payload = self._request_json("GET", path, headers=self._headers("public"))
         rows = payload if isinstance(payload, list) else []
         if not rows:
             raise ConnectorError(f"TianGong {table} detail not found.")
@@ -724,7 +726,7 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
             ids = list(dict.fromkeys(remote_id for remote_id, _version in chunk))
             params = {"select": "*", "id": f"in.({','.join(ids)})"}
             path = f"/rest/v1/{url_parse.quote(table, safe='')}?{url_parse.urlencode(params)}"
-            payload = self._request_json("GET", path, headers=self._headers())
+            payload = self._request_json("GET", path, headers=self._headers("public"))
             rows = [row for row in payload if isinstance(row, dict)] if isinstance(payload, list) else []
             by_id: dict[str, list[dict[str, Any]]] = {}
             for row in rows:

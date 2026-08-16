@@ -740,20 +740,55 @@ def _build_tidas_graph_from_xflow_record(
     unresolved: list[dict] = []
     materialization_warnings: list[str] = []
     seen_names: dict[str, int] = {}
+    process_instance_counts: dict[str, int] = {}
     for index, xnode in enumerate(xflow_nodes):
         data = xnode.get("data") if isinstance(xnode.get("data"), dict) else {}
         node_id = _safe_str(xnode.get("id")) or f"node_tidas_xflow_{index}"
-        process_uuid = _safe_str(data.get("id") or xnode.get("process_uuid"))
-        source = resolved_process_json_by_uuid.get(process_uuid)
+        source_process_uuid = _safe_str(data.get("id") or xnode.get("process_uuid"))
+        source = resolved_process_json_by_uuid.get(source_process_uuid)
         if source is None:
             unresolved.append({
                 "model_uuid": model_record.get("model_uuid"),
                 "type": "missing_process_reference",
-                "process_uuid": process_uuid,
+                "process_uuid": source_process_uuid,
                 "node_id": node_id,
                 "reason": "xflow node process not found",
             })
             continue
+
+        instance_count = process_instance_counts.get(source_process_uuid, 0) + 1
+        process_instance_counts[source_process_uuid] = instance_count
+        process_uuid = source_process_uuid
+        if instance_count > 1:
+            process_uuid = str(uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"nebula:tidas-model:{_safe_str(model_record.get('model_uuid'))}:node:{node_id}:process:{source_process_uuid}",
+            ))
+            instance_source = copy.deepcopy(source)
+            instance_source["process_uuid"] = process_uuid
+            instance_source["source_process_uuid"] = source_process_uuid
+            resolved_process_json_by_uuid[process_uuid] = instance_source
+            source = instance_source
+            if db.get(ReferenceProcess, process_uuid) is None:
+                source_row = db.get(ReferenceProcess, source_process_uuid)
+                if source_row is not None:
+                    import_report = copy.deepcopy(source_row.import_report_json or {})
+                    import_report["process_uuid"] = process_uuid
+                    import_report["source_process_uuid"] = source_process_uuid
+                    db.add(ReferenceProcess(
+                        process_uuid=process_uuid,
+                        process_name=f"{source_row.process_name}({instance_count})",
+                        process_name_zh=(f"{source_row.process_name_zh}({instance_count})" if source_row.process_name_zh else None),
+                        process_name_en=(f"{source_row.process_name_en}({instance_count})" if source_row.process_name_en else None),
+                        process_type=source_row.process_type,
+                        reference_flow_uuid=source_row.reference_flow_uuid,
+                        reference_flow_internal_id=source_row.reference_flow_internal_id,
+                        process_json=instance_source,
+                        source_file=source_row.source_file,
+                        source_process_uuid=source_process_uuid,
+                        import_mode=source_row.import_mode,
+                        import_report_json=import_report,
+                    ))
 
         source_exchanges = copy.deepcopy(
             [exchange for exchange in list(source.get("exchanges") or []) if isinstance(exchange, dict)]
