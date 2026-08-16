@@ -220,6 +220,21 @@ class TestRunJobLightweightRequestJson:
         assert result["edge_count"] == 0
         assert result["model_version_id"] == "test-id"
 
+    def test_edge_count_uses_graph_exchanges(self):
+        class FakeGraph:
+            nodes = []
+            exchanges = [object(), object()]
+
+        class FakePayload:
+            graph = FakeGraph()
+            model_version_id = "test-id"
+            project_id = "test-project"
+            force_recompile = False
+
+        result = _build_run_job_request_json(FakePayload())
+
+        assert result["edge_count"] == 2
+
     def test_debug_env_restores_full_storage(self):
         """With NEBULA_DEBUG_STORE_RUN_GRAPH=1, full graph should be stored."""
 

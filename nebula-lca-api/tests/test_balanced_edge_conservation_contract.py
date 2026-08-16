@@ -77,6 +77,49 @@ def _balanced_graph(*, provider_amount=3, consumer_amount=3, provider_switch=Non
     }
 
 
+def _same_name_graph(node_kind: str):
+    return HybridGraph.model_validate({
+        "functionalUnit": "1 unit",
+        "nodes": [
+            {
+                "id": "first",
+                "node_kind": node_kind,
+                "mode": "balanced",
+                "process_uuid": "process-first",
+                "name": "market for diesel",
+                "location": "GLO",
+                "reference_product": "diesel",
+                "inputs": [],
+                "outputs": [],
+            },
+            {
+                "id": "second",
+                "node_kind": node_kind,
+                "mode": "balanced",
+                "process_uuid": "process-second",
+                "name": "market for diesel",
+                "location": "RER",
+                "reference_product": "diesel",
+                "inputs": [],
+                "outputs": [],
+            },
+        ],
+        "exchanges": [],
+    })
+
+
+def test_lci_datasets_may_share_display_name_when_process_uuids_differ():
+    validate_graph_contract(_same_name_graph("lci_dataset"))
+
+
+def test_run_contract_rejects_duplicate_foreground_process_names():
+    with pytest.raises(HTTPException) as exc:
+        validate_graph_contract(_same_name_graph("unit_process"))
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "DUPLICATE_PROCESS_NAME"
+
+
 def test_balanced_single_edge_rejects_non_conserved_flow_basis_amounts():
     graph = HybridGraph.model_validate(_balanced_graph(provider_switch={"targetUnitGroup": "mass", "targetUnit": "kg", "factor": 0.75}))
 

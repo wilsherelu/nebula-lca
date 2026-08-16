@@ -910,6 +910,7 @@ def validate_graph_contract(
     """Run all non-DB graph contract checks in one call."""
     normalize_graph_product_flags(graph)
     normalize_graph_edge_port_ids(graph)
+    _raise_if_duplicate_process_names_in_graph(graph=graph, scope_label="main_graph")
     validate_port_bucket_direction_consistency(graph)
     validate_unique_process_uuid(graph)
     validate_edge_binding_and_uniqueness(graph)
@@ -1162,7 +1163,7 @@ def _enrich_market_process_input_sources_in_graph_json(graph_json: dict) -> dict
 
 # ── Process name uniqueness ────────────────────────────────────────────
 
-_NON_PTS_UNIQUE_NAME_NODE_KINDS: set[str] = {"unit_process", "market_process", "lci_dataset"}
+_NON_PTS_UNIQUE_NAME_NODE_KINDS: set[str] = {"unit_process", "market_process"}
 
 
 def _process_name_uniqueness_group(node_kind: str) -> str | None:

@@ -182,6 +182,68 @@ def test_tiangong_process_detail_batches_flow_dependencies(monkeypatch):
     ]
 
 
+def test_tiangong_flow_details_batch_dependencies(monkeypatch):
+    connector = TianGongSupabaseConnector(
+        PlatformAccountContext(
+            account_id="tg-1",
+            platform="tiangong",
+            alias="TianGong",
+            base_url="https://tg.example",
+            auth_type="bearer",
+            credential={"token": "test-token"},
+            metadata={"publishable_key": "pub-key"},
+        )
+    )
+    calls: list[str] = []
+
+    def fake_request(_method, path, **_kwargs):
+        calls.append(path)
+        if "/rest/v1/flows" in path:
+            return [_flow_row("flow-1"), _flow_row("flow-2")]
+        if "/rest/v1/flowproperties" in path:
+            return [_flowproperty_row()]
+        if "/rest/v1/unitgroups" in path:
+            return [_unitgroup_row()]
+        raise AssertionError(path)
+
+    monkeypatch.setattr(connector, "_request_json", fake_request)
+
+    details = connector.get_flow_details([("flow-1", "1"), ("flow-2", "1")])
+
+    assert set(details) == {("flow-1", "1"), ("flow-2", "1")}
+    assert [path.split("?")[0] for path in calls] == [
+        "/rest/v1/flows",
+        "/rest/v1/flowproperties",
+        "/rest/v1/unitgroups",
+    ]
+
+
+def test_tiangong_model_summary_search_filters_open_state(monkeypatch):
+    connector = TianGongSupabaseConnector(
+        PlatformAccountContext(
+            account_id="tg-1",
+            platform="tiangong",
+            alias="TianGong",
+            base_url="https://tg.example",
+            auth_type="bearer",
+            credential={"token": "test-token"},
+            metadata={"publishable_key": "pub-key"},
+        )
+    )
+    paths: list[str] = []
+
+    def fake_request(_method, path, **_kwargs):
+        paths.append(path)
+        return [{"id": "model-1", "version": "1", "name": "Remote model"}]
+
+    monkeypatch.setattr(connector, "_request_json", fake_request)
+
+    result = connector.search_models("Remote", state_code=100)
+
+    assert result.total == 1
+    assert parse_qs(urlparse(paths[0]).query)["state_code"] == ["eq.100"]
+
+
 @pytest.fixture(autouse=True)
 def setup_db(monkeypatch):
     monkeypatch.setenv("DATA_PLATFORM_CREDENTIAL_KEY", "test-platform-key")
@@ -1093,6 +1155,7 @@ def test_tiangong_search_prefers_current_hybrid_function_contract(client, monkey
     search_call = next(call for call in calls if "/functions/v1/flow_hybrid_search" in call["url"])
     assert json.loads(search_call["body"]) == {
         "query": "remote",
+        "filter": {},
         "filter_condition": {},
         "data_source": "tg",
         "page_size": 10,
@@ -1102,7 +1165,7 @@ def test_tiangong_search_prefers_current_hybrid_function_contract(client, monkey
     assert not any("/rest/v1/rpc/search_flows_latest" in call["url"] for call in calls)
 
 
-def test_tiangong_search_keeps_remote_total_after_local_rerank(monkeypatch):
+def test_tiangong_search_corrects_remote_total_after_local_rerank(monkeypatch):
     connector = TianGongSupabaseConnector(
         PlatformAccountContext(
             account_id="tg-1",
@@ -1128,11 +1191,41 @@ def test_tiangong_search_keeps_remote_total_after_local_rerank(monkeypatch):
     result = connector.search_processes("diesel", page=1, page_size=10)
 
     assert len(result.items) == 1
-    assert result.total == 200
-    assert result.has_more is True
+    assert result.total == 1
+    assert result.has_more is False
 
 
-def test_tiangong_search_retries_query_parts_when_remote_page_has_no_full_match(monkeypatch):
+def test_tiangong_search_corrects_total_when_complete_remote_page_is_filtered(monkeypatch):
+    connector = TianGongSupabaseConnector(
+        PlatformAccountContext(
+            account_id="tg-1",
+            platform="tiangong",
+            alias="TianGong",
+            base_url="https://tg.example",
+            auth_type="bearer",
+            credential={"token": "test-token"},
+            metadata={"publishable_key": "pub-key"},
+        )
+    )
+    monkeypatch.setattr(
+        connector,
+        "_invoke_function",
+        lambda _name, _payload: {
+            "data": [
+                {"id": "flow-1", "name": "Hydrogenated naphtha", "version": "1", "total_count": 2},
+                {"id": "flow-2", "name": "Unrelated flow", "version": "1", "total_count": 2},
+            ]
+        },
+    )
+
+    result = connector.search_flows("Hydrogenated naphtha", page=1, page_size=10)
+
+    assert len(result.items) == 1
+    assert result.total == 1
+    assert result.has_more is False
+
+
+def test_tiangong_search_does_not_repeat_query_parts_when_remote_page_has_no_full_match(monkeypatch):
     connector = TianGongSupabaseConnector(
         PlatformAccountContext(
             account_id="tg-1",
@@ -1178,9 +1271,9 @@ def test_tiangong_search_retries_query_parts_when_remote_page_has_no_full_match(
 
     result = connector.search_processes("交流电生产; 水力发电", page=1, page_size=10)
 
-    assert [item.process_uuid for item in result.items] == ["hydro"]
-    assert result.total == 1
-    assert queries == ["交流电生产 水力发电", "水力发电"]
+    assert result.items == []
+    assert result.total == 0
+    assert queries == ["交流电生产 水力发电"]
 
 
 def test_process_search_skips_localized_fallback_when_primary_has_results(client, monkeypatch):
@@ -1276,7 +1369,7 @@ def test_tiangong_expired_session_refreshes_then_falls_back_to_password(client, 
     finally:
         db.close()
 
-    fallback = client.get(f"/api/data-platforms/accounts/{account_id}/flows/search?q=remote")
+    fallback = client.get(f"/api/data-platforms/accounts/{account_id}/flows/search?q=remote-fallback")
 
     assert fallback.status_code == 200
     assert any("grant_type=refresh_token" in call["url"] for call in calls_fallback)
@@ -1334,11 +1427,82 @@ def test_remote_search_caches_but_does_not_write_catalog(client):
     assert data["page_size"] == 2
     db = _db_module.SessionLocal()
     try:
-        assert db.query(DataPlatformRemoteCache).count() == 2
+        assert db.query(DataPlatformRemoteCache).count() == 3
         assert db.query(ReferenceProcess).count() == 0
         assert db.query(FlowRecord).count() == 0
     finally:
         db.close()
+
+
+def test_remote_search_page_cache_avoids_repeated_connector_call(client, monkeypatch):
+    account_id = _create_mock_account(client)
+    calls: list[str] = []
+
+    class FakeConnector:
+        def search_models(self, query, **_kwargs):
+            from app.services.data_platform_connectors import RemoteModelDTO
+
+            calls.append(query)
+            return RemotePageDTO(
+                items=[RemoteModelDTO(remote_id="model-1", model_uuid="model-1", model_name="Cached model")],
+                total=1,
+            )
+
+    monkeypatch.setattr("app.api.data_platforms.connector_for_account", lambda _ctx: FakeConnector())
+
+    first = client.get(f"/api/data-platforms/accounts/{account_id}/models/search?q=cached&page_size=10")
+    second = client.get(f"/api/data-platforms/accounts/{account_id}/models/search?q=cached&page_size=10")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json() == second.json()
+    assert calls == ["cached"]
+
+
+def test_flow_sync_reuses_cached_search_row(client, monkeypatch):
+    account_id = _create_mock_account(client)
+    detail_calls: list[str] = []
+
+    class FakeConnector:
+        def search_flows(self, _query, **_kwargs):
+            from app.services.data_platform_connectors import RemoteFlowDTO
+
+            return RemotePageDTO(
+                items=[
+                    RemoteFlowDTO(
+                        remote_id="flow-cached",
+                        flow_uuid="flow-cached",
+                        flow_name="Cached flow",
+                        default_unit="kg",
+                        unit_group="Units of mass",
+                        source="mock",
+                        remote_version="1",
+                    )
+                ],
+                total=1,
+            )
+
+        def get_flow_detail(self, remote_id, _remote_version=None):
+            detail_calls.append(remote_id)
+            raise AssertionError("cached flow should not be fetched again")
+
+        def resolve_flow_detail(self, flow):
+            return flow
+
+        def get_flow_dependency_unit_groups(self, _flow):
+            return []
+
+    monkeypatch.setattr("app.api.data_platforms.connector_for_account", lambda _ctx: FakeConnector())
+
+    searched = client.get(f"/api/data-platforms/accounts/{account_id}/flows/search?q=cached&page_size=10")
+    synced = client.post(
+        f"/api/data-platforms/accounts/{account_id}/flows/sync",
+        json={"remote_flow_id": "flow-cached", "remote_version": "1", "overwrite": True},
+    )
+
+    assert searched.status_code == 200
+    assert synced.status_code == 200, synced.text
+    assert detail_calls == []
 
 
 def test_sync_process_writes_catalog_and_is_idempotent(client):
@@ -1411,7 +1575,7 @@ def test_tiangong_supabase_search_and_selected_sync(client, monkeypatch):
     assert model_search.json()["items"][0]["model_uuid"] == "model-1"
     db = _db_module.SessionLocal()
     try:
-        assert db.query(DataPlatformRemoteCache).count() == 3
+        assert db.query(DataPlatformRemoteCache).count() == 6
         assert db.query(FlowRecord).count() == 0
         assert db.query(ReferenceProcess).count() == 0
         assert db.query(Model).count() == 0
