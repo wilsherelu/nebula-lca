@@ -592,7 +592,7 @@ def _install_fake_tiangong_http(
     hybrid_search_404: bool = True,
     indexed_search_404: bool = False,
     v1_search_404: bool = False,
-    legacy_search_404: bool = False,
+    exact_search_404: bool = False,
 ):
     calls = []
 
@@ -643,18 +643,18 @@ def _install_fake_tiangong_http(
             if indexed_search_404:
                 raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
             return _FakeSupabaseResponse([{"id": "model-1", "name": "Remote model", "version": "1", "total_count": 1}])
-        if "/rest/v1/rpc/search_flows_latest" in url:
-            if legacy_search_404:
+        if "/rest/v1/rpc/search_flows" in url:
+            if exact_search_404:
                 raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
-            return _FakeSupabaseResponse({"items": [{"id": "flow-1", "name": "Remote flow", "version": "1"}], "total": 1})
-        if "/rest/v1/rpc/search_processes_latest" in url:
-            if legacy_search_404:
+            return _FakeSupabaseResponse([{"id": "flow-1", "name": "Remote flow", "version": "1", "total_count": 1}])
+        if "/rest/v1/rpc/search_processes" in url:
+            if exact_search_404:
                 raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
-            return _FakeSupabaseResponse({"items": [{"id": "process-1", "name": "Remote process", "version": "1"}], "total": 1})
-        if "/rest/v1/rpc/search_lifecyclemodels_latest" in url:
-            if legacy_search_404:
+            return _FakeSupabaseResponse([{"id": "process-1", "name": "Remote process", "version": "1", "total_count": 1}])
+        if "/rest/v1/rpc/search_lifecyclemodels" in url:
+            if exact_search_404:
                 raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
-            return _FakeSupabaseResponse({"items": [{"id": "model-1", "name": "Remote model", "version": "1"}], "total": 1})
+            return _FakeSupabaseResponse([{"id": "model-1", "name": "Remote model", "version": "1", "total_count": 1}])
         if "/rest/v1/flows" in url:
             flow_id = "flow-model" if "flow-model" in url else "flow-1"
             return _FakeSupabaseResponse([_flow_row(flow_id)])
@@ -1021,7 +1021,7 @@ def test_tiangong_account_rejects_mixed_authentication_credentials(client):
     assert response.json()["detail"]["code"] == "TIANGONG_API_KEY_CREDENTIAL_INVALID"
 
 
-def test_tiangong_search_uses_latest_search_rpc_payload(client, monkeypatch):
+def test_tiangong_search_uses_current_formal_search_rpc_payload(client, monkeypatch):
     calls = _install_fake_tiangong_http(monkeypatch)
     account_id = _create_tiangong_account(client)
 
@@ -1029,7 +1029,7 @@ def test_tiangong_search_uses_latest_search_rpc_payload(client, monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["total"] == 1
-    search_call = next(call for call in calls if "/rest/v1/rpc/search_processes_latest" in call["url"])
+    search_call = next(call for call in calls if "/rest/v1/rpc/search_processes" in call["url"])
     body = json.loads(search_call["body"])
     assert body["query_text"] == "remote"
     assert body["page_current"] == 2
@@ -1037,6 +1037,8 @@ def test_tiangong_search_uses_latest_search_rpc_payload(client, monkeypatch):
     assert body["data_source"] == "tg"
     assert body["state_code_filter"] == 100
     assert body["type_of_data_set_filter"] == "all"
+    assert body["query_terms"] == ["remote"]
+    assert body["owner_draft_only"] is False
     assert body["this_user_id"] == "user-1"
     assert body["team_id_filter"] is None
     assert "sort_by" not in body
@@ -1050,7 +1052,7 @@ def test_tiangong_search_normalizes_semicolon_separated_keywords(client, monkeyp
     response = client.get(f"/api/data-platforms/accounts/{account_id}/processes/search?q=primary%3B+aluminium")
 
     assert response.status_code == 200
-    search_call = next(call for call in calls if "/rest/v1/rpc/search_processes_latest" in call["url"])
+    search_call = next(call for call in calls if "/rest/v1/rpc/search_processes" in call["url"])
     assert json.loads(search_call["body"])["query_text"] == "primary aluminium"
 
 
@@ -1078,7 +1080,7 @@ def test_tiangong_search_can_request_all_states(client, monkeypatch):
     response = client.get(f"/api/data-platforms/accounts/{account_id}/processes/search?q=remote&page=1&page_size=10&state_scope=all")
 
     assert response.status_code == 200
-    search_call = next(call for call in calls if "/rest/v1/rpc/search_processes_latest" in call["url"])
+    search_call = next(call for call in calls if "/rest/v1/rpc/search_processes" in call["url"])
     body = json.loads(search_call["body"])
     assert body["state_code_filter"] is None
 
@@ -1090,7 +1092,7 @@ def test_tiangong_search_sends_flow_type_filter(client, monkeypatch):
     response = client.get(f"/api/data-platforms/accounts/{account_id}/flows/search?q=remote&page=1&page_size=10&state_code=100&flow_type=Product+flow")
 
     assert response.status_code == 200
-    search_call = next(call for call in calls if "/rest/v1/rpc/search_flows_latest" in call["url"])
+    search_call = next(call for call in calls if "/rest/v1/rpc/search_flows" in call["url"])
     body = json.loads(search_call["body"])
     assert body["state_code_filter"] == 100
     assert body["filter_condition"] == {"flowType": "Product flow"}
@@ -1103,7 +1105,7 @@ def test_tiangong_search_sends_process_type_filter(client, monkeypatch):
     response = client.get(f"/api/data-platforms/accounts/{account_id}/processes/search?q=remote&page=1&page_size=10&state_code=100&process_type=LCI+result")
 
     assert response.status_code == 200
-    search_call = next(call for call in calls if "/rest/v1/rpc/search_processes_latest" in call["url"])
+    search_call = next(call for call in calls if "/rest/v1/rpc/search_processes" in call["url"])
     body = json.loads(search_call["body"])
     assert body["state_code_filter"] == 100
     assert body["type_of_data_set_filter"] == "LCI result"
@@ -1133,15 +1135,15 @@ def test_tiangong_preview_reads_detail_without_importing(client, monkeypatch):
 
 
 def test_tiangong_search_fails_closed_when_exact_rpc_is_unavailable(client, monkeypatch):
-    calls = _install_fake_tiangong_http(monkeypatch, legacy_search_404=True)
+    calls = _install_fake_tiangong_http(monkeypatch, exact_search_404=True)
     account_id = _create_tiangong_account(client)
 
     response = client.get(f"/api/data-platforms/accounts/{account_id}/flows/search?q=remote&page=1&page_size=10")
 
     assert response.status_code == 502
     assert response.json()["detail"]["code"] == "DATA_PLATFORM_CONNECTOR_ERROR"
-    assert response.json()["detail"]["message"] == "TianGong exact search contract is unavailable. Check the TianGong database connection."
-    assert any("/rest/v1/rpc/search_flows_latest" in call["url"] for call in calls)
+    assert response.json()["detail"]["message"] == "TianGong lexical search contract is unavailable because the upstream database deployment does not match the current TianGong frontend."
+    assert any("/rest/v1/rpc/search_flows" in call["url"] for call in calls)
     assert not any("/functions/v1/flow_hybrid_search" in call["url"] for call in calls)
     assert not any("/rest/v1/rpc/pgroonga_search_flows" in call["url"] for call in calls)
 
@@ -1154,11 +1156,10 @@ def test_tiangong_search_prefers_same_exact_rpc_as_tiangong_platform(client, mon
 
     assert response.status_code == 200
     assert response.json()["items"][0]["flow_uuid"] == "flow-1"
-    search_call = next(call for call in calls if "/rest/v1/rpc/search_flows_latest" in call["url"])
+    search_call = next(call for call in calls if "/rest/v1/rpc/search_flows" in call["url"])
     assert json.loads(search_call["body"]) == {
         "query_text": "remote",
         "filter_condition": {},
-        "order_by": {},
         "data_source": "tg",
         "page_size": 10,
         "page_current": 2,
@@ -1200,7 +1201,7 @@ def test_tiangong_search_returns_concise_error_when_all_search_endpoints_fail(cl
         monkeypatch,
         indexed_search_404=True,
         v1_search_404=True,
-        legacy_search_404=True,
+        exact_search_404=True,
     )
     account_id = _create_tiangong_account(client)
 
@@ -1208,7 +1209,7 @@ def test_tiangong_search_returns_concise_error_when_all_search_endpoints_fail(cl
 
     assert response.status_code == 502
     assert response.json()["detail"]["code"] == "DATA_PLATFORM_CONNECTOR_ERROR"
-    assert response.json()["detail"]["message"] == "TianGong exact search contract is unavailable. Check the TianGong database connection."
+    assert response.json()["detail"]["message"] == "TianGong lexical search contract is unavailable because the upstream database deployment does not match the current TianGong frontend."
 
 
 def test_tiangong_expired_session_refreshes_then_falls_back_to_password(client, monkeypatch):
@@ -1468,7 +1469,7 @@ def test_tiangong_supabase_search_and_selected_sync(client, monkeypatch):
     assert process_sync.json()["tidas_import_report"]["import_type"] == "processes"
     assert model_sync.json()["tidas_import_report"]["created_projects"]
     assert any("/auth/v1/token" in call["url"] for call in calls)
-    assert any("/rest/v1/rpc/search_flows_latest" in call["url"] for call in calls)
+    assert any("/rest/v1/rpc/search_flows" in call["url"] for call in calls)
     db = _db_module.SessionLocal()
     try:
         assert db.query(FlowRecord).count() == 2

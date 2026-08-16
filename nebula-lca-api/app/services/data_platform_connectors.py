@@ -756,11 +756,11 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
         process_type: str | None = None,
     ) -> RemotePageDTO:
         if kind == "flow":
-            latest_rpc, search_rpc, mapper = "get_latest_flow_versions", "search_flows_latest", _tiangong_flow_from_row
+            latest_rpc, search_rpc, mapper = "get_latest_flow_versions", "search_flows", _tiangong_flow_from_row
         elif kind == "process":
-            latest_rpc, search_rpc, mapper = "get_latest_process_versions", "search_processes_latest", _tiangong_process_from_row
+            latest_rpc, search_rpc, mapper = "get_latest_process_versions", "search_processes", _tiangong_process_from_row
         else:
-            latest_rpc, search_rpc, mapper = "get_latest_lifecyclemodel_versions", "search_lifecyclemodels_latest", _tiangong_model_from_row
+            latest_rpc, search_rpc, mapper = "get_latest_lifecyclemodel_versions", "search_lifecyclemodels", _tiangong_model_from_row
         normalized_query = " ".join(re.sub(r"[;；]+", " ", query).split())
         user_id = self._current_user_id()
         filter_condition: dict[str, Any] = {}
@@ -791,7 +791,6 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
         search_payload: dict[str, Any] = {
             "query_text": normalized_query,
             "filter_condition": filter_condition,
-            "order_by": {},
             "page_size": page_size,
             "page_current": page,
             "data_source": data_source,
@@ -801,13 +800,15 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
         }
         if kind == "process":
             search_payload["type_of_data_set_filter"] = normalized_process_type if normalized_process_type and normalized_process_type != "all" else "all"
+            search_payload["query_terms"] = [normalized_query]
+            search_payload["owner_draft_only"] = False
         search_started_at = time.perf_counter()
         try:
             raw = self._rpc(search_rpc, search_payload)
         except ConnectorError as exc:
             logger.warning("TianGong %s exact search endpoint=%s failed: %s", kind, search_rpc, exc)
             raise ConnectorError(
-                "TianGong exact search contract is unavailable. Check the TianGong database connection.",
+                "TianGong lexical search contract is unavailable because the upstream database deployment does not match the current TianGong frontend.",
                 status_code=exc.status_code,
             ) from exc
         logger.info(
