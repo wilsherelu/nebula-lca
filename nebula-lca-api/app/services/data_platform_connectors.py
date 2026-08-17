@@ -302,6 +302,9 @@ class BaseDataPlatformConnector:
     def get_model_detail(self, remote_model_id: str, remote_version: str | None = None) -> RemoteModelDetailDTO:
         raise NotImplementedError
 
+    def resolve_model_detail(self, model: RemoteModelDTO) -> RemoteModelDetailDTO:
+        return self.get_model_detail(model.remote_id, model.remote_version)
+
     def get_flow_dependency_unit_groups(self, flow: RemoteFlowDTO) -> list[RemoteUnitGroupDTO]:
         return []
 
@@ -950,6 +953,12 @@ class TianGongSupabaseConnector(BaseDataPlatformConnector):
     def get_model_detail(self, remote_model_id: str, remote_version: str | None = None) -> RemoteModelDetailDTO:
         row = self._table_one("lifecyclemodels", remote_model_id, remote_version)
         model = _tiangong_model_from_row(row)
+        return self.resolve_model_detail(model)
+
+    def resolve_model_detail(self, model: RemoteModelDTO) -> RemoteModelDetailDTO:
+        row = model.metadata.get("row") if isinstance(model.metadata, dict) else None
+        if not isinstance(row, dict):
+            return self.get_model_detail(model.remote_id, model.remote_version)
         return RemoteModelDetailDTO(
             model=model,
             # Preserve the complete TianGong row: the standard ILCD model lives

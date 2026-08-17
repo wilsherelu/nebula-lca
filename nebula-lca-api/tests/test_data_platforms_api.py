@@ -1361,6 +1361,87 @@ def test_remote_search_page_cache_avoids_repeated_connector_call(client, monkeyp
     assert calls == ["cached"]
 
 
+def test_remote_search_cache_normalizes_whitespace_and_semicolons(client, monkeypatch):
+    account_id = _create_mock_account(client)
+    calls: list[str] = []
+
+    class FakeConnector:
+        def search_flows(self, query, **_kwargs):
+            from app.services.data_platform_connectors import RemoteFlowDTO
+
+            calls.append(query)
+            return RemotePageDTO(
+                items=[RemoteFlowDTO(remote_id="flow-1", flow_uuid="flow-1", flow_name="Cached flow")],
+                total=1,
+            )
+
+    monkeypatch.setattr("app.api.data_platforms.connector_for_account", lambda _ctx: FakeConnector())
+
+    first = client.get(f"/api/data-platforms/accounts/{account_id}/flows/search", params={"q": " resin； material "})
+    second = client.get(f"/api/data-platforms/accounts/{account_id}/flows/search", params={"q": "resin material"})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json() == second.json()
+    assert calls == ["resin material"]
+
+
+def test_model_preview_reuses_complete_search_row(client, monkeypatch):
+    account_id = _create_mock_account(client)
+    detail_calls: list[str] = []
+    model_row = {
+        "id": "model-cached",
+        "version": "01.00.001",
+        "json": {
+            "lifeCycleModelDataSet": {
+                "lifeCycleModelInformation": {
+                    "dataSetInformation": {
+                        "common:UUID": "model-cached",
+                        "name": {"baseName": [{"@xml:lang": "en", "#text": "Cached model"}]},
+                    }
+                }
+            }
+        },
+    }
+
+    class FakeConnector:
+        def search_models(self, _query, **_kwargs):
+            from app.services.data_platform_connectors import RemoteModelDTO
+
+            return RemotePageDTO(
+                items=[RemoteModelDTO(
+                    remote_id="model-cached",
+                    model_uuid="model-cached",
+                    model_name="Cached model",
+                    remote_version="01.00.001",
+                    metadata={"row": model_row},
+                )],
+                total=1,
+            )
+
+        def get_model_detail(self, remote_id, _remote_version=None):
+            detail_calls.append(remote_id)
+            raise AssertionError("cached model should not be fetched again")
+
+        def resolve_model_detail(self, model):
+            from app.services.data_platform_connectors import RemoteModelDetailDTO
+
+            return RemoteModelDetailDTO(model=model, model_json=model_row, lineage={"source": "mock"})
+
+    monkeypatch.setattr("app.api.data_platforms.connector_for_account", lambda _ctx: FakeConnector())
+
+    searched = client.get(f"/api/data-platforms/accounts/{account_id}/models/search?q=cached&page_size=10")
+    previewed = client.get(
+        f"/api/data-platforms/accounts/{account_id}/models/model-cached/preview",
+        params={"remote_version": "01.00.001"},
+    )
+
+    assert searched.status_code == 200
+    assert previewed.status_code == 200, previewed.text
+    assert previewed.json()["remote_id"] == "model-cached"
+    assert detail_calls == []
+
+
 def test_flow_sync_reuses_cached_search_row(client, monkeypatch):
     account_id = _create_mock_account(client)
     detail_calls: list[str] = []
