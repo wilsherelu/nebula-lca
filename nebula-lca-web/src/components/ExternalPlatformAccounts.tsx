@@ -467,14 +467,6 @@ export function ExternalPlatformAccounts(props: Props) {
       await performRemoteSync(item);
       return;
     }
-    const previewMatches = remotePreview
-      && remotePreview.remote_id === item.remote_id
-      && (remotePreview.remote_version ?? null) === (item.remote_version ?? null);
-    if (!previewMatches) {
-      setErrorText(zh ? "模型导入前需要先预览当前版本。" : "Preview the current model version before importing.");
-      onStatus?.(zh ? "请先预览该模型的当前版本。" : "Preview this model version first.");
-      return;
-    }
     setModelSyncConfirm({ open: true, item });
   };
 
@@ -809,7 +801,10 @@ export function ExternalPlatformAccounts(props: Props) {
                 : `About to import model: ${modelSyncConfirm.item.model_name ?? modelSyncConfirm.item.remote_id}`}
             </p>
             {(() => {
-              const relatedCount = Array.isArray(remotePreview?.related) ? remotePreview.related.length : 0;
+              const previewMatches = remotePreview
+                && remotePreview.remote_id === modelSyncConfirm.item.remote_id
+                && (remotePreview.remote_version ?? null) === (modelSyncConfirm.item.remote_version ?? null);
+              const relatedCount = previewMatches && Array.isArray(remotePreview.related) ? remotePreview.related.length : 0;
               if (relatedCount > 0) {
                 return (
                   <p>
@@ -821,11 +816,15 @@ export function ExternalPlatformAccounts(props: Props) {
               }
               return (
                 <p>
-                  {zh ? "此模型当前没有已知的依赖项。" : "This model has no known dependencies from the preview."}
+                  {previewMatches
+                    ? (zh ? "此模型当前没有已知的依赖项。" : "This model has no known dependencies from the preview.")
+                    : (zh
+                      ? "将导入检索结果中的当前最新版并创建新项目，相关 Process 和 Flow 依赖会一并处理。"
+                      : "The latest listed version will be imported as a new project, including its Process and Flow dependencies.")}
                 </p>
               );
             })()}
-            {remotePreview?.warnings && remotePreview.warnings.length > 0 && (
+            {remotePreview?.remote_id === modelSyncConfirm.item.remote_id && remotePreview.warnings && remotePreview.warnings.length > 0 && (
               <div className="pm-warning" style={{ marginTop: "8px" }}>
                 <strong>{zh ? "警告" : "Warnings"}:</strong>
                 <ul style={{ margin: "4px 0 0 0", paddingLeft: "20px" }}>

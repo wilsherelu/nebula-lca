@@ -80,11 +80,15 @@ from ..services.tidas_import_core import (
 
 
 api_router = APIRouter(prefix="/api/data-platforms", tags=["data-platforms"])
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 
 def _safe_str(value: object) -> str:
     return str(value or "").strip()
+
+
+def _normalize_remote_query(value: str) -> str:
+    return " ".join(value.replace("；", " ").replace(";", " ").split())
 
 
 def _process_search_terms(db: Session, query: str) -> list[str]:
@@ -687,6 +691,54 @@ def _cached_remote_flow(
 def _resolve_cached_flow(connector: Any, flow: RemoteFlowDTO) -> RemoteFlowDTO:
     resolver = getattr(connector, "resolve_flow_detail", None)
     return resolver(flow) if callable(resolver) else flow
+
+
+def _cached_remote_model(
+    db: Session,
+    *,
+    account: DataPlatformAccount,
+    remote_id: str,
+    remote_version: str | None,
+) -> RemoteModelDTO | None:
+    row = (
+        db.query(DataPlatformRemoteCache)
+        .filter(
+            DataPlatformRemoteCache.account_id == account.id,
+            DataPlatformRemoteCache.remote_kind == "model",
+            DataPlatformRemoteCache.remote_id == remote_id,
+        )
+        .first()
+    )
+    if row is None:
+        return None
+    try:
+        item = RemoteModelItem.model_validate(row.payload_json)
+    except Exception:  # noqa: BLE001
+        return None
+    if remote_version and item.remote_version != remote_version:
+        return None
+    raw_row = item.metadata.get("row") if isinstance(item.metadata, dict) else None
+    if not isinstance(raw_row, dict):
+        return None
+    if not any(
+        isinstance(raw_row.get(key), dict)
+        for key in ("json", "json_ordered", "json_tg", "lifeCycleModelDataSet", "hybrid_graph")
+    ):
+        return None
+    return RemoteModelDTO(
+        remote_id=item.remote_id,
+        model_uuid=item.model_uuid,
+        model_name=item.model_name,
+        model_name_en=item.model_name_en,
+        source=item.source,
+        remote_version=item.remote_version,
+        metadata=item.metadata,
+    )
+
+
+def _resolve_cached_model(connector: Any, model: RemoteModelDTO) -> Any:
+    resolver = getattr(connector, "resolve_model_detail", None)
+    return resolver(model) if callable(resolver) else connector.get_model_detail(model.remote_id, model.remote_version)
 
 
 def _upsert_sync_record(
@@ -1598,10 +1650,12 @@ def search_remote_flows(
     flow_type: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> DataPlatformSearchResponse:
+    search_started_at = time.perf_counter()
     account = _account_or_404(db, account_id)
+    normalized_q = _normalize_remote_query(q)
     effective_state_code = None if state_scope == "all" else state_code
     cache_parameters = {
-        "q": q,
+        "q": normalized_q,
         "page": page,
         "page_size": page_size,
         "data_source": data_source,
@@ -1610,17 +1664,23 @@ def search_remote_flows(
     }
     cached = _read_search_cache(db, account=account, remote_kind="flow", parameters=cache_parameters)
     if cached is not None:
+        logger.info(
+            "TianGong flow search complete account_id=%s query=%r elapsed_ms=%d cache_hit=true",
+            account.id,
+            normalized_q,
+            round((time.perf_counter() - search_started_at) * 1000),
+        )
         return cached
     try:
-        result = connector_for_account(_account_context(account, db)).search_flows(q, page=page, page_size=page_size, data_source=data_source, state_code=effective_state_code, flow_type=flow_type)
+        result = connector_for_account(_account_context(account, db)).search_flows(normalized_q, page=page, page_size=page_size, data_source=data_source, state_code=effective_state_code, flow_type=flow_type)
     except ConnectorError as exc:
         raise _connector_error(exc) from exc
     for item in result.items:
-        _write_cache(db, account=account, remote_kind="flow", query_key=q, remote_id=item.remote_id, payload=_remote_flow_item(item).model_dump(mode="python"))
+        _write_cache(db, account=account, remote_kind="flow", query_key=normalized_q, remote_id=item.remote_id, payload=_remote_flow_item(item).model_dump(mode="python"))
     response = DataPlatformSearchResponse(
         account_id=account.id,
         platform=account.platform,
-        query=q,
+        query=normalized_q,
         page=result.page,
         page_size=result.page_size,
         has_more=result.has_more,
@@ -1629,6 +1689,14 @@ def search_remote_flows(
     )
     _write_search_cache(db, account=account, remote_kind="flow", parameters=cache_parameters, response=response)
     db.commit()
+    logger.info(
+        "TianGong flow search complete account_id=%s query=%r elapsed_ms=%d cache_hit=false result_count=%d total=%s",
+        account.id,
+        normalized_q,
+        round((time.perf_counter() - search_started_at) * 1000),
+        len(result.items),
+        result.total,
+    )
     return response
 
 
@@ -1645,9 +1713,10 @@ def search_remote_processes(
     db: Session = Depends(get_db),
 ) -> DataPlatformSearchResponse:
     account = _account_or_404(db, account_id)
+    normalized_q = _normalize_remote_query(q)
     effective_state_code = None if state_scope == "all" else state_code
     cache_parameters = {
-        "q": q,
+        "q": normalized_q,
         "page": page,
         "page_size": page_size,
         "data_source": data_source,
@@ -1660,7 +1729,7 @@ def search_remote_processes(
     try:
         connector = connector_for_account(_account_context(account, db))
         pages: list[RemotePageDTO] = []
-        for term in _process_search_terms(db, q):
+        for term in _process_search_terms(db, normalized_q):
             current = connector.search_processes(
                 term,
                 page=page,
@@ -1676,11 +1745,11 @@ def search_remote_processes(
     except ConnectorError as exc:
         raise _connector_error(exc) from exc
     for item in result.items:
-        _write_cache(db, account=account, remote_kind="process", query_key=q, remote_id=item.remote_id, payload=_remote_process_item(item).model_dump(mode="python"))
+        _write_cache(db, account=account, remote_kind="process", query_key=normalized_q, remote_id=item.remote_id, payload=_remote_process_item(item).model_dump(mode="python"))
     response = DataPlatformSearchResponse(
         account_id=account.id,
         platform=account.platform,
-        query=q,
+        query=normalized_q,
         page=result.page,
         page_size=result.page_size,
         has_more=result.has_more,
@@ -1703,10 +1772,12 @@ def search_remote_models(
     state_scope: str = Query(default="open"),
     db: Session = Depends(get_db),
 ) -> DataPlatformSearchResponse:
+    search_started_at = time.perf_counter()
     account = _account_or_404(db, account_id)
+    normalized_q = _normalize_remote_query(q)
     effective_state_code = None if state_scope == "all" else state_code
     cache_parameters = {
-        "q": q,
+        "q": normalized_q,
         "page": page,
         "page_size": page_size,
         "data_source": data_source,
@@ -1714,17 +1785,23 @@ def search_remote_models(
     }
     cached = _read_search_cache(db, account=account, remote_kind="model", parameters=cache_parameters)
     if cached is not None:
+        logger.info(
+            "TianGong model search complete account_id=%s query=%r elapsed_ms=%d cache_hit=true",
+            account.id,
+            normalized_q,
+            round((time.perf_counter() - search_started_at) * 1000),
+        )
         return cached
     try:
-        result = connector_for_account(_account_context(account, db)).search_models(q, page=page, page_size=page_size, data_source=data_source, state_code=effective_state_code)
+        result = connector_for_account(_account_context(account, db)).search_models(normalized_q, page=page, page_size=page_size, data_source=data_source, state_code=effective_state_code)
     except ConnectorError as exc:
         raise _connector_error(exc) from exc
     for item in result.items:
-        _write_cache(db, account=account, remote_kind="model", query_key=q, remote_id=item.remote_id, payload=_remote_model_item(item).model_dump(mode="python"))
+        _write_cache(db, account=account, remote_kind="model", query_key=normalized_q, remote_id=item.remote_id, payload=_remote_model_item(item).model_dump(mode="python"))
     response = DataPlatformSearchResponse(
         account_id=account.id,
         platform=account.platform,
-        query=q,
+        query=normalized_q,
         page=result.page,
         page_size=result.page_size,
         has_more=result.has_more,
@@ -1733,6 +1810,14 @@ def search_remote_models(
     )
     _write_search_cache(db, account=account, remote_kind="model", parameters=cache_parameters, response=response)
     db.commit()
+    logger.info(
+        "TianGong model search complete account_id=%s query=%r elapsed_ms=%d cache_hit=false result_count=%d total=%s",
+        account.id,
+        normalized_q,
+        round((time.perf_counter() - search_started_at) * 1000),
+        len(result.items),
+        result.total,
+    )
     return response
 
 
@@ -1743,6 +1828,7 @@ def preview_remote_flow(
     remote_version: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> DataPlatformRemotePreviewResponse:
+    preview_started_at = time.perf_counter()
     account = _account_or_404(db, account_id)
     try:
         connector = connector_for_account(_account_context(account, db))
@@ -1762,6 +1848,13 @@ def preview_remote_flow(
             payload=_remote_flow_item(flow).model_dump(mode="python"),
         )
         db.commit()
+        logger.info(
+            "TianGong flow preview complete account_id=%s remote_id=%s elapsed_ms=%d cached_search_row=%s",
+            account.id,
+            remote_id,
+            round((time.perf_counter() - preview_started_at) * 1000),
+            cached is not None,
+        )
         return _preview_from_flow(account, flow)
     except ConnectorError as exc:
         raise _connector_error(exc) from exc
@@ -1793,9 +1886,24 @@ def preview_remote_model(
     remote_version: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> DataPlatformRemotePreviewResponse:
+    preview_started_at = time.perf_counter()
     account = _account_or_404(db, account_id)
     try:
-        detail = connector_for_account(_account_context(account, db)).get_model_detail(remote_id, remote_version)
+        connector = connector_for_account(_account_context(account, db))
+        cached = _cached_remote_model(
+            db,
+            account=account,
+            remote_id=remote_id,
+            remote_version=remote_version,
+        )
+        detail = _resolve_cached_model(connector, cached) if cached is not None else connector.get_model_detail(remote_id, remote_version)
+        logger.info(
+            "TianGong model preview complete account_id=%s remote_id=%s elapsed_ms=%d cached_search_row=%s",
+            account.id,
+            remote_id,
+            round((time.perf_counter() - preview_started_at) * 1000),
+            cached is not None,
+        )
         return _preview_from_model(account, detail)
     except ConnectorError as exc:
         raise _connector_error(exc) from exc
@@ -2048,6 +2156,7 @@ def sync_remote_process(account_id: str, payload: DataPlatformSyncProcessRequest
 
 @api_router.post("/accounts/{account_id}/models/sync", response_model=DataPlatformSyncModelResponse)
 def sync_remote_model(account_id: str, payload: DataPlatformSyncModelRequest, db: Session = Depends(get_db)) -> DataPlatformSyncModelResponse:
+    sync_started_at = time.perf_counter()
     account = _account_or_404(db, account_id)
     job = DataPlatformSyncJob(account_id=account.id, platform=account.platform, remote_process_id=payload.remote_model_id, status="running", phase="fetch", stats_json={"remote_kind": "model"})
     db.add(job)
@@ -2058,7 +2167,13 @@ def sync_remote_model(account_id: str, payload: DataPlatformSyncModelRequest, db
     dependency_flow_uuid: str | None = None
     try:
         connector = connector_for_account(_account_context(account, db))
-        detail = connector.get_model_detail(payload.remote_model_id, payload.remote_version)
+        cached = _cached_remote_model(
+            db,
+            account=account,
+            remote_id=payload.remote_model_id,
+            remote_version=payload.remote_version,
+        )
+        detail = _resolve_cached_model(connector, cached) if cached is not None else connector.get_model_detail(payload.remote_model_id, payload.remote_version)
         job.phase = "validate"
         graph_json: dict[str, Any] | None = None
         try:
@@ -2200,6 +2315,14 @@ def sync_remote_model(account_id: str, payload: DataPlatformSyncModelRequest, db
         flow_count = len(flows_by_uuid)
         job.stats_json = {"remote_kind": "model", "project_id": project_id, "version": version_value, "flow_count": flow_count, "warnings": warnings, "synced_count": len(synced), "tidas_import": report_summary}
         db.commit()
+        logger.info(
+            "TianGong model import complete account_id=%s remote_id=%s elapsed_ms=%d cached_search_row=%s project_id=%s",
+            account.id,
+            payload.remote_model_id,
+            round((time.perf_counter() - sync_started_at) * 1000),
+            cached is not None,
+            project_id,
+        )
         return DataPlatformSyncModelResponse(
             job_id=job.id,
             account_id=account.id,
