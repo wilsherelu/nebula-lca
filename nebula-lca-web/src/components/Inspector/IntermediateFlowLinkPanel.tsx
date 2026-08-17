@@ -33,6 +33,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
   const uiLanguage = useLcaGraphStore((state) => state.uiLanguage);
   const edges = useLcaGraphStore((state) => state.edges);
   const updateNode = useLcaGraphStore((state) => state.updateNode);
+  const disconnectProvider = useLcaGraphStore((state) => state.disconnectIntermediateProvider);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [resolutionState, setResolutionState] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -214,6 +215,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
   };
 
   const handleL3ProxyConfirm = (port: FlowPort, link: IntermediateFlowLink) => {
+    disconnectProvider(node.id, port.id);
     updateNode(node.id, (current) => ({
       ...current,
       data: {
@@ -334,7 +336,11 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
                   <span className="intermediate-flow-level-badge approved">{t("转换完成", "Conversion completed")}</span>
                   <span className="muted-text">{t("可关联 ecoinvent 背景数据", "Ready for ecoinvent background data association")}</span>
                 </div>
-                <div className="intermediate-flow-link-actions" />
+                <div className="intermediate-flow-link-actions">
+                  <button type="button" className="flow-link-button ghost compact" disabled={busy} onClick={() => setProxyPortId(port.id)}>
+                    {t("更换代理", "Change proxy")}
+                  </button>
+                </div>
               </>
             ) : review ? (
               <>
@@ -361,11 +367,9 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
                       {t("复用手动转换", "Reuse manual conversion")}
                     </button>
                   )}
-                  {review.mapping_level === "L3" && (
-                    <button type="button" className="flow-link-button ghost compact" disabled={busy} onClick={() => setProxyPortId(port.id)}>
-                      {t("更换代理", "Change proxy")}
-                    </button>
-                  )}
+                  <button type="button" className="flow-link-button ghost compact" disabled={busy} onClick={() => setProxyPortId(port.id)}>
+                    {t("更换代理", "Change proxy")}
+                  </button>
                 </div>
               </>
             ) : (
