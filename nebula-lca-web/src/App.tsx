@@ -292,8 +292,11 @@ const LOCAL_DRAFT_SAVE_DEBOUNCE_MS = 200;
 const INTERVAL_SAVE_MS = 60000;
 const draftKey = (projectId: string) => `nebula:${projectId}:draft`;
 const snapshotKey = (projectId: string) => `nebula:${projectId}:snapshot`;
-const LATEST_PROJECT_CACHE_SCHEMA = "v3";
+const LATEST_PROJECT_CACHE_SCHEMA = "v4";
 const latestProjectCacheKey = (projectId: string) => `nebula:${projectId}:latest:${LATEST_PROJECT_CACHE_SCHEMA}`;
+const latestProjectCacheGeneration = new Map<string, number>();
+const getLatestProjectCacheGeneration = (projectId: string): number =>
+  latestProjectCacheGeneration.get(projectId) ?? 0;
 
 type LatestProjectCacheEntry = {
   etag: string;
@@ -333,6 +336,7 @@ const writeLatestProjectCache = (projectId: string, entry: LatestProjectCacheEnt
 };
 
 const clearLatestProjectCache = (projectId: string) => {
+  latestProjectCacheGeneration.set(projectId, getLatestProjectCacheGeneration(projectId) + 1);
   try {
     localStorage.removeItem(latestProjectCacheKey(projectId));
   } catch {
@@ -2795,28 +2799,40 @@ export default function App() {
       | { kind: "not_modified"; payload: ModelVersionResponse }
       | { kind: "miss"; status: number }
     > => {
-      const cached = readLatestProjectCache(targetProjectId);
-      const response = await fetch(`${API_BASE}/projects/${encodeURIComponent(targetProjectId)}/latest`, {
-        headers: cached?.etag ? { "If-None-Match": cached.etag } : undefined,
-      });
-      if (response.status === 304 && cached?.payload) {
-        return { kind: "not_modified", payload: cached.payload };
-      }
-      if (!response.ok) {
-        return { kind: "miss", status: response.status };
-      }
-      const payload = (await response.json()) as ModelVersionResponse;
-      const etag = response.headers.get("ETag");
-      if (etag) {
-        writeLatestProjectCache(targetProjectId, {
-          etag,
-          payload,
-          cachedAt: Date.now(),
+      const endpoint = `${API_BASE}/projects/${encodeURIComponent(targetProjectId)}/latest`;
+      let useCachedEtag = true;
+      for (;;) {
+        const cached = readLatestProjectCache(targetProjectId);
+        const cacheGeneration = getLatestProjectCacheGeneration(targetProjectId);
+        const response = await fetch(endpoint, {
+          cache: useCachedEtag ? "default" : "no-store",
+          headers: useCachedEtag && cached?.etag ? { "If-None-Match": cached.etag } : undefined,
         });
-      } else {
-        clearLatestProjectCache(targetProjectId);
+        if (cacheGeneration !== getLatestProjectCacheGeneration(targetProjectId)) {
+          useCachedEtag = false;
+          continue;
+        }
+        if (response.status === 304 && cached?.payload) {
+          return { kind: "not_modified", payload: cached.payload };
+        }
+        if (!response.ok) {
+          return { kind: "miss", status: response.status };
+        }
+        const payload = (await response.json()) as ModelVersionResponse;
+        if (cacheGeneration !== getLatestProjectCacheGeneration(targetProjectId)) {
+          useCachedEtag = false;
+          continue;
+        }
+        const etag = response.headers.get("ETag");
+        if (etag) {
+          writeLatestProjectCache(targetProjectId, {
+            etag,
+            payload,
+            cachedAt: Date.now(),
+          });
+        }
+        return { kind: "fresh", payload };
       }
-      return { kind: "fresh", payload };
     },
     [],
   );
