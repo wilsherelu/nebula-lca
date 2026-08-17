@@ -2755,7 +2755,7 @@ export function ProjectManagement(props: Props) {
           )}
 
           {activeModule === "platform" && (
-            <ExternalPlatformAccounts uiLanguage={uiLanguage} onStatus={onStatus} />
+            <ExternalPlatformAccounts uiLanguage={uiLanguage} onStatus={onStatus} onOpenProject={onOpenProject} />
           )}
         </main>
       </div>

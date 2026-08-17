@@ -63,6 +63,8 @@ type RemotePreviewResponse = {
 type RemoteSyncResponse = {
   job_id: string;
   status: string;
+  project_id?: string | null;
+  version?: number | null;
   flow_count?: number;
   tidas_import_job_id?: string | null;
   tidas_import_report?: {
@@ -88,6 +90,14 @@ type RemoteSyncError = Error & {
 type Props = {
   uiLanguage: UiLanguage;
   onStatus?: (text: string) => void;
+  onOpenProject?: (projectId: string, projectName?: string) => void;
+};
+
+export const importedProjectTarget = (result: RemoteSyncResponse, fallbackName?: string) => {
+  const createdProject = result.tidas_import_report?.created_projects?.[0];
+  const projectId = String(result.project_id ?? createdProject?.project_id ?? "").trim();
+  const projectName = String(createdProject?.name ?? fallbackName ?? "").trim();
+  return projectId ? { projectId, projectName: projectName || undefined } : null;
 };
 
 const emptyForm = {
@@ -168,7 +178,7 @@ const requestJson = async <T,>(url: string, init?: RequestInit): Promise<T> => {
 };
 
 export function ExternalPlatformAccounts(props: Props) {
-  const { uiLanguage, onStatus } = props;
+  const { uiLanguage, onStatus, onOpenProject } = props;
   const zh = uiLanguage === "zh";
   const [accounts, setAccounts] = useState<PlatformAccount[]>([]);
   const [saving, setSaving] = useState(false);
@@ -447,6 +457,13 @@ export function ExternalPlatformAccounts(props: Props) {
           ? `已按需导入：新增 ${report?.inserted ?? 0}，更新 ${report?.updated ?? 0}，失败 ${failed}，警告 ${warnings}。`
           : `Imported on demand: ${report?.inserted ?? 0} inserted, ${report?.updated ?? 0} updated, ${failed} failed, ${warnings} warnings.`,
       );
+      if (remoteKind === "models") {
+        const target = importedProjectTarget(result, item.model_name ?? item.model_name_en ?? undefined);
+        if (target) {
+          onStatus?.(zh ? "模型已导入，正在打开新项目。" : "Model imported. Opening the new project.");
+          onOpenProject?.(target.projectId, target.projectName);
+        }
+      }
     } catch (error) {
       const syncError = error as RemoteSyncError;
       const message = error instanceof Error ? error.message : "sync failed";
