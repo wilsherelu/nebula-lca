@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 import app.api.reference_data as reference_data
 import app.database as _db_module
@@ -203,6 +204,48 @@ def test_flows_api_exposes_source_and_custom_flags(client):
     assert item["flow_id"] == "flow-co2-legacy"
     assert item["source"] == "ecoinvent"
     assert item["is_custom"] is False
+
+
+def test_flows_api_ranks_exact_before_prefix_and_contains_when_fts_is_available(client):
+    db = _db_module.SessionLocal()
+    try:
+        for flow_uuid, flow_name in (
+            ("resin", "树脂"),
+            ("resin-material", "树脂材料"),
+            ("composite-resin-material", "复合树脂材料"),
+        ):
+            db.add(
+                FlowRecord(
+                    flow_uuid=flow_uuid,
+                    flow_name=flow_name,
+                    flow_type="Product flow",
+                    default_unit="kg",
+                    unit_group="Units of mass",
+                    source="tiangong",
+                    is_custom=False,
+                )
+            )
+        db.commit()
+        db.execute(text("CREATE VIRTUAL TABLE flow_catalog_fts USING fts5(flow_uuid, flow_name, flow_name_en)"))
+        db.execute(
+            text(
+                "INSERT INTO flow_catalog_fts(flow_uuid, flow_name, flow_name_en) "
+                "SELECT flow_uuid, flow_name, coalesce(flow_name_en, '') FROM flow_catalog"
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+    invalidate_management_caches(flows=True)
+
+    response = client.get("/api/flows?search=树脂&type=intermediate_flow&page_size=10")
+
+    assert response.status_code == 200
+    assert [item["flow_name"] for item in response.json()["items"]] == [
+        "树脂",
+        "树脂材料",
+        "复合树脂材料",
+    ]
 
 
 def test_flows_api_filters_and_annotates_ef_tidas_conversion_rows(client):

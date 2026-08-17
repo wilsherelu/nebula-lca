@@ -2583,8 +2583,16 @@ body,
 
 .flow-picker-action-col,
 .flow-picker-action-cell {
-  width: 104px;
+  width: 128px;
   text-align: right;
+}
+
+.flow-picker-action-cell {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  white-space: nowrap;
 }
 
 .flow-picker-category-col,
@@ -2611,23 +2619,6 @@ body,
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-.flow-picker-use-btn {
-  border: 1px solid #b8d5ef;
-  border-radius: 999px;
-  background: #f1f8ff;
-  color: #0876df;
-  font-size: 13px;
-  font-weight: 700;
-  padding: 6px 14px;
-  cursor: pointer;
-}
-
-.flow-picker-use-btn:hover {
-  border-color: #0d83ff;
-  background: #0d83ff;
-  color: #fff;
 }
 
 .flow-picker-panel .overlay-pagination {
@@ -2816,7 +2807,7 @@ body,
   display: flex;
   gap: 8px;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
   min-width: 0;
   white-space: nowrap;
 }
@@ -2857,6 +2848,7 @@ body,
 
 .inventory-grid-product-header,
 .inventory-grid-show-header,
+.inventory-grid-action-header,
 .inventory-grid-product-cell,
 .inventory-grid-show-cell {
   text-align: center;
@@ -6478,7 +6470,7 @@ body,
 
 .intermediate-flow-link-columns {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 0.6fr);
+  grid-template-columns: minmax(150px, 1.1fr) minmax(250px, 1.65fr) minmax(190px, 1.1fr) minmax(100px, 0.55fr);
   gap: 12px;
   align-items: center;
   padding: 8px 16px;
@@ -6492,7 +6484,7 @@ body,
 
 .intermediate-flow-link-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 0.6fr);
+  grid-template-columns: minmax(150px, 1.1fr) minmax(250px, 1.65fr) minmax(190px, 1.1fr) minmax(100px, 0.55fr);
   gap: 12px;
   align-items: center;
   min-height: 44px;
@@ -6519,11 +6511,13 @@ body,
 .intermediate-flow-link-actions {
   justify-content: flex-end;
   justify-self: end;
+  white-space: nowrap;
 }
 
 .intermediate-flow-link-target {
-  display: grid;
-  gap: 2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
   color: #4c6570;
   font-size: 14px;
@@ -6534,6 +6528,29 @@ body,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.flow-link-text-action {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #0876df;
+  font: inherit;
+  font-weight: 700;
+  line-height: 22px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.flow-link-text-action:hover:not(:disabled) {
+  color: #005fbe;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.flow-link-text-action:disabled {
+  color: #9aaab2;
+  cursor: not-allowed;
 }
 
 .intermediate-flow-link-target > .muted-text {

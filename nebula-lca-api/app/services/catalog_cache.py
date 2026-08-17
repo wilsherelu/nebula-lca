@@ -57,22 +57,32 @@ def fts5_flow_search_query(db: Session, normalized_search: str):
     if not fts_available:
         return (db.query(FlowRecord), False)
 
-    safe_query = normalized_search.replace("'", "''")
+    search_terms = [term for term in normalized_search.split() if term]
+    prefix_query = " ".join(f'"{term.replace(chr(34), chr(34) * 2)}"*' for term in search_terms)
     try:
         raw_conn = db.connection().connection
         cursor = raw_conn.cursor()
         cursor.execute(
             "SELECT flow_uuid FROM flow_catalog_fts WHERE flow_catalog_fts MATCH ?",
-            (safe_query,),
+            (prefix_query,),
         )
         matched_uuids = {row[0] for row in cursor.fetchall()}
         if matched_uuids:
+            search_token = f"%{normalized_search}%"
+            flow_name_expr = sqla_func.lower(sqla_func.coalesce(FlowRecord.flow_name, ""))
+            flow_name_en_expr = sqla_func.lower(sqla_func.coalesce(FlowRecord.flow_name_en, ""))
+            flow_uuid_expr = sqla_func.lower(sqla_func.coalesce(FlowRecord.flow_uuid, ""))
             return (
-                db.query(FlowRecord).filter(FlowRecord.flow_uuid.in_(matched_uuids)),
+                db.query(FlowRecord).filter(
+                    FlowRecord.flow_uuid.in_(matched_uuids)
+                    | flow_name_expr.like(search_token)
+                    | flow_name_en_expr.like(search_token)
+                    | flow_uuid_expr.like(search_token)
+                ),
                 True,
             )
         else:
-            return (db.query(FlowRecord).filter(FlowRecord.flow_uuid == ""), True)
+            return (db.query(FlowRecord), False)
     except Exception:
         return (db.query(FlowRecord), False)
 

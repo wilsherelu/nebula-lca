@@ -337,7 +337,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
                   <span className="muted-text">{t("可关联 ecoinvent 背景数据", "Ready for ecoinvent background data association")}</span>
                 </div>
                 <div className="intermediate-flow-link-actions">
-                  <button type="button" className="flow-link-button ghost compact" disabled={busy} onClick={() => setProxyPortId(port.id)}>
+                  <button type="button" className="flow-link-text-action" disabled={busy} onClick={() => setProxyPortId(port.id)}>
                     {t("更换代理", "Change proxy")}
                   </button>
                 </div>
@@ -358,18 +358,13 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
                   </span>
                 </div>
                 <div className="intermediate-flow-link-actions">
-                  {review.mapping_level === "L1" ? (
-                    <span className="muted-text">{t("等待自动转换", "Ready for automatic conversion")}</span>
-                  ) : review.mapping_level === "L2" ? (
-                    <span className="muted-text">{t("等待确认转换", "Ready for confirmation")}</span>
-                  ) : (
-                    <button type="button" className="flow-link-button primary compact" disabled={busy} onClick={() => applyReviewedLink(port, review)}>
-                      {t("复用手动转换", "Reuse manual conversion")}
+                  {review.mapping_level === "L3" ? (
+                    <button type="button" className="flow-link-text-action" disabled={busy} onClick={() => applyReviewedLink(port, review)}>
+                      {t("复用转换", "Reuse conversion")}
                     </button>
+                  ) : (
+                    <span aria-hidden="true">—</span>
                   )}
-                  <button type="button" className="flow-link-button ghost compact" disabled={busy} onClick={() => setProxyPortId(port.id)}>
-                    {t("更换代理", "Change proxy")}
-                  </button>
                 </div>
               </>
             ) : (
@@ -386,7 +381,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
                 </div>
                 <div className="intermediate-flow-link-actions">
                   {resolutionState === "ready" && (
-                    <button type="button" className="flow-link-button ghost compact" onClick={() => setProxyPortId(port.id)}>
+                    <button type="button" className="flow-link-text-action" onClick={() => setProxyPortId(port.id)}>
                       {t("手动转换", "Manual conversion")}
                     </button>
                   )}
