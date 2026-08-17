@@ -249,6 +249,52 @@ describe("IntermediateFlowLinkPanel", () => {
     expect(imported!.data.inputs[0].intermediateFlowLink!.status).toBe("inactive");
   });
 
+  it("repairs the missing subtype override on persisted public L2 evidence", () => {
+    useLcaGraphStore.getState().importGraph({
+      functionalUnit: "1 MJ electricity",
+      nodes: [{
+        id: "node-l2-repair",
+        node_kind: "unit_process",
+        mode: "balanced",
+        process_uuid: "proc-l2-repair",
+        name: "Imported Process",
+        location: "CN",
+        reference_product: "product",
+        inputs: [{
+          id: "port-l2-repair",
+          flowUuid: "tidas-electricity",
+          name: "Electricity",
+          unit: "MJ",
+          amount: 1,
+          type: "technosphere",
+          direction: "input",
+          showOnNode: true,
+          intermediate_flow_link: {
+            source_flow_uuid: "tidas-electricity",
+            target_flow_uuid: "ecoinvent-electricity",
+            amount_factor: 0.2777777777777778,
+            source_unit: "MJ",
+            target_unit: "kWh",
+            mapping_level: "L2",
+            mapping_reason: "approved",
+            rule_id: "public-rule",
+            rule_origin: "builtin",
+            status: "user_confirmed",
+            application_mode: "auto_compatible",
+            flow_subtype_override: false,
+            warnings: ["MANUAL_CONFIRMATION_RECOMMENDED"],
+          },
+        }] as unknown as import("../../model/node").FlowPort[],
+        outputs: [],
+      }],
+      exchanges: [],
+    });
+
+    const store = useLcaGraphStore.getState();
+    const imported = store.canvases[store.activeCanvasId].nodes.find((node) => node.id === "node-l2-repair");
+    expect(imported?.data.inputs[0].intermediateFlowLink?.flowSubtypeOverride).toBe(true);
+  });
+
   it("preserves converted provider edge through exportGraph with exact contract", () => {
     const consumerNodeId = "consumer-node";
     const consumerPortId = "consumer-port";
