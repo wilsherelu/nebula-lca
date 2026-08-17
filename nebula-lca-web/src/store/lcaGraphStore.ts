@@ -311,6 +311,7 @@ type LcaGraphState = {
     consumerPortId: string,
     provider: ImportedUnitProcessPayload,
   ) => string | undefined;
+  disconnectIntermediateProvider: (consumerNodeId: string, consumerPortId: string) => void;
   autoConnectByUuid: (options?: { silentNoCandidate?: boolean; silentSuccess?: boolean }) => void;
   packageSelectionAsPts: () => void;
   unpackPtsNode: (nodeId?: string) => void;
@@ -5003,6 +5004,31 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
     });
     return createdNodeId;
   },
+  disconnectIntermediateProvider: (consumerNodeId, consumerPortId) =>
+    set((state) =>
+      updateActiveCanvas(state, (canvas) => {
+        const targetHandle = `in:${consumerPortId}`;
+        const detachedProviderIds = new Set(
+          canvas.edges
+            .filter((edge) => edge.target === consumerNodeId && edge.targetHandle === targetHandle)
+            .map((edge) => edge.source),
+        );
+        if (detachedProviderIds.size === 0) return canvas;
+        const remainingEdges = canvas.edges.filter(
+          (edge) => !(edge.target === consumerNodeId && edge.targetHandle === targetHandle),
+        );
+        const referencedNodeIds = new Set(
+          remainingEdges.flatMap((edge) => [edge.source, edge.target]),
+        );
+        return {
+          ...canvas,
+          nodes: canvas.nodes.filter(
+            (item) => !(item.hidden && detachedProviderIds.has(item.id) && !referencedNodeIds.has(item.id)),
+          ),
+          edges: remainingEdges,
+        };
+      }),
+    ),
   autoConnectByUuid: (options) =>
     set((state) => {
       const silentNoCandidate = Boolean(options?.silentNoCandidate);

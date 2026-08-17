@@ -485,12 +485,6 @@ export function ExternalPlatformAccounts(props: Props) {
     item.flow_type ?? item.process_type ?? (remoteKind === "models" ? "Model" : "-"),
     zh,
   );
-  const itemSummary = (item: RemoteItem): string => {
-    const classification = typeof item.metadata?.classification === "string" ? item.metadata.classification : "";
-    if (classification) return classification;
-    if (item.default_unit || item.unit_group) return [item.default_unit, item.unit_group].filter(Boolean).join(" / ");
-    return "-";
-  };
   const itemModifiedAt = (item: RemoteItem): string => {
     const raw = typeof item.metadata?.modified_at === "string" ? item.metadata.modified_at : "";
     return raw ? formatTime(raw) : "-";
@@ -595,7 +589,6 @@ export function ExternalPlatformAccounts(props: Props) {
               <tr>
                 <th>{zh ? "名称" : "Name"}</th>
                 <th>{zh ? "类型" : "Type"}</th>
-                <th>{zh ? "分类 / 摘要" : "Classification / Summary"}</th>
                 <th>{zh ? "版本" : "Version"}</th>
                 <th>{zh ? "更新" : "Updated"}</th>
                 <th>{zh ? "操作" : "Actions"}</th>
@@ -615,7 +608,6 @@ export function ExternalPlatformAccounts(props: Props) {
                         <span className="pm-lci-result-badge" title={zh ? "清单结果（背景 LCI 数据集）" : "LCI result (background LCI dataset)"}>LCI</span>
                       )}
                     </td>
-                    <td><span className="pm-result-summary">{itemSummary(item)}</span></td>
                     <td>{item.remote_version ?? "-"}</td>
                     <td>{itemModifiedAt(item)}</td>
                     <td>
@@ -633,7 +625,7 @@ export function ExternalPlatformAccounts(props: Props) {
               })}
               {(!remoteResult || remoteResult.items.length === 0) && (
                 <tr>
-                  <td colSpan={6}>{remoteLoading ? (zh ? "加载中..." : "Loading...") : (zh ? "暂无远程结果。" : "No remote results.")}</td>
+                  <td colSpan={5}>{remoteLoading ? (zh ? "加载中..." : "Loading...") : (zh ? "暂无远程结果。" : "No remote results.")}</td>
                 </tr>
               )}
             </tbody>

@@ -129,8 +129,10 @@ export function L3UserProxyModal({
         </header>
 
         <div className="l3-proxy-modal-context">
-          <span className="l3-proxy-context-label">{t("源流", "Source flow")}</span>
-          <strong title={portLabel}>{portLabel}</strong>
+          <div className="l3-proxy-modal-context-title">
+            <span className="l3-proxy-context-label">{t("源流", "Source flow")}</span>
+            <strong title={portLabel}>{portLabel}</strong>
+          </div>
           <span className="muted-text">
             {t(
               "当没有可用的自动转换时，可手动选择一个 eco 中间流作为转换目标。",

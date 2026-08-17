@@ -79,6 +79,79 @@ describe("IntermediateFlowLinkPanel", () => {
     expect(screen.getByText("Tiangong intermediate flow")).toBeTruthy();
   });
 
+  it("offers proxy replacement for an existing conversion and detaches its background LCI", async () => {
+    const linkedNode: Node<LcaNodeData> = {
+      ...node,
+      data: {
+        ...node.data,
+        inputs: [{
+          ...node.data.inputs[0],
+          intermediateFlowLink: {
+            sourceFlowUuid: "tidas-flow-1",
+            targetFlowUuid: "eco-flow-1",
+            amountFactor: 1,
+            sourceUnit: "kg",
+            targetUnit: "kg",
+            mappingLevel: "L1",
+            mappingReason: "exact",
+            ruleId: "rule-existing",
+            ruleOrigin: "builtin",
+            status: "auto",
+            warnings: [],
+          },
+        }],
+      },
+    };
+    const providerNode: Node<LcaNodeData> = {
+      id: "hidden-provider-replace",
+      type: "lcaProcess",
+      hidden: true,
+      position: { x: -200, y: 0 },
+      data: {
+        nodeKind: "lci_dataset",
+        mode: "normalized",
+        processUuid: "provider-replace",
+        name: "Background provider",
+        location: "GLO",
+        referenceProduct: "product",
+        lciRole: "provider",
+        inputs: [],
+        outputs: [],
+      },
+    };
+    const providerEdge = {
+      id: "edge-provider-replace",
+      source: providerNode.id,
+      target: linkedNode.id,
+      targetHandle: "in:input-1",
+    };
+    useLcaGraphStore.setState((state) => {
+      const active = state.canvases[state.activeCanvasId];
+      return {
+        uiLanguage: "zh",
+        canvases: {
+          ...state.canvases,
+          [state.activeCanvasId]: {
+            ...active,
+            nodes: [linkedNode, providerNode],
+            edges: [providerEdge],
+          },
+        },
+        nodes: [linkedNode, providerNode],
+        edges: [providerEdge],
+      };
+    });
+
+    render(<IntermediateFlowLinkPanel node={linkedNode} />);
+    fireEvent.click(screen.getByRole("button", { name: /中间流转换/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "更换代理" })).toBeTruthy());
+
+    useLcaGraphStore.getState().disconnectIntermediateProvider(linkedNode.id, "input-1");
+    const active = useLcaGraphStore.getState().canvases[useLcaGraphStore.getState().activeCanvasId];
+    expect(active.edges).toHaveLength(0);
+    expect(active.nodes.some((item) => item.id === providerNode.id)).toBe(false);
+  });
+
   it("sets the foreground port unit to sourceUnit after L1 auto-conversion", async () => {
     const localNode: Node<LcaNodeData> = {
       ...node,
@@ -827,6 +900,13 @@ describe("IntermediateFlowLinkPanel", () => {
     const edgeTargets = edgesFromProvider.map((e) => ({ target: e.target, targetHandle: e.targetHandle }));
     expect(edgeTargets).toContainEqual({ target: consumerNode1Id, targetHandle: `in:${consumerPort1Id}` });
     expect(edgeTargets).toContainEqual({ target: consumerNode2Id, targetHandle: `in:${consumerPort2Id}` });
+
+    useLcaGraphStore.getState().disconnectIntermediateProvider(consumerNode1Id, consumerPort1Id);
+    const stateAfterDetach = useLcaGraphStore.getState();
+    const canvasAfterDetach = stateAfterDetach.canvases[stateAfterDetach.activeCanvasId];
+    expect(canvasAfterDetach.edges).toHaveLength(1);
+    expect(canvasAfterDetach.edges[0].target).toBe(consumerNode2Id);
+    expect(canvasAfterDetach.nodes.some((item) => item.id === firstNodeId)).toBe(true);
   });
 
   it("exports converted edge after reconnecting to existing hidden provider from loaded snake_case graph", () => {
