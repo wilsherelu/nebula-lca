@@ -204,6 +204,7 @@ describe("IntermediateFlowLinkPanel", () => {
     render(<IntermediateFlowLinkPanel node={localNode} />);
     fireEvent.click(screen.getByRole("button", { name: /中间流转换/ }));
     await waitFor(() => expect(screen.getByText("自动可转换 1")).toBeTruthy());
+    expect(screen.queryByRole("button", { name: "更换代理" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /自动转换（1）/ }));
 
     await waitFor(() => {

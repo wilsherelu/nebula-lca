@@ -394,7 +394,7 @@ function FlowSection({
         {hasExtra ? <div>{extraHeader}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
         {hasExtra2 ? <div className="inventory-grid-product-header">{extraHeader2}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
         {showNodeColumn ? <div className="inventory-grid-show-header">{t("显示", "Show")}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
-        {showActionColumn ? <div>{t("操作", "Action")}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
+        {showActionColumn ? <div className="inventory-grid-action-header">{t("操作", "Action")}</div> : <div className="inventory-grid-spacer" aria-hidden="true" />}
       </div>
       {!remoteLoading && !remoteError && visiblePorts.map((port, idx) => (
         <div key={port.id} className="inventory-grid-row">
@@ -2791,7 +2791,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                                 : (zh ? "刷新" : "Refresh")}
                             </button>
                           )}
-                          <button type="button" className="flow-picker-use-btn" onClick={() => addCatalogFlow(flow)}>
+                          <button type="button" className="pm-link-btn" onClick={() => addCatalogFlow(flow)}>
                             {t("引用", "Use")}
                           </button>
                         </td>
