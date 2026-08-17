@@ -2226,20 +2226,19 @@ def sync_remote_model(account_id: str, payload: DataPlatformSyncModelRequest, db
                 if flow is None:
                     raise ConnectorError(f"Could not fetch referenced flow: {flow_uuid}")
                 flows_by_uuid[flow_uuid] = flow
-        for flow_uuid, flow in flows_by_uuid.items():
-            dependency_flow_uuid = flow_uuid
-            flow_synced, flow_warnings, _ = _import_single_flow(
-                db,
-                connector,
-                account,
-                flow,
-                upsert_mode="update" if payload.overwrite else "skip",
-                source_label=account.platform,
-                expected_uuid=flow_uuid,
-            )
-            synced.extend(flow_synced)
-            warnings.extend(flow_warnings)
-            db.flush()
+        dependency_flow_uuid = next(iter(flows_by_uuid), None)
+        flow_synced, flow_warnings, _ = _import_flow_batch(
+            db,
+            connector,
+            account,
+            flows_by_uuid,
+            source_path=f"{account.platform}://models/{detail.model.remote_id}/flows",
+            upsert_mode="update" if payload.overwrite else "skip",
+            source_label=account.platform,
+        )
+        synced.extend(flow_synced)
+        warnings.extend(flow_warnings)
+        db.flush()
         dependency_flow_uuid = None
         job.phase = "upsert"
         process_json_by_uuid: dict[str, dict[str, Any]] = {}
@@ -2701,6 +2700,79 @@ def _import_single_flow(
             metadata=flow.metadata,
         )
     )
+    return synced, warnings, tidas_report
+
+
+def _import_flow_batch(
+    db: Session,
+    connector: Any,
+    account: DataPlatformAccount,
+    flows_by_uuid: dict[str, RemoteFlowDTO],
+    *,
+    source_path: str,
+    upsert_mode: str = "update",
+    source_label: str = "tiangong",
+) -> tuple[list[dict[str, Any]], list[str], TidasImportReportResponse]:
+    """Import a model's resolved Flow dependencies in one TIDAS batch."""
+    warnings: list[str] = []
+    synced: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
+    for expected_uuid, flow in flows_by_uuid.items():
+        if flow.flow_uuid != expected_uuid:
+            raise ConnectorError(
+                f"Remote flow UUID '{flow.flow_uuid}' does not match expected UUID '{expected_uuid}'."
+            )
+        if not str(flow.default_unit or "").strip() or not str(flow.unit_group or "").strip():
+            raise ConnectorError(
+                f"Remote flow '{flow.flow_uuid}' has unresolved unit metadata; sync was blocked."
+            )
+        synced.extend(
+            _upsert_flow_dependencies(
+                db,
+                account=account,
+                connector=connector,
+                flow=flow,
+                warnings=warnings,
+            )
+        )
+        rows.append(
+            _remote_raw_row(
+                flow.metadata,
+                {
+                    "id": flow.flow_uuid or flow.remote_id,
+                    "name": flow.flow_name,
+                    "version": flow.remote_version,
+                    "default_unit": flow.default_unit,
+                    "unit_group": flow.unit_group,
+                    "flow_type": flow.flow_type,
+                    "source": account.platform,
+                },
+            )
+        )
+
+    tidas_report = import_tidas_flow_rows(
+        db,
+        rows,
+        source_path=source_path,
+        upsert_mode=upsert_mode,
+        source_label=source_label,
+        with_transaction=True,
+    )
+    if tidas_report.failed:
+        raise ConnectorError(f"TIDAS flow import failed: {tidas_report.errors[:3]}")
+
+    for flow in flows_by_uuid.values():
+        synced.append(
+            _upsert_sync_record(
+                db,
+                account=account,
+                local_kind="flow",
+                local_uuid=flow.flow_uuid,
+                remote_id=flow.remote_id,
+                remote_version=flow.remote_version,
+                metadata=flow.metadata,
+            )
+        )
     return synced, warnings, tidas_report
 
 

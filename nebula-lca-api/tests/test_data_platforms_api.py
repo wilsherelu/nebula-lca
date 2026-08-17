@@ -1567,6 +1567,16 @@ def test_tiangong_supabase_search_and_selected_sync(client, monkeypatch):
 
     flow_sync = client.post(f"/api/data-platforms/accounts/{account_id}/flows/sync", json={"remote_flow_id": "flow-1", "remote_version": "1"})
     process_sync = client.post(f"/api/data-platforms/accounts/{account_id}/processes/sync", json={"remote_process_id": "process-1", "remote_version": "1"})
+    from app.api import data_platforms as data_platforms_api
+
+    original_import_tidas_flow_rows = data_platforms_api.import_tidas_flow_rows
+    model_flow_batch_sizes: list[int] = []
+
+    def tracked_import_tidas_flow_rows(db, rows, **kwargs):
+        model_flow_batch_sizes.append(len(rows))
+        return original_import_tidas_flow_rows(db, rows, **kwargs)
+
+    monkeypatch.setattr(data_platforms_api, "import_tidas_flow_rows", tracked_import_tidas_flow_rows)
     model_sync = client.post(f"/api/data-platforms/accounts/{account_id}/models/sync", json={"remote_model_id": "model-1", "remote_version": "1"})
 
     assert flow_sync.status_code == 200, flow_sync.text
@@ -1575,6 +1585,7 @@ def test_tiangong_supabase_search_and_selected_sync(client, monkeypatch):
     assert flow_sync.json()["tidas_import_job_id"]
     assert process_sync.json()["tidas_import_report"]["import_type"] == "processes"
     assert model_sync.json()["tidas_import_report"]["created_projects"]
+    assert model_flow_batch_sizes == [model_sync.json()["flow_count"]]
     assert any("/auth/v1/token" in call["url"] for call in calls)
     assert any("/rest/v1/rpc/search_flows" in call["url"] for call in calls)
     db = _db_module.SessionLocal()
