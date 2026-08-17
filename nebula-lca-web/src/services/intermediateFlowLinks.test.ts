@@ -41,6 +41,17 @@ describe("toIntermediateFlowLink", () => {
     expect(link.targetUnitGroup).toBe("energy");
     expect(link.amountFactor).toBeCloseTo(1 / 3.6, 12);
   });
+
+  it("preserves the reviewed L2 subtype override evidence", () => {
+    const link = toIntermediateFlowLink({
+      ...resolution("L2"),
+      application_mode: "auto_compatible",
+      flow_subtype_override: true,
+    });
+
+    expect(link.applicationMode).toBe("auto_compatible");
+    expect(link.flowSubtypeOverride).toBe(true);
+  });
 });
 
 describe("searchEcoIntermediateFlows", () => {

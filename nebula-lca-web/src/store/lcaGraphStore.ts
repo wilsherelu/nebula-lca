@@ -1176,6 +1176,11 @@ const normalizeIntermediateFlowLinkPort = (port: FlowPort): FlowPort => {
   const value = rawLink as Record<string, unknown>;
   const mappingLevel = String(value.mappingLevel ?? value.mapping_level) as "L1" | "L2" | "L3";
   const rawStatus = String(value.status);
+  const applicationMode = (String(value.applicationMode ?? value.application_mode ?? "") || undefined) as
+    "strict_identity" | "auto_compatible" | undefined;
+  const ruleOrigin = String(value.ruleOrigin ?? value.rule_origin) as "builtin" | "user" | "explicit";
+  const flowSubtypeOverride = Boolean(value.flowSubtypeOverride ?? value.flow_subtype_override)
+    || (mappingLevel === "L2" && ruleOrigin === "builtin" && applicationMode === "auto_compatible");
   const normalizedLink: FlowPort["intermediateFlowLink"] = {
     sourceFlowUuid: String(value.sourceFlowUuid ?? value.source_flow_uuid ?? ""),
     targetFlowUuid: String(value.targetFlowUuid ?? value.target_flow_uuid ?? ""),
@@ -1187,12 +1192,13 @@ const normalizeIntermediateFlowLinkPort = (port: FlowPort): FlowPort => {
     mappingLevel,
     mappingReason: String(value.mappingReason ?? value.mapping_reason ?? ""),
     ruleId: String(value.ruleId ?? value.rule_id ?? ""),
-    ruleOrigin: String(value.ruleOrigin ?? value.rule_origin) as "builtin" | "user" | "explicit",
+    ruleOrigin,
     status: (rawStatus === "active" && mappingLevel === "L3" ? "user_confirmed" : rawStatus) as "auto" | "user_confirmed" | "inactive",
     packageId: String(value.packageId ?? value.package_id ?? "") || undefined,
     packageVersion: String(value.packageVersion ?? value.package_version ?? "") || undefined,
     packageHash: String(value.packageHash ?? value.package_hash ?? "") || undefined,
-    applicationMode: (String(value.applicationMode ?? value.application_mode ?? "") || undefined) as "strict_identity" | "auto_compatible" | undefined,
+    applicationMode,
+    flowSubtypeOverride,
     warnings: Array.isArray(value.warnings) ? value.warnings.map(String) : [],
   };
   const isActive = normalizedLink.status === "auto" || normalizedLink.status === "user_confirmed";

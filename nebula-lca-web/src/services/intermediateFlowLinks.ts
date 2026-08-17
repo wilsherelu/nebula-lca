@@ -19,6 +19,7 @@ export type RawResolution = {
   package_version?: string;
   package_hash?: string;
   application_mode?: "strict_identity" | "auto_compatible";
+  flow_subtype_override?: boolean;
   warnings?: string[];
   status?: "active" | "auto" | "user_confirmed";
   target_flow_name?: string;
@@ -80,6 +81,7 @@ export const toIntermediateFlowLink = (raw: RawResolution): IntermediateFlowLink
   packageVersion: raw.package_version,
   packageHash: raw.package_hash,
   applicationMode: raw.application_mode,
+  flowSubtypeOverride: raw.flow_subtype_override,
   warnings: raw.warnings ?? [],
 });
 

@@ -52,6 +52,7 @@ export type IntermediateFlowLink = {
   packageVersion?: string;
   packageHash?: string;
   applicationMode?: "strict_identity" | "auto_compatible";
+  flowSubtypeOverride?: boolean;
   warnings?: string[];
 };
 
