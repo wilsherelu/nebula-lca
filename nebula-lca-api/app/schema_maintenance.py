@@ -4,7 +4,8 @@ from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from .models import LciBiosphereFlowKey, LciExchangeMatrix, LciProcessVector, LciVectorAxis, UnitGroup, ImportJob, ImportJobPauseRequest, DatasetCheckpoint, GlobalDatasetImport
+from .models import FlowVersionRecord, LciBiosphereFlowKey, LciExchangeMatrix, LciProcessVector, LciVectorAxis, UnitGroup, ImportJob, ImportJobPauseRequest, DatasetCheckpoint, GlobalDatasetImport
+from .services.flow_versions import backfill_tg_legacy_flow_versions
 from .tidas_reference import load_tidas_reference_seed
 
 
@@ -47,6 +48,9 @@ def ensure_flow_catalog_tidas_columns(engine: Engine) -> dict:
             ("tidas_flow_property_uuid", "VARCHAR(64)"),
             ("tidas_reference_source", "VARCHAR(128)"),
             ("allocation_properties", "JSONB" if engine.dialect.name == "postgresql" else "JSON"),
+            ("source_namespace", "VARCHAR(64)"),
+            ("source_version", "VARCHAR(64)"),
+            ("version_label", "VARCHAR(128)"),
         ]:
             if col_name in columns:
                 continue
@@ -61,6 +65,18 @@ def ensure_flow_catalog_tidas_columns(engine: Engine) -> dict:
         "table": "flow_catalog",
         "added_columns": added_columns,
         "status": "ok" if added_columns else "already_complete",
+    }
+
+
+def ensure_flow_version_storage(engine: Engine, db: Session) -> dict:
+    FlowVersionRecord.__table__.create(bind=engine, checkfirst=True)
+    created = backfill_tg_legacy_flow_versions(db)
+    if created:
+        db.commit()
+    return {
+        "table": "flow_versions",
+        "legacy_snapshots_created": created,
+        "status": "ok",
     }
 
 

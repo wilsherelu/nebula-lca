@@ -147,6 +147,7 @@ from .schema_maintenance import (
     backfill_tidas_unit_group_sources,
     ensure_flow_catalog_context_columns,
     ensure_flow_catalog_tidas_columns,
+    ensure_flow_version_storage,
     ensure_unit_group_source_columns,
     ensure_lci_exchange_matrix_table,
     ensure_import_tables,
@@ -1581,12 +1582,14 @@ def _ensure_source_compliance_schema_on_startup() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_custom_flow_columns()
     ensure_flow_catalog_context_columns(engine)
+    ensure_flow_catalog_tidas_columns(engine)
     _ensure_unit_group_source_columns()
     ensure_lci_exchange_matrix_table(engine)
     ensure_import_tables(engine)
     db = SessionLocal()
     try:
         _bootstrap_reference_data_if_needed(db=db)
+        ensure_flow_version_storage(engine, db)
         _run_startup_maintenance(db=db)
     finally:
         db.close()

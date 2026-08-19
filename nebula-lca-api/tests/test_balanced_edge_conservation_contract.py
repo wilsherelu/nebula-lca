@@ -77,6 +77,24 @@ def _balanced_graph(*, provider_amount=3, consumer_amount=3, provider_switch=Non
     }
 
 
+def test_graph_contract_rejects_edge_between_different_flow_versions():
+    graph = _balanced_graph()
+    graph["nodes"][0]["outputs"][0].update({
+        "flowSourceNamespace": "tiangong_open_data",
+        "flowVersion": "01.01.002",
+    })
+    graph["nodes"][1]["inputs"][0].update({
+        "flowSourceNamespace": "tiangong_open_data",
+        "flowVersion": "01.01.003",
+    })
+
+    with pytest.raises(HTTPException) as error:
+        validate_graph_contract(HybridGraph.model_validate(graph))
+
+    assert error.value.detail["code"] == "INVALID_EDGE_PORT_BINDING"
+    assert "incompatible Flow versions" in error.value.detail["evidence"][0]["issues"][0]
+
+
 def _same_name_graph(node_kind: str):
     return HybridGraph.model_validate({
         "functionalUnit": "1 unit",

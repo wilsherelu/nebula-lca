@@ -48,6 +48,46 @@ class FlowRecord(Base):
     tidas_flow_property_uuid: Mapped[str | None] = mapped_column(String(64), nullable=True)
     tidas_reference_source: Mapped[str | None] = mapped_column(String(128), nullable=True)
     allocation_properties: Mapped[list | None] = mapped_column(JsonType, nullable=True)
+    source_namespace: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    source_version: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    version_label: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+
+class FlowVersionRecord(Base):
+    """Immutable source-version snapshot for a Flow UUID.
+
+    ``flow_catalog`` remains the compatibility catalog used by older projects.
+    Version-sensitive imports and graph ports resolve units through this table.
+    """
+
+    __tablename__ = "flow_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_namespace",
+            "flow_uuid",
+            "source_version",
+            name="uq_flow_versions_source_uuid_version",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source_namespace: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    flow_uuid: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source_version: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    version_label: Mapped[str] = mapped_column(String(128), nullable=False)
+    flow_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    flow_name_en: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    flow_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    default_unit: Mapped[str] = mapped_column(String(64), nullable=False)
+    unit_group: Mapped[str] = mapped_column(String(128), nullable=False)
+    flow_property_uuid: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    flow_property_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    unit_group_uuid: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    unit_group_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_updated_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column(JsonType, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class IntermediateFlowLinkRule(Base):

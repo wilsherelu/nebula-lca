@@ -14,7 +14,7 @@ from typing import Any
 from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
-from ..models import DebugDiagnostic, FlowRecord, Model, ReferenceProcess
+from ..models import DebugDiagnostic, FlowRecord, FlowVersionRecord, Model, ReferenceProcess
 from ..schemas import (
     FilteredExchangeEvidence,
     HybridGraph,
@@ -28,6 +28,13 @@ from ..schemas import (
 from .catalog_cache import invalidate_management_caches
 from .project_versions import _create_project_version_from_graph_json
 from .graph_storage import repair_tidas_product_flags
+from .flow_versions import (
+    TG_LEGACY_NAMESPACE,
+    TG_LEGACY_VERSION,
+    TIDAS_NAMESPACE,
+    create_flow_version_snapshot,
+    normalized_flow_identity,
+)
 from .reference_catalog import (
     TidasAllocationImportError,
     _filter_exchanges_with_evidence,
@@ -249,7 +256,7 @@ def _exchange_unit_text(row: dict) -> str:
             text = _safe_str(value)
             if text and not text.isdigit():
                 return text
-    return "kg"
+    return ""
 
 
 def _exchange_is_allocated_product(row: dict) -> bool:
@@ -335,10 +342,12 @@ def _extract_tidas_flow_record(row: dict) -> tuple[dict | None, str | None]:
     ):
         default_unit, unit_group = inferred_unit, inferred_group
     flow_property_uuid = ""
+    flow_property_version = ""
     reference_property = _reference_flow_property(flow_dataset)
     ref = reference_property.get("referenceToFlowPropertyDataSet") if isinstance(reference_property, dict) else None
     if isinstance(ref, dict):
         flow_property_uuid = _safe_str(ref.get("@refObjectId") or ref.get("refObjectId"))
+        flow_property_version = _safe_str(ref.get("@version") or ref.get("version"))
     return {
         "flow_uuid": flow_uuid,
         "flow_name": flow_name,
@@ -347,13 +356,18 @@ def _extract_tidas_flow_record(row: dict) -> tuple[dict | None, str | None]:
         "default_unit": default_unit or "kg",
         "unit_group": unit_group or "Units of mass",
         "compartment": compartment,
-        "source_updated_at": _safe_str(row.get("modified_at") or row.get("updated_at") or row.get("version")),
+        "source_updated_at": _safe_str(row.get("modified_at") or row.get("updated_at")),
         "source": _safe_str(row.get("source")) or TIDAS_FLOW_IMPORT_SOURCE,
         "is_custom": False,
         "tidas_compatible": True,
         "tidas_unit_group": unit_group or "Units of mass",
         "tidas_flow_property_uuid": flow_property_uuid or None,
+        "tidas_flow_property_version": _safe_str(row.get("flow_property_version")) or flow_property_version or None,
+        "tidas_unit_group_uuid": _safe_str(row.get("unit_group_uuid")) or None,
+        "tidas_unit_group_version": _safe_str(row.get("unit_group_version")) or None,
+        "source_version": _safe_str(row.get("version") or row.get("source_version")) or None,
         "tidas_reference_source": _safe_str(row.get("source")) or TIDAS_FLOW_IMPORT_SOURCE,
+        "source_payload": row,
     }, None
 
 
@@ -391,6 +405,12 @@ def _normalize_exchange(row: dict) -> dict:
     return {
         "exchange_internal_id": _safe_str(row.get("exchange_internal_id") or row.get("@dataSetInternalID") or row.get("dataSetInternalID")),
         "flow_uuid": flow_uuid,
+        "flow_version": _safe_str(row.get("flow_version") or row.get("flowVersion") or ref.get("@version") or ref.get("version")) or None,
+        "flow_source_namespace": _safe_str(row.get("flow_source_namespace") or row.get("flowSourceNamespace")) or None,
+        "flow_property_uuid": _safe_str(row.get("flow_property_uuid") or row.get("flowPropertyUuid")) or None,
+        "flow_property_version": _safe_str(row.get("flow_property_version") or row.get("flowPropertyVersion")) or None,
+        "unit_group_uuid": _safe_str(row.get("unit_group_uuid") or row.get("unitGroupUuid")) or None,
+        "unit_group_version": _safe_str(row.get("unit_group_version") or row.get("unitGroupVersion")) or None,
         "flow_name": flow_name,
         "direction": direction,
         "amount": amount,
@@ -419,15 +439,40 @@ def _hydrate_exchange_flow_semantics(
         str(row.flow_uuid): row
         for row in db.query(FlowRecord).filter(FlowRecord.flow_uuid.in_(flow_uuids)).all()
     } if flow_uuids else {}
+    requested_versions = {
+        (
+            _safe_str(exchange.get("flow_source_namespace")) or TIDAS_NAMESPACE,
+            _safe_str(exchange.get("flow_uuid")),
+            _safe_str(exchange.get("flow_version")),
+        )
+        for exchange in exchanges
+        if isinstance(exchange, dict)
+        and _safe_str(exchange.get("flow_uuid"))
+        and _safe_str(exchange.get("flow_version"))
+    }
+    version_rows = (
+        db.query(FlowVersionRecord).filter(
+            FlowVersionRecord.flow_uuid.in_({item[1] for item in requested_versions}),
+        ).all()
+        if requested_versions
+        else []
+    )
+    versioned = {
+        (row.source_namespace, row.flow_uuid, row.source_version): row
+        for row in version_rows
+    }
     for exchange in exchanges:
         if not isinstance(exchange, dict):
             continue
         flow_uuid = _safe_str(exchange.get("flow_uuid"))
         staged_row = staged.get(flow_uuid) or {}
         stored_row = stored.get(flow_uuid)
-        flow_type = staged_row.get("flow_type") or getattr(stored_row, "flow_type", None)
-        unit_group = staged_row.get("unit_group") or getattr(stored_row, "unit_group", None)
-        default_unit = staged_row.get("default_unit") or getattr(stored_row, "default_unit", None)
+        source_namespace = _safe_str(exchange.get("flow_source_namespace")) or TIDAS_NAMESPACE
+        source_version = _safe_str(exchange.get("flow_version"))
+        snapshot = versioned.get((source_namespace, flow_uuid, source_version)) if source_version else None
+        flow_type = getattr(snapshot, "flow_type", None) or staged_row.get("flow_type") or getattr(stored_row, "flow_type", None)
+        unit_group = getattr(snapshot, "unit_group", None) or staged_row.get("unit_group") or getattr(stored_row, "unit_group", None)
+        default_unit = getattr(snapshot, "default_unit", None) or staged_row.get("default_unit") or getattr(stored_row, "default_unit", None)
         if flow_type:
             exchange["flow_type"] = str(flow_type)
         if unit_group:
@@ -803,8 +848,10 @@ def _build_tidas_graph_from_xflow_record(
             meta = flow_meta.get(_safe_str(exchange.get("flow_uuid")))
             if meta is None:
                 continue
-            exchange["flow_type"] = meta[3]
-            exchange["unit_group"] = meta[2]
+            if not _safe_str(exchange.get("flow_type")):
+                exchange["flow_type"] = meta[3]
+            if not _safe_str(exchange.get("unit_group")):
+                exchange["unit_group"] = meta[2]
             if not _safe_str(exchange.get("unit")):
                 exchange["unit"] = meta[1]
         graph_exchanges, materialized_reference_flow_uuid, product_warnings = _materialize_process_exchanges_for_graph(
@@ -835,17 +882,27 @@ def _build_tidas_graph_from_xflow_record(
                 port_id = f"{base_port_id}:{internal_id}"
             seen_port_ids.add(port_id)
             is_product = bool(exchange.get("isProduct"))
+            port_name = _safe_str(exchange.get("flow_name")) or meta[0]
+            port_unit = _safe_str(exchange.get("unit")) or meta[1]
+            port_unit_group = _safe_str(exchange.get("unit_group")) or meta[2]
+            port_flow_type = _safe_str(exchange.get("flow_type")) or meta[3]
             port = {
                 "id": port_id,
                 "flowUuid": flow_uuid,
-                "name": meta[0],
-                "unit": meta[1],
-                "unitGroup": meta[2],
+                "flowSourceNamespace": exchange.get("flow_source_namespace"),
+                "flowVersion": exchange.get("flow_version"),
+                "flowPropertyUuid": exchange.get("flow_property_uuid"),
+                "flowPropertyVersion": exchange.get("flow_property_version"),
+                "unitGroupUuid": exchange.get("unit_group_uuid"),
+                "unitGroupVersion": exchange.get("unit_group_version"),
+                "name": port_name,
+                "unit": port_unit,
+                "unitGroup": port_unit_group,
                 "amount": float(exchange.get("amount") or 0.0),
-                "type": flow_semantic_to_exchange_type(meta[3]),
+                "type": flow_semantic_to_exchange_type(port_flow_type),
                 "direction": direction,
-                "showOnNode": not is_elementary_flow_semantic(meta[3]),
-                "internalExposed": not is_elementary_flow_semantic(meta[3]),
+                "showOnNode": not is_elementary_flow_semantic(port_flow_type),
+                "internalExposed": not is_elementary_flow_semantic(port_flow_type),
                 "isProduct": is_product,
                 "allocationFactor": exchange.get("allocationFactor"),
                 "allocationBasis": exchange.get("allocationBasis"),
@@ -1240,42 +1297,69 @@ def _invalidate_management_caches(**kwargs: Any) -> None:
     invalidate_management_caches(**kwargs)
 
 
-def _upsert_flow_record(db: Session, flow_record: dict, report: dict, *, dry_run: bool, upsert_mode: str) -> str | None:
+def _upsert_flow_record(
+    db: Session,
+    flow_record: dict,
+    report: dict,
+    *,
+    dry_run: bool,
+    upsert_mode: str,
+    source_namespace: str,
+    source_version: str,
+) -> str | None:
     flow_uuid = str(flow_record["flow_uuid"])
     existing = db.get(FlowRecord, flow_uuid)
-    if existing is not None and upsert_mode == "skip":
-        report["skipped"] += 1
-        return flow_uuid
     incoming_source = _safe_str(flow_record.get("source"))
     if existing is not None and _is_protected_builtin_flow(existing) and incoming_source != _safe_str(existing.source):
         report["skipped"] += 1
         report["warnings"].append(f"{flow_uuid}: built-in flow source={existing.source}; skipped overwrite from TIDAS flow import")
         return flow_uuid
+    snapshot, snapshot_created = create_flow_version_snapshot(
+        db,
+        flow_record=flow_record,
+        source_namespace=source_namespace,
+        source_version=source_version,
+        metadata={"source_payload": flow_record.get("source_payload")},
+    )
+    if snapshot_created and not dry_run:
+        # SessionLocal disables autoflush.  Flush each new immutable version so
+        # later process imports in the same transaction can resolve it exactly.
+        db.flush()
+    if existing is not None and upsert_mode == "skip" and not snapshot_created:
+        report["skipped"] += 1
+        return flow_uuid
     if existing is None:
         report["inserted"] += 1
         if not dry_run:
-            db.add(FlowRecord(**flow_record))
+            db.add(FlowRecord(
+                flow_uuid=flow_uuid,
+                flow_name=str(flow_record.get("flow_name") or flow_uuid),
+                flow_name_en=_safe_str(flow_record.get("flow_name_en")) or None,
+                flow_type=str(flow_record.get("flow_type") or "Product flow"),
+                default_unit=str(flow_record.get("default_unit") or "kg"),
+                unit_group=str(flow_record.get("unit_group") or "Units of mass"),
+                compartment=_safe_str(flow_record.get("compartment")) or None,
+                source_updated_at=_safe_str(flow_record.get("source_updated_at")) or None,
+                source=incoming_source or TIDAS_FLOW_IMPORT_SOURCE,
+                is_custom=False,
+                tidas_compatible=bool(flow_record.get("tidas_compatible")),
+                tidas_unit_group=_safe_str(flow_record.get("tidas_unit_group")) or None,
+                tidas_flow_property_uuid=_safe_str(flow_record.get("tidas_flow_property_uuid")) or None,
+                tidas_reference_source=_safe_str(flow_record.get("tidas_reference_source")) or None,
+                source_namespace=source_namespace,
+                source_version=source_version,
+                version_label=snapshot.version_label,
+            ))
+            # Make the compatibility row visible to subsequent imports in the
+            # same caller-managed transaction.  Without this flush, importing
+            # another version of the same UUID can enqueue a duplicate row.
+            db.flush()
         return flow_uuid
     report["updated"] += 1
     if not dry_run:
-        previous_unit = existing.default_unit
-        previous_unit_group = existing.unit_group
-        existing.flow_name = str(flow_record.get("flow_name") or existing.flow_name)
-        existing.flow_name_en = _safe_str(flow_record.get("flow_name_en")) or None
-        existing.flow_type = str(flow_record.get("flow_type") or existing.flow_type)
-        incoming_unit = str(flow_record.get("default_unit") or existing.default_unit)
-        incoming_unit_group = str(flow_record.get("unit_group") or existing.unit_group)
-        existing.default_unit = incoming_unit
-        existing.unit_group = previous_unit_group if incoming_unit == previous_unit and previous_unit_group else incoming_unit_group
-        compartment = _safe_str(flow_record.get("compartment"))
-        if compartment and compartment != "[]":
-            existing.compartment = compartment
-        existing.source_updated_at = _safe_str(flow_record.get("source_updated_at")) or None
-        existing.source = _safe_str(flow_record.get("source")) or existing.source
-        existing.tidas_compatible = bool(flow_record.get("tidas_compatible"))
-        existing.tidas_unit_group = existing.unit_group or _safe_str(flow_record.get("tidas_unit_group")) or existing.tidas_unit_group
-        existing.tidas_flow_property_uuid = _safe_str(flow_record.get("tidas_flow_property_uuid")) or existing.tidas_flow_property_uuid
-        existing.tidas_reference_source = _safe_str(flow_record.get("tidas_reference_source")) or existing.tidas_reference_source
+        report["warnings"].append(
+            f"{flow_uuid}@{source_version}: stored as an immutable Flow version; compatibility catalog was not overwritten"
+        )
     return flow_uuid
 
 
@@ -1290,6 +1374,8 @@ def import_tidas_flow_rows(
     source_label: str = TIDAS_FLOW_IMPORT_SOURCE,
     persist_report: bool = True,
     with_transaction: bool = False,
+    source_namespace: str = TG_LEGACY_NAMESPACE,
+    require_source_version: bool = False,
 ) -> TidasImportReportResponse:
     """Import flow rows from TIDAS/ILCD format.
 
@@ -1319,7 +1405,32 @@ def import_tidas_flow_rows(
             report["errors"].append(f"{source_path}: {err}")
             continue
         _label_imported_elementary_flow_source(flow_record, source_label)
-        _upsert_flow_record(db, flow_record, report, dry_run=dry_run, upsert_mode=upsert_mode)
+        incoming_version = _safe_str(flow_record.get("source_version"))
+        if require_source_version and not incoming_version:
+            report["failed"] += 1
+            report["errors"].append(f"{source_path}: {flow_record['flow_uuid']} missing exact TIDAS Flow version")
+            continue
+        resolved_namespace, resolved_version = normalized_flow_identity(
+            source_namespace=source_namespace,
+            source_version=(
+                TG_LEGACY_VERSION
+                if source_namespace == TG_LEGACY_NAMESPACE
+                else incoming_version
+            ),
+        )
+        if not resolved_version:
+            report["failed"] += 1
+            report["errors"].append(f"{source_path}: {flow_record['flow_uuid']} missing Flow source version")
+            continue
+        _upsert_flow_record(
+            db,
+            flow_record,
+            report,
+            dry_run=dry_run,
+            upsert_mode=upsert_mode,
+            source_namespace=resolved_namespace,
+            source_version=resolved_version,
+        )
     if with_transaction:
         return (
             _persist_tidas_import_report(db, report, commit=False)
@@ -1347,6 +1458,8 @@ def import_tidas_process_rows(
     valid_flow_uuids: set[str] | None = None,
     persist_report: bool = True,
     with_transaction: bool = False,
+    flow_source_namespace: str = TG_LEGACY_NAMESPACE,
+    require_flow_versions: bool = False,
 ) -> TidasImportReportResponse:
     """Import process rows from TIDAS/ILCD format.
 
@@ -1385,6 +1498,24 @@ def import_tidas_process_rows(
             exchanges=list(process_record.get("exchanges") or []),
             valid_flow_uuids=valid_flow_uuids,
         )
+        missing_versions: list[str] = []
+        for exchange in kept_exchanges:
+            exchange["flow_source_namespace"] = (
+                flow_source_namespace
+                if flow_source_namespace == TG_LEGACY_NAMESPACE
+                else (_safe_str(exchange.get("flow_source_namespace")) or flow_source_namespace)
+            )
+            if flow_source_namespace == TG_LEGACY_NAMESPACE:
+                exchange["flow_version"] = TG_LEGACY_VERSION
+            if require_flow_versions and not _safe_str(exchange.get("flow_version")):
+                missing_versions.append(_safe_str(exchange.get("flow_uuid")))
+        if missing_versions:
+            report["failed"] += 1
+            report["errors"].append(
+                f"{source_path}: {process_uuid} has exchanges without exact TIDAS Flow versions: "
+                + ", ".join(sorted(set(missing_versions))[:10])
+            )
+            continue
         _hydrate_exchange_flow_semantics(db, kept_exchanges)
         reference_flow_uuid, product_warnings = _reference_flow_uuid_from_quantitative_reference(process_record, kept_exchanges)
         report["warnings"].extend([f"{process_uuid}: {msg}" for msg in product_warnings])

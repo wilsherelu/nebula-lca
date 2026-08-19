@@ -22,6 +22,7 @@ from ..schemas import (
     HybridNode,
     flow_semantic_to_exchange_type,
 )
+from .flow_versions import ports_are_version_compatible
 
 # ── Utility ──────────────────────────────────────────────────────────────
 
@@ -372,6 +373,13 @@ def validate_edge_binding_and_uniqueness(graph: HybridGraph) -> None:
             )
             if not link_ok:
                 issues.append("edge.flowUuid does not match target port flowUuid or an active intermediate-flow link")
+        if (
+            source_port is not None
+            and target_port is not None
+            and str(source_port.flowUuid or "") == str(target_port.flowUuid or "")
+            and not ports_are_version_compatible(source_port, target_port)
+        ):
+            issues.append("edge connects incompatible Flow versions or unit groups")
 
         if issues:
             binding_issues.append({

@@ -60,6 +60,12 @@ export type FlowPort = {
   id: string;
   legacyPortId?: string;
   flowUuid: string;
+  flowSourceNamespace?: string;
+  flowVersion?: string;
+  flowPropertyUuid?: string;
+  flowPropertyVersion?: string;
+  unitGroupUuid?: string;
+  unitGroupVersion?: string;
   name: string;
   flowNameEn?: string;
   displayNameEn?: string;

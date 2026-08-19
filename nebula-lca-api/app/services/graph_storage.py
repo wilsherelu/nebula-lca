@@ -198,10 +198,9 @@ def repair_impossible_flow_units(
 ) -> list[dict[str, str]]:
     """Repair units that cannot belong to their saved unit group.
 
-    The Flow catalog unit group is authoritative unless an imported TianGong
-    provider's product exchange proves that the catalog was derived from a
-    non-reference Flow property. Other repairs require no explicit unit-group
-    switch and a valid catalog default unit.
+    Repairs are scoped to the current graph. The compatibility Flow catalog is
+    never rewritten from a project or process exchange because another project
+    may be pinned to a different Flow version.
     """
     if db is None:
         return []
@@ -223,7 +222,8 @@ def repair_impossible_flow_units(
     if not flow_uuids:
         return []
 
-    from ..models import FlowRecord, ReferenceProcess, UnitDefinition
+    from ..models import FlowRecord, FlowVersionRecord, ReferenceProcess, UnitDefinition
+    from .flow_versions import port_flow_identity
 
     flow_meta: dict[str, tuple[str, str]] = {}
     flow_rows: dict[str, Any] = {}
@@ -236,6 +236,15 @@ def repair_impossible_flow_units(
         ):
             flow_meta[str(row.flow_uuid)] = (str(row.unit_group or "").strip(), str(row.default_unit or "").strip())
             flow_rows[str(row.flow_uuid)] = row
+    version_rows = (
+        db.query(FlowVersionRecord)
+        .filter(FlowVersionRecord.flow_uuid.in_(list(flow_uuids)))
+        .all()
+    )
+    version_meta = {
+        (row.source_namespace, row.flow_uuid, row.source_version): row
+        for row in version_rows
+    }
     units_by_group: dict[str, set[str]] = {}
     for row in db.query(UnitDefinition.unit_group, UnitDefinition.unit_name).all():
         group = str(row.unit_group or "").strip().casefold()
@@ -258,11 +267,20 @@ def repair_impossible_flow_units(
     }
 
     repairs: list[dict[str, str]] = []
-    repaired_catalog_flows: set[str] = set()
     for node, port, bucket in ports:
         get_value = port.get if isinstance(port, dict) else lambda key, default=None: getattr(port, key, default)
         flow_uuid = str(get_value("flowUuid") or get_value("flow_uuid") or "").strip()
         flow_group, default_unit = flow_meta.get(flow_uuid, ("", ""))
+        _, source_namespace, source_version, _ = port_flow_identity(port)
+        explicit_source_version = str(get_value("flowVersion") or get_value("flow_version") or "").strip()
+        snapshot = (
+            version_meta.get((source_namespace, flow_uuid, source_version))
+            if explicit_source_version
+            else None
+        )
+        if snapshot is not None:
+            flow_group = str(snapshot.unit_group or "").strip()
+            default_unit = str(snapshot.default_unit or "").strip()
         current_group = str(get_value("unitGroup") or get_value("unit_group") or "").strip()
         current_unit = str(get_value("unit") or "").strip()
         is_product_output = bucket == "outputs" and bool(get_value("isProduct") or get_value("is_product"))
@@ -294,6 +312,7 @@ def repair_impossible_flow_units(
             and source_group
             and source_unit.casefold() in source_group_units
             and flow_row is not None
+            and snapshot is None
             and str(flow_row.source or "").strip() == "tiangong"
             and (
                 source_unit.casefold() != default_unit.casefold()
@@ -307,11 +326,6 @@ def repair_impossible_flow_units(
             else:
                 setattr(port, "unit", source_unit)
                 setattr(port, "unitGroup", source_group)
-            if apply_catalog_updates and flow_uuid not in repaired_catalog_flows:
-                flow_row.default_unit = source_unit
-                flow_row.unit_group = source_group
-                flow_row.tidas_unit_group = source_group
-                repaired_catalog_flows.add(flow_uuid)
             repairs.append({
                 "port_id": str(get_value("id") or ""),
                 "flow_uuid": flow_uuid,
