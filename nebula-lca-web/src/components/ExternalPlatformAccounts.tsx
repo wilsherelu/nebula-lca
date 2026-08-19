@@ -617,7 +617,7 @@ export function ExternalPlatformAccounts(props: Props) {
                 return (
                   <tr key={`${item.remote_id}:${item.remote_version ?? ""}`}>
                     <td>
-                      <strong>{itemTitle(item)}</strong>
+                      <strong className="pm-remote-result-name" title={itemTitle(item)}>{itemTitle(item)}</strong>
                     </td>
                     <td>
                       <span>{itemType(item)}</span>
@@ -797,52 +797,45 @@ export function ExternalPlatformAccounts(props: Props) {
 
       {modelSyncConfirm.open && modelSyncConfirm.item && (
         <div className="pm-modal-mask" onClick={() => setModelSyncConfirm({ open: false, item: null })}>
-          <div className="pm-modal" onClick={(event) => event.stopPropagation()}>
+          <div
+            className="pm-modal pm-model-import-confirm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="pm-model-import-confirm-title"
+            onClick={(event) => event.stopPropagation()}
+          >
             <div className="pm-modal-head">
-              <strong>{zh ? "确认导入模型" : "Confirm Model Import"}</strong>
+              <div className="pm-model-import-confirm-title">
+                <strong id="pm-model-import-confirm-title">{zh ? "导入模型" : "Import Model"}</strong>
+                <span>{zh ? `版本 ${modelSyncConfirm.item.remote_version ?? "-"}` : `Version ${modelSyncConfirm.item.remote_version ?? "-"}`}</span>
+              </div>
               <button type="button" className="pm-link-btn" onClick={() => setModelSyncConfirm({ open: false, item: null })}>
                 {zh ? "关闭" : "Close"}
               </button>
             </div>
-            <p>
-              {zh
-                ? `即将导入模型：${modelSyncConfirm.item.model_name ?? modelSyncConfirm.item.remote_id}`
-                : `About to import model: ${modelSyncConfirm.item.model_name ?? modelSyncConfirm.item.remote_id}`}
-            </p>
-            {(() => {
-              const previewMatches = remotePreview
-                && remotePreview.remote_id === modelSyncConfirm.item.remote_id
-                && (remotePreview.remote_version ?? null) === (modelSyncConfirm.item.remote_version ?? null);
-              const relatedCount = previewMatches && Array.isArray(remotePreview.related) ? remotePreview.related.length : 0;
-              if (relatedCount > 0) {
-                return (
-                  <p>
-                    {zh
-                      ? `此模型依赖 ${relatedCount} 个关联项（交换流 / 上下游数据）。导入时将一并处理这些依赖。`
-                      : `This model depends on ${relatedCount} related item(s) (exchanges / upstream-downstream data). Dependencies will be processed during import.`}
-                  </p>
-                );
-              }
-              return (
-                <p>
-                  {previewMatches
-                    ? (zh ? "此模型当前没有已知的依赖项。" : "This model has no known dependencies from the preview.")
-                    : (zh
-                      ? "将导入检索结果中的当前最新版并创建新项目，相关 Process 和 Flow 依赖会一并处理。"
-                      : "The latest listed version will be imported as a new project, including its Process and Flow dependencies.")}
-                </p>
-              );
-            })()}
+            <div className="pm-model-import-confirm-body">
+              <div className="pm-model-import-confirm-name">
+                <span>{zh ? "模型名称" : "Model"}</span>
+                <strong title={modelSyncConfirm.item.model_name ?? modelSyncConfirm.item.remote_id}>
+                  {modelSyncConfirm.item.model_name ?? modelSyncConfirm.item.remote_id}
+                </strong>
+              </div>
+              <p>
+                {zh
+                  ? "将导入当前最新版本并创建新项目，相关 Process 和 Flow 依赖会一并处理。"
+                  : "The current latest version will be imported as a new project, including its Process and Flow dependencies."}
+              </p>
             {remotePreview?.remote_id === modelSyncConfirm.item.remote_id && remotePreview.warnings && remotePreview.warnings.length > 0 && (
-              <div className="pm-warning" style={{ marginTop: "8px" }}>
+              <div className="pm-warning pm-model-import-confirm-warning">
                 <strong>{zh ? "警告" : "Warnings"}:</strong>
-                <ul style={{ margin: "4px 0 0 0", paddingLeft: "20px" }}>
+                <ul>
                   {remotePreview.warnings.map((w, idx) => (
                     <li key={idx}>{w}</li>
                   ))}
                 </ul>
               </div>
             )}
+            </div>
             <div className="pm-modal-actions">
               <button type="button" className="pm-ghost-btn" onClick={() => setModelSyncConfirm({ open: false, item: null })}>
                 {zh ? "取消" : "Cancel"}

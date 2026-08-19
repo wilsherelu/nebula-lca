@@ -48,7 +48,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
       ? t("自动转换", "Automatic conversion")
       : level === "L2"
         ? t("需确认转换", "Conversion needs confirmation")
-        : t("手动转换", "Manual conversion");
+        : t("有转换记忆", "Conversion memory available");
 
   const inputs = useMemo(
     () => node.data.inputs.filter((port) => port.type !== "biosphere"),
@@ -206,7 +206,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
       });
       onStatus?.(resolution.mapping_level === "L2"
         ? t("已确认该转换；请继续选择具体背景 LCI。", "Confirmed this conversion; choose a background LCI next.")
-        : t("已复用手动转换；请继续选择具体背景 LCI。", "Reused this manual conversion; choose a background LCI next."));
+        : t("已复用转换记忆；请继续选择具体背景 LCI。", "Reused the conversion memory; choose a background LCI next."));
     } catch (error) {
       onStatus?.(error instanceof Error ? error.message : t("确认映射失败", "Link confirmation failed"));
     } finally {
@@ -334,7 +334,6 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
                 </div>
                 <div className="intermediate-flow-link-status">
                   <span className="intermediate-flow-level-badge approved">{t("转换完成", "Conversion completed")}</span>
-                  <span className="muted-text">{t("可关联 ecoinvent 背景数据", "Ready for ecoinvent background data association")}</span>
                 </div>
                 <div className="intermediate-flow-link-actions">
                   <button type="button" className="flow-link-text-action" disabled={busy} onClick={() => setProxyPortId(port.id)}>
@@ -359,9 +358,14 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
                 </div>
                 <div className="intermediate-flow-link-actions">
                   {review.mapping_level === "L3" ? (
-                    <button type="button" className="flow-link-text-action" disabled={busy} onClick={() => applyReviewedLink(port, review)}>
-                      {t("复用转换", "Reuse conversion")}
-                    </button>
+                    <>
+                      <button type="button" className="flow-link-text-action" disabled={busy} onClick={() => applyReviewedLink(port, review)}>
+                        {t("复用", "Reuse")}
+                      </button>
+                      <button type="button" className="flow-link-text-action" disabled={busy} onClick={() => setProxyPortId(port.id)}>
+                        {t("手动转换", "Manual conversion")}
+                      </button>
+                    </>
                   ) : (
                     <span aria-hidden="true">—</span>
                   )}
