@@ -38,6 +38,7 @@ from app.services.data_platform_connectors import (
     RemotePageDTO,
     RemoteProcessDTO,
     TianGongSupabaseConnector,
+    _extract_flow_property_reference,
     _tiangong_flow_from_row,
     _tiangong_process_from_row,
     encrypt_credential,
@@ -77,6 +78,33 @@ def test_tiangong_flow_without_resolved_unit_metadata_does_not_fallback_to_mass(
     assert flow.default_unit == ""
     assert flow.unit_group == ""
     assert flow.metadata["unit_resolution_error"] == "FLOW_UNIT_METADATA_UNRESOLVED"
+
+
+def test_tiangong_flow_dependency_uses_quantitative_reference_property():
+    reference = _extract_flow_property_reference({
+        "json": {
+            "flowDataSet": {
+                "flowInformation": {
+                    "quantitativeReference": {"referenceToReferenceFlowProperty": "0"},
+                },
+                "flowProperties": {
+                    "flowProperty": [
+                        {
+                            "@dataSetInternalID": "1",
+                            "referenceToFlowPropertyDataSet": {"@refObjectId": "energy-property"},
+                        },
+                        {
+                            "@dataSetInternalID": "0",
+                            "referenceToFlowPropertyDataSet": {"@refObjectId": "mass-property"},
+                        },
+                    ]
+                },
+            }
+        }
+    })
+
+    assert reference is not None
+    assert reference["id"] == "mass-property"
 
 
 def test_tiangong_process_preserves_localized_chinese_and_english_names():

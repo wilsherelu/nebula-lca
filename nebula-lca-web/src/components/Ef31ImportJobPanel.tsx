@@ -68,8 +68,9 @@ const zhText = {
   packagePlaceholder: "\u8bf7\u9009\u62e9 .7z \u6216 .xlsx \u6587\u4ef6",
   guide: "\u6570\u636e\u8d2d\u4e70\u4e0e\u4e0b\u8f7d\u6307\u5357",
   guideTitle: "ecoinvent \u6570\u636e\u5e93\u8d2d\u4e70\u4e0e\u4e0b\u8f7d",
-  guideIntro: "请先购买 ecoinvent 授权，并从 ecoinvent 官网进入许可证与 ecoQuery 下载入口。",
-  guideEnglish: "\u82f1\u6587\u5b98\u65b9\u9875\u9762",
+  guideIntro: "中国大陆用户可通过海科数据咨询 ecoinvent 授权与下载；已有国际账号的用户也可继续使用 ecoinvent 官网和 ecoQuery。",
+  guideChina: "中国区官方合作页面（海科数据）",
+  guideEnglish: "ecoinvent 国际官网",
   guidePackages: "\u9700\u8981\u4e0b\u8f7d\u7684\u4e24\u4e2a\u538b\u7f29\u5305",
   guideNote: "购买后进入下载区，通常会看到不同版本号与不同产品系统模型的压缩包。LCA 实务中一般推荐使用 cutoff 模型；实际文件名前面可能带有版本前缀，例如 ecoinvent 3.x。只要文件名结尾分别匹配 cutoff_lci_ecoSpold02.7z 与 LCIA_implementation.7z 即可。导入时先上传 LCI 包，LCIA 包用于生成 LCIA Runtime；请保留原始压缩包，不要先解压再上传。",
   advanced: "\u9ad8\u7ea7\u8bbe\u7f6e",
@@ -147,8 +148,9 @@ const enText = {
   packagePlaceholder: "Choose .7z or .xlsx file",
   guide: "Purchase and download guide",
   guideTitle: "ecoinvent purchase and download",
-  guideIntro: "Purchase an ecoinvent license first, then use the ecoinvent website for license and ecoQuery access.",
-  guideEnglish: "English official page",
+  guideIntro: "Users in mainland China can contact HiQ Data for ecoinvent licensing and downloads. Existing international users can continue through ecoinvent and ecoQuery.",
+  guideChina: "China partner page (HiQ Data)",
+  guideEnglish: "ecoinvent international site",
   guidePackages: "Required archive files",
   guideNote: "After purchase, the download area may contain archives for multiple versions and product system models. In LCA practice, the cutoff model is generally recommended. The actual archive names may include a version prefix such as ecoinvent 3.x; what matters is that the names end with cutoff_lci_ecoSpold02.7z and LCIA_implementation.7z. Upload the LCI archive first; the LCIA archive is used to generate the LCIA Runtime. Keep the original archives and do not unzip before upload.",
   advanced: "Advanced",
@@ -819,7 +821,8 @@ export default function Ef31ImportJobPanel(props: {
               <div className="ef31-guide-body">
                 <p>{t.guideIntro}</p>
                 <div className="ef31-guide-links">
-                  <a href="https://ecoinvent.org/" target="_blank" rel="noreferrer">{t.guideEnglish}</a>
+                  <a href="https://www.hiqlcd.com/" target="_blank" rel="noreferrer">{t.guideChina}</a>
+                  <a href="https://ecoinvent.org/licenses/" target="_blank" rel="noreferrer">{t.guideEnglish}</a>
                 </div>
                 <div className="ef31-guide-packages">
                   <span>{t.guidePackages}</span>

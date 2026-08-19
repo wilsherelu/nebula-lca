@@ -3607,7 +3607,7 @@ def create_model(payload: ModelCreateRequest, db: Session = Depends(get_db)) -> 
     validate_graph_intermediate_flow_links(db, payload.graph)
     validate_graph_flow_type_contract(payload.graph, db=db, stage="save_model")
     validate_graph_port_names_against_flow_catalog(payload.graph, db=db, stage="save_model")
-    _repair_impossible_flow_units(payload.graph, db)
+    _repair_impossible_flow_units(payload.graph, db, apply_catalog_updates=True)
     normalize_graph_flow_unit_switches(payload.graph, db)
     flow_default_unit_violations = collect_flow_default_unit_conversion_violations(payload.graph, db)
     if flow_default_unit_violations:

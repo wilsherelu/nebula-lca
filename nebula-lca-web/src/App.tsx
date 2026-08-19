@@ -1545,6 +1545,13 @@ const getUnitProcessProductUnitGroupIssues = (graph: LcaGraphPayload): string[] 
     if (hasCompleteManualFactors) {
       continue;
     }
+    const hasLegacyTidasAllocation = productOutputs.every((port) => {
+      const basis = port.allocationBasis;
+      return basis?.method === "quantity" && basis.source === "tidas_import_policy";
+    });
+    if (hasLegacyTidasAllocation) {
+      continue;
+    }
     const groups = Array.from(
       new Set(
         productOutputs
@@ -3226,10 +3233,34 @@ export default function App() {
       if (!response.ok) {
         throw new Error(await response.text());
       }
+      const repairResult = (await response.json()) as {
+        repaired_count?: number;
+        skipped_count?: number;
+        failed_count?: number;
+        items?: Array<{ status?: string; reason?: string }>;
+      };
+      const repairedCount = Number(repairResult.repaired_count ?? 0);
+      const skippedCount = Number(repairResult.skipped_count ?? 0);
+      const failedCount = Number(repairResult.failed_count ?? 0);
+      if (repairedCount <= 0 && skippedCount + failedCount > 0) {
+        const firstReason = repairResult.items?.find((item) => item.status !== "repaired")?.reason;
+        throw new Error(
+          firstReason ||
+            (uiLanguage === "zh" ? "未找到可自动修复的问题。" : "No issue could be repaired automatically."),
+        );
+      }
       const target = projects.find((item) => item.project_id === projectId);
       await loadProjectGraph(projectId, target?.name ?? projectName);
       setShowProjectIntegrityDialog(false);
-      setStatusText(uiLanguage === "zh" ? "项目完整性问题已自动修复并重新加载。" : "Project integrity issues were auto-repaired and reloaded.");
+      setStatusText(
+        skippedCount + failedCount > 0
+          ? uiLanguage === "zh"
+            ? `已修复 ${repairedCount} 项，另有 ${skippedCount + failedCount} 项未能自动修复。`
+            : `Repaired ${repairedCount} issue(s); ${skippedCount + failedCount} could not be repaired automatically.`
+          : uiLanguage === "zh"
+            ? `已修复 ${repairedCount} 项项目完整性问题并重新加载。`
+            : `Repaired ${repairedCount} project integrity issue(s) and reloaded.`,
+      );
     } catch (error) {
       setStatusText(
         `${uiLanguage === "zh" ? "项目自动修复失败" : "Project auto-repair failed"}: ${formatApiError(error)}`,

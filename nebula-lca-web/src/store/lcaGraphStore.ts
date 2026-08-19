@@ -4874,12 +4874,21 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
       }
       const active = state.canvases[state.activeCanvasId];
       const base = position ?? getAutoNodePosition(active);
+      const nodesUsedForNaming = [...active.nodes];
       const importedNodes = rows.map((row, idx) => {
         const nextPos =
           position || rows.length > 1
             ? { x: base.x + (idx % 3) * 40, y: base.y + Math.floor(idx / 3) * 26 }
             : { x: base.x, y: base.y };
-        const node = buildImportedUnitProcessNode(row, nextPos);
+        const importedNode = buildImportedUnitProcessNode(row, nextPos);
+        const node: Node<LcaNodeData> = {
+          ...importedNode,
+          data: {
+            ...importedNode.data,
+            name: buildUniqueNodeName(nodesUsedForNaming, importedNode.data.name, state.uiLanguage),
+          },
+        };
+        nodesUsedForNaming.push(node);
         createdIds.push(node.id);
         return node;
       });
