@@ -190,24 +190,29 @@ def slim_graph_for_storage(graph_json: dict) -> dict:
 # ── Hydrate helpers ──────────────────────────────────────────────────────
 
 
-def repair_impossible_flow_units(graph: Any, db: Any) -> list[dict[str, str]]:
+def repair_impossible_flow_units(
+    graph: Any,
+    db: Any,
+    *,
+    apply_catalog_updates: bool = False,
+) -> list[dict[str, str]]:
     """Repair units that cannot belong to their saved unit group.
 
-    The Flow catalog unit group is authoritative. A repair is made only when
-    there is no explicit unit-group switch, the saved port group conflicts
-    with the Flow group or its unit is not a member of that group, and the
-    Flow default unit is a valid member.
+    The Flow catalog unit group is authoritative unless an imported TianGong
+    provider's product exchange proves that the catalog was derived from a
+    non-reference Flow property. Other repairs require no explicit unit-group
+    switch and a valid catalog default unit.
     """
     if db is None:
         return []
     nodes = graph.get("nodes", []) if isinstance(graph, dict) else getattr(graph, "nodes", [])
-    ports: list[Any] = []
+    ports: list[tuple[Any, Any, str]] = []
     flow_uuids: set[str] = set()
     for node in nodes or []:
         for bucket in ("inputs", "outputs", "emissions"):
             bucket_ports = node.get(bucket, []) if isinstance(node, dict) else getattr(node, bucket, [])
             for port in bucket_ports or []:
-                ports.append(port)
+                ports.append((node, port, bucket))
                 flow_uuid = str(
                     (port.get("flowUuid") or port.get("flow_uuid") or "")
                     if isinstance(port, dict)
@@ -218,17 +223,19 @@ def repair_impossible_flow_units(graph: Any, db: Any) -> list[dict[str, str]]:
     if not flow_uuids:
         return []
 
-    from ..models import FlowRecord, UnitDefinition
+    from ..models import FlowRecord, ReferenceProcess, UnitDefinition
 
     flow_meta: dict[str, tuple[str, str]] = {}
+    flow_rows: dict[str, Any] = {}
     for start in range(0, len(flow_uuids), 500):
         batch = list(flow_uuids)[start:start + 500]
         for row in (
-            db.query(FlowRecord.flow_uuid, FlowRecord.unit_group, FlowRecord.default_unit)
+            db.query(FlowRecord)
             .filter(FlowRecord.flow_uuid.in_(batch))
             .all()
         ):
             flow_meta[str(row.flow_uuid)] = (str(row.unit_group or "").strip(), str(row.default_unit or "").strip())
+            flow_rows[str(row.flow_uuid)] = row
     units_by_group: dict[str, set[str]] = {}
     for row in db.query(UnitDefinition.unit_group, UnitDefinition.unit_name).all():
         group = str(row.unit_group or "").strip().casefold()
@@ -236,13 +243,85 @@ def repair_impossible_flow_units(graph: Any, db: Any) -> list[dict[str, str]]:
         if group and unit:
             units_by_group.setdefault(group, set()).add(unit)
 
+    process_uuids = {
+        str(
+            (node.get("process_uuid") or node.get("processUuid") or "")
+            if isinstance(node, dict)
+            else (getattr(node, "process_uuid", None) or getattr(node, "processUuid", None) or "")
+        ).strip()
+        for node in nodes or []
+    }
+    process_uuids.discard("")
+    source_processes = {
+        str(row.process_uuid): row.process_json
+        for row in db.query(ReferenceProcess).filter(ReferenceProcess.process_uuid.in_(process_uuids)).all()
+    }
+
     repairs: list[dict[str, str]] = []
-    for port in ports:
+    repaired_catalog_flows: set[str] = set()
+    for node, port, bucket in ports:
         get_value = port.get if isinstance(port, dict) else lambda key, default=None: getattr(port, key, default)
         flow_uuid = str(get_value("flowUuid") or get_value("flow_uuid") or "").strip()
         flow_group, default_unit = flow_meta.get(flow_uuid, ("", ""))
         current_group = str(get_value("unitGroup") or get_value("unit_group") or "").strip()
         current_unit = str(get_value("unit") or "").strip()
+        is_product_output = bucket == "outputs" and bool(get_value("isProduct") or get_value("is_product"))
+        node_process_uuid = str(
+            (node.get("process_uuid") or node.get("processUuid") or "")
+            if isinstance(node, dict)
+            else (getattr(node, "process_uuid", None) or getattr(node, "processUuid", None) or "")
+        ).strip()
+        source_process = source_processes.get(node_process_uuid)
+        source_exchanges = source_process.get("exchanges", []) if isinstance(source_process, dict) else []
+        source_semantics = {
+            (
+                str(exchange.get("unit") or "").strip(),
+                str(exchange.get("unit_group") or exchange.get("unitGroup") or "").strip(),
+            )
+            for exchange in source_exchanges or []
+            if isinstance(exchange, dict)
+            and str(exchange.get("flow_uuid") or exchange.get("flowUuid") or "").strip() == flow_uuid
+            and str(exchange.get("direction") or "").strip().lower() in {"output", "outputs"}
+            and str(exchange.get("unit") or "").strip()
+            and str(exchange.get("unit_group") or exchange.get("unitGroup") or "").strip()
+        }
+        source_unit, source_group = next(iter(source_semantics)) if len(source_semantics) == 1 else ("", "")
+        source_group_units = units_by_group.get(source_group.casefold(), set())
+        flow_row = flow_rows.get(flow_uuid)
+        catalog_conflicts_with_source = (
+            is_product_output
+            and source_unit
+            and source_group
+            and source_unit.casefold() in source_group_units
+            and flow_row is not None
+            and str(flow_row.source or "").strip() == "tiangong"
+            and (
+                source_unit.casefold() != default_unit.casefold()
+                or source_group.casefold() != flow_group.casefold()
+            )
+        )
+        if catalog_conflicts_with_source:
+            if isinstance(port, dict):
+                port["unit"] = source_unit
+                port["unitGroup"] = source_group
+            else:
+                setattr(port, "unit", source_unit)
+                setattr(port, "unitGroup", source_group)
+            if apply_catalog_updates and flow_uuid not in repaired_catalog_flows:
+                flow_row.default_unit = source_unit
+                flow_row.unit_group = source_group
+                flow_row.tidas_unit_group = source_group
+                repaired_catalog_flows.add(flow_uuid)
+            repairs.append({
+                "port_id": str(get_value("id") or ""),
+                "flow_uuid": flow_uuid,
+                "from_unit": default_unit,
+                "to_unit": source_unit,
+                "unit_group": source_group,
+                "repair": "tiangong_reference_product_unit",
+            })
+            flow_meta[flow_uuid] = (source_group, source_unit)
+            continue
         switch = get_value("unitGroupSwitch") or get_value("unit_group_switch")
         flow_group_units = units_by_group.get(flow_group.casefold(), set())
         group_conflicts = bool(current_group) and current_group.casefold() != flow_group.casefold()
@@ -269,6 +348,114 @@ def repair_impossible_flow_units(graph: Any, db: Any) -> list[dict[str, str]]:
                 "to_unit": default_unit,
                 "unit_group": flow_group,
             })
+    repairs.extend(repair_legacy_tidas_allocation_factors(graph, db))
+    return repairs
+
+
+def repair_legacy_tidas_allocation_factors(graph: Any, db: Any) -> list[dict[str, str]]:
+    """Restore explicit TIDAS allocation factors after Flow unit repairs.
+
+    Older imported graphs stored same-unit products with quantity allocation.
+    If the Flow catalog later corrects one product to another unit group, the
+    original TIDAS ``allocatedFraction`` values remain authoritative and can be
+    restored deterministically from the imported reference process.
+    """
+    if db is None:
+        return []
+    nodes = graph.get("nodes", []) if isinstance(graph, dict) else getattr(graph, "nodes", [])
+
+    def value(item: Any, key: str, fallback: str | None = None) -> Any:
+        if isinstance(item, dict):
+            return item.get(key, item.get(fallback)) if fallback else item.get(key)
+        return getattr(item, key, getattr(item, fallback, None) if fallback else None)
+
+    candidates: list[tuple[Any, list[Any], str]] = []
+    process_uuids: set[str] = set()
+    for node in nodes or []:
+        outputs = value(node, "outputs") or []
+        products = [
+            port for port in outputs
+            if bool(value(port, "isProduct", "is_product"))
+            and str(value(port, "type") or "") != "biosphere"
+        ]
+        if len(products) <= 1:
+            continue
+        groups = {
+            str(
+                (
+                    (value(port, "unitGroupSwitch", "unit_group_switch") or {}).get("targetUnitGroup")
+                    or (value(port, "unitGroupSwitch", "unit_group_switch") or {}).get("target_unit_group")
+                )
+                if isinstance(value(port, "unitGroupSwitch", "unit_group_switch"), dict)
+                else ""
+            ).strip()
+            or str(value(port, "unitGroup", "unit_group") or "").strip()
+            for port in products
+        }
+        if len(groups - {""}) <= 1:
+            continue
+        bases = [value(port, "allocationBasis", "allocation_basis") for port in products]
+        if not all(
+            isinstance(basis, dict)
+            and str(basis.get("method") or "") == "quantity"
+            and str(basis.get("source") or "") == "tidas_import_policy"
+            for basis in bases
+        ):
+            continue
+        process_uuid = str(value(node, "process_uuid", "processUuid") or "").strip()
+        if not process_uuid:
+            continue
+        candidates.append((node, products, process_uuid))
+        process_uuids.add(process_uuid)
+    if not candidates:
+        return []
+
+    from ..models import ReferenceProcess
+
+    source_by_process = {
+        str(row.process_uuid): row.process_json
+        for row in db.query(ReferenceProcess).filter(ReferenceProcess.process_uuid.in_(process_uuids)).all()
+    }
+    repairs: list[dict[str, str]] = []
+    for node, products, process_uuid in candidates:
+        source = source_by_process.get(process_uuid)
+        exchanges = source.get("exchanges", []) if isinstance(source, dict) else []
+        raw_by_flow: dict[str, float] = {}
+        for exchange in exchanges or []:
+            if not isinstance(exchange, dict) or not bool(exchange.get("tidasAllocationPresent")):
+                continue
+            flow_uuid = str(exchange.get("flow_uuid") or exchange.get("flowUuid") or "").strip()
+            raw = exchange.get("tidasAllocatedFraction")
+            try:
+                parsed = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if flow_uuid and parsed >= 0:
+                raw_by_flow[flow_uuid] = parsed
+        product_flows = [str(value(port, "flowUuid", "flow_uuid") or "").strip() for port in products]
+        if any(not flow_uuid or flow_uuid not in raw_by_flow for flow_uuid in product_flows):
+            continue
+        total = sum(raw_by_flow[flow_uuid] for flow_uuid in product_flows)
+        if total <= 0:
+            continue
+        for port, flow_uuid in zip(products, product_flows):
+            raw = raw_by_flow[flow_uuid]
+            basis = {
+                "method": "manual_factor",
+                "source": "tidas_allocated_fraction",
+                "rawValue": raw,
+            }
+            if isinstance(port, dict):
+                port["allocationFactor"] = raw / total
+                port["allocationBasis"] = basis
+            else:
+                setattr(port, "allocationFactor", raw / total)
+                setattr(port, "allocationBasis", basis)
+        repairs.append({
+            "node_id": str(value(node, "id") or ""),
+            "process_uuid": process_uuid,
+            "repair": "tidas_allocation_factors",
+        })
     return repairs
 
 

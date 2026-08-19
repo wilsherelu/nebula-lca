@@ -2,6 +2,7 @@ from fastapi import HTTPException
 
 from app.models import PtsCompileArtifact, PtsExternalArtifact
 from app.schemas import HybridGraph
+from app.services.graph_contract import validate_graph_contract
 from app.services.pts_resources import (
     _load_published_compile_rows_for_graph,
     _validate_pts_market_supplier_coverage,
@@ -294,6 +295,21 @@ def test_pts_flatten_uses_shell_output_port_to_select_provider_vp():
     assert len(flattened.exchanges) == 1
     source_node = next(node for node in flattened.nodes if node.id == flattened.exchanges[0].fromNode)
     assert source_node.process_uuid == "pts-1::product::proc-b::ptsout-b::flow-diesel"
+
+
+def test_pts_flatten_disambiguates_duplicate_virtual_process_names():
+    compile_row = _compile_row_with_two_same_flow_vps()
+    for virtual_process in compile_row.artifact_json["virtual_processes"]:
+        virtual_process["process_name"] = "diesel @ pts-1"
+
+    flattened = build_flattened_graph_for_run_pts(
+        graph=_pts_shell_graph("out:ptsout-b"),
+        compile_rows=[compile_row],
+    )
+
+    virtual_names = [node.name for node in flattened.nodes if "::product::" in str(node.process_uuid)]
+    assert virtual_names == ["diesel @ pts-1", "diesel @ pts-1（1）"]
+    validate_graph_contract(flattened, require_balanced_conservation=True)
 
 
 def test_pts_flatten_rejects_ambiguous_same_flow_without_output_port():

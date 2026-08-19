@@ -26,7 +26,7 @@ from app.services.graph_storage import (
     repair_tidas_product_flags,
 )
 from app.database import Base, engine, SessionLocal
-from app.models import FlowRecord, Model, ModelVersion, UnitDefinition, UnitGroup
+from app.models import FlowRecord, Model, ModelVersion, ReferenceProcess, UnitDefinition, UnitGroup
 from app.schemas import HybridGraph
 from tests.conftest import _TEST_DB
 
@@ -227,6 +227,149 @@ class TestSlimUnit:
         assert [port["isProduct"] for port in graph["nodes"][0]["outputs"]] == [True, False, True, True]
         assert graph["nodes"][0]["reference_product_flow_uuid"] == "ethylene"
         assert graph["nodes"][0]["reference_product_direction"] == "output"
+
+    def test_unit_repair_restores_legacy_tidas_allocation_factors(self):
+        process_uuid = "legacy-tidas-allocation-process"
+        db = _db_module.SessionLocal()
+        try:
+            db.add(ReferenceProcess(
+                process_uuid=process_uuid,
+                process_name="Legacy TIDAS allocation",
+                process_json={
+                    "exchanges": [
+                        {
+                            "direction": "output",
+                            "flow_uuid": "mass-product",
+                            "tidasAllocationPresent": True,
+                            "tidasAllocatedFraction": 1.0,
+                        },
+                        {
+                            "direction": "output",
+                            "flow_uuid": "energy-product",
+                            "tidasAllocationPresent": True,
+                            "tidasAllocatedFraction": 3.0,
+                        },
+                    ],
+                },
+            ))
+            db.commit()
+            graph = {
+                "nodes": [{
+                    "id": "legacy-node",
+                    "process_uuid": process_uuid,
+                    "inputs": [],
+                    "outputs": [
+                        {
+                            "id": "mass-output",
+                            "flowUuid": "mass-product",
+                            "type": "technosphere",
+                            "unit": "kg",
+                            "unitGroup": "Units of mass",
+                            "isProduct": True,
+                            "allocationFactor": None,
+                            "allocationBasis": {"method": "quantity", "source": "tidas_import_policy"},
+                        },
+                        {
+                            "id": "energy-output",
+                            "flowUuid": "energy-product",
+                            "type": "technosphere",
+                            "unit": "MJ",
+                            "unitGroup": "Units of energy",
+                            "isProduct": True,
+                            "allocationFactor": None,
+                            "allocationBasis": {"method": "quantity", "source": "tidas_import_policy"},
+                        },
+                    ],
+                }],
+            }
+
+            repairs = repair_impossible_flow_units(graph, db)
+
+            assert repairs == [{
+                "node_id": "legacy-node",
+                "process_uuid": process_uuid,
+                "repair": "tidas_allocation_factors",
+            }]
+            assert [port["allocationFactor"] for port in graph["nodes"][0]["outputs"]] == [0.25, 0.75]
+            assert all(
+                port["allocationBasis"]["source"] == "tidas_allocated_fraction"
+                for port in graph["nodes"][0]["outputs"]
+            )
+        finally:
+            db.close()
+
+    def test_unit_repair_restores_tiangong_product_reference_unit_and_catalog(self):
+        flow_uuid = "diesel-reference-unit-regression"
+        process_uuid = "diesel-provider-regression"
+        db = _db_module.SessionLocal()
+        try:
+            if not db.query(UnitDefinition).filter_by(unit_group="Units of mass", unit_name="kg").first():
+                db.add(UnitDefinition(
+                    unit_group="Units of mass",
+                    unit_name="kg",
+                    factor_to_reference=1.0,
+                    is_reference=True,
+                ))
+            db.add(FlowRecord(
+                flow_uuid=flow_uuid,
+                flow_name="Diesel",
+                flow_type="Product flow",
+                default_unit="MJ",
+                unit_group="Units of energy",
+                source="tiangong",
+                tidas_unit_group="Units of energy",
+            ))
+            db.add(ReferenceProcess(
+                process_uuid=process_uuid,
+                process_name="Diesel provider",
+                process_json={
+                    "exchanges": [{
+                        "flow_uuid": flow_uuid,
+                        "direction": "output",
+                        "unit": "kg",
+                        "unit_group": "Units of mass",
+                    }],
+                },
+            ))
+            db.commit()
+            graph = {
+                "nodes": [{
+                    "id": "diesel-node",
+                    "process_uuid": process_uuid,
+                    "inputs": [],
+                    "outputs": [{
+                        "id": "diesel-output",
+                        "flowUuid": flow_uuid,
+                        "unit": "MJ",
+                        "unitGroup": "Units of energy",
+                        "type": "technosphere",
+                        "isProduct": True,
+                    }],
+                }],
+            }
+
+            repairs = repair_impossible_flow_units(graph, db, apply_catalog_updates=True)
+
+            assert repairs == [{
+                "port_id": "diesel-output",
+                "flow_uuid": flow_uuid,
+                "from_unit": "MJ",
+                "to_unit": "kg",
+                "unit_group": "Units of mass",
+                "repair": "tiangong_reference_product_unit",
+            }]
+            assert graph["nodes"][0]["outputs"][0]["unit"] == "kg"
+            assert graph["nodes"][0]["outputs"][0]["unitGroup"] == "Units of mass"
+            flow = db.get(FlowRecord, flow_uuid)
+            assert flow.default_unit == "kg"
+            assert flow.unit_group == "Units of mass"
+            assert flow.tidas_unit_group == "Units of mass"
+        finally:
+            db.rollback()
+            db.query(ReferenceProcess).filter(ReferenceProcess.process_uuid == process_uuid).delete()
+            db.query(FlowRecord).filter(FlowRecord.flow_uuid == flow_uuid).delete()
+            db.commit()
+            db.close()
     """Unit tests for slim/hydrate logic."""
 
     def test_slim_drops_display_fields_only(self):

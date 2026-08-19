@@ -185,23 +185,34 @@ def _misclassified_elementary_port_uuids(graph_json: dict, elementary_flow_uuids
     return sorted(mismatched)
 
 
+def _reference_flow_property(flow_dataset: dict) -> dict | None:
+    flow_info = flow_dataset.get("flowInformation") if isinstance(flow_dataset.get("flowInformation"), dict) else {}
+    quantitative_reference = (
+        flow_info.get("quantitativeReference")
+        if isinstance(flow_info.get("quantitativeReference"), dict)
+        else {}
+    )
+    reference_id = _safe_str(quantitative_reference.get("referenceToReferenceFlowProperty"))
+    props = flow_dataset.get("flowProperties") if isinstance(flow_dataset.get("flowProperties"), dict) else {}
+    rows = [row for row in _as_list(props.get("flowProperty")) if isinstance(row, dict)]
+    if reference_id:
+        for row in rows:
+            internal_id = _safe_str(row.get("@dataSetInternalID") or row.get("dataSetInternalID"))
+            if internal_id == reference_id:
+                return row
+    return rows[0] if rows else None
+
+
 def _infer_unit_defaults_from_flow_dataset(flow_dataset: dict) -> tuple[str, str]:
     flow_info = flow_dataset.get("flowInformation") if isinstance(flow_dataset.get("flowInformation"), dict) else {}
     ref_unit = _safe_str(flow_info.get("referenceUnit"))
     unit_group = _safe_str(flow_info.get("unitGroup"))
     if ref_unit and unit_group:
         return ref_unit, unit_group
-    props = flow_dataset.get("flowProperties") if isinstance(flow_dataset.get("flowProperties"), dict) else {}
-    hint_texts: list[str] = []
-    for row in _as_list(props.get("flowProperty") if isinstance(props, dict) else None):
-        if not isinstance(row, dict):
-            continue
-        ref = row.get("referenceToFlowPropertyDataSet")
-        short_desc = ref.get("common:shortDescription") if isinstance(ref, dict) else None
-        text_value = _pick_localized_text(short_desc, preferred_langs=("en", "zh")) or ""
-        if text_value:
-            hint_texts.append(text_value.lower())
-    hint_blob = " ".join(hint_texts)
+    reference_property = _reference_flow_property(flow_dataset)
+    ref = reference_property.get("referenceToFlowPropertyDataSet") if isinstance(reference_property, dict) else None
+    short_desc = ref.get("common:shortDescription") if isinstance(ref, dict) else None
+    hint_blob = (_pick_localized_text(short_desc, preferred_langs=("en", "zh")) or "").lower()
     if "energy" in hint_blob or "calorific" in hint_blob:
         return "MJ", "Units of energy"
     if "volume" in hint_blob:
@@ -323,16 +334,11 @@ def _extract_tidas_flow_record(row: dict) -> tuple[dict | None, str | None]:
         and (inferred_unit, inferred_group) != ("kg", "Units of mass")
     ):
         default_unit, unit_group = inferred_unit, inferred_group
-    props = flow_dataset.get("flowProperties") if isinstance(flow_dataset.get("flowProperties"), dict) else {}
     flow_property_uuid = ""
-    for prop in _as_list(props.get("flowProperty") if isinstance(props, dict) else None):
-        if not isinstance(prop, dict):
-            continue
-        ref = prop.get("referenceToFlowPropertyDataSet")
-        if isinstance(ref, dict):
-            flow_property_uuid = _safe_str(ref.get("@refObjectId") or ref.get("refObjectId"))
-            if flow_property_uuid:
-                break
+    reference_property = _reference_flow_property(flow_dataset)
+    ref = reference_property.get("referenceToFlowPropertyDataSet") if isinstance(reference_property, dict) else None
+    if isinstance(ref, dict):
+        flow_property_uuid = _safe_str(ref.get("@refObjectId") or ref.get("refObjectId"))
     return {
         "flow_uuid": flow_uuid,
         "flow_name": flow_name,

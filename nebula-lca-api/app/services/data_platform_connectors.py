@@ -1211,9 +1211,24 @@ def _extract_flow_property_reference(row: dict[str, Any]) -> dict[str, Any] | No
     flow_dataset = payload.get("flowDataSet") if isinstance(payload.get("flowDataSet"), dict) else payload
     flow_properties = flow_dataset.get("flowProperties") if isinstance(flow_dataset, dict) else None
     raw = flow_properties.get("flowProperty") if isinstance(flow_properties, dict) else None
-    for item in _as_list(raw):
-        if not isinstance(item, dict):
-            continue
+    flow_info = flow_dataset.get("flowInformation") if isinstance(flow_dataset, dict) else None
+    quantitative_reference = flow_info.get("quantitativeReference") if isinstance(flow_info, dict) else None
+    reference_id = str(
+        quantitative_reference.get("referenceToReferenceFlowProperty")
+        if isinstance(quantitative_reference, dict)
+        else ""
+    ).strip()
+    items = [item for item in _as_list(raw) if isinstance(item, dict)]
+    ordered_items = items
+    if reference_id:
+        matching = [
+            item
+            for item in items
+            if str(item.get("@dataSetInternalID") or item.get("dataSetInternalID") or "").strip() == reference_id
+        ]
+        if matching:
+            ordered_items = matching
+    for item in ordered_items:
         ref = _ref_dict(item.get("referenceToFlowPropertyDataSet") or item.get("refObject") or item)
         if ref:
             ref["mean_value"] = item.get("meanValue")

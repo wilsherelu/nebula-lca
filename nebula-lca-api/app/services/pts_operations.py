@@ -17,6 +17,7 @@ Public API
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
@@ -284,6 +285,13 @@ def _repair_pts_publication_from_resource(*, db: Session, resource: PtsResource)
 
     Returns ``(success: bool, detail: str)``.
     """
+    from .graph_storage import repair_impossible_flow_units
+
+    repaired_pts_graph = deepcopy(resource.pts_graph_json or {})
+    unit_repairs = repair_impossible_flow_units(repaired_pts_graph, db, apply_catalog_updates=True)
+    if unit_repairs:
+        resource.pts_graph_json = repaired_pts_graph
+
     graph = _pr._build_compile_graph_from_pts_resource(resource)
     if graph is None:
         return False, "pts_resource_graph_invalid"

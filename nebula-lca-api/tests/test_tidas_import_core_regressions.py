@@ -213,6 +213,34 @@ def test_calorific_flow_property_resolves_to_energy_default() -> None:
     assert _infer_unit_defaults_from_flow_dataset(flow_dataset) == ("MJ", "Units of energy")
 
 
+def test_flow_unit_inference_uses_only_quantitative_reference_property() -> None:
+    flow_dataset = {
+        "flowInformation": {
+            "quantitativeReference": {"referenceToReferenceFlowProperty": "0"},
+        },
+        "flowProperties": {
+            "flowProperty": [
+                {
+                    "@dataSetInternalID": "0",
+                    "referenceToFlowPropertyDataSet": {
+                        "@refObjectId": "mass-property",
+                        "common:shortDescription": {"#text": "Mass", "@xml:lang": "en"},
+                    },
+                },
+                {
+                    "@dataSetInternalID": "1",
+                    "referenceToFlowPropertyDataSet": {
+                        "@refObjectId": "calorific-property",
+                        "common:shortDescription": {"#text": "Net calorific value", "@xml:lang": "en"},
+                    },
+                },
+            ]
+        },
+    }
+
+    assert _infer_unit_defaults_from_flow_dataset(flow_dataset) == ("kg", "Units of mass")
+
+
 def test_normalize_exchange_uses_only_explicit_allocation_factor() -> None:
     reference = _normalize_exchange({
         "flow_uuid": "flow-1",

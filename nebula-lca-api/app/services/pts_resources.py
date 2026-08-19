@@ -1105,6 +1105,23 @@ def build_flattened_graph_for_run_pts(*, graph: HybridGraph, compile_rows: list[
 
     virtuals_by_pts: dict[str, list[dict]] = {}
     virtual_node_by_key: dict[tuple[str, str], HybridNode] = {}
+    used_process_names = {
+        str(node.name or "").strip().casefold()
+        for node in new_nodes
+        if str(node.name or "").strip()
+    }
+
+    def _unique_process_name(base_name: str) -> str:
+        candidate = base_name.strip() or "PTS process"
+        if candidate.casefold() not in used_process_names:
+            used_process_names.add(candidate.casefold())
+            return candidate
+        suffix = 1
+        while f"{candidate}（{suffix}）".casefold() in used_process_names:
+            suffix += 1
+        unique_name = f"{candidate}（{suffix}）"
+        used_process_names.add(unique_name.casefold())
+        return unique_name
 
     def _ref(vp: dict) -> dict:
         return vp.get("reference_product") if isinstance(vp.get("reference_product"), dict) else {}
@@ -1168,7 +1185,7 @@ def build_flattened_graph_for_run_pts(*, graph: HybridGraph, compile_rows: list[
                     "node_kind": "unit_process",
                     "mode": "normalized",
                     "process_uuid": process_uuid,
-                    "name": str(vp.get("process_name") or f"{pts_node.name}::{idx}"),
+                    "name": _unique_process_name(str(vp.get("process_name") or f"{pts_node.name}::{idx}")),
                     "location": pts_node.location,
                     "reference_product": ref_name,
                     "inputs": _vp_inputs(vp),
