@@ -95,6 +95,12 @@ class FlowPort(BaseModel):
     id: str
     legacy_port_id: str | None = Field(default=None, alias="legacyPortId")
     flowUuid: str
+    flow_source_namespace: str | None = Field(default=None, alias="flowSourceNamespace")
+    flow_version: str | None = Field(default=None, alias="flowVersion")
+    flow_property_uuid: str | None = Field(default=None, alias="flowPropertyUuid")
+    flow_property_version: str | None = Field(default=None, alias="flowPropertyVersion")
+    unit_group_uuid: str | None = Field(default=None, alias="unitGroupUuid")
+    unit_group_version: str | None = Field(default=None, alias="unitGroupVersion")
     name: str
     flow_name_en: str | None = None
     display_name_en: str | None = None
@@ -541,6 +547,9 @@ class FlowListItem(BaseModel):
     category: str | None = None
     subcompartment: str | None = None
     source: str | None = None
+    source_namespace: str | None = None
+    source_version: str | None = None
+    version_label: str | None = None
     is_custom: bool = False
     tidas_compatible: bool = False
     tidas_unit_group: str | None = None
@@ -658,6 +667,9 @@ class FlowOut(BaseModel):
     compartment: str | None = None
     subcompartment: str | None = None
     source: str | None = None
+    source_namespace: str | None = None
+    source_version: str | None = None
+    version_label: str | None = None
     is_custom: bool = False
     tidas_compatible: bool = False
     tidas_unit_group: str | None = None

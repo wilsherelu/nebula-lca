@@ -12,6 +12,7 @@ import { create } from "zustand";
 import { processLibrary } from "../data/processLibrary";
 import type { LcaEdgeData, LcaExchange, LcaGraphPayload } from "../model/exchange";
 import type { FlowPort, LcaNodeData, LcaProcessTemplate, LciRole, ProcessMode } from "../model/node";
+import { flowPortIdentityKey, flowPortsAreVersionCompatible } from "../model/flowVersionIdentity";
 import {
   buildGraphRelations,
   createEmptyGraphRelations,
@@ -5172,6 +5173,9 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         targetPort: FlowPort;
       }): Edge<LcaEdgeData> | undefined => {
         const { sourceNode, sourcePort, targetNode, targetPort } = params;
+        if (!flowPortsAreVersionCompatible(sourcePort, targetPort)) {
+          return undefined;
+        }
         const sourceProcessUuid = (sourceNode.data.processUuid ?? "").trim();
         const resolveSourceIdentityKey = (
           node: Node<LcaNodeData>,
@@ -5288,13 +5292,15 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
           .filter((port) => isProductIntermediate(port) && isUuidLike(port.flowUuid) && isPtsPortExposedToRoot(node, port))
           .map((port) => ({ node, port })),
       );
-      const allFlowUuids = Array.from(new Set(allProductOutputs.map((item) => item.port.flowUuid)));
-      for (const flowUuid of allFlowUuids) {
+      const allFlowIdentities = Array.from(
+        new Map(allProductOutputs.map((item) => [flowPortIdentityKey(item.port), item.port])).values(),
+      );
+      for (const referencePort of allFlowIdentities) {
         const marketCandidates = getAllNodes().filter(
           (node) =>
             isMarketProcessNode(node) &&
             node.data.outputs.some(
-              (port) => isProductIntermediate(port) && port.flowUuid === flowUuid && isPtsPortExposedToRoot(node, port),
+              (port) => isProductIntermediate(port) && flowPortsAreVersionCompatible(port, referencePort) && isPtsPortExposedToRoot(node, port),
             ),
         );
         if (marketCandidates.length !== 1) {
@@ -5303,7 +5309,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         const marketNode = marketCandidates[0];
         const providers = getAllNodes().flatMap((node) =>
           node.data.outputs
-            .filter((port) => isProductIntermediate(port) && port.flowUuid === flowUuid && isPtsPortExposedToRoot(node, port))
+            .filter((port) => isProductIntermediate(port) && flowPortsAreVersionCompatible(port, referencePort) && isPtsPortExposedToRoot(node, port))
             .map((port) => ({ node, port })),
         );
         for (const provider of providers) {
@@ -5379,7 +5385,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         if (ref.direction === "input") {
           for (const node of getAllNodes()) {
             for (const port of node.data.outputs) {
-              if (!isProductIntermediate(port) || port.flowUuid !== flowUuid) {
+              if (!isProductIntermediate(port) || !flowPortsAreVersionCompatible(port, ref.port)) {
                 continue;
               }
               if (!isPtsPortExposedToRoot(node, port)) {
@@ -5397,7 +5403,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         }
         for (const node of getAllNodes()) {
           for (const port of node.data.inputs) {
-            if (!isProductIntermediate(port) || port.flowUuid !== flowUuid) {
+            if (!isProductIntermediate(port) || !flowPortsAreVersionCompatible(ref.port, port)) {
               continue;
             }
             if (!isPtsPortExposedToRoot(node, port)) {

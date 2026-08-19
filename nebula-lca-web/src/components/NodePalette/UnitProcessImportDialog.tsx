@@ -31,6 +31,12 @@ type CatalogProcessItem = {
 
 type ProcessExchange = {
   flow_uuid?: string;
+  flow_source_namespace?: string;
+  flow_version?: string;
+  flow_property_uuid?: string;
+  flow_property_version?: string;
+  unit_group_uuid?: string;
+  unit_group_version?: string;
   flow_name?: unknown;
   flow_name_en?: unknown;
   amount?: number;
@@ -115,6 +121,12 @@ const toPort = (
   return {
     id: `${direction}_${Math.random().toString(36).slice(2, 8)}_${idx}`,
     flowUuid: String(ex.flow_uuid ?? "").trim(),
+    flowSourceNamespace: String(ex.flow_source_namespace ?? "").trim() || undefined,
+    flowVersion: String(ex.flow_version ?? "").trim() || undefined,
+    flowPropertyUuid: String(ex.flow_property_uuid ?? "").trim() || undefined,
+    flowPropertyVersion: String(ex.flow_property_version ?? "").trim() || undefined,
+    unitGroupUuid: String(ex.unit_group_uuid ?? "").trim() || undefined,
+    unitGroupVersion: String(ex.unit_group_version ?? "").trim() || undefined,
     name: displayName,
     flowNameEn: flowNameEnRaw || undefined,
     unit: String(ex.unit ?? "kg"),

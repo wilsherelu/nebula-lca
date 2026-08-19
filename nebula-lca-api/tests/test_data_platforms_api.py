@@ -24,6 +24,7 @@ from app.models import (
     DebugDiagnostic,
     ExternalDataSyncRecord,
     FlowRecord,
+    FlowVersionRecord,
     LciBiosphereFlowKey,
     LciProcessVector,
     Model,
@@ -319,6 +320,7 @@ def setup_db(monkeypatch):
         db.execute(LciProcessVector.__table__.delete())
         db.execute(LciBiosphereFlowKey.__table__.delete())
         db.execute(ReferenceProcess.__table__.delete())
+        db.execute(FlowVersionRecord.__table__.delete())
         db.execute(FlowRecord.__table__.delete())
         db.execute(UnitDefinition.__table__.delete())
         db.execute(UnitGroup.__table__.delete())
@@ -2756,7 +2758,7 @@ def test_remote_raw_row_empty_raw_returns_raw_without_fallback(client):
     assert result == {}
 
 
-def test_refresh_imports_energy_flow_has_correct_units(client, monkeypatch):
+def test_refresh_imports_energy_flow_creates_version_without_overwriting_catalog(client, monkeypatch):
     """Full integration: sync an energy flow, then refresh-imports.
     Assert the final FlowRecord has default_unit='MJ' and unit_group='Units of energy'.
     This validates that _remote_raw_row merges fallback into the json payload before
@@ -2817,14 +2819,25 @@ def test_refresh_imports_energy_flow_has_correct_units(client, monkeypatch):
     refresh_data = refresh_resp.json()
     assert refresh_data["refreshed"] >= 1, f"Expected at least 1 refreshed, got: {refresh_data}"
 
-    # Verify the flow record was updated with correct units
+    # The compatibility catalog stays pinned; the exact remote version carries
+    # the refreshed unit semantics.
     db = _db_module.SessionLocal()
     try:
         flow = db.get(FlowRecord, flow_uuid)
         assert flow is not None
-        assert flow.default_unit == "MJ", f"Expected MJ, got: {flow.default_unit}"
-        assert flow.unit_group == "Units of energy", f"Expected Units of energy, got: {flow.unit_group}"
-        assert flow.tidas_compatible is True
+        assert flow.default_unit == "kg"
+        assert flow.unit_group == "Units of mass"
+        snapshot = (
+            db.query(FlowVersionRecord)
+            .filter_by(
+                source_namespace="tiangong_open_data",
+                flow_uuid=flow_uuid,
+                source_version="2",
+            )
+            .one()
+        )
+        assert snapshot.default_unit == "MJ"
+        assert snapshot.unit_group == "Units of energy"
         # Verify sync record was updated
         sync_rec = (
             db.query(ExternalDataSyncRecord)
@@ -2919,9 +2932,19 @@ def test_tidas_flow_refresh_preserves_existing_unit_group_when_unit_is_unchanged
         flow = db.get(FlowRecord, flow_uuid)
         assert flow is not None
         assert flow.unit_group == "Units of energy"
-        assert flow.tidas_unit_group == "Units of energy"
-        assert flow.tidas_compatible is True
-        assert flow.source_updated_at == "2026-07-14T09:30:00+08:00"
+        assert flow.tidas_unit_group is None
+        assert flow.source_updated_at is None
+        snapshot = (
+            db.query(FlowVersionRecord)
+            .filter_by(
+                source_namespace="tiangong_open_data",
+                flow_uuid=flow_uuid,
+                source_version="2",
+            )
+            .one()
+        )
+        assert snapshot.unit_group == "Units of energy"
+        assert snapshot.source_updated_at == "2026-07-14T09:30:00+08:00"
     finally:
         db.close()
 

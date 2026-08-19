@@ -298,7 +298,7 @@ class TestSlimUnit:
         finally:
             db.close()
 
-    def test_unit_repair_restores_tiangong_product_reference_unit_and_catalog(self):
+    def test_unit_repair_restores_tiangong_product_reference_unit_without_catalog_mutation(self):
         flow_uuid = "diesel-reference-unit-regression"
         process_uuid = "diesel-provider-regression"
         db = _db_module.SessionLocal()
@@ -361,9 +361,9 @@ class TestSlimUnit:
             assert graph["nodes"][0]["outputs"][0]["unit"] == "kg"
             assert graph["nodes"][0]["outputs"][0]["unitGroup"] == "Units of mass"
             flow = db.get(FlowRecord, flow_uuid)
-            assert flow.default_unit == "kg"
-            assert flow.unit_group == "Units of mass"
-            assert flow.tidas_unit_group == "Units of mass"
+            assert flow.default_unit == "MJ"
+            assert flow.unit_group == "Units of energy"
+            assert flow.tidas_unit_group == "Units of energy"
         finally:
             db.rollback()
             db.query(ReferenceProcess).filter(ReferenceProcess.process_uuid == process_uuid).delete()

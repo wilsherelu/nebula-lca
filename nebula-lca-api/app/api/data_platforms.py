@@ -23,6 +23,7 @@ from ..models import (
     DataPlatformSyncJob,
     ExternalDataSyncRecord,
     FlowRecord,
+    FlowVersionRecord,
     LciBiosphereFlowKey,
     LciProcessVector,
     ReferenceProcess,
@@ -77,6 +78,7 @@ from ..services.tidas_import_core import (
     import_tidas_model_rows,
     import_tidas_process_rows,
 )
+from ..services.flow_versions import TIDAS_NAMESPACE
 
 
 api_router = APIRouter(prefix="/api/data-platforms", tags=["data-platforms"])
@@ -85,6 +87,51 @@ logger = logging.getLogger("uvicorn.error")
 
 def _safe_str(value: object) -> str:
     return str(value or "").strip()
+
+
+def _remote_flow_namespace(account: DataPlatformAccount) -> str:
+    return TIDAS_NAMESPACE if _safe_str(account.platform).casefold() == "tiangong" else f"{_safe_str(account.platform).casefold()}_remote"
+
+
+def _pin_process_exchange_flow_versions(
+    process_row: dict[str, Any],
+    flows: list[RemoteFlowDTO],
+    *,
+    source_namespace: str,
+) -> dict[str, Any]:
+    """Copy exact dependency identities into exchanges without UUID-only guessing."""
+    versions_by_uuid: dict[str, set[str]] = {}
+    flow_by_identity: dict[tuple[str, str], RemoteFlowDTO] = {}
+    for flow in flows:
+        flow_uuid = _safe_str(flow.flow_uuid)
+        version = _safe_str(flow.remote_version)
+        if not flow_uuid or not version:
+            continue
+        versions_by_uuid.setdefault(flow_uuid, set()).add(version)
+        flow_by_identity[(flow_uuid, version)] = flow
+    pinned = dict(process_row)
+    exchanges: list[dict[str, Any]] = []
+    for raw in list(process_row.get("exchanges") or []):
+        if not isinstance(raw, dict):
+            continue
+        exchange = dict(raw)
+        flow_uuid = _safe_str(exchange.get("flow_uuid") or exchange.get("flowUuid"))
+        version = _safe_str(exchange.get("flow_version") or exchange.get("flowVersion"))
+        candidates = versions_by_uuid.get(flow_uuid, set())
+        if not version and len(candidates) == 1:
+            version = next(iter(candidates))
+        flow = flow_by_identity.get((flow_uuid, version)) if version else None
+        if version:
+            exchange["flow_version"] = version
+            exchange["flow_source_namespace"] = source_namespace
+        if flow is not None and isinstance(flow.metadata, dict):
+            exchange.setdefault("flow_property_uuid", flow.metadata.get("flow_property_id"))
+            exchange.setdefault("flow_property_version", flow.metadata.get("flow_property_version"))
+            exchange.setdefault("unit_group_uuid", flow.metadata.get("unit_group_id"))
+            exchange.setdefault("unit_group_version", flow.metadata.get("unit_group_version"))
+        exchanges.append(exchange)
+    pinned["exchanges"] = exchanges
+    return pinned
 
 
 def _normalize_remote_query(value: str) -> str:
@@ -1334,6 +1381,11 @@ def _remote_raw_row(metadata: dict[str, Any] | None, fallback: dict[str, Any] | 
     else:
         raw = {}
 
+    if isinstance(metadata, dict):
+        modified_at = metadata.get("modified_at")
+        if modified_at is not None and modified_at != "" and not raw.get("modified_at"):
+            raw["modified_at"] = modified_at
+
     # Detect whether raw carries a binary JSON payload (json/json_tg/json_ordered keys).
     # When present, preserve the payload as the base, but still merge missing or empty
     # scalar fields from the fallback so that default_unit / unit_group / flow_type / name
@@ -1988,23 +2040,29 @@ def sync_remote_process(account_id: str, payload: DataPlatformSyncProcessRequest
             dependency_flow_uuid = _safe_str(failed_flow_uuids[0])
             raise ConnectorError(f"Could not fetch referenced flow: {dependency_flow_uuid}")
         # Collect unique flow UUIDs from flows-by-reference and process exchanges
-        flows_by_uuid: dict[str, RemoteFlowDTO] = {}
+        flows_by_uuid: dict[tuple[str, str | None], RemoteFlowDTO] = {}
         for flow in detail.flows:
             if flow.flow_uuid:
-                flows_by_uuid[flow.flow_uuid] = flow
+                flows_by_uuid[(flow.flow_uuid, flow.remote_version)] = flow
         for exchange in (detail.process_json or {}).get("exchanges", []):
             if not isinstance(exchange, dict):
                 continue
             flow_uuid = _safe_str(exchange.get("flow_uuid") or exchange.get("flowUuid"))
-            if flow_uuid and flow_uuid not in flows_by_uuid:
+            flow_version = _safe_str(exchange.get("flow_version") or exchange.get("flowVersion")) or None
+            identity = (flow_uuid, flow_version)
+            same_uuid_identities = [item for item in flows_by_uuid if item[0] == flow_uuid]
+            if flow_uuid and flow_version is None and len(same_uuid_identities) == 1:
+                continue
+            if flow_uuid and identity not in flows_by_uuid:
                 # Fetch sequentially, fail immediately on any error
                 dependency_flow_uuid = flow_uuid
-                fetched = connector.get_flow_detail(flow_uuid)
-                flows_by_uuid[flow_uuid] = fetched
+                fetched = connector.get_flow_detail(flow_uuid, flow_version)
+                flows_by_uuid[(fetched.flow_uuid, fetched.remote_version)] = fetched
         # Import all flows atomically (no commit)
         warnings: list[str] = []
         synced: list[dict[str, Any]] = []
-        for expected_flow_uuid, flow_dto in flows_by_uuid.items():
+        for expected_identity, flow_dto in flows_by_uuid.items():
+            expected_flow_uuid = expected_identity[0]
             dependency_flow_uuid = expected_flow_uuid
             flow_dto = _resolve_flow_unit_metadata_from_local_catalog(
                 db,
@@ -2034,13 +2092,20 @@ def sync_remote_process(account_id: str, payload: DataPlatformSyncProcessRequest
             "reference_flow_uuid": process.reference_flow_uuid,
             "exchanges": [],
         }
+        process_row = _pin_process_exchange_flow_versions(
+            process_row,
+            list(flows_by_uuid.values()),
+            source_namespace=_remote_flow_namespace(account),
+        )
         process_report = import_tidas_process_rows(
             db,
             [process_row],
             source_path=f"{account.platform}://processes/{process.remote_id}",
             upsert_mode="update" if payload.overwrite else "skip",
-            valid_flow_uuids=set(flows_by_uuid),
+            valid_flow_uuids={identity[0] for identity in flows_by_uuid},
             with_transaction=True,
+            flow_source_namespace=_remote_flow_namespace(account),
+            require_flow_versions=True,
         )
         if process_report.failed:
             raise ConnectorError(f"TIDAS process import failed: {process_report.errors[:3]}")
@@ -2191,7 +2256,7 @@ def sync_remote_model(account_id: str, payload: DataPlatformSyncModelRequest, db
                 for reference in process_references
             }
         process_details: list[Any] = []
-        flows_by_uuid: dict[str, RemoteFlowDTO] = {}
+        flows_by_uuid: dict[tuple[str, str | None], RemoteFlowDTO] = {}
         for process_uuid, process_version in process_references:
             process_detail = process_details_by_reference.get((process_uuid, process_version))
             if process_detail is None:
@@ -2207,7 +2272,7 @@ def sync_remote_model(account_id: str, payload: DataPlatformSyncModelRequest, db
             process_details.append(process_detail)
             for flow in process_detail.flows:
                 if flow.flow_uuid:
-                    flows_by_uuid[flow.flow_uuid] = flow
+                    flows_by_uuid[(flow.flow_uuid, flow.remote_version)] = flow
         if graph_json is not None:
             flow_uuids = _graph_flow_uuids(graph_json)
             references = [(flow_uuid, None) for flow_uuid in flow_uuids]
@@ -2225,8 +2290,8 @@ def sync_remote_model(account_id: str, payload: DataPlatformSyncModelRequest, db
                 flow = flow_details.get((flow_uuid, None))
                 if flow is None:
                     raise ConnectorError(f"Could not fetch referenced flow: {flow_uuid}")
-                flows_by_uuid[flow_uuid] = flow
-        dependency_flow_uuid = next(iter(flows_by_uuid), None)
+                flows_by_uuid[(flow_uuid, flow.remote_version)] = flow
+        dependency_flow_uuid = next((identity[0] for identity in flows_by_uuid), None)
         flow_synced, flow_warnings, _ = _import_flow_batch(
             db,
             connector,
@@ -2250,13 +2315,20 @@ def sync_remote_model(account_id: str, payload: DataPlatformSyncModelRequest, db
                 "reference_flow_uuid": process.reference_flow_uuid,
                 "exchanges": [],
             }
+            process_row = _pin_process_exchange_flow_versions(
+                process_row,
+                list(flows_by_uuid.values()),
+                source_namespace=_remote_flow_namespace(account),
+            )
             process_report = import_tidas_process_rows(
                 db,
                 [process_row],
                 source_path=f"{account.platform}://processes/{process.remote_id}",
                 upsert_mode="update" if payload.overwrite else "skip",
-                valid_flow_uuids=set(flows_by_uuid),
+                valid_flow_uuids={identity[0] for identity in flows_by_uuid},
                 with_transaction=True,
+                flow_source_namespace=_remote_flow_namespace(account),
+                require_flow_versions=True,
             )
             if process_report.failed:
                 raise ConnectorError(f"TIDAS process import failed: {process_report.errors[:3]}")
@@ -2674,6 +2746,9 @@ def _import_single_flow(
             "unit_group": flow.unit_group,
             "flow_type": flow.flow_type,
             "source": account.platform,
+            "flow_property_version": flow.metadata.get("flow_property_version") if isinstance(flow.metadata, dict) else None,
+            "unit_group_uuid": flow.metadata.get("unit_group_id") if isinstance(flow.metadata, dict) else None,
+            "unit_group_version": flow.metadata.get("unit_group_version") if isinstance(flow.metadata, dict) else None,
         },
     )
 
@@ -2684,6 +2759,8 @@ def _import_single_flow(
         upsert_mode=upsert_mode,
         source_label=source_label,
         with_transaction=True,
+        source_namespace=_remote_flow_namespace(account),
+        require_source_version=True,
     )
 
     if tidas_report.failed:
@@ -2707,7 +2784,7 @@ def _import_flow_batch(
     db: Session,
     connector: Any,
     account: DataPlatformAccount,
-    flows_by_uuid: dict[str, RemoteFlowDTO],
+    flows_by_uuid: dict[str | tuple[str, str | None], RemoteFlowDTO],
     *,
     source_path: str,
     upsert_mode: str = "update",
@@ -2717,7 +2794,8 @@ def _import_flow_batch(
     warnings: list[str] = []
     synced: list[dict[str, Any]] = []
     rows: list[dict[str, Any]] = []
-    for expected_uuid, flow in flows_by_uuid.items():
+    for expected_identity, flow in flows_by_uuid.items():
+        expected_uuid = expected_identity[0] if isinstance(expected_identity, tuple) else expected_identity
         if flow.flow_uuid != expected_uuid:
             raise ConnectorError(
                 f"Remote flow UUID '{flow.flow_uuid}' does not match expected UUID '{expected_uuid}'."
@@ -2746,6 +2824,9 @@ def _import_flow_batch(
                     "unit_group": flow.unit_group,
                     "flow_type": flow.flow_type,
                     "source": account.platform,
+                    "flow_property_version": flow.metadata.get("flow_property_version") if isinstance(flow.metadata, dict) else None,
+                    "unit_group_uuid": flow.metadata.get("unit_group_id") if isinstance(flow.metadata, dict) else None,
+                    "unit_group_version": flow.metadata.get("unit_group_version") if isinstance(flow.metadata, dict) else None,
                 },
             )
         )
@@ -2757,6 +2838,8 @@ def _import_flow_batch(
         upsert_mode=upsert_mode,
         source_label=source_label,
         with_transaction=True,
+        source_namespace=_remote_flow_namespace(account),
+        require_source_version=True,
     )
     if tidas_report.failed:
         raise ConnectorError(f"TIDAS flow import failed: {tidas_report.errors[:3]}")
@@ -2784,24 +2867,32 @@ def _resolve_flow_unit_metadata_from_local_catalog(
 ) -> RemoteFlowDTO:
     """Reuse a previously synced, same-source Flow only for missing units.
 
-    TianGong's protected standard flow-property records are not always readable
-    through the account API.  A prior TianGong Flow sync is still an auditable
-    unit source for the exact same UUID, so it can complete that metadata
-    without guessing a unit or accepting an unreadable Flow.
+    Only an immutable snapshot of the exact same UUID and version may fill
+    missing unit metadata. A UUID-only catalog fallback could mix Flow versions
+    that use different unit groups.
     """
     if _safe_str(flow.default_unit) and _safe_str(flow.unit_group):
         return flow
-    local = db.get(FlowRecord, flow.flow_uuid)
-    if local is None or _safe_str(local.source).casefold() != _safe_str(account.platform).casefold():
+    version = _safe_str(flow.remote_version)
+    if not version:
         return flow
-    if not _safe_str(local.default_unit) or not _safe_str(local.unit_group):
+    snapshot = (
+        db.query(FlowVersionRecord)
+        .filter(
+            FlowVersionRecord.source_namespace == _remote_flow_namespace(account),
+            FlowVersionRecord.flow_uuid == flow.flow_uuid,
+            FlowVersionRecord.source_version == version,
+        )
+        .one_or_none()
+    )
+    if snapshot is None or not _safe_str(snapshot.default_unit) or not _safe_str(snapshot.unit_group):
         return flow
     metadata = dict(flow.metadata) if isinstance(flow.metadata, dict) else {}
-    metadata["unit_metadata_source"] = "local_same_source_flow"
+    metadata["unit_metadata_source"] = "local_exact_flow_version"
     return replace(
         flow,
-        default_unit=local.default_unit,
-        unit_group=local.unit_group,
+        default_unit=snapshot.default_unit,
+        unit_group=snapshot.unit_group,
         metadata=metadata,
     )
 
@@ -2945,6 +3036,9 @@ def refresh_account_imports(
                     "unit_group": flow_dto.unit_group,
                     "flow_type": flow_dto.flow_type,
                     "source": account.platform,
+                    "flow_property_version": flow_dto.metadata.get("flow_property_version") if isinstance(flow_dto.metadata, dict) else None,
+                    "unit_group_uuid": flow_dto.metadata.get("unit_group_id") if isinstance(flow_dto.metadata, dict) else None,
+                    "unit_group_version": flow_dto.metadata.get("unit_group_version") if isinstance(flow_dto.metadata, dict) else None,
                 },
             )
             flow_report = import_tidas_flow_rows(
@@ -2953,6 +3047,8 @@ def refresh_account_imports(
                 source_path=f"{account.platform}://flows/{rec.remote_id}",
                 upsert_mode=upsert_mode,
                 source_label=account.platform,
+                source_namespace=_remote_flow_namespace(account),
+                require_source_version=True,
             )
             if flow_report.failed:
                 failed += 1
@@ -3007,15 +3103,17 @@ def refresh_account_imports(
             detail = connector.get_process_detail(rec.remote_id, rec.remote_version)
             process = detail.process
             # Sync referenced flows first
-            flows_by_uuid: dict[str, RemoteFlowDTO] = {}
+            flows_by_uuid: dict[tuple[str, str | None], RemoteFlowDTO] = {}
             for exchange in (detail.process_json or {}).get("exchanges", []):
                 if not isinstance(exchange, dict):
                     continue
                 flow_uuid = _safe_str(exchange.get("flow_uuid") or exchange.get("flowUuid"))
-                if flow_uuid and flow_uuid not in flows_by_uuid:
+                flow_version = _safe_str(exchange.get("flow_version") or exchange.get("flowVersion")) or None
+                identity = (flow_uuid, flow_version)
+                if flow_uuid and identity not in flows_by_uuid:
                     try:
-                        fetched = connector.get_flow_detail(flow_uuid)
-                        flows_by_uuid[fetched.flow_uuid] = fetched
+                        fetched = connector.get_flow_detail(flow_uuid, flow_version)
+                        flows_by_uuid[(fetched.flow_uuid, fetched.remote_version)] = fetched
                     except Exception:  # noqa: BLE001
                         pass
 
@@ -3038,6 +3136,8 @@ def refresh_account_imports(
                     source_path=f"{account.platform}://flows/{flow_dto.remote_id}",
                     upsert_mode=upsert_mode,
                     source_label=account.platform,
+                    source_namespace=_remote_flow_namespace(account),
+                    require_source_version=True,
                 )
                 if flow_report.failed:
                     pass  # process still proceeds
@@ -3048,11 +3148,18 @@ def refresh_account_imports(
                 "reference_flow_uuid": process.reference_flow_uuid,
                 "exchanges": [],
             }
+            process_row = _pin_process_exchange_flow_versions(
+                process_row,
+                list(flows_by_uuid.values()),
+                source_namespace=_remote_flow_namespace(account),
+            )
             process_report = import_tidas_process_rows(
                 db,
                 [process_row],
                 source_path=f"{account.platform}://processes/{process.remote_id}",
                 upsert_mode=upsert_mode,
+                flow_source_namespace=_remote_flow_namespace(account),
+                require_flow_versions=True,
             )
             if process_report.failed:
                 failed += 1
