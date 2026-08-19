@@ -3877,22 +3877,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
       }
 
       const nodeByIdAfterUpdate = new Map(nextNodes.map((node) => [node.id, node]));
-      nextEdges = nextEdges.filter((edge) => {
-        const source = nodeByIdAfterUpdate.get(edge.source);
-        const target = nodeByIdAfterUpdate.get(edge.target);
-        const flowUuid = edge.data?.flowUuid ?? "";
-        if (!source || !target || !flowUuid) {
-          return false;
-        }
-        const sourcePortId = parseHandlePortId(edge.sourceHandle ?? undefined, "out:");
-        const targetPortId = parseHandlePortId(edge.targetHandle ?? undefined, "in:");
-        if (!sourcePortId || !targetPortId) {
-          return false;
-        }
-        const sourceValid = source.data.outputs.some((p) => p.id === sourcePortId && p.flowUuid === flowUuid);
-        const targetValid = target.data.inputs.some((p) => p.id === targetPortId && p.flowUuid === flowUuid);
-        return sourceValid && targetValid;
-      });
+      nextEdges = nextEdges.filter((edge) => Boolean(resolveEdgeDataByNodes(edge, nodeByIdAfterUpdate)));
 
       if (currentNode && updatedNode) {
         const currentInputByIdForSwap = new Map(currentNode.data.inputs.map((p) => [p.id, p]));
@@ -4004,20 +3989,23 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         if (!source || !target || !flowUuid) {
           return false;
         }
-        const sourcePortId = parseHandlePortId(edge.sourceHandle ?? undefined, "out:");
-        const targetPortId = parseHandlePortId(edge.targetHandle ?? undefined, "in:");
-        if (!sourcePortId || !targetPortId) {
+        const resolved = resolveEdgeDataByNodes(edge, nodeByIdAfterUpdate);
+        if (!resolved) {
           return false;
         }
-        const sourcePort = source.data.outputs.find((p) => p.id === sourcePortId && p.flowUuid === flowUuid);
-        const targetPort = target.data.inputs.find((p) => p.id === targetPortId && p.flowUuid === flowUuid);
-        if (!sourcePort || !targetPort) {
-          return false;
-        }
+        const { sourcePort, targetPort } = resolved;
 
         const enforceSingleInboundForNonProduct = isNonProductIntermediate(targetPort);
         const inputHandleKey = `${edge.target}::${targetPort.id}`;
         const inputOccupiedByOtherSource = enforceSingleInboundForNonProduct && occupiedInputHandles.has(inputHandleKey);
+
+        if (targetPort.flowUuid !== flowUuid) {
+          if (occupiedInputHandles.has(inputHandleKey)) {
+            return false;
+          }
+          occupiedInputHandles.add(inputHandleKey);
+          return true;
+        }
 
         const targetFlowKey = `${edge.target}::${flowUuid}`;
         const sourceFlowKey = `${edge.source}::${flowUuid}`;

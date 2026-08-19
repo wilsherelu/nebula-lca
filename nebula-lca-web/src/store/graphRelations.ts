@@ -139,15 +139,41 @@ const resolveTargetPortForEdge = (
     return undefined;
   }
   const explicitPortId = parseInputPortId(edge.targetHandle ?? undefined);
-  return (
-    (explicitPortId
-      ? targetNode.data.inputs.find(
-          (port) =>
-            (port.id === explicitPortId || String(port.legacyPortId ?? "").trim() === explicitPortId) &&
-            port.flowUuid === flowUuid,
-        )
-      : undefined) ?? targetNode.data.inputs.find((port) => port.flowUuid === flowUuid)
-  );
+  const explicitPort = explicitPortId
+    ? targetNode.data.inputs.find(
+        (port) => port.id === explicitPortId || String(port.legacyPortId ?? "").trim() === explicitPortId,
+      )
+    : undefined;
+  const sameFlowPort =
+    (explicitPort?.flowUuid === flowUuid ? explicitPort : undefined) ??
+    targetNode.data.inputs.find((port) => port.flowUuid === flowUuid);
+  if (sameFlowPort) {
+    return sameFlowPort;
+  }
+
+  const consumerFlowUuid = String(edge.data?.consumerFlowUuid ?? "").trim();
+  const convertedPort =
+    (explicitPort?.flowUuid === consumerFlowUuid ? explicitPort : undefined) ??
+    targetNode.data.inputs.find((port) => port.flowUuid === consumerFlowUuid);
+  const link = convertedPort?.intermediateFlowLink;
+  const edgeRuleId = String(edge.data?.intermediateFlowLinkRuleId ?? "").trim();
+  const edgeFactor = edge.data?.intermediateFlowLinkFactor;
+  if (
+    convertedPort
+    && consumerFlowUuid
+    && link
+    && (link.status === "auto" || link.status === "user_confirmed")
+    && link.sourceFlowUuid === consumerFlowUuid
+    && link.targetFlowUuid === flowUuid
+    && edgeRuleId
+    && link.ruleId === edgeRuleId
+    && Number.isFinite(edgeFactor)
+    && (edgeFactor as number) > 0
+    && Math.abs((edgeFactor as number) - link.amountFactor) < 1e-9
+  ) {
+    return convertedPort;
+  }
+  return undefined;
 };
 
 const buildMarketInputDisplayMap = (params: {

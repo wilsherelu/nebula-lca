@@ -102,7 +102,18 @@ describe("normalizeGraphPayload", () => {
     expect(provider?.hidden).toBe(true);
     expect(provider?.data.lciRole).toBe("provider");
     expect(association?.targetHandle).toBe("in:consumer-input");
+    expect(state.graphRelations.sourcePortByEdgeId.get("association-edge")?.id).toBe("provider-output");
+    expect(state.graphRelations.targetPortByEdgeId.get("association-edge")?.id).toBe("consumer-input");
     expect(state.exportGraph().exchanges).toHaveLength(1);
+
+    useLcaGraphStore.getState().updateNode("foreground", (node) => ({
+      ...node,
+      data: {
+        ...node.data,
+        inputs: node.data.inputs.map((port) => ({ ...port, flowNameEn: "diesel input" })),
+      },
+    }));
+    expect(useLcaGraphStore.getState().edges.find((edge) => edge.id === "association-edge")).toBeDefined();
   });
 
   it("preserves an exact converted-flow edge whose provider and consumer flow UUIDs differ", () => {

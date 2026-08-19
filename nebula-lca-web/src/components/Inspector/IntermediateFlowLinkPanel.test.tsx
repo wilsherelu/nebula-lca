@@ -222,6 +222,38 @@ describe("IntermediateFlowLinkPanel", () => {
     expect(updated?.data.inputs[0].unitGroup).toBe("Units of energy");
   });
 
+  it("offers reuse and manual conversion for an L3 conversion memory", async () => {
+    useLcaGraphStore.setState({ uiLanguage: "zh", edges: [] });
+    mockResolve.mockResolvedValueOnce({
+      counts: {},
+      items: [{
+        port_id: "input-1",
+        status: "L3",
+        resolution: {
+          source_flow_uuid: "tidas-flow-1",
+          target_flow_uuid: "ecoinvent-flow-1",
+          amount_factor: 1,
+          source_unit: "kg",
+          target_unit: "kg",
+          mapping_level: "L3",
+          mapping_reason: "",
+          rule_id: "remembered-rule",
+          rule_origin: "user",
+          target_flow_name: "remembered product",
+          warnings: [],
+        },
+      }],
+    });
+
+    render(<IntermediateFlowLinkPanel node={node} />);
+    fireEvent.click(screen.getByRole("button", { name: /中间流转换/ }));
+
+    await waitFor(() => expect(screen.getByText("有转换记忆")).toBeTruthy());
+    expect(screen.getByRole("button", { name: "复用" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "手动转换" })).toBeTruthy();
+    expect(screen.queryByText("复用转换")).toBeNull();
+  });
+
   it("restores source unit semantics and normalizes a persisted active L3 rule", () => {
     useLcaGraphStore.getState().importGraph({
       functionalUnit: "1 kg test",
