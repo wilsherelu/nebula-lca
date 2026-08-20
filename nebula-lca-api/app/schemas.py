@@ -351,6 +351,7 @@ class ModelCreateResponse(BaseModel):
     pts_compiled_uuids: list[str] = Field(default_factory=list)
     pts_failed_count: int = 0
     pts_failed_items: list[dict] = Field(default_factory=list)
+    graph_repair_count: int = 0
 
 
 class PtsValidationItem(BaseModel):

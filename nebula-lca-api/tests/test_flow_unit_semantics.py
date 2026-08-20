@@ -23,6 +23,12 @@ class _FakeQuery:
     def all(self):
         return self._rows
 
+    def filter(self, *args):
+        return self
+
+    def one_or_none(self):
+        return self._rows[0] if self._rows else None
+
 
 class _FakeDb:
     def __init__(self):
@@ -43,6 +49,7 @@ class _FakeDb:
             SimpleNamespace(name="Units of volume", reference_unit="m3"),
             SimpleNamespace(name="Units of mass", reference_unit="kg"),
         ]
+        self.flow_versions = []
 
     def get(self, model, key):
         if model is FlowRecord:
@@ -52,6 +59,10 @@ class _FakeDb:
         return None
 
     def query(self, model):
+        from app.models import FlowVersionRecord
+
+        if model is FlowVersionRecord:
+            return _FakeQuery(self.flow_versions)
         if model is UnitDefinition:
             return _FakeQuery(self.unit_defs)
         if model is UnitGroup:
@@ -234,8 +245,12 @@ def test_ensure_ecoinvent_unit_group_writes_stable_source_identity():
 
 
 def test_flow_default_unit_conversion_requires_switch_for_cross_group_current_unit():
+    db = _FakeDb()
+    db.flow_versions = [db.flow_by_uuid["oil-flow"]]
     port = _switched_oil_port()
     port.pop("unitGroupSwitch")
+    port["flowSourceNamespace"] = "tiangong_open_data"
+    port["flowVersion"] = "01.01.000"
 
     violations = collect_flow_default_unit_conversion_violations(
         {
@@ -250,7 +265,7 @@ def test_flow_default_unit_conversion_requires_switch_for_cross_group_current_un
                 }
             ]
         },
-        _FakeDb(),
+        db,
     )
 
     assert len(violations) == 1
@@ -276,12 +291,11 @@ def test_flow_default_unit_conversion_uses_flow_level_rule_when_port_switch_miss
     sem = resolve_flow_port_unit_semantics(db, port)
 
     assert sem.ok is True
-    assert sem.amount_in_flow_default_unit == 1
-    assert sem.unit_group_switch["factor"] == 800
-    assert sem.unit_group_switch["inferredFromFlowAllocationProperties"] is True
+    assert sem.amount_in_flow_default_unit == 800
+    assert sem.unit_group_switch == {}
 
 
-def test_normalize_graph_flow_unit_switches_persists_backend_canonical_switch():
+def test_normalize_graph_flow_unit_switches_does_not_infer_from_mutable_catalog_for_legacy_port():
     db = _FakeDb()
     db.flow_by_uuid["oil-flow"].allocation_properties = [
         {
@@ -309,22 +323,67 @@ def test_normalize_graph_flow_unit_switches_persists_backend_canonical_switch():
 
     normalize_graph_flow_unit_switches(graph, db)
 
-    switch = graph["nodes"][0]["outputs"][0]["unitGroupSwitch"]
-    assert switch["sourceUnitGroup"] == "Units of volume"
-    assert switch["targetUnitGroup"] == "Units of mass"
-    assert switch["factor"] == 800
-    assert "sourceAmount" not in switch
+    assert "unitGroupSwitch" not in graph["nodes"][0]["outputs"][0]
 
 
-def test_flow_default_unit_conversion_uses_catalog_default_over_stale_switch_source_group():
+def test_legacy_unversioned_flow_uses_saved_switch_source_over_mutable_catalog():
     port = _switched_oil_port()
     port["unitGroupSwitch"]["sourceUnitGroup"] = "Units of mass"
+    port["unitGroupSwitch"]["sourceUnit"] = "kg"
+    port["unitGroupSwitch"]["sourceReferenceUnit"] = "kg"
 
     sem = resolve_flow_port_unit_semantics(_FakeDb(), port)
 
     assert sem.ok is True
-    assert sem.flow_default_unit_group == "Units of volume"
+    assert sem.flow_default_unit_group == "Units of mass"
+    assert sem.amount_in_flow_default_unit == 800
+
+
+def test_legacy_unversioned_flow_keeps_saved_unit_when_catalog_unit_group_changed():
+    db = _FakeDb()
+    db.flow_by_uuid["diesel-flow"] = SimpleNamespace(
+        flow_uuid="diesel-flow",
+        default_unit="MJ",
+        unit_group="Units of energy",
+        allocation_properties=[],
+    )
+    port = {
+        "id": "out_diesel",
+        "flowUuid": "diesel-flow",
+        "name": "diesel",
+        "amount": 1,
+        "unit": "kg",
+        "unitGroup": "Units of mass",
+        "type": "technosphere",
+        "direction": "output",
+    }
+
+    sem = resolve_flow_port_unit_semantics(db, port)
+
+    assert sem.ok is True
+    assert sem.flow_default_unit_group == "Units of mass"
+    assert sem.flow_default_unit == "kg"
     assert sem.amount_in_flow_default_unit == 1
+
+
+def test_versioned_flow_fails_closed_when_exact_snapshot_is_missing():
+    port = {
+        "id": "out_diesel",
+        "flowUuid": "diesel-flow",
+        "flowSourceNamespace": "tiangong_open_data",
+        "flowVersion": "02.00.000",
+        "name": "diesel",
+        "amount": 1,
+        "unit": "kg",
+        "unitGroup": "Units of mass",
+        "type": "technosphere",
+        "direction": "output",
+    }
+
+    sem = resolve_flow_port_unit_semantics(_FakeDb(), port)
+
+    assert sem.ok is False
+    assert sem.reason == "missing_flow_version_snapshot"
 
 
 def test_flow_default_unit_conversion_ignores_legacy_switch_source_amount_mismatch():

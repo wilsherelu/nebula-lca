@@ -497,12 +497,13 @@ def _free_port() -> int:
 def _wait_for_solver(url: str, process: subprocess.Popen) -> None:
     deadline = time.time() + 20
     last_error: Exception | None = None
+    opener = request.build_opener(request.ProxyHandler({}))
     while time.time() < deadline:
         if process.poll() is not None:
             stdout, stderr = process.communicate(timeout=1)
             raise RuntimeError(f"solver exited early\nstdout={stdout}\nstderr={stderr}")
         try:
-            with request.urlopen(f"{url}/health", timeout=1) as response:
+            with opener.open(f"{url}/health", timeout=1) as response:
                 if response.status == 200:
                     return
         except Exception as exc:

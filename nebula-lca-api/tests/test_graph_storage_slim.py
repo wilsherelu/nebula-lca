@@ -26,7 +26,7 @@ from app.services.graph_storage import (
     repair_tidas_product_flags,
 )
 from app.database import Base, engine, SessionLocal
-from app.models import FlowRecord, Model, ModelVersion, ReferenceProcess, UnitDefinition, UnitGroup
+from app.models import FlowRecord, FlowVersionRecord, Model, ModelVersion, ReferenceProcess, UnitDefinition, UnitGroup
 from app.schemas import HybridGraph
 from tests.conftest import _TEST_DB
 
@@ -298,7 +298,7 @@ class TestSlimUnit:
         finally:
             db.close()
 
-    def test_unit_repair_restores_tiangong_product_reference_unit_without_catalog_mutation(self):
+    def test_unit_repair_keeps_legacy_project_unit_when_catalog_changed(self):
         flow_uuid = "diesel-reference-unit-regression"
         process_uuid = "diesel-provider-regression"
         db = _db_module.SessionLocal()
@@ -340,8 +340,8 @@ class TestSlimUnit:
                     "outputs": [{
                         "id": "diesel-output",
                         "flowUuid": flow_uuid,
-                        "unit": "MJ",
-                        "unitGroup": "Units of energy",
+                        "unit": "kg",
+                        "unitGroup": "Units of mass",
                         "type": "technosphere",
                         "isProduct": True,
                     }],
@@ -350,14 +350,7 @@ class TestSlimUnit:
 
             repairs = repair_impossible_flow_units(graph, db, apply_catalog_updates=True)
 
-            assert repairs == [{
-                "port_id": "diesel-output",
-                "flow_uuid": flow_uuid,
-                "from_unit": "MJ",
-                "to_unit": "kg",
-                "unit_group": "Units of mass",
-                "repair": "tiangong_reference_product_unit",
-            }]
+            assert repairs == []
             assert graph["nodes"][0]["outputs"][0]["unit"] == "kg"
             assert graph["nodes"][0]["outputs"][0]["unitGroup"] == "Units of mass"
             flow = db.get(FlowRecord, flow_uuid)
@@ -656,6 +649,16 @@ class TestSlimUnit:
                 default_unit="MJ",
                 unit_group="Units of energy",
             ))
+            db.add(FlowVersionRecord(
+                source_namespace="tiangong_open_data",
+                flow_uuid=flow_uuid,
+                source_version="01.01.000",
+                version_label="TIDAS 01.01.000",
+                flow_name="electricity",
+                flow_type="Product flow",
+                default_unit="MJ",
+                unit_group="Units of energy",
+            ))
             db.commit()
 
             graph_dict = {
@@ -672,6 +675,8 @@ class TestSlimUnit:
                             "amount": 1,
                             "type": "technosphere",
                             "direction": "input",
+                            "flowSourceNamespace": "tiangong_open_data",
+                            "flowVersion": "01.01.000",
                         },
                         {
                             "id": "valid-same-group",
@@ -682,6 +687,8 @@ class TestSlimUnit:
                             "amount": 1,
                             "type": "technosphere",
                             "direction": "input",
+                            "flowSourceNamespace": "tiangong_open_data",
+                            "flowVersion": "01.01.000",
                         },
                         {
                             "id": "legacy-wrong-group",
@@ -692,6 +699,8 @@ class TestSlimUnit:
                             "amount": 1,
                             "type": "technosphere",
                             "direction": "input",
+                            "flowSourceNamespace": "tiangong_open_data",
+                            "flowVersion": "01.01.000",
                         },
                     ],
                 }],
@@ -707,6 +716,7 @@ class TestSlimUnit:
             assert graph_dict["nodes"][0]["inputs"][2]["unit"] == "MJ"
             assert graph_dict["nodes"][0]["inputs"][2]["unitGroup"] == "Units of energy"
         finally:
+            db.query(FlowVersionRecord).filter(FlowVersionRecord.flow_uuid == flow_uuid).delete()
             db.query(FlowRecord).filter(FlowRecord.flow_uuid == flow_uuid).delete()
             db.commit()
             db.close()

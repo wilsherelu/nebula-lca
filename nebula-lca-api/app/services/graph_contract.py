@@ -813,7 +813,7 @@ def validate_graph_port_names_against_flow_catalog(
     db: Session,
     stage: str,
 ) -> None:
-    """Warn (or reject) when sampled port names differ from catalog."""
+    """Audit display-name drift without making it a save/run contract."""
     flow_meta = _flow_meta_by_uuid_cached(db)
     evidence: list[dict] = []
     sample_limit = 10
@@ -871,20 +871,10 @@ def validate_graph_port_names_against_flow_catalog(
         if sampled >= sample_limit:
             break
 
-    if evidence and sampled > 0 and len(evidence) == sampled:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "FLOW_NAME_MISMATCH",
-                "message": (
-                    "Sampled port display names all differ from catalog flow names; "
-                    "save/run rejected."
-                ),
-                "stage": stage,
-                "sampled_count": sampled,
-                "evidence": evidence,
-            },
-        )
+    # Names and classifications are display metadata. Catalog refreshes may
+    # make them stale, but that must not mutate or block an established model.
+    # The existing explicit sync endpoint remains available as an opt-in action.
+    return None
 
 
 def validate_graph_text_encoding(

@@ -6,11 +6,19 @@ import sys
 import types
 from pathlib import Path
 from urllib import request, error
+from urllib.parse import urlsplit
 
 from .config import WORKSPACE_ROOT, settings
 from .schemas import HybridGraph
 from .solver import to_tiangong_like
 from .services.public_flow_mapping_service import apply_elementary_mappings_to_snapshot
+
+
+def _open_solver_request(req: request.Request, *, timeout: float):
+    host = (urlsplit(req.full_url).hostname or "").casefold()
+    if host in {"127.0.0.1", "localhost", "::1"}:
+        return request.build_opener(request.ProxyHandler({})).open(req, timeout=timeout)
+    return request.urlopen(req, timeout=timeout)
 
 
 def _ensure_embedded_solver_core() -> None:
@@ -190,7 +198,7 @@ def run_tiangong_lcia(
         method="POST",
     )
     try:
-        with request.urlopen(req, timeout=120) as resp:
+        with _open_solver_request(req, timeout=120) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="ignore")
@@ -216,7 +224,7 @@ def run_tiangong_pts_compile(payload: dict) -> dict:
         method="POST",
     )
     try:
-        with request.urlopen(req, timeout=120) as resp:
+        with _open_solver_request(req, timeout=120) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="ignore")

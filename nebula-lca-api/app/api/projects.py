@@ -333,7 +333,7 @@ def create_project_version(
     validate_graph_contract(payload.graph, require_non_empty=True, allow_pts_nodes=True)
     validate_graph_flow_type_contract(payload.graph, db=db, stage="save_version")
     validate_graph_port_names_against_flow_catalog(payload.graph, db=db, stage="save_version")
-    repair_impossible_flow_units(payload.graph, db, apply_catalog_updates=True)
+    graph_repairs = repair_impossible_flow_units(payload.graph, db, apply_catalog_updates=True)
     normalize_graph_flow_unit_switches(payload.graph, db)
     flow_default_unit_violations = collect_flow_default_unit_conversion_violations(payload.graph, db)
     if flow_default_unit_violations:
@@ -408,6 +408,7 @@ def create_project_version(
                 created_at=latest_row.created_at,
                 created_new_version=False,
                 graph_hash=graph_hash,
+                graph_repair_count=len(graph_repairs),
                 message="内容未变化，未创建新版本",
                 **pts_compile_summary,
             )
@@ -445,6 +446,7 @@ def create_project_version(
         created_at=version.created_at,
         created_new_version=True,
         graph_hash=graph_hash,
+        graph_repair_count=len(graph_repairs),
         **pts_compile_summary,
     )
 
