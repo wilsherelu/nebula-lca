@@ -10,6 +10,7 @@
     "build:api": "node scripts/build-api.js",
     "desktop:build": "npm run build:web && npm run build:api && npm run build",
     "desktop:dist": "npm run desktop:build && electron-builder --config electron-builder.yml",
+    "desktop:audit": "node scripts/audit-release.js",
     "desktop:smoke": "npm run build && electron dist/main.js --smoke"
   },
   "dependencies": {

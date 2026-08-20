@@ -9,13 +9,15 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from ..release_assets import select_latest_public_mapping_root, stable_release_version
 
-DEFAULT_PUBLIC_MAPPING_ROOT = (
+
+PUBLIC_MAPPING_PARENT = (
     Path(__file__).resolve().parents[2]
     / "data"
     / "flow_mappings"
-    / "nebula-flow-mapping-v1"
 )
+DEFAULT_PUBLIC_MAPPING_ROOT = select_latest_public_mapping_root(PUBLIC_MAPPING_PARENT)
 
 
 @dataclass(frozen=True)
@@ -35,12 +37,15 @@ class PublicFlowMapping:
 class PublicFlowMappingRegistry:
     """Load the public data-only package and fail closed on manifest drift."""
 
-    def __init__(self, root: Path = DEFAULT_PUBLIC_MAPPING_ROOT):
+    def __init__(self, root: Path | None = None):
+        root = root or select_latest_public_mapping_root(PUBLIC_MAPPING_PARENT)
         manifest_path = root / "MANIFEST.json"
         manifest_raw = manifest_path.read_bytes()
         manifest = json.loads(manifest_raw.decode("utf-8"))
-        if manifest.get("dataset_version") != "1.0.0":
+        if stable_release_version(manifest.get("dataset_version")) is None:
             raise ValueError("unsupported public flow-mapping dataset version")
+        if manifest.get("schema_version") != "nebula-flow-mapping-release.v1":
+            raise ValueError("unsupported public flow-mapping schema version")
         if manifest.get("mapping_direction") != "TIANGONG_TO_ECOINVENT":
             raise ValueError("unsupported public flow-mapping direction")
         if manifest.get("forbidden_content_included") is not False:
