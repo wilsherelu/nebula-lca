@@ -205,13 +205,13 @@ def repair_impossible_flow_units(
     if db is None:
         return []
     nodes = graph.get("nodes", []) if isinstance(graph, dict) else getattr(graph, "nodes", [])
-    ports: list[tuple[Any, Any, str]] = []
+    ports: list[Any] = []
     flow_uuids: set[str] = set()
     for node in nodes or []:
         for bucket in ("inputs", "outputs", "emissions"):
             bucket_ports = node.get(bucket, []) if isinstance(node, dict) else getattr(node, bucket, [])
             for port in bucket_ports or []:
-                ports.append((node, port, bucket))
+                ports.append(port)
                 flow_uuid = str(
                     (port.get("flowUuid") or port.get("flow_uuid") or "")
                     if isinstance(port, dict)
@@ -222,11 +222,11 @@ def repair_impossible_flow_units(
     if not flow_uuids:
         return []
 
-    from ..models import FlowRecord, FlowVersionRecord, ReferenceProcess, UnitDefinition
+    from ..models import FlowRecord, FlowVersionRecord, UnitDefinition
     from .flow_versions import port_flow_identity
 
     flow_meta: dict[str, tuple[str, str]] = {}
-    flow_rows: dict[str, Any] = {}
+    elementary_flow_uuids: set[str] = set()
     for start in range(0, len(flow_uuids), 500):
         batch = list(flow_uuids)[start:start + 500]
         for row in (
@@ -235,7 +235,8 @@ def repair_impossible_flow_units(
             .all()
         ):
             flow_meta[str(row.flow_uuid)] = (str(row.unit_group or "").strip(), str(row.default_unit or "").strip())
-            flow_rows[str(row.flow_uuid)] = row
+            if "elementary" in str(row.flow_type or "").strip().casefold():
+                elementary_flow_uuids.add(str(row.flow_uuid))
     version_rows = (
         db.query(FlowVersionRecord)
         .filter(FlowVersionRecord.flow_uuid.in_(list(flow_uuids)))
@@ -252,25 +253,14 @@ def repair_impossible_flow_units(
         if group and unit:
             units_by_group.setdefault(group, set()).add(unit)
 
-    process_uuids = {
-        str(
-            (node.get("process_uuid") or node.get("processUuid") or "")
-            if isinstance(node, dict)
-            else (getattr(node, "process_uuid", None) or getattr(node, "processUuid", None) or "")
-        ).strip()
-        for node in nodes or []
-    }
-    process_uuids.discard("")
-    source_processes = {
-        str(row.process_uuid): row.process_json
-        for row in db.query(ReferenceProcess).filter(ReferenceProcess.process_uuid.in_(process_uuids)).all()
-    }
-
     repairs: list[dict[str, str]] = []
-    for node, port, bucket in ports:
+    for port in ports:
         get_value = port.get if isinstance(port, dict) else lambda key, default=None: getattr(port, key, default)
         flow_uuid = str(get_value("flowUuid") or get_value("flow_uuid") or "").strip()
-        flow_group, default_unit = flow_meta.get(flow_uuid, ("", ""))
+        current_group = str(get_value("unitGroup") or get_value("unit_group") or "").strip()
+        current_unit = str(get_value("unit") or "").strip()
+        switch = get_value("unitGroupSwitch") or get_value("unit_group_switch")
+        switch = switch if isinstance(switch, dict) else {}
         _, source_namespace, source_version, _ = port_flow_identity(port)
         explicit_source_version = str(get_value("flowVersion") or get_value("flow_version") or "").strip()
         snapshot = (
@@ -281,62 +271,23 @@ def repair_impossible_flow_units(
         if snapshot is not None:
             flow_group = str(snapshot.unit_group or "").strip()
             default_unit = str(snapshot.default_unit or "").strip()
-        current_group = str(get_value("unitGroup") or get_value("unit_group") or "").strip()
-        current_unit = str(get_value("unit") or "").strip()
-        is_product_output = bucket == "outputs" and bool(get_value("isProduct") or get_value("is_product"))
-        node_process_uuid = str(
-            (node.get("process_uuid") or node.get("processUuid") or "")
-            if isinstance(node, dict)
-            else (getattr(node, "process_uuid", None) or getattr(node, "processUuid", None) or "")
-        ).strip()
-        source_process = source_processes.get(node_process_uuid)
-        source_exchanges = source_process.get("exchanges", []) if isinstance(source_process, dict) else []
-        source_semantics = {
-            (
-                str(exchange.get("unit") or "").strip(),
-                str(exchange.get("unit_group") or exchange.get("unitGroup") or "").strip(),
-            )
-            for exchange in source_exchanges or []
-            if isinstance(exchange, dict)
-            and str(exchange.get("flow_uuid") or exchange.get("flowUuid") or "").strip() == flow_uuid
-            and str(exchange.get("direction") or "").strip().lower() in {"output", "outputs"}
-            and str(exchange.get("unit") or "").strip()
-            and str(exchange.get("unit_group") or exchange.get("unitGroup") or "").strip()
-        }
-        source_unit, source_group = next(iter(source_semantics)) if len(source_semantics) == 1 else ("", "")
-        source_group_units = units_by_group.get(source_group.casefold(), set())
-        flow_row = flow_rows.get(flow_uuid)
-        catalog_conflicts_with_source = (
-            is_product_output
-            and source_unit
-            and source_group
-            and source_unit.casefold() in source_group_units
-            and flow_row is not None
-            and snapshot is None
-            and str(flow_row.source or "").strip() == "tiangong"
-            and (
-                source_unit.casefold() != default_unit.casefold()
-                or source_group.casefold() != flow_group.casefold()
-            )
-        )
-        if catalog_conflicts_with_source:
-            if isinstance(port, dict):
-                port["unit"] = source_unit
-                port["unitGroup"] = source_group
-            else:
-                setattr(port, "unit", source_unit)
-                setattr(port, "unitGroup", source_group)
-            repairs.append({
-                "port_id": str(get_value("id") or ""),
-                "flow_uuid": flow_uuid,
-                "from_unit": default_unit,
-                "to_unit": source_unit,
-                "unit_group": source_group,
-                "repair": "tiangong_reference_product_unit",
-            })
-            flow_meta[flow_uuid] = (source_group, source_unit)
-            continue
-        switch = get_value("unitGroupSwitch") or get_value("unit_group_switch")
+        elif explicit_source_version:
+            flow_group, default_unit = flow_meta.get(flow_uuid, ("", ""))
+        elif flow_uuid in elementary_flow_uuids or str(get_value("type") or "").strip().casefold() == "biosphere":
+            flow_group, default_unit = flow_meta.get(flow_uuid, (current_group, current_unit))
+        else:
+            flow_group = str(
+                switch.get("sourceUnitGroup")
+                or switch.get("source_unit_group")
+                or current_group
+            ).strip()
+            default_unit = str(
+                switch.get("sourceUnit")
+                or switch.get("source_unit")
+                or switch.get("sourceReferenceUnit")
+                or switch.get("source_reference_unit")
+                or current_unit
+            ).strip()
         flow_group_units = units_by_group.get(flow_group.casefold(), set())
         group_conflicts = bool(current_group) and current_group.casefold() != flow_group.casefold()
         unit_conflicts = bool(current_unit) and current_unit.casefold() not in flow_group_units

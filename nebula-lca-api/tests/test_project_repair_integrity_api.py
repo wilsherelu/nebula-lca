@@ -53,7 +53,7 @@ def _stale_flow_graph(flow_uuid: str) -> dict:
     }
 
 
-def test_repair_integrity_syncs_stale_flow_names_and_allows_save():
+def test_stale_flow_names_are_advisory_and_optional_sync_allows_save():
     Base.metadata.create_all(bind=_db_module.engine)
     client = TestClient(app)
     project_id = str(uuid.uuid4())
@@ -93,6 +93,13 @@ def test_repair_integrity_syncs_stale_flow_names_and_allows_save():
     before = client.get(f"/api/projects/{project_id}/latest")
     assert before.status_code == 200, before.text
     assert before.json()["flow_name_sync_needed"] is True
+    assert before.json()["project_integrity"]["ok"] is True
+
+    saved_before_sync = client.post(
+        f"/api/projects/{project_id}/versions",
+        json={"graph": before.json()["graph"]},
+    )
+    assert saved_before_sync.status_code == 200, saved_before_sync.text
 
     repaired = client.post(f"/api/projects/{project_id}/repair-integrity")
     assert repaired.status_code == 200, repaired.text

@@ -26,6 +26,7 @@ type ModelCreateResponse = {
   pts_compiled_uuids?: string[];
   pts_failed_count?: number;
   pts_failed_items?: Array<Record<string, unknown>>;
+  graph_repair_count?: number;
 };
 
 type ModelVersionResponse = {
@@ -3466,9 +3467,10 @@ export default function App() {
         );
         lastSavedFingerprintRef.current = currentFingerprint;
         const repairedUnits = unitRepairRequired;
+        const serverRepairedGraph = Number(payload.graph_repair_count ?? 0) > 0;
         setUnitRepairRequired(false);
         void refreshProjects();
-        if (repairedUnits) {
+        if (repairedUnits || serverRepairedGraph) {
           await loadProjectGraph(payload.project_id, projectNameForMessage);
         }
 
@@ -3495,6 +3497,8 @@ export default function App() {
           setStatusText(
             repairedUnits
               ? `已按单位组默认单位修复并保存项目 ${projectNameForMessage}: version=${payload.version}`
+              : serverRepairedGraph
+              ? `已完成项目兼容修复并保存 ${projectNameForMessage}: version=${payload.version}${ptsStatusText}`
               : nonBlockingWarnings.length > 0
               ? `已保存项目 ${projectNameForMessage}: version=${payload.version}${ptsStatusText}。警告：${nonBlockingWarnings.join("；")}`
               : `已保存项目 ${projectNameForMessage}: version=${payload.version}${ptsStatusText}`,

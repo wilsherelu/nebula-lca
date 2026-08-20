@@ -590,20 +590,9 @@ def _build_project_integrity_summary(
                 details=item.model_dump(mode="python"),
             )
         )
-    if flow_name_sync_needed:
-        issues.append(
-            ProjectIntegrityIssue(
-                kind="flow_name_sync",
-                severity="warning",
-                code="FLOW_NAME_SYNC_NEEDED",
-                message="Some node/port flow names are outdated compared with the flow catalog.",
-                auto_repairable=outdated_flow_refs_count > 0,
-                details={
-                    "outdated_count": int(outdated_flow_refs_count or 0),
-                    "examples": list(outdated_flow_ref_examples or []),
-                },
-            )
-        )
+    # Flow names/classifications are display metadata. Keep the separate sync
+    # state for an optional refresh, but never classify name drift as project
+    # corruption or block opening, saving, and calculation.
     return ProjectIntegritySummary(
         ok=not issues,
         issue_count=len(issues),

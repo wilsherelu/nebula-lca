@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from .models import FlowRecord, UnitDefinition, UnitGroup
+from .services.flow_versions import get_flow_version
 
 
 def _get(obj: Any, key: str, default: Any = None) -> Any:
@@ -290,16 +291,38 @@ def resolve_flow_port_unit_semantics(
     flow_uuid = _clean(_get(port, "flowUuid", None) or _get(port, "flow_uuid", None))
     flow_record = db.get(FlowRecord, flow_uuid) if flow_uuid else None
     switch = _switch(port)
+    flow_source_namespace = _clean(
+        _get(port, "flowSourceNamespace", None) or _get(port, "flow_source_namespace", None)
+    )
+    flow_version = _clean(_get(port, "flowVersion", None) or _get(port, "flow_version", None))
+    version_record = None
+    if flow_uuid and flow_version:
+        version_record = get_flow_version(
+            db,
+            flow_uuid=flow_uuid,
+            source_namespace=flow_source_namespace,
+            source_version=flow_version,
+        )
+
+    port_type = _clean(_get(port, "type", None)).lower()
+    flow_type = _clean(getattr(flow_record, "flow_type", None)).lower()
+    is_elementary_flow = port_type == "biosphere" or "elementary" in flow_type
+
+    # Versioned ports resolve immutable Flow semantics from their exact source
+    # snapshot. Legacy unversioned ports keep the unit semantics saved in the
+    # project graph; the mutable UUID compatibility catalog must not rewrite
+    # established models when a newer Flow revision changes unit group.
+    semantic_record = version_record if flow_version else (flow_record if is_elementary_flow else None)
 
     flow_default_unit_group = _clean(
-        getattr(flow_record, "unit_group", None)
+        getattr(semantic_record, "unit_group", None)
         or switch.get("sourceUnitGroup")
         or switch.get("source_unit_group")
         or _get(port, "unitGroup", None)
         or _get(port, "unit_group", None)
     )
     flow_default_unit = _clean(
-        getattr(flow_record, "default_unit", None)
+        getattr(semantic_record, "default_unit", None)
         or switch.get("sourceUnit")
         or switch.get("source_unit")
         or switch.get("sourceReferenceUnit")
@@ -324,6 +347,21 @@ def resolve_flow_port_unit_semantics(
         current_amount = float(_get(port, "amount", 0) or 0)
     except (TypeError, ValueError):
         current_amount = 0.0
+
+    if flow_version and version_record is None:
+        return FlowPortUnitSemantics(
+            flow_uuid,
+            flow_default_unit_group,
+            flow_default_unit,
+            current_unit_group,
+            current_unit,
+            current_amount,
+            switch,
+            None,
+            None,
+            False,
+            reason="missing_flow_version_snapshot",
+        )
 
     if (
         current_unit
@@ -365,7 +403,7 @@ def resolve_flow_port_unit_semantics(
         and default_factor is not None
         and default_factor > 0
         and _same_group_identity(current_unit_group, flow_default_unit_group, unit_group_identity_by_name)
-        and _looks_like_flow_name_unit(flow_record, port, current_unit)
+        and _looks_like_flow_name_unit(semantic_record or flow_record, port, current_unit)
     ):
         current_factor = default_factor
     if current_factor is None or current_factor <= 0:
@@ -409,7 +447,7 @@ def resolve_flow_port_unit_semantics(
         if switch_factor <= 0 or not _same_group_identity(target_group, current_unit_group, unit_group_identity_by_name):
             inferred_switch = _infer_switch_from_flow_properties(
                 flow_uuid=flow_uuid,
-                flow_record=flow_record,
+                flow_record=None if flow_version else flow_record,
                 current_unit_group=current_unit_group,
                 current_unit=current_unit,
                 flow_default_unit_group=flow_default_unit_group,
