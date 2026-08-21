@@ -118,6 +118,74 @@ describe("manual foreground connection", () => {
     });
   });
 
+  it("restores backend snake-case Flow identity before auto-creating an input", () => {
+    const sourcePort = electricityPort("provider-output", providerFlowUuid, "output", 3.6, "tidas");
+    const backendPort = {
+      ...sourcePort,
+      flowSourceNamespace: undefined,
+      flowVersion: undefined,
+      flowPropertyUuid: undefined,
+      flowPropertyVersion: undefined,
+      unitGroupUuid: undefined,
+      unitGroupVersion: undefined,
+      flow_source_namespace: sourcePort.flowSourceNamespace,
+      flow_version: sourcePort.flowVersion,
+      flow_property_uuid: sourcePort.flowPropertyUuid,
+      flow_property_version: sourcePort.flowPropertyVersion,
+      unit_group_uuid: sourcePort.unitGroupUuid,
+      unit_group_version: sourcePort.unitGroupVersion,
+    } as unknown as FlowPort;
+    useLcaGraphStore.getState().importGraph({
+      functionalUnit: "1 unit",
+      nodes: [
+        {
+          id: "provider",
+          node_kind: "unit_process",
+          process_uuid: "provider-process",
+          name: "供给过程",
+          location: "CN",
+          reference_product: "交流电",
+          inputs: [],
+          outputs: [backendPort],
+        },
+        {
+          id: "consumer",
+          node_kind: "unit_process",
+          process_uuid: "consumer-process",
+          name: "消费过程",
+          location: "CN",
+          reference_product: "产品",
+          inputs: [],
+          outputs: [],
+        },
+      ],
+      exchanges: [],
+      metadata: {},
+    });
+
+    useLcaGraphStore.getState().onConnect({
+      source: "provider",
+      target: "consumer",
+      sourceHandle: "out:provider-output",
+      targetHandle: null,
+    });
+
+    const loadedSource = useLcaGraphStore.getState().nodes.find((node) => node.id === "provider")?.data.outputs[0];
+    const autoInput = useLcaGraphStore.getState().nodes.find((node) => node.id === "consumer")?.data.inputs[0];
+    expect(loadedSource).toMatchObject({
+      flowSourceNamespace: "tiangong_open_data",
+      flowVersion: "01.01.000",
+    });
+    expect(autoInput).toMatchObject({
+      flowSourceNamespace: loadedSource?.flowSourceNamespace,
+      flowVersion: loadedSource?.flowVersion,
+      flowPropertyUuid: loadedSource?.flowPropertyUuid,
+      flowPropertyVersion: loadedSource?.flowPropertyVersion,
+      unitGroupUuid: loadedSource?.unitGroupUuid,
+      unitGroupVersion: loadedSource?.unitGroupVersion,
+    });
+  });
+
   it("does not reuse an orphaned same-UUID input from another Flow version", () => {
     const sourcePort = electricityPort("provider-output", providerFlowUuid, "output", 3.6, "tidas");
     const staleInput = electricityPort("in_oldbug", providerFlowUuid, "input", 3.6, "legacy");
