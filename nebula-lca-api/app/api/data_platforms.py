@@ -2582,14 +2582,13 @@ def refresh_tiangong_flow(
 
     - Selects the preferred validated TianGong account.
     - Accepts only an existing local flow whose exact source is `tiangong`.
-    - Resolves the remote id from flow sync lineage when present, otherwise uses the local UUID.
+    - Requires exact flow sync lineage; never guesses a remote id from the local UUID.
     - Fetches the current remote version without name guessing.
     - Rejects a remote UUID that differs from the requested local UUID.
     - Uses shared single-flow synchronization helper.
     - Propagates HTTP 429 as `TIANGONG_RATE_LIMITED` with `retry_after_seconds` when provided.
     """
     account = _preferred_tiangong_account(db)
-    connector = connector_for_account(_account_context(account, db))
 
     flow_row = db.get(FlowRecord, flow_uuid)
     if flow_row is None:
@@ -2620,7 +2619,20 @@ def refresh_tiangong_flow(
         .first()
     )
 
-    remote_id = sync_record.remote_id if sync_record and sync_record.remote_id else flow_uuid
+    if sync_record is None or not _safe_str(sync_record.remote_id):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "TIANGONG_SYNC_LINEAGE_MISSING",
+                "message": (
+                    f"Flow '{flow_uuid}' has no exact TianGong sync lineage; "
+                    "refresh is blocked to avoid guessing a remote Flow identity."
+                ),
+            },
+        )
+
+    remote_id = sync_record.remote_id
+    connector = connector_for_account(_account_context(account, db))
 
     try:
         remote_flow = connector.get_flow_detail(remote_id, None)
