@@ -1,5 +1,6 @@
 import { getApiBase } from "../apiBase";
 import { useRef, useState } from "react";
+import { primeFlowReferenceCache } from "./flowReferenceCache";
 
 const API_BASE = getApiBase();
 
@@ -114,6 +115,7 @@ export async function refreshTianGongFlow(flowUuid: string): Promise<TianGongFlo
     error.code = "TIANGONG_UUID_MISMATCH";
     throw error;
   }
+  primeFlowReferenceCache(API_BASE, flowUuid, flow);
   return { ...refreshResult, flow };
 }
 

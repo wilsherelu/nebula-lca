@@ -1,6 +1,12 @@
 import { getApiBase } from "./apiBase";
 import nebulaLogoUrl from "./assets/nebula-logo.png";
-import { findClimateChangeIndicatorIndex, getRunProcessCount } from "./resultAnalysis";
+import {
+  findClimateChangeIndicatorIndex,
+  formatRunIssue,
+  formatRunWarningBanner,
+  getRunIssueAssociationTarget,
+  getRunProcessCount,
+} from "./resultAnalysis";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GraphCanvas } from "./components/GraphCanvas/GraphCanvas";
 import { startTransition } from "react";
@@ -2113,6 +2119,12 @@ export default function App() {
   const [ecoinventLciaRuntimeAvailable, setEcoinventLciaRuntimeAvailable] = useState(false);
   const [repairInspectorTab, setRepairInspectorTab] = useState<"external_in" | "external_out" | undefined>(undefined);
   const [repairProcessInfoNodeId, setRepairProcessInfoNodeId] = useState<string | undefined>(undefined);
+  const [runIssueAssociationTarget, setRunIssueAssociationTarget] = useState<{
+    nodeId: string;
+    portId: string;
+    requestKey: number;
+  } | null>(null);
+  const runIssueAssociationRequestRef = useRef(0);
   const [productDetailViewKey, setProductDetailViewKey] = useState("");
   const [lciaMethodOptions, setLciaMethodOptions] = useState<string[]>(["EF v3.1"]);
   const [lciaMethodIndicatorCounts, setLciaMethodIndicatorCounts] = useState<Record<string, number>>({});
@@ -4899,33 +4911,30 @@ export default function App() {
     return Array.isArray(issues) ? issues : [];
   }, [lastRun]);
 
-  const formatRunIssue = (issue: unknown) => {
-    if (issue && typeof issue === "object") {
-      const record = issue as Record<string, unknown>;
-      if (record.code === "UNLINKED_POSITIVE_TECHNOSPHERE_INPUT") {
-        const nodeName = String(record.node_name ?? record.node_id ?? "");
-        const flowName = String(record.flow_name ?? record.port_id ?? "");
-        const amount = String(record.amount ?? "");
-        const unit = String(record.unit ?? "");
-        return uiLanguage === "zh"
-          ? `未关联背景供应：${nodeName} / ${flowName}（${amount} ${unit}）`
-          : `Unlinked background supply: ${nodeName} / ${flowName} (${amount} ${unit})`;
-      }
-      return JSON.stringify(record);
-    }
-    return String(issue ?? "");
-  };
-
   const warningBannerText = useMemo(() => {
-    if (runIssues.length === 0) {
-      return "";
-    }
-    const first = formatRunIssue(runIssues[0]);
-    if (runIssues.length === 1) {
-      return `发现 1 条警告：${first}`;
-    }
-    return `发现 ${runIssues.length} 条警告：${first}`;
+    return formatRunWarningBanner(runIssues, uiLanguage);
   }, [runIssues, uiLanguage]);
+
+  const openRunIssueAssociation = (issue: unknown) => {
+    const target = getRunIssueAssociationTarget(issue);
+    if (!target) {
+      return;
+    }
+    const rootNodes = canvases.root?.nodes ?? [];
+    const node = rootNodes.find((item) => item.id === target.nodeId || item.data.processUuid === target.nodeId);
+    const port = node?.data.inputs.find((item) => item.id === target.portId && item.type !== "biosphere");
+    if (!node || !port) {
+      setStatusText(uiLanguage === "zh" ? "无法定位该未关联输入，请重新计算后再试。" : "Unable to locate this unlinked input. Run the calculation again and retry.");
+      return;
+    }
+    runIssueAssociationRequestRef.current += 1;
+    setRunIssueAssociationTarget({ nodeId: node.id, portId: port.id, requestKey: runIssueAssociationRequestRef.current });
+    setRepairInspectorTab("external_in");
+    setRepairProcessInfoNodeId(undefined);
+    setShowRunWarnings(false);
+    setShowRunAnalysis(false);
+    openNodeInspector(node.id);
+  };
 
   const ptsResultContextByUuid = useMemo(() => {
     const map = new Map<
@@ -6069,7 +6078,7 @@ export default function App() {
               <div className="run-analysis-subdialog-mask" onClick={() => setShowRunWarnings(false)}>
                 <section className="run-analysis-subdialog" onClick={(event) => event.stopPropagation()}>
                   <div className="run-analysis-subdialog-head">
-                    <strong>{`警告列表 (${runIssues.length})`}</strong>
+                    <strong>{uiLanguage === "zh" ? `计算警告 (${runIssues.length})` : `Calculation Warnings (${runIssues.length})`}</strong>
                     <button type="button" className="drawer-close-btn" onClick={() => setShowRunWarnings(false)}>
                       {i18n.close}
                     </button>
@@ -6079,22 +6088,33 @@ export default function App() {
                       <thead>
                         <tr>
                           <th style={{ width: 64 }}>#</th>
-                          <th>内容</th>
+                          <th>{uiLanguage === "zh" ? "未关联输入" : "Unlinked Input"}</th>
+                          <th style={{ width: 132 }}>{uiLanguage === "zh" ? "处理" : "Action"}</th>
                         </tr>
                       </thead>
                       <tbody>
                         {runIssues.map((issue, idx) => {
-                          const text = formatRunIssue(issue);
+                          const text = formatRunIssue(issue, uiLanguage);
+                          const associationTarget = getRunIssueAssociationTarget(issue);
                           return (
                             <tr key={`warn_dialog_${idx}`}>
                               <td className="run-analysis-warning-index">{idx + 1}</td>
-                              <td title={text}>{text}</td>
+                              <td title={text}>
+                                <div className="run-analysis-warning-content">{text}</div>
+                              </td>
+                              <td>
+                                {associationTarget ? (
+                                  <button type="button" className="link-btn" onClick={() => openRunIssueAssociation(issue)}>
+                                    {uiLanguage === "zh" ? "选择背景供应" : "Choose Provider"}
+                                  </button>
+                                ) : "-"}
+                              </td>
                             </tr>
                           );
                         })}
                         {runIssues.length === 0 && (
                           <tr>
-                            <td colSpan={2}>无警告</td>
+                            <td colSpan={3}>{uiLanguage === "zh" ? "无警告" : "No warnings"}</td>
                           </tr>
                         )}
                       </tbody>
@@ -6472,6 +6492,9 @@ export default function App() {
                 sourcePolicy={currentSourcePolicy}
                 initialNodeTab={repairInspectorTab}
                 initialProcessInfoNodeId={repairProcessInfoNodeId}
+                initialAssociationNodeId={runIssueAssociationTarget?.nodeId}
+                initialAssociationPortId={runIssueAssociationTarget?.portId}
+                initialAssociationRequestKey={runIssueAssociationTarget?.requestKey}
               />
               <FlowBalanceDialog />
               <PtsPortEditorDialog />
