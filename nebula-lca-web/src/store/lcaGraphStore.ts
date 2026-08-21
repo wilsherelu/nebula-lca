@@ -788,6 +788,12 @@ const getTargetHandle = (
 const buildAutoInputPort = (sourcePort: FlowPort): FlowPort => ({
   id: `in_${uid().slice(0, 8)}`,
   flowUuid: sourcePort.flowUuid,
+  flowSourceNamespace: sourcePort.flowSourceNamespace,
+  flowVersion: sourcePort.flowVersion,
+  flowPropertyUuid: sourcePort.flowPropertyUuid,
+  flowPropertyVersion: sourcePort.flowPropertyVersion,
+  unitGroupUuid: sourcePort.unitGroupUuid,
+  unitGroupVersion: sourcePort.unitGroupVersion,
   name: sourcePort.name,
   flowNameEn: sourcePort.flowNameEn,
   unit: sourcePort.unit,
@@ -799,6 +805,54 @@ const buildAutoInputPort = (sourcePort: FlowPort): FlowPort => ({
   direction: "input",
   showOnNode: true,
 });
+
+const backfillAutoInputFlowIdentity = (canvas: CanvasGraph): CanvasGraph => {
+  const nodeById = new Map(canvas.nodes.map((node) => [node.id, node]));
+  const identityByTargetPort = new Map<string, FlowPort>();
+  for (const edge of canvas.edges) {
+    const sourcePortId = parseHandlePortId(edge.sourceHandle ?? undefined, "out:");
+    const targetPortId = parseHandlePortId(edge.targetHandle ?? undefined, "in:");
+    if (!sourcePortId || !targetPortId || !targetPortId.startsWith("in_")) {
+      continue;
+    }
+    const sourcePort = nodeById.get(edge.source)?.data.outputs.find((port) => port.id === sourcePortId);
+    const targetPort = nodeById.get(edge.target)?.data.inputs.find((port) => port.id === targetPortId);
+    if (
+      !sourcePort
+      || !targetPort
+      || sourcePort.flowUuid !== targetPort.flowUuid
+      || (!sourcePort.flowSourceNamespace && !sourcePort.flowVersion)
+      || targetPort.flowSourceNamespace
+      || targetPort.flowVersion
+    ) {
+      continue;
+    }
+    identityByTargetPort.set(`${edge.target}:${targetPortId}`, sourcePort);
+  }
+  if (identityByTargetPort.size === 0) {
+    return canvas;
+  }
+  return {
+    ...canvas,
+    nodes: canvas.nodes.map((node) => {
+      const inputs = node.data.inputs.map((port) => {
+        const sourcePort = identityByTargetPort.get(`${node.id}:${port.id}`);
+        return sourcePort
+          ? {
+              ...port,
+              flowSourceNamespace: sourcePort.flowSourceNamespace,
+              flowVersion: sourcePort.flowVersion,
+              flowPropertyUuid: sourcePort.flowPropertyUuid,
+              flowPropertyVersion: sourcePort.flowPropertyVersion,
+              unitGroupUuid: sourcePort.unitGroupUuid,
+              unitGroupVersion: sourcePort.unitGroupVersion,
+            }
+          : port;
+      });
+      return inputs === node.data.inputs ? node : { ...node, data: { ...node.data, inputs } };
+    }),
+  };
+};
 
 const extractMarketSourceSuffix = (flowName: string): string => {
   const trimmed = (flowName ?? "").trim();
@@ -6807,6 +6861,9 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
           [ROOT_CANVAS_ID]: nextRoot,
         };
       }
+      nextCanvases = Object.fromEntries(
+        Object.entries(nextCanvases).map(([id, canvas]) => [id, backfillAutoInputFlowIdentity(canvas)]),
+      );
       endDeserializeSpan();
 
       debugFlowTypesForNode(

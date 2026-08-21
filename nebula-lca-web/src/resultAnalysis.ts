@@ -83,6 +83,26 @@ export function formatRunIssue(issue: unknown, language: "zh" | "en"): string {
   return String(issue ?? "");
 }
 
+export function getRunIssuePresentation(
+  issue: unknown,
+  language: "zh" | "en",
+  localized?: { nodeName?: string; flowName?: string },
+): { processName: string; flowName: string; amount: string; status: string } {
+  const record = issue && typeof issue === "object" ? issue as Record<string, unknown> : {};
+  const processName = String(localized?.nodeName ?? record.node_name ?? record.node_id ?? "—").trim() || "—";
+  const flowName = String(localized?.flowName ?? record.flow_name ?? record.port_id ?? "—").trim() || "—";
+  const amountValue = String(record.amount ?? "").trim();
+  const unit = String(record.unit ?? "").trim();
+  return {
+    processName,
+    flowName,
+    amount: [amountValue, unit].filter(Boolean).join(" ") || "—",
+    status: isUnlinkedTechnosphereInput(issue)
+      ? (language === "zh" ? "已从计算中省略" : "Omitted from calculation")
+      : (language === "zh" ? "请查看详情" : "Review details"),
+  };
+}
+
 export function formatRunWarningBanner(issues: unknown[], language: "zh" | "en"): string {
   const unlinkedCount = getUnlinkedTechnosphereInputCount(issues);
   if (unlinkedCount > 0) {

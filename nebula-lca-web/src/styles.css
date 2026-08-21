@@ -934,6 +934,40 @@ body,
   color: #496571;
 }
 
+.run-analysis-warning-cell {
+  max-width: 280px;
+  overflow: hidden;
+  color: #365563;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-analysis-warning-flow {
+  color: #173b4c;
+  font-weight: 650;
+}
+
+.run-analysis-warning-amount {
+  color: #496571;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.run-analysis-warning-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 3px 8px;
+  border: 1px solid #ead39a;
+  border-radius: 999px;
+  background: #fff8e8;
+  color: #815c12;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
 .run-analysis-raw {
   margin-top: 10px;
 }
@@ -970,7 +1004,7 @@ body,
 }
 
 .run-analysis-subdialog {
-  width: min(720px, calc(100vw - 96px));
+  width: min(1120px, calc(100vw - 96px));
   max-height: min(72vh, 680px);
   border: 1px solid #d7e4ea;
   border-radius: 12px;
@@ -2508,12 +2542,28 @@ body,
 }
 
 .flow-picker-panel .flow-picker-toolbar {
-  display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(160px, 220px) 140px auto 72px auto;
+  display: flex;
   gap: 8px;
   align-items: center;
   padding: 10px 16px;
   background: #f8fbfd;
+}
+
+.flow-picker-toolbar-filters {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(160px, 220px) minmax(126px, 150px);
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.flow-picker-toolbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-width: 0;
 }
 
 .flow-picker-toolbar input,
@@ -2521,6 +2571,14 @@ body,
   min-width: 0;
   height: 36px;
   font-size: 14px;
+}
+
+.flow-picker-toolbar input:focus,
+.flow-picker-toolbar select:focus {
+  border-color: #6aade0;
+  outline: 2px solid rgba(24, 132, 216, 0.14);
+  outline-offset: 0;
+  box-shadow: none;
 }
 
 .flow-picker-compatible-toggle {
@@ -2616,11 +2674,21 @@ body,
 }
 
 .flow-picker-action-cell {
+  padding-right: 12px;
+  white-space: nowrap;
+}
+
+.flow-picker-action-group {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
   white-space: nowrap;
+}
+
+.flow-picker-action-group .pm-link-btn {
+  min-width: 0;
+  padding: 0 4px;
 }
 
 .flow-picker-category-col,
@@ -2710,7 +2778,16 @@ body,
 
 @media (max-width: 820px) {
   .flow-picker-panel .flow-picker-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .flow-picker-toolbar-filters {
     grid-template-columns: 1fr;
+  }
+
+  .flow-picker-toolbar-actions {
+    justify-content: stretch;
   }
 
   .flow-picker-create-btn {
