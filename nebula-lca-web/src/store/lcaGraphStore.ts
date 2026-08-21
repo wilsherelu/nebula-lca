@@ -757,10 +757,10 @@ const buildNodeFromTemplate = (template: LcaProcessTemplate, position: XYPositio
 
 const getTargetHandle = (
   targetNode: Node<LcaNodeData>,
-  flowUuid: string,
+  sourcePort: FlowPort,
   edges?: Array<Edge<LcaEdgeData>>,
 ): string | undefined => {
-  const byFlow = targetNode.data.inputs.filter((item) => item.flowUuid === flowUuid);
+  const byFlow = targetNode.data.inputs.filter((item) => flowPortsAreVersionCompatible(sourcePort, item));
   if (byFlow.length === 0) {
     return undefined;
   }
@@ -822,8 +822,7 @@ const backfillAutoInputFlowIdentity = (canvas: CanvasGraph): CanvasGraph => {
       || !targetPort
       || sourcePort.flowUuid !== targetPort.flowUuid
       || (!sourcePort.flowSourceNamespace && !sourcePort.flowVersion)
-      || targetPort.flowSourceNamespace
-      || targetPort.flowVersion
+      || flowPortsAreVersionCompatible(sourcePort, targetPort)
     ) {
       continue;
     }
@@ -2644,13 +2643,13 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         (!isInputHandleId(explicitConsumerHandle) || (Boolean(explicitPortId) && explicitOccupied));
       let targetHandle: string | undefined;
       if (isInputHandleId(explicitConsumerHandle)) {
-        if (explicitPort?.flowUuid === providerPort.flowUuid && !(isMarketProcessNode(nextConsumerNode) && explicitOccupied)) {
+        if (explicitPort && flowPortsAreVersionCompatible(providerPort, explicitPort) && !(isMarketProcessNode(nextConsumerNode) && explicitOccupied)) {
           targetHandle = explicitConsumerHandle ?? undefined;
           nextConsumerNode = ensureNodePortVisibleByFlow(nextConsumerNode, "input", providerPort.flowUuid, explicitPort.id);
         }
       }
       if (!targetHandle && !forceCreateMarketInputRow) {
-        targetHandle = getTargetHandle(nextConsumerNode, providerPort.flowUuid, active.edges);
+        targetHandle = getTargetHandle(nextConsumerNode, providerPort, active.edges);
         if (targetHandle) {
           const matchedPortId = parseHandlePortId(targetHandle, "in:");
           nextConsumerNode = ensureNodePortVisibleByFlow(nextConsumerNode, "input", providerPort.flowUuid, matchedPortId);
@@ -2724,12 +2723,11 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         didAutoCreateTargetInput = true;
       }
       if (!hasInputHandleId(nextConsumerNode, targetHandle)) {
-        const fallbackHandle = getTargetHandle(nextConsumerNode, providerPort.flowUuid, active.edges);
+        const fallbackHandle = getTargetHandle(nextConsumerNode, providerPort, active.edges);
         if (hasInputHandleId(nextConsumerNode, fallbackHandle)) {
           targetHandle = fallbackHandle;
         } else {
-          const firstInput =
-            nextConsumerNode.data.inputs.find((p) => p.flowUuid === providerPort.flowUuid) ?? nextConsumerNode.data.inputs[0];
+          const firstInput = nextConsumerNode.data.inputs.find((p) => flowPortsAreVersionCompatible(providerPort, p));
           targetHandle = firstInput ? `in:${firstInput.id}` : undefined;
         }
       }
@@ -2739,8 +2737,8 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
 
       const targetPortId = parseHandlePortId(targetHandle, "in:");
       const targetPort =
-        (targetPortId && nextConsumerNode.data.inputs.find((p) => p.id === targetPortId && p.flowUuid === providerPort.flowUuid)) ||
-        nextConsumerNode.data.inputs.find((p) => p.flowUuid === providerPort.flowUuid);
+        (targetPortId && nextConsumerNode.data.inputs.find((p) => p.id === targetPortId && flowPortsAreVersionCompatible(providerPort, p))) ||
+        nextConsumerNode.data.inputs.find((p) => flowPortsAreVersionCompatible(providerPort, p));
       if (!targetPort) {
         return { connectionHint: RULE_HINTS.targetNoMatchingInputCanceled };
       }
@@ -3765,7 +3763,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
               ];
 
         let nextTargetNode = targetNode;
-        let targetHandle = getTargetHandle(targetNode, fix.flowUuid, canvas.edges);
+        let targetHandle = getTargetHandle(targetNode, marketOut, canvas.edges);
         if (!targetHandle) {
           const autoInput = buildAutoInputPort(marketOut);
           nextTargetNode = {
@@ -4466,11 +4464,11 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
           );
         let targetHandle =
           targetInputPortId &&
-          targetNode.data.inputs.some((port) => port.id === targetInputPortId && port.flowUuid === outputPort.flowUuid) &&
+          targetNode.data.inputs.some((port) => port.id === targetInputPortId && flowPortsAreVersionCompatible(outputPort, port)) &&
           !(isMarketProcessNode(targetNode) && explicitOccupied)
             ? `in:${targetInputPortId}`
             : !forceCreateMarketInputRow
-              ? getTargetHandle(targetNode, outputPort.flowUuid, canvas.edges)
+              ? getTargetHandle(targetNode, outputPort, canvas.edges)
               : undefined;
         if (shouldEnforceMarketSingleFlow(targetNode)) {
           const marketInput = targetNode.data.inputs[0];
@@ -4659,7 +4657,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
           y: sourceNode.position.y + Math.floor(Math.random() * 80) - 40,
         }, state.uiLanguage);
         let nextNode = node;
-        let targetHandle = getTargetHandle(nextNode, outputPort.flowUuid, canvas.edges);
+        let targetHandle = getTargetHandle(nextNode, outputPort, canvas.edges);
         if (!targetHandle) {
           const autoPort: FlowPort = {
             ...buildAutoInputPort(outputPort),
@@ -5164,7 +5162,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
             }
           }
         }
-        let targetHandle = getTargetHandle(targetNode, sourcePort.flowUuid, workingEdges);
+        let targetHandle = getTargetHandle(targetNode, sourcePort, workingEdges);
         const shouldCreateNewMarketInputRow = isMarketProcessNode(targetNode) && !targetHandle;
         let targetPortId = parseHandlePortId(targetHandle, "in:");
         let targetPort =
