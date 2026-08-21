@@ -4735,24 +4735,11 @@ export default function App() {
     if (!text) {
       return;
     }
-    const shouldUseStatusToast =
-      text === "PTS封装完成。" ||
-      text === "PTS解封完成。" ||
-      text.startsWith("PTS 封装失败") ||
-      text.startsWith("PTS封装失败") ||
-      text.startsWith("自动连线完成") ||
-      text.startsWith("自动连线未找到") ||
-      text.startsWith("Auto-connect complete") ||
-      text.startsWith("Auto-connect: no candidate") ||
-      text === "No unique auto-connect candidates found." ||
-      text.startsWith("无法连线") ||
-      text.startsWith("Cannot connect") ||
-      text === "警告：当前过程未定义产品，已关闭清单分析，可稍后继续补充。";
-    if (shouldUseStatusToast) {
+    if (!connectionFix) {
       setStatusText(text);
       clearConnectionHint();
     }
-  }, [clearConnectionHint, connectionHint]);
+  }, [clearConnectionHint, connectionFix, connectionHint]);
 
   useEffect(() => {
     if (hydratedRef.current) {
@@ -6406,7 +6393,7 @@ export default function App() {
       <main className="main">
         <NodePalette />
         <section className="workspace">
-          {connectionHint && (
+          {connectionHint && connectionFix && (
             <div
               className={`inline-banner inline-banner--${connectionHintLevel === "error" ? "warning" : connectionHintLevel} inline-banner--action`}
             >
