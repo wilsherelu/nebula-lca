@@ -95,7 +95,7 @@ def test_graph_contract_rejects_edge_between_different_flow_versions():
     assert "incompatible Flow versions" in error.value.detail["evidence"][0]["issues"][0]
 
 
-def test_graph_contract_accepts_explicit_same_version_foreground_alias():
+def test_graph_contract_rejects_same_version_foreground_alias_with_different_uuid():
     payload = _balanced_graph(provider_amount=3, consumer_amount=3)
     source_port = payload["nodes"][0]["outputs"][0]
     target_port = payload["nodes"][1]["inputs"][0]
@@ -123,18 +123,6 @@ def test_graph_contract_accepts_explicit_same_version_foreground_alias():
         "unit": "MJ",
         "providerUnit": "MJ",
         "consumerUnit": "MJ",
-    })
-
-    validate_graph_contract(HybridGraph.model_validate(payload))
-
-
-def test_graph_contract_rejects_foreground_alias_with_different_unit_group():
-    payload = _balanced_graph(provider_amount=3, consumer_amount=3)
-    payload["nodes"][0]["outputs"][0]["flowUuid"] = "provider-flow"
-    payload["nodes"][1]["inputs"][0]["flowUuid"] = "consumer-flow"
-    payload["exchanges"][0].update({
-        "flowUuid": "provider-flow",
-        "consumerFlowUuid": "consumer-flow",
     })
 
     with pytest.raises(HTTPException) as error:

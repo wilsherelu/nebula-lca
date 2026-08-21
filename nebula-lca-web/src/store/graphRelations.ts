@@ -1,7 +1,6 @@
 import type { Edge, Node } from "@xyflow/react";
 import type { LcaEdgeData } from "../model/exchange";
 import type { FlowPort, LcaNodeData } from "../model/node";
-import { flowPortsAreForegroundAliases } from "../model/flowVersionIdentity";
 
 type NodeId = string;
 type EdgeId = string;
@@ -153,13 +152,6 @@ const resolveTargetPortForEdge = (
   }
 
   const consumerFlowUuid = String(edge.data?.consumerFlowUuid ?? "").trim();
-  const aliasPort =
-    (explicitPort?.flowUuid === consumerFlowUuid ? explicitPort : undefined) ??
-    targetNode.data.inputs.find((port) => port.flowUuid === consumerFlowUuid);
-  const sourcePort = resolveSourcePortForEdge(edge, nodeById);
-  if (aliasPort && sourcePort && flowPortsAreForegroundAliases(sourcePort, aliasPort)) {
-    return aliasPort;
-  }
   const convertedPort =
     (explicitPort?.flowUuid === consumerFlowUuid ? explicitPort : undefined) ??
     targetNode.data.inputs.find((port) => port.flowUuid === consumerFlowUuid);
