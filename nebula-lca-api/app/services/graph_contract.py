@@ -22,7 +22,7 @@ from ..schemas import (
     HybridNode,
     flow_semantic_to_exchange_type,
 )
-from .flow_versions import ports_are_version_compatible
+from .flow_versions import ports_are_foreground_aliases, ports_are_version_compatible
 
 # ── Utility ──────────────────────────────────────────────────────────────
 
@@ -361,6 +361,11 @@ def validate_edge_binding_and_uniqueness(graph: HybridGraph) -> None:
             issues.append("edge.flowUuid does not match source port flowUuid")
         if target_port is not None and str(target_port.flowUuid or "") != str(edge.flowUuid or ""):
             link = target_port.intermediate_flow_link
+            alias_ok = bool(
+                source_port is not None
+                and str(edge.consumer_flow_uuid or "") == str(target_port.flowUuid or "")
+                and ports_are_foreground_aliases(source_port, target_port)
+            )
             link_ok = bool(
                 link is not None
                 and link.status in {"auto", "user_confirmed"}
@@ -371,7 +376,7 @@ def validate_edge_binding_and_uniqueness(graph: HybridGraph) -> None:
                 and edge.intermediate_flow_link_factor is not None
                 and abs(float(edge.intermediate_flow_link_factor) - float(link.amount_factor)) <= 1e-12
             )
-            if not link_ok:
+            if not alias_ok and not link_ok:
                 issues.append("edge.flowUuid does not match target port flowUuid or an active intermediate-flow link")
         if (
             source_port is not None

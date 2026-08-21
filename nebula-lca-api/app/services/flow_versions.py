@@ -48,6 +48,46 @@ def ports_are_version_compatible(source: Any, target: Any) -> bool:
     return port_flow_identity(source)[:3] == port_flow_identity(target)[:3]
 
 
+def ports_are_foreground_aliases(source: Any, target: Any) -> bool:
+    """Allow explicit foreground links without replacing either Flow identity."""
+    if ports_are_version_compatible(source, target):
+        return True
+
+    def value(port: Any, snake: str, camel: str) -> str:
+        if isinstance(port, dict):
+            raw = port.get(camel) or port.get(snake)
+        else:
+            raw = getattr(port, snake, None) or getattr(port, camel, None)
+        return " ".join(str(raw or "").strip().casefold().split())
+
+    if port_flow_identity(source)[1:3] != port_flow_identity(target)[1:3]:
+        return False
+    if value(source, "type", "type") == "biosphere" or value(target, "type", "type") == "biosphere":
+        return False
+    required_pairs = (
+        ("type", "type"),
+        ("name", "name"),
+        ("unit", "unit"),
+        ("unit_group", "unitGroup"),
+    )
+    if any(not value(source, snake, camel) or value(source, snake, camel) != value(target, snake, camel)
+           for snake, camel in required_pairs):
+        return False
+    optional_pairs = (
+        ("flow_name_en", "flowNameEn"),
+        ("flow_property_uuid", "flowPropertyUuid"),
+        ("flow_property_version", "flowPropertyVersion"),
+        ("unit_group_uuid", "unitGroupUuid"),
+        ("unit_group_version", "unitGroupVersion"),
+    )
+    for snake, camel in optional_pairs:
+        source_value = value(source, snake, camel)
+        target_value = value(target, snake, camel)
+        if bool(source_value) != bool(target_value) or (source_value and source_value != target_value):
+            return False
+    return True
+
+
 def flow_version_label(source_namespace: str, source_version: str) -> str:
     if source_namespace == TG_LEGACY_NAMESPACE and source_version == TG_LEGACY_VERSION:
         return TG_LEGACY_LABEL

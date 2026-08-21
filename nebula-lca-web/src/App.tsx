@@ -5635,7 +5635,7 @@ export default function App() {
             onClick={navigateToManagement}
             title={uiLanguage === "zh" ? "返回主页" : "Back home"}
           >
-            <img className="topbar-logo" src="/favicon.ico" alt="Nebula logo" />
+            <img className="topbar-logo" src={`${import.meta.env.BASE_URL}favicon.ico`} alt="Nebula logo" />
             <span className="topbar-brand-copy">
               <span className="title">{i18n.appTitle}</span>
               <span className="topbar-brand-hint">{uiLanguage === "zh" ? "点击返回主页" : "Click to return home"}</span>

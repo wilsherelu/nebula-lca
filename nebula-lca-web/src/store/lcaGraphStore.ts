@@ -12,7 +12,11 @@ import { create } from "zustand";
 import { processLibrary } from "../data/processLibrary";
 import type { LcaEdgeData, LcaExchange, LcaGraphPayload } from "../model/exchange";
 import type { FlowPort, LcaNodeData, LcaProcessTemplate, LciRole, ProcessMode } from "../model/node";
-import { flowPortIdentityKey, flowPortsAreVersionCompatible } from "../model/flowVersionIdentity";
+import {
+  flowPortIdentityKey,
+  flowPortsAreForegroundAliases,
+  flowPortsAreVersionCompatible,
+} from "../model/flowVersionIdentity";
 import {
   buildGraphRelations,
   createEmptyGraphRelations,
@@ -1643,14 +1647,14 @@ const hasInputHandleId = (node: Node<LcaNodeData>, handleId: string | undefined)
 const resolveTargetInputAmount = (
   targetNode: Node<LcaNodeData>,
   targetHandle: string | undefined,
-  flowUuid: string,
+  _flowUuid: string,
   fallback: number,
 ): number => {
   const targetPortId = parseHandlePortId(targetHandle, "in:");
   if (!targetPortId) {
     return fallback;
   }
-  const targetPort = targetNode.data.inputs.find((p) => p.id === targetPortId && p.flowUuid === flowUuid);
+  const targetPort = targetNode.data.inputs.find((p) => p.id === targetPortId);
   return targetPort && Number.isFinite(targetPort.amount) ? targetPort.amount : fallback;
 };
 
@@ -1696,6 +1700,11 @@ const resolveEdgeDataByNodes = (
     && sourcePort.flowUuid === resolvedFlowUuid
     && targetPort.flowUuid === resolvedFlowUuid;
 
+  const sameSemanticAliasMatch = Boolean(resolvedFlowUuid)
+    && sourcePort.flowUuid === resolvedFlowUuid
+    && targetPort.flowUuid === edge.data?.consumerFlowUuid
+    && flowPortsAreForegroundAliases(sourcePort, targetPort);
+
   let isConvertedEdge = false;
   if (!sameFlowMatch && edgeFlowUuid) {
     const link = targetPort.intermediateFlowLink;
@@ -1720,7 +1729,7 @@ const resolveEdgeDataByNodes = (
     }
   }
 
-  if (!sameFlowMatch && !isConvertedEdge) {
+  if (!sameFlowMatch && !sameSemanticAliasMatch && !isConvertedEdge) {
     return undefined;
   }
 
@@ -1914,7 +1923,9 @@ const attachEdgeToCanvas = (
 
   const targetPortId = parseHandlePortId(targetHandle, "in:");
   const targetPort =
-    targetPortId && targetNode.data.inputs.find((port) => port.id === targetPortId && port.flowUuid === flowUuid);
+    targetPortId && targetNode.data.inputs.find(
+      (port) => port.id === targetPortId && flowPortsAreForegroundAliases(sourcePort, port),
+    );
   if (!targetPort) {
     return { canvas, attached: false };
   }
@@ -2584,7 +2595,11 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         (!isInputHandleId(explicitConsumerHandle) || (Boolean(explicitPortId) && explicitOccupied));
       let targetHandle: string | undefined;
       if (isInputHandleId(explicitConsumerHandle)) {
-        if (explicitPort?.flowUuid === providerPort.flowUuid && !(isMarketProcessNode(nextConsumerNode) && explicitOccupied)) {
+        if (
+          explicitPort
+          && flowPortsAreForegroundAliases(providerPort, explicitPort)
+          && !(isMarketProcessNode(nextConsumerNode) && explicitOccupied)
+        ) {
           targetHandle = explicitConsumerHandle ?? undefined;
           nextConsumerNode = ensureNodePortVisibleByFlow(nextConsumerNode, "input", providerPort.flowUuid, explicitPort.id);
         }
@@ -2679,7 +2694,9 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
 
       const targetPortId = parseHandlePortId(targetHandle, "in:");
       const targetPort =
-        (targetPortId && nextConsumerNode.data.inputs.find((p) => p.id === targetPortId && p.flowUuid === providerPort.flowUuid)) ||
+        (targetPortId && nextConsumerNode.data.inputs.find(
+          (p) => p.id === targetPortId && flowPortsAreForegroundAliases(providerPort, p),
+        )) ||
         nextConsumerNode.data.inputs.find((p) => p.flowUuid === providerPort.flowUuid);
       if (!targetPort) {
         return { connectionHint: RULE_HINTS.targetNoMatchingInputCanceled };
@@ -2786,6 +2803,9 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
           type: providerPort.type,
           allocation: "physical",
           dbMapping: "",
+          consumerFlowUuid: targetPort.flowUuid === providerPort.flowUuid ? undefined : targetPort.flowUuid,
+          providerUnit: providerPort.unit,
+          consumerUnit: targetPort.unit,
         },
       };
 
