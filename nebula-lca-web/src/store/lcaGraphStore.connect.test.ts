@@ -61,7 +61,7 @@ describe("manual foreground connection", () => {
     });
   });
 
-  it("rejects an explicitly selected port when the Flow UUID differs", () => {
+  it("creates a new matching input instead of reusing a same-name port with another UUID", () => {
     useLcaGraphStore.getState().onConnect({
       source: "provider",
       target: "consumer",
@@ -69,11 +69,15 @@ describe("manual foreground connection", () => {
       targetHandle: "in:consumer-input",
     });
 
-    const stateAfterConnect = useLcaGraphStore.getState();
-    expect(stateAfterConnect.nodes.find((node) => node.id === "consumer")?.data.inputs).toHaveLength(1);
-    expect(stateAfterConnect.pendingEdges).toHaveLength(0);
-    expect(stateAfterConnect.connectionHint).toContain("UUID");
+    const consumerInputs = useLcaGraphStore.getState().nodes.find((node) => node.id === "consumer")?.data.inputs ?? [];
+    expect(consumerInputs).toHaveLength(2);
+    expect(consumerInputs[0].flowUuid).toBe(consumerFlowUuid);
+    expect(consumerInputs[1].flowUuid).toBe(providerFlowUuid);
+
     useLcaGraphStore.getState().flushPendingEdges();
-    expect(useLcaGraphStore.getState().edges).toHaveLength(0);
+    const edge = useLcaGraphStore.getState().edges[0];
+    expect(edge?.data?.flowUuid).toBe(providerFlowUuid);
+    expect(edge?.data?.consumerFlowUuid).toBeUndefined();
+    expect(edge?.targetHandle).toBe(`in:${consumerInputs[1].id}`);
   });
 });

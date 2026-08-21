@@ -385,7 +385,6 @@ const RULE_HINTS = {
   marketSingleFlowOnly: `无法连线：市场过程只能处理单一中间流 UUID。`,
   marketInputRequiresProductSource: `无法连线：市场过程输入只能连接已定义为产品的来源端口。`,
   invalidFlowUuid: `无法连线：流 UUID 缺失或非法，请先从数据库引用中间流或基本流。`,
-  flowUuidMismatch: `无法连线：两端流 UUID 不一致。请使用同一条流，或先在天工数据平台修正流数据。`,
   targetNoMatchingInput: `目标过程不存在同 UUID 输入端口，是否自动创建？`,
   targetNoMatchingInputCanceled: `已取消连线：目标过程未创建同 UUID 输入端口。`,
 };
@@ -2585,9 +2584,6 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         (!isInputHandleId(explicitConsumerHandle) || (Boolean(explicitPortId) && explicitOccupied));
       let targetHandle: string | undefined;
       if (isInputHandleId(explicitConsumerHandle)) {
-        if (explicitPort && explicitPort.flowUuid !== providerPort.flowUuid) {
-          return { connectionHint: RULE_HINTS.flowUuidMismatch };
-        }
         if (explicitPort?.flowUuid === providerPort.flowUuid && !(isMarketProcessNode(nextConsumerNode) && explicitOccupied)) {
           targetHandle = explicitConsumerHandle ?? undefined;
           nextConsumerNode = ensureNodePortVisibleByFlow(nextConsumerNode, "input", providerPort.flowUuid, explicitPort.id);
