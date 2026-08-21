@@ -3292,10 +3292,10 @@ def test_tiangong_flow_refresh_rate_limit_429(client, monkeypatch):
     assert data["detail"]["code"] == "TIANGONG_RATE_LIMITED"
 
 
-def test_tiangong_flow_refresh_falls_back_to_local_uuid(client, monkeypatch):
-    """When no sync record exists, refresh should use local UUID as remote_id."""
-    account_id = _create_tiangong_account(client)
-    flow_uuid = "fallback-flow-uuid"
+def test_tiangong_flow_refresh_without_lineage_fails_closed(client, monkeypatch):
+    """A local Flow UUID must never be guessed as the remote identity."""
+    _create_tiangong_account(client)
+    flow_uuid = "flow-without-lineage"
 
     db = _db_module.SessionLocal()
     try:
@@ -3313,32 +3313,14 @@ def test_tiangong_flow_refresh_falls_back_to_local_uuid(client, monkeypatch):
     finally:
         db.close()
 
-    def fake_urlopen(req, timeout):  # noqa: ARG001
-        url = req.full_url
-        if "/auth/v1/token?grant_type=password" in url:
-            return _FakeSupabaseResponse({"access_token": _jwt(), "refresh_token": "rt", "expires_in": 3600, "token_type": "bearer"})
-        if "/rest/v1/flows" in url and flow_uuid in url:
-            return _FakeSupabaseResponse([{
-                "id": flow_uuid,
-                "name": "Fallback Flow",
-                "version": "1",
-                "default_unit": "kg",
-                "unit_group": "Units of mass",
-                "json": {"flowDataSet": {"flowInformation": {"dataSetInformation": {"common:name": "Fallback Flow"}}}},
-            }])
-        if "/rest/v1/flowproperties" in url:
-            return _FakeSupabaseResponse([_flowproperty_row()])
-        if "/rest/v1/unitgroups" in url:
-            return _FakeSupabaseResponse([_unitgroup_row()])
-        raise AssertionError(f"Unexpected URL {url}")
+    def unexpected_remote_call(*_args, **_kwargs):
+        raise AssertionError("remote Flow lookup must not run without exact sync lineage")
 
-    monkeypatch.setattr("app.services.data_platform_connectors.url_request.urlopen", fake_urlopen)
+    monkeypatch.setattr("app.services.data_platform_connectors.url_request.urlopen", unexpected_remote_call)
 
     response = client.post(f"/api/data-platforms/tiangong/flows/{flow_uuid}/refresh", json={})
-    assert response.status_code == 200, response.text
-    data = response.json()
-    assert data["flow_uuid"] == flow_uuid
-    assert data["remote_id"] == flow_uuid
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "TIANGONG_SYNC_LINEAGE_MISSING"
 
 
 # ======================================================================
