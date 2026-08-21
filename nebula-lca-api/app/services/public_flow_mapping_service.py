@@ -51,13 +51,26 @@ class PublicFlowMappingRegistry:
         if not public_mapping_contract_is_accepted(manifest, acceptance):
             raise ValueError("unsupported public flow-mapping package contract")
 
-        conversions = self._load_conversions(root / "data" / "unit-conversions.v1.json")
+        conversions_path = root / "data" / "unit-conversions.v1.json"
+        conversions = self._load_conversions(conversions_path)
         self.intermediate = self._load_scope(root, manifest, "intermediate", conversions)
         self.elementary = self._load_scope(root, manifest, "elementary", conversions)
         self.root = root
         self.package_id = "nebula-flow-mapping"
         self.package_version = str(manifest["dataset_version"])
-        self.package_hash = hashlib.sha256(manifest_raw).hexdigest()
+        content_identity = {
+            "dataset_version": manifest["dataset_version"],
+            "mapping_direction": manifest["mapping_direction"],
+            "intermediate_sha256": manifest["intermediate"]["sha256"],
+            "elementary_sha256": manifest["elementary"]["sha256"],
+            "unit_conversions_sha256": hashlib.sha256(conversions_path.read_bytes()).hexdigest(),
+        }
+        self.package_hash = hashlib.sha256(json.dumps(
+            content_identity,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")).hexdigest()
         self.manifest = manifest
 
     @staticmethod

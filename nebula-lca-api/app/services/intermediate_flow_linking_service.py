@@ -403,6 +403,33 @@ def repair_legacy_intermediate_flow_links(db: Session, graph: HybridGraph) -> li
                 "updated_edges": updated_edges,
             })
 
+    # A package's publication metadata may change without changing any mapping
+    # row. Refresh only the content fingerprint when every other piece of the
+    # persisted builtin evidence still validates against the current rule.
+    for node in graph.nodes:
+        for port in node.inputs:
+            link = port.intermediate_flow_link
+            if (
+                link is None
+                or link.status not in {"auto", "user_confirmed"}
+                or link.mapping_level not in {"L1", "L2"}
+                or link.rule_origin != "builtin"
+            ):
+                continue
+            resolution, issue = resolve_intermediate_flow(
+                db,
+                port.flowUuid,
+                source_namespace=port.flow_source_namespace,
+                source_version=port.flow_version,
+                source_unit=port.unit,
+                source_unit_group=port.unitGroup,
+            )
+            if issue or resolution is None or link.package_hash == resolution.package_hash:
+                continue
+            refreshed = link.model_copy(update={"package_hash": resolution.package_hash})
+            if validate_intermediate_flow_link(db, port.flowUuid, refreshed, port=port) is None:
+                port.intermediate_flow_link = refreshed
+
     for node in graph.nodes:
         for port in node.inputs:
             link = port.intermediate_flow_link
@@ -717,14 +744,12 @@ def validate_intermediate_flow_link(
             expected.rule_id,
             expected.package_id,
             expected.package_version,
-            expected.package_hash,
         )
         actual_fields = (
             link.target_flow_uuid,
             link.rule_id,
             link.package_id,
             link.package_version,
-            link.package_hash,
         )
         if actual_fields != expected_fields or abs(link.amount_factor - expected.amount_factor) > 1e-12:
             return f"{link.mapping_level}_EVIDENCE_MISMATCH"
@@ -747,6 +772,8 @@ def validate_intermediate_flow_link(
             or tuple(link.warnings) != expected.warnings
         ):
             return "L2_EVIDENCE_MISMATCH"
+        if link.package_hash != expected.package_hash:
+            return "PACKAGE_HASH_DRIFT"
         return None
 
     if link.mapping_level == "L3":
