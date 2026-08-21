@@ -414,7 +414,7 @@ def test_reviewed_factor_uses_current_catalog_unit_spelling(db):
     assert _validate_resolution_records(source, target, resolution) is None
 
 
-def test_alias_edge_preserves_consumer_uuid_and_requires_current_l1_evidence(db):
+def test_alias_edge_preserves_consumer_uuid_and_refreshes_metadata_only_package_hash(db):
     row = _seed_first_l1_pair(db)
     graph = _graph(row)
     validate_graph_contract(graph)
@@ -425,10 +425,32 @@ def test_alias_edge_preserves_consumer_uuid_and_requires_current_l1_evidence(db)
     assert analyze_handle_consistency(graph)["ok"] is True
 
     stale = _graph(row, package_hash="stale")
+    repairs = repair_legacy_intermediate_flow_links(db, stale)
+
+    assert len(repairs) == 1
+    assert stale.nodes[1].inputs[0].intermediate_flow_link is not None
+    assert (
+        stale.nodes[1].inputs[0].intermediate_flow_link.package_hash
+        == get_intermediate_flow_link_registry().package_hash
+    )
+    validate_graph_intermediate_flow_links(db, stale)
+
+
+def test_package_hash_refresh_does_not_accept_changed_mapping_evidence(db):
+    row = _seed_first_l1_pair(db)
+    stale = _graph(row, package_hash="stale")
+    link = stale.nodes[1].inputs[0].intermediate_flow_link
+    assert link is not None
+    stale.nodes[1].inputs[0].intermediate_flow_link = link.model_copy(update={
+        "target_flow_uuid": "different-target",
+    })
+
+    repair_legacy_intermediate_flow_links(db, stale)
+
     with pytest.raises(HTTPException) as exc:
         validate_graph_intermediate_flow_links(db, stale)
     assert exc.value.detail["code"] == "INVALID_INTERMEDIATE_FLOW_LINK"
-    assert exc.value.detail["evidence"][0]["reason"] == "L1_EVIDENCE_MISMATCH"
+    assert exc.value.detail["evidence"][0]["reason"] == "TARGET_FLOW_NOT_FOUND"
 
 
 def test_legacy_builtin_link_inherits_explicit_port_flow_version(db):
@@ -775,6 +797,21 @@ def test_resolve_and_provider_apis_keep_provider_choice_explicit():
         })
         assert resolved.status_code == 200
         assert resolved.json()["items"][0]["status"] == "L1"
+        explicit = dict(resolved.json()["items"][0]["resolution"])
+        explicit.update({"status": "auto", "package_hash": "legacy-manifest-hash"})
+        metadata_drift = client.post("/api/intermediate-flow-links/resolve-batch", json={
+            "items": [{
+                "port_id": "input-1",
+                "flow_uuid": row["source_flow_uuid"],
+                "direction": "input",
+                "exchange_type": "technosphere",
+                "unit": row["source_unit"],
+                "unit_group": row["source_unit_group"],
+                "intermediate_flow_link": explicit,
+            }],
+        })
+        assert metadata_drift.status_code == 200
+        assert metadata_drift.json()["items"][0]["status"] == "explicit"
 
         providers = client.get(
             "/api/intermediate-flow-links/providers",

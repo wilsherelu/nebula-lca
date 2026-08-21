@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import shutil
+
 from app.services.public_flow_mapping_service import (
     PublicFlowMappingRegistry,
     apply_elementary_mappings_to_snapshot,
@@ -14,6 +17,20 @@ def test_public_mapping_package_is_complete_and_verified():
     assert len(registry.elementary) == 9764
     assert registry.manifest["intermediate"]["mapping_levels"] == {"L1": 147, "L2": 1232}
     assert registry.manifest["elementary"]["mapping_levels"] == {"L1": 6354, "L2": 3410}
+
+
+def test_public_mapping_content_hash_ignores_release_metadata_only_changes(tmp_path):
+    registry = PublicFlowMappingRegistry()
+    copied = tmp_path / "mapping"
+    shutil.copytree(registry.root, copied)
+    manifest_path = copied / "MANIFEST.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["release_date"] = "2026-08-22"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    refreshed = PublicFlowMappingRegistry(copied)
+
+    assert refreshed.package_hash == registry.package_hash
 
 
 def test_public_intermediate_mapping_preserves_energy_conversion():

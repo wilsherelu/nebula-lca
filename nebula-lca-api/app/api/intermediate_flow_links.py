@@ -142,7 +142,10 @@ def resolve_batch(payload: ResolveBatchRequest, db: Session = Depends(get_db)) -
                 issue = validate_intermediate_flow_link(db, item.flow_uuid, parsed_link, port=request_port)
             except (TypeError, ValueError) as exc:
                 issue = f"INVALID_EXPLICIT_LINK: {exc}"
-            if issue:
+            if issue == "PACKAGE_HASH_DRIFT":
+                results.append({**base, "status": "explicit", "resolution": explicit, "l2_candidates": []})
+                counts["explicit"] += 1
+            elif issue:
                 results.append({**base, "status": "blocked", "reason": issue})
                 counts["blocked"] += 1
             else:
