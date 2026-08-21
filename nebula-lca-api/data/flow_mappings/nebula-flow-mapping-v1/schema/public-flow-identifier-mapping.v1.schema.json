@@ -1,5 +1,5 @@
 {
-  "$id": "https://nebula-flow-mapping.invalid/schema/public-flow-identifier-mapping.v1.schema.json",
+  "$id": "https://raw.githubusercontent.com/wilsherelu/nebula-flow-mapping/v1.0.0/schema/public-flow-identifier-mapping.v1.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {

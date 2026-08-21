@@ -2,8 +2,6 @@
 
 ## 1.0.0 - 2026-08-05
 
-- Published 1,379 accepted intermediate-flow UUID relationships.
-- Published 9,764 accepted elementary-flow UUID relationships.
-- Normalized the combined public L1 graph to bilateral uniqueness.
+- Published 1,379 intermediate-flow UUID relationships: 147 L1 and 1,232 L2.
+- Published 9,764 elementary-flow UUID relationships: 6,354 L1 and 3,410 L2.
 - Added two independently maintained standard unit-conversion rules.
-- Excluded L3 candidates and all database content, emission factors, LCIA factors, and private audit evidence.

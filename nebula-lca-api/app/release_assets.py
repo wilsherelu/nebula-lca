@@ -8,6 +8,16 @@ from pathlib import Path
 
 
 _STABLE_VERSION = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
+_PUBLIC_MANIFEST_KEYS = {
+    "dataset_version", "elementary", "intermediate", "license",
+    "mapping_direction", "release_date", "schema_version", "source_compatibility",
+}
+_PUBLIC_SCOPE_KEYS = {"file", "mapping_count", "mapping_levels", "sha256"}
+_PUBLIC_ACCEPTANCE_KEYS = {
+    "dataset_version", "elementary_mapping_count", "intermediate_mapping_count",
+    "l1_bilateral_uniqueness", "status", "tiangong_uuid_uniqueness_per_scope",
+    "total_mapping_count",
+}
 
 
 def stable_release_version(value: object) -> tuple[int, int, int] | None:
@@ -15,6 +25,55 @@ def stable_release_version(value: object) -> tuple[int, int, int] | None:
     if match is None:
         return None
     return tuple(int(part) for part in match.groups())
+
+
+def public_mapping_contract_is_accepted(manifest: object, acceptance: object) -> bool:
+    """Validate the frozen public-package contract without private audit fields."""
+    if not isinstance(manifest, dict) or not isinstance(acceptance, dict):
+        return False
+    if set(manifest) != _PUBLIC_MANIFEST_KEYS or set(acceptance) != _PUBLIC_ACCEPTANCE_KEYS:
+        return False
+    version = stable_release_version(manifest.get("dataset_version"))
+    if version is None or acceptance.get("dataset_version") != manifest.get("dataset_version"):
+        return False
+    if manifest.get("schema_version") != "nebula-flow-mapping-release.v1":
+        return False
+    if manifest.get("mapping_direction") != "TIANGONG_TO_ECOINVENT":
+        return False
+    if manifest.get("license") != "CC-BY-4.0":
+        return False
+    if manifest.get("source_compatibility") != {"ecoinvent_release": "3.11"}:
+        return False
+    if acceptance.get("status") != "passed":
+        return False
+    if acceptance.get("l1_bilateral_uniqueness") is not True:
+        return False
+    if acceptance.get("tiangong_uuid_uniqueness_per_scope") is not True:
+        return False
+
+    counts: dict[str, int] = {}
+    for scope in ("intermediate", "elementary"):
+        contract = manifest.get(scope)
+        if not isinstance(contract, dict) or set(contract) != _PUBLIC_SCOPE_KEYS:
+            return False
+        try:
+            count = int(contract.get("mapping_count", -1))
+        except (TypeError, ValueError):
+            return False
+        levels = contract.get("mapping_levels")
+        if count < 0 or not isinstance(levels, dict) or set(levels) != {"L1", "L2"}:
+            return False
+        if any(not isinstance(levels[level], int) or levels[level] < 0 for level in ("L1", "L2")):
+            return False
+        if levels["L1"] + levels["L2"] != count:
+            return False
+        counts[scope] = count
+
+    return (
+        acceptance.get("intermediate_mapping_count") == counts["intermediate"]
+        and acceptance.get("elementary_mapping_count") == counts["elementary"]
+        and acceptance.get("total_mapping_count") == sum(counts.values())
+    )
 
 
 def select_latest_public_mapping_root(parent: Path) -> Path:
@@ -28,19 +87,10 @@ def select_latest_public_mapping_root(parent: Path) -> Path:
             acceptance = json.loads((root / "ACCEPTANCE.json").read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):
             continue
+        if not public_mapping_contract_is_accepted(manifest, acceptance):
+            continue
         version = stable_release_version(manifest.get("dataset_version"))
-        if version is None or acceptance.get("dataset_version") != manifest.get("dataset_version"):
-            continue
-        if manifest.get("schema_version") != "nebula-flow-mapping-release.v1":
-            continue
-        if manifest.get("mapping_direction") != "TIANGONG_TO_ECOINVENT":
-            continue
-        if manifest.get("forbidden_content_included") is not False or manifest.get("l3_included") is not False:
-            continue
-        if acceptance.get("status") != "passed" or acceptance.get("l3_included") is not False:
-            continue
-        if int(acceptance.get("forbidden_public_fields", -1)) != 0:
-            continue
+        assert version is not None
         candidates.append((version, root))
     if not candidates:
         raise FileNotFoundError(f"no accepted public flow-mapping release under {parent}")
