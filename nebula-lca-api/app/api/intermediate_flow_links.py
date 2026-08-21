@@ -12,14 +12,15 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..flow_unit_semantics import _unit_group_key
-from ..models import FlowRecord, IntermediateFlowLinkRule
-from ..schemas import IntermediateFlowLink
+from ..models import FlowRecord, IntermediateFlowLinkRule, IntermediateFlowLinkRuleVersion
+from ..schemas import FlowPort, IntermediateFlowLink
 from ..services.intermediate_flow_linking_service import (
     get_intermediate_flow_link_registry,
     deterministic_default_unit_factor,
     list_l2_candidates,
     list_provider_candidates,
     resolve_intermediate_flow,
+    resolve_source_flow_context,
     validate_intermediate_flow_link,
 )
 api_router = APIRouter(prefix="/api/intermediate-flow-links", tags=["intermediate-flow-links"])
@@ -32,6 +33,9 @@ class ResolvePortRequest(BaseModel):
     direction: Literal["input", "output"] = "input"
     exchange_type: Literal["technosphere", "biosphere"] = "technosphere"
     unit: str | None = None
+    unit_group: str | None = None
+    flow_source_namespace: str | None = None
+    flow_version: str | None = None
     intermediate_flow_link: dict[str, Any] | None = None
 
 
@@ -46,11 +50,19 @@ class UserRuleCreateRequest(BaseModel):
     target_flow_uuid: str
     amount_factor: float | None = Field(default=None, gt=0)
     mapping_reason: str = Field(default="", max_length=1024)
+    source_unit: str | None = None
+    source_unit_group: str | None = None
+    source_flow_namespace: str | None = None
+    source_flow_version: str | None = None
 
 
 class ConfirmL2Request(BaseModel):
     source_flow_uuid: str
     rule_id: str
+    source_unit: str | None = None
+    source_unit_group: str | None = None
+    source_flow_namespace: str | None = None
+    source_flow_version: str | None = None
 
 
 def _flow_or_404(db: Session, flow_uuid: str) -> FlowRecord:
@@ -63,9 +75,10 @@ def _flow_or_404(db: Session, flow_uuid: str) -> FlowRecord:
     return row
 
 
-def _rule_payload(db: Session, row: IntermediateFlowLinkRule) -> dict[str, Any]:
+def _rule_payload(db: Session, row: IntermediateFlowLinkRule | IntermediateFlowLinkRuleVersion) -> dict[str, Any]:
     source = db.get(FlowRecord, row.source_flow_uuid)
     target = db.get(FlowRecord, row.target_flow_uuid)
+    versioned = isinstance(row, IntermediateFlowLinkRuleVersion)
     return {
         "id": row.id,
         "source_flow_uuid": row.source_flow_uuid,
@@ -73,8 +86,10 @@ def _rule_payload(db: Session, row: IntermediateFlowLinkRule) -> dict[str, Any]:
         "amount_factor": row.amount_factor,
         "source_unit": row.source_unit,
         "target_unit": row.target_unit,
-        "source_unit_group": source.unit_group if source is not None else None,
-        "target_unit_group": target.unit_group if target is not None else None,
+        "source_unit_group": row.source_unit_group if versioned else (source.unit_group if source is not None else None),
+        "target_unit_group": row.target_unit_group if versioned else (target.unit_group if target is not None else None),
+        "source_flow_namespace": row.source_namespace if versioned else None,
+        "source_flow_version": row.source_version if versioned else None,
         "mapping_level": row.mapping_level,
         "mapping_reason": row.mapping_reason,
         "rule_origin": row.rule_origin,
@@ -112,7 +127,19 @@ def resolve_batch(payload: ResolveBatchRequest, db: Session = Depends(get_db)) -
         if explicit and explicit.get("status") in {"auto", "user_confirmed"}:
             try:
                 parsed_link = IntermediateFlowLink.model_validate(explicit)
-                issue = validate_intermediate_flow_link(db, item.flow_uuid, parsed_link)
+                request_port = FlowPort(
+                    id=item.port_id or "resolve-port",
+                    flowUuid=item.flow_uuid,
+                    flowSourceNamespace=item.flow_source_namespace,
+                    flowVersion=item.flow_version,
+                    name=item.flow_uuid,
+                    unit=item.unit or parsed_link.source_unit,
+                    unitGroup=item.unit_group,
+                    amount=0,
+                    type=item.exchange_type,
+                    direction=item.direction,
+                )
+                issue = validate_intermediate_flow_link(db, item.flow_uuid, parsed_link, port=request_port)
             except (TypeError, ValueError) as exc:
                 issue = f"INVALID_EXPLICIT_LINK: {exc}"
             if issue:
@@ -127,7 +154,14 @@ def resolve_batch(payload: ResolveBatchRequest, db: Session = Depends(get_db)) -
             results.append({**base, "status": "blocked", "reason": "SOURCE_FLOW_NOT_FOUND"})
             counts["blocked"] += 1
             continue
-        resolution, issue = resolve_intermediate_flow(db, item.flow_uuid)
+        resolution, issue = resolve_intermediate_flow(
+            db,
+            item.flow_uuid,
+            source_namespace=item.flow_source_namespace,
+            source_version=item.flow_version,
+            source_unit=item.unit,
+            source_unit_group=item.unit_group,
+        )
         if issue:
             results.append({**base, "status": "blocked", "reason": issue})
             counts["blocked"] += 1
@@ -161,7 +195,14 @@ def resolve_batch(payload: ResolveBatchRequest, db: Session = Depends(get_db)) -
 
 @api_router.post("/confirm-l2")
 def confirm_l2(payload: ConfirmL2Request, db: Session = Depends(get_db)) -> dict[str, Any]:
-    resolution, issue = resolve_intermediate_flow(db, payload.source_flow_uuid)
+    resolution, issue = resolve_intermediate_flow(
+        db,
+        payload.source_flow_uuid,
+        source_namespace=payload.source_flow_namespace,
+        source_version=payload.source_flow_version,
+        source_unit=payload.source_unit,
+        source_unit_group=payload.source_unit_group,
+    )
     if issue:
         raise HTTPException(status_code=422, detail={"code": issue})
     if resolution is None or resolution.mapping_level != "L2" or resolution.rule_origin != "builtin":
@@ -197,12 +238,27 @@ def list_user_rules(
     if not include_inactive:
         query = query.filter(IntermediateFlowLinkRule.status == "active")
     rows = query.order_by(IntermediateFlowLinkRule.updated_at.desc()).all()
+    versioned_query = db.query(IntermediateFlowLinkRuleVersion)
+    if not include_inactive:
+        versioned_query = versioned_query.filter(IntermediateFlowLinkRuleVersion.status == "active")
+    rows.extend(versioned_query.order_by(IntermediateFlowLinkRuleVersion.updated_at.desc()).all())
+    rows.sort(key=lambda item: item.updated_at, reverse=True)
     return {"items": [_rule_payload(db, row) for row in rows], "total": len(rows)}
 
 
 @api_router.post("/user-rules", status_code=201)
 def create_user_rule(payload: UserRuleCreateRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
-    source = _flow_or_404(db, payload.source_flow_uuid)
+    context, context_issue = resolve_source_flow_context(
+        db,
+        flow_uuid=payload.source_flow_uuid,
+        source_namespace=payload.source_flow_namespace,
+        source_version=payload.source_flow_version,
+        source_unit=payload.source_unit,
+        source_unit_group=payload.source_unit_group,
+    )
+    if context_issue or context is None:
+        raise HTTPException(status_code=422, detail={"code": context_issue or "SOURCE_FLOW_VERSION_NOT_FOUND"})
+    source = context.record
     target = _flow_or_404(db, payload.target_flow_uuid)
     source_type = "waste" if "waste" in source.flow_type.casefold() else "product"
     target_type = "waste" if "waste" in target.flow_type.casefold() else "product"
@@ -226,20 +282,26 @@ def create_user_rule(payload: UserRuleCreateRequest, db: Session = Depends(get_d
             )
         amount_factor = payload.amount_factor
     existing = (
-        db.query(IntermediateFlowLinkRule)
+        db.query(IntermediateFlowLinkRuleVersion)
         .filter(
-            IntermediateFlowLinkRule.source_flow_uuid == source.flow_uuid,
-            IntermediateFlowLinkRule.target_flow_uuid == target.flow_uuid,
+            IntermediateFlowLinkRuleVersion.source_namespace == context.namespace,
+            IntermediateFlowLinkRuleVersion.source_flow_uuid == payload.source_flow_uuid,
+            IntermediateFlowLinkRuleVersion.source_version == context.version,
+            IntermediateFlowLinkRuleVersion.target_flow_uuid == target.flow_uuid,
         )
         .first()
     )
     if existing is None:
-        existing = IntermediateFlowLinkRule(
+        existing = IntermediateFlowLinkRuleVersion(
             id=str(uuid.uuid4()),
-            source_flow_uuid=source.flow_uuid,
+            source_flow_uuid=payload.source_flow_uuid,
+            source_namespace=context.namespace,
+            source_version=context.version,
             target_flow_uuid=target.flow_uuid,
             source_unit=source.default_unit,
+            source_unit_group=str(source.unit_group or ""),
             target_unit=target.default_unit,
+            target_unit_group=str(target.unit_group or ""),
         )
         db.add(existing)
     existing.amount_factor = amount_factor
@@ -257,7 +319,7 @@ def create_user_rule(payload: UserRuleCreateRequest, db: Session = Depends(get_d
 
 @api_router.delete("/user-rules/{rule_id}")
 def deactivate_user_rule(rule_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
-    row = db.get(IntermediateFlowLinkRule, rule_id)
+    row = db.get(IntermediateFlowLinkRuleVersion, rule_id) or db.get(IntermediateFlowLinkRule, rule_id)
     if row is None:
         raise HTTPException(status_code=404, detail={"code": "RULE_NOT_FOUND"})
     row.status = "inactive"

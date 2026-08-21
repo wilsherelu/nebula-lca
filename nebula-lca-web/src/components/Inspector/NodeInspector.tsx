@@ -14,6 +14,7 @@ import { BackgroundLciAssociationSection } from "./BackgroundLciAssociationSecti
 import type { SourcePolicy } from "../ProjectManagement/ProjectManagement";
 import { useTianGongFlowRefresh } from "../../services/tiangongFlowRefresh";
 import { getLocalizedText } from "../../utils/localizedText";
+import { FlowPickerDialog, type FlowPickerCatalogFlow } from "./FlowPickerDialog";
 
 const DEV_NODE_DEBUG = Boolean(import.meta.env.DEV);
 const debugNode = (scope: string, payload?: unknown) => {
@@ -39,21 +40,7 @@ type TabKey = "external_in" | "external_out";
 type FlowTarget = "in_intermediate" | "in_elementary" | "out_intermediate" | "out_elementary";
 type AssocDirection = "input" | "output";
 
-type CatalogFlow = {
-  flow_uuid: string;
-  flow_name: string;
-  flow_name_en?: string | null;
-  flow_type: string;
-  default_unit: string;
-  unit_group: string;
-  compartment?: string | null;
-  source?: string | null;
-  is_custom?: boolean;
-  conversion_compatible?: boolean | null;
-  conversion_mode?: "bidirectional" | "canonical" | "one_way_canonicalization" | null;
-  conversion_target_flow_uuid?: string | null;
-  conversion_package_version?: string | null;
-};
+type CatalogFlow = FlowPickerCatalogFlow;
 
 type UnitDefinition = {
   unit_group: string;
@@ -152,13 +139,6 @@ function isElementaryFlow(flow: CatalogFlow): boolean {
   return t.includes("elementary") || t.includes("basic") || t.includes("biosphere");
 }
 
-function getCatalogFlowDisplayName(flow: CatalogFlow, uiLanguage: "zh" | "en"): string {
-  if (uiLanguage === "en") {
-    return String(flow.flow_name_en ?? "").trim() || flow.flow_name;
-  }
-  return flow.flow_name;
-}
-
 function flowSourceGroup(flow: CatalogFlow): "ecoinvent" | "custom" | "tiangong" | "unknown" {
   const source = String(flow.source ?? "").trim().toLowerCase();
   if (source.startsWith("ecoinvent")) {
@@ -249,6 +229,8 @@ function toPortFromReference(flow: CatalogFlow, direction: "input" | "output", t
   return {
     id: `${direction}_${suffix}`,
     flowUuid: flow.flow_uuid,
+    flowSourceNamespace: String(flow.source_namespace ?? "").trim() || undefined,
+    flowVersion: String(flow.source_version ?? "").trim() || undefined,
     name: flow.flow_name,
     flowNameEn: String(flow.flow_name_en ?? "").trim() || undefined,
     unit: flow.default_unit || "kg",
@@ -556,7 +538,6 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
   });
 
   const uiLanguage = useLcaGraphStore((state) => state.uiLanguage);
-  const zh = uiLanguage === "zh";
   const tiangongFlowRefresh = useTianGongFlowRefresh({
     language: uiLanguage,
     onSuccess: (result) => {
@@ -1590,7 +1571,11 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
                 (row.compartment as string | null | undefined) ??
                 (row.category as string | null | undefined) ??
                 null,
+              subcompartment: (row.subcompartment as string | null | undefined) ?? null,
               source: (row.source as string | null | undefined) ?? null,
+              source_namespace: (row.source_namespace as string | null | undefined) ?? null,
+              source_version: (row.source_version as string | null | undefined) ?? null,
+              version_label: (row.version_label as string | null | undefined) ?? null,
               is_custom: Boolean(row.is_custom),
               conversion_compatible: Boolean(row.conversion_compatible),
               conversion_mode: (row.conversion_mode as CatalogFlow["conversion_mode"]) ?? null,
@@ -2654,176 +2639,33 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
       )}
 
       {flowPicker.open && (
-        <div className="overlay-modal">
-          <div className="overlay-panel flow-picker-panel">
-            <div className="overlay-head">
-              <strong>{flowPicker.target?.includes("elementary") ? t("引用基本流", "Use Elementary Flow") : t("引用中间流", "Use Intermediate Flow")}</strong>
-              <button type="button" className="drawer-close-btn" onClick={() => setFlowPicker({ open: false, target: null })}>
-                {t("关闭", "Close")}
-              </button>
-            </div>
-            <div className="overlay-filters">
-              <div className="search-row flow-picker-search-row">
-                <input
-                  value={flowSearchInput}
-                  onChange={(e) => setFlowSearchInput(e.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      applyFlowSearch();
-                    }
-                  }}
-                  placeholder={t("输入流名称检索", "Search flow name")}
-                />
-                <select
-                  value={flowCategoryLevel1}
-                  onChange={(event) => {
-                    setFlowCategoryLevel1(event.target.value);
-                    setFlowPage(1);
-                  }}
-                >
-                  <option value="">{t("全部分类", "All Categories")}</option>
-                  {flowCategoryOptions.map((item) => (
-                    <option key={item.category} value={item.category}>
-                      {`${item.category} (${item.count})`}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={flowSourceFilter}
-                  onChange={(event) => {
-                    setFlowSourceFilter(event.target.value);
-                    setFlowPage(1);
-                  }}
-                >
-                  <option value="">{t("全部来源", "All Sources")}</option>
-                  <option value="ecoinvent">ecoinvent</option>
-                  <option value="tiangong">TIDAS/EF</option>
-                  <option value="custom">custom</option>
-                </select>
-                {flowPicker.target?.includes("elementary") && (
-                  <label className="flow-picker-compatible-toggle">
-                    <input
-                      type="checkbox"
-                      checked={flowConversionCompatibleOnly}
-                      onChange={(event) => {
-                        setFlowConversionCompatibleOnly(event.target.checked);
-                        setFlowCategoryLevel1("");
-                        setFlowPage(1);
-                      }}
-                    />
-                    <span>{t("仅显示 EF/ecoinvent 可转换流", "Convertible EF/ecoinvent only")}</span>
-                  </label>
-                )}
-                <button type="button" className="search-btn" onClick={applyFlowSearch}>
-                  {t("检索", "Search")}
-                </button>
-                {!flowPicker.target?.includes("elementary") && (
-                  <button
-                    type="button"
-                    className="search-btn flow-picker-create-btn"
-                    onClick={() => {
-                      setFlowPicker({ open: false, target: null });
-                      setCreateFlowDialog({ open: true, target: flowPicker.target });
-                    }}
-                  >
-                    {t("+ 新建自定义流", "+ Create Custom Flow")}
-                  </button>
-                )}
-              </div>
-            </div>
-            <div className="overlay-table">
-              {loadingFlows && <div className="table-empty">{t("加载中...", "Loading...")}</div>}
-              {!loadingFlows && flowLoadError && <div className="table-empty">{flowLoadError}</div>}
-              {!loadingFlows && !flowLoadError && (
-                <table>
-                  <thead>
-                    <tr>
-                      <th className="flow-picker-type-col">{t("类型", "Type")}</th>
-                      <th className="flow-picker-name-col">{t("流名称", "Flow Name")}</th>
-                      <th className="flow-picker-unit-col">{t("单位", "Unit")}</th>
-                      <th className="flow-picker-category-col">{t("分类", "Category")}</th>
-                      <th className="flow-picker-source-col">{t("来源", "Source")}</th>
-                      <th className="flow-picker-action-col">{t("操作", "Action")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredFlows.map((flow) => (
-                      <tr key={flow.flow_uuid}>
-                        <td className="flow-picker-type-cell">{displayFlowType(flow.flow_type)}</td>
-                        <td className="flow-picker-name-cell" title={getCatalogFlowDisplayName(flow, uiLanguage)}>
-                          <span>{getCatalogFlowDisplayName(flow, uiLanguage)}</span>
-                          {flow.conversion_compatible && (
-                            <span
-                              className={`flow-conversion-badge flow-conversion-badge-${flow.conversion_mode ?? "canonical"}`}
-                              title={`${t("EF 目标", "EF target")}: ${flow.conversion_target_flow_uuid ?? flow.flow_uuid}`}
-                            >
-                              {flow.conversion_mode === "bidirectional"
-                                ? t("双向", "Bidirectional")
-                                : flow.conversion_mode === "one_way_canonicalization"
-                                  ? t("单向规范化", "One-way")
-                                  : t("EF 规范流", "Canonical EF")}
-                            </span>
-                          )}
-                        </td>
-                        <td>{flow.default_unit}</td>
-                        <td className="flow-picker-category-cell" title={flow.compartment || "-"}>
-                          {flow.compartment || "-"}
-                        </td>
-                        <td className="flow-picker-source-cell" title={flow.source || "unknown"}>
-                          {flow.source || "unknown"}
-                        </td>
-                        <td className="flow-picker-action-cell">
-                          {flow.source === "tiangong" && (
-                            <button
-                              type="button"
-                              className="pm-link-btn"
-                              title={zh ? "从天工平台刷新该 Flow" : "Refresh this flow from TianGong platform"}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void tiangongFlowRefresh.refresh(flow.flow_uuid);
-                              }}
-                              disabled={tiangongFlowRefresh.busyFlowUuid !== ""}
-                              aria-label={zh ? "刷新 Flow" : "Refresh flow"}
-                            >
-                              {tiangongFlowRefresh.busyFlowUuid === flow.flow_uuid
-                                ? (zh ? "刷新中" : "Refreshing")
-                                : (zh ? "刷新" : "Refresh")}
-                            </button>
-                          )}
-                          <button type="button" className="pm-link-btn" onClick={() => addCatalogFlow(flow)}>
-                            {t("引用", "Use")}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-            {!loadingFlows && !flowLoadError && (
-              <div className="overlay-pagination">
-                <span>{uiLanguage === "zh" ? `第 ${flowPage} / ${totalPages} 页，共 ${flowTotal} 条` : `Page ${flowPage} / ${totalPages}, total ${flowTotal}`}</span>
-                <div className="overlay-pagination-actions">
-                  <button type="button" className="ghost-btn" disabled={flowPage <= 1} onClick={() => setFlowPage(1)}>
-                    {t("首页", "First")}
-                  </button>
-                  <button type="button" className="ghost-btn" disabled={flowPage <= 1} onClick={() => setFlowPage((prev) => Math.max(1, prev - 1))}>
-                    {t("上一页", "Prev")}
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost-btn"
-                    disabled={flowPage >= totalPages}
-                    onClick={() => setFlowPage((prev) => Math.min(totalPages, prev + 1))}
-                  >
-                    {t("下一页", "Next")}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+        <FlowPickerDialog
+          language={uiLanguage}
+          elementary={Boolean(flowPicker.target?.includes("elementary"))}
+          flows={filteredFlows}
+          loading={loadingFlows}
+          error={flowLoadError}
+          searchInput={flowSearchInput}
+          category={flowCategoryLevel1}
+          categories={flowCategoryOptions}
+          source={flowSourceFilter}
+          compatibleOnly={flowConversionCompatibleOnly}
+          page={flowPage}
+          totalPages={totalPages}
+          total={flowTotal}
+          refreshingFlowUuid={tiangongFlowRefresh.busyFlowUuid}
+          onClose={() => setFlowPicker({ open: false, target: null })}
+          onSearchInputChange={setFlowSearchInput}
+          onSearch={applyFlowSearch}
+          onCategoryChange={(value) => { setFlowCategoryLevel1(value); setFlowPage(1); }}
+          onSourceChange={(value) => { setFlowSourceFilter(value); setFlowPage(1); }}
+          onCompatibleOnlyChange={(value) => { setFlowConversionCompatibleOnly(value); setFlowCategoryLevel1(""); setFlowPage(1); }}
+          onCreate={() => { setFlowPicker({ open: false, target: null }); setCreateFlowDialog({ open: true, target: flowPicker.target }); }}
+          onUse={addCatalogFlow}
+          onRefresh={(flowUuid) => { void tiangongFlowRefresh.refresh(flowUuid); }}
+          onPageChange={setFlowPage}
+          displayFlowType={displayFlowType}
+        />
       )}
 
       {assocDialog.open && assocDialog.port && (

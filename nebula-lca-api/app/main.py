@@ -4283,6 +4283,11 @@ def run_solver_and_persist(
     payload: RunRequest,
     db: Session,
 ) -> tuple[str, str, dict, dict]:
+    from .services.calculation_integrity import (
+        collect_unlinked_positive_technosphere_inputs,
+        merge_calculation_issues,
+    )
+
     # Harden product flags at backend entry to avoid stale/null frontend payloads.
     normalize_graph_product_flags(payload.graph)
     normalize_same_flow_uuid_opposite_direction_ports(payload.graph)
@@ -4321,6 +4326,7 @@ def run_solver_and_persist(
             })
     flow_type_by_uuid = _solver_flow_type_by_uuid_cached(db)
     flow_source_by_uuid = _solver_flow_source_by_uuid_cached(db)
+    integrity_issues = collect_unlinked_positive_technosphere_inputs(payload.graph)
 
     compact_normalized_graph = _graph_with_solver_unit_defaults(
         db=db,
@@ -4337,6 +4343,11 @@ def run_solver_and_persist(
     )
     if hybrid_result is not None:
         solver_output = hybrid_result.solver_output
+        merged_summary, merged_issues = merge_calculation_issues(
+            solver_output.get("summary", {}),
+            solver_output.get("issues", []),
+            integrity_issues,
+        )
         process_index = solver_output.get("process_index", [])
         values = solver_output.get("values", [])
         product_result_index, product_unit_map, product_values = _build_product_result_view_from_graph(
@@ -4348,9 +4359,9 @@ def run_solver_and_persist(
             reference_unit_by_group=reference_unit_by_group,
         )
         solved = {
-            "summary": solver_output.get("summary", {}),
+            "summary": merged_summary,
             "lci_result": {
-                "issues": solver_output.get("issues", []),
+                "issues": merged_issues,
                 "lci_vector_runtime": solver_output.get("lci_vector_runtime", {}),
                 "missing_ef31_flow_uuids": solver_output.get("missing_ef31_flow_uuids", []),
                 "missing_ef31_flows": solver_output.get("missing_ef31_flows", []),
@@ -4395,6 +4406,11 @@ def run_solver_and_persist(
     )
     if direct_result is not None:
         solver_output = direct_result.solver_output
+        merged_summary, merged_issues = merge_calculation_issues(
+            solver_output.get("summary", {}),
+            solver_output.get("issues", []),
+            integrity_issues,
+        )
         process_index = solver_output.get("process_index", [])
         values = solver_output.get("values", [])
         product_result_index, product_unit_map, product_values = _build_product_result_view_from_graph(
@@ -4406,9 +4422,9 @@ def run_solver_and_persist(
             reference_unit_by_group=reference_unit_by_group,
         )
         solved = {
-            "summary": solver_output.get("summary", {}),
+            "summary": merged_summary,
             "lci_result": {
-                "issues": solver_output.get("issues", []),
+                "issues": merged_issues,
                 "lci_vector_runtime": solver_output.get("lci_vector_runtime", {}),
                 "missing_ef31_flow_uuids": solver_output.get("missing_ef31_flow_uuids", []),
                 "missing_ef31_flows": solver_output.get("missing_ef31_flows", []),
@@ -4476,6 +4492,11 @@ def run_solver_and_persist(
         raise HTTPException(status_code=502, detail=f"tiangong solver api failed: {exc}") from exc
 
     solver_output = adapter_result["solver_output"]
+    merged_summary, merged_issues = merge_calculation_issues(
+        solver_output.get("summary", {}),
+        solver_output.get("issues", []),
+        integrity_issues,
+    )
     snapshot_process_unit_map = _build_process_unit_map_from_snapshot(adapter_result.get("tiangong_like_input", {}))
     merged_process_unit_map = dict(snapshot_process_unit_map)
     for pid, meta in display_process_unit_map.items():
@@ -4506,9 +4527,9 @@ def run_solver_and_persist(
     )
 
     solved = {
-        "summary": solver_output.get("summary", {}),
+        "summary": merged_summary,
         "lci_result": {
-            "issues": solver_output.get("issues", []),
+            "issues": merged_issues,
             "lci_vector_runtime": {
                 "expanded_process_count": lci_expansion.expanded_process_count,
                 "expanded_port_count": lci_expansion.expanded_port_count,

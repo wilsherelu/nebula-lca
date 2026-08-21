@@ -2853,9 +2853,15 @@ export default function App() {
   );
 
   const loadProjectGraph = useCallback(
-    async (targetProjectId: string, targetProjectName?: string) => {
+    async (
+      targetProjectId: string,
+      targetProjectName?: string,
+      options: { announceRestore?: boolean } = {},
+    ) => {
       const loadToken = ++activeProjectLoadTokenRef.current;
-      setStatusText("项目读取中...");
+      if (options.announceRestore !== false) {
+        setStatusText("项目读取中...");
+      }
       const endFirstPaintReadySpan = startLoadPerformanceSpan("project-load:first-paint-ready");
       let firstPaintReadyClosed = false;
       const closeFirstPaintReadySpan = () => {
@@ -2937,7 +2943,9 @@ export default function App() {
           setCurrentSourcePolicy(normalizeSourcePolicy(latest.source_policy));
           setVersion(String(latest.version));
           setVersionTraveling(false);
-          setStatusText(`已恢复项目: ${resolvedProjectName} (version=${latest.version})`);
+          if (options.announceRestore !== false) {
+            setStatusText(`已恢复项目: ${resolvedProjectName} (version=${latest.version})`);
+          }
           scheduleAfterNextPaint(() => {
             closeFirstPaintReadySpan();
           });
@@ -3261,7 +3269,7 @@ export default function App() {
         );
       }
       const target = projects.find((item) => item.project_id === projectId);
-      await loadProjectGraph(projectId, target?.name ?? projectName);
+      await loadProjectGraph(projectId, target?.name ?? projectName, { announceRestore: false });
       setShowProjectIntegrityDialog(false);
       setStatusText(
         skippedCount + failedCount > 0
@@ -3482,7 +3490,7 @@ export default function App() {
         void refreshProjects();
         const repairedGraph =
           repairedUnits || serverRepairedGraph
-            ? await loadProjectGraph(payload.project_id, projectNameForMessage)
+            ? await loadProjectGraph(payload.project_id, projectNameForMessage, { announceRestore: false })
             : null;
 
         if (mode === "manual") {
@@ -4891,16 +4899,33 @@ export default function App() {
     return Array.isArray(issues) ? issues : [];
   }, [lastRun]);
 
+  const formatRunIssue = (issue: unknown) => {
+    if (issue && typeof issue === "object") {
+      const record = issue as Record<string, unknown>;
+      if (record.code === "UNLINKED_POSITIVE_TECHNOSPHERE_INPUT") {
+        const nodeName = String(record.node_name ?? record.node_id ?? "");
+        const flowName = String(record.flow_name ?? record.port_id ?? "");
+        const amount = String(record.amount ?? "");
+        const unit = String(record.unit ?? "");
+        return uiLanguage === "zh"
+          ? `未关联背景供应：${nodeName} / ${flowName}（${amount} ${unit}）`
+          : `Unlinked background supply: ${nodeName} / ${flowName} (${amount} ${unit})`;
+      }
+      return JSON.stringify(record);
+    }
+    return String(issue ?? "");
+  };
+
   const warningBannerText = useMemo(() => {
     if (runIssues.length === 0) {
       return "";
     }
-    const first = String(runIssues[0] ?? "");
+    const first = formatRunIssue(runIssues[0]);
     if (runIssues.length === 1) {
       return `发现 1 条警告：${first}`;
     }
     return `发现 ${runIssues.length} 条警告：${first}`;
-  }, [runIssues]);
+  }, [runIssues, uiLanguage]);
 
   const ptsResultContextByUuid = useMemo(() => {
     const map = new Map<
@@ -6059,7 +6084,7 @@ export default function App() {
                       </thead>
                       <tbody>
                         {runIssues.map((issue, idx) => {
-                          const text = typeof issue === "object" ? JSON.stringify(issue) : String(issue);
+                          const text = formatRunIssue(issue);
                           return (
                             <tr key={`warn_dialog_${idx}`}>
                               <td className="run-analysis-warning-index">{idx + 1}</td>

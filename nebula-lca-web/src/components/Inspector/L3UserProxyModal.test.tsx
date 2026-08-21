@@ -77,7 +77,16 @@ describe("L3UserProxyModal", () => {
     fireEvent.click(screen.getByRole("button", { name: "确认转换" }));
 
     await waitFor(() => {
-      expect(createUserProxyRule).toHaveBeenCalledWith("source-flow", "eco-flow", "", undefined);
+      expect(createUserProxyRule).toHaveBeenCalledWith(
+        expect.objectContaining({
+          flowUuid: "source-flow",
+          unit: "MJ",
+          unitGroup: "Units of energy",
+        }),
+        "eco-flow",
+        "",
+        undefined,
+      );
       expect(onConfirm).toHaveBeenCalledTimes(1);
     });
   });
@@ -114,7 +123,16 @@ describe("L3UserProxyModal", () => {
     fireEvent.click(confirmButton);
 
     await waitFor(() => {
-      expect(createUserProxyRule).toHaveBeenCalledWith("source-flow", "eco-mass-flow", "", 0.04);
+      expect(createUserProxyRule).toHaveBeenCalledWith(
+        expect.objectContaining({
+          flowUuid: "source-flow",
+          unit: "MJ",
+          unitGroup: "Units of energy",
+        }),
+        "eco-mass-flow",
+        "",
+        0.04,
+      );
       expect(onConfirm).toHaveBeenCalledTimes(1);
     });
   });

@@ -15,6 +15,7 @@ extraResources:
     filter:
       - "**/*"
 win:
+  icon: ../nebula-lca-web/public/favicon.ico
   signAndEditExecutable: false
   target:
     - nsis

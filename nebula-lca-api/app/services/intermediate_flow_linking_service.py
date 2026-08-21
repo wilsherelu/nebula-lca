@@ -17,12 +17,19 @@ from fastapi import HTTPException
 from ..models import (
     FlowRecord,
     IntermediateFlowLinkRule,
+    IntermediateFlowLinkRuleVersion,
     LciProcessVector,
     ReferenceProcess,
     UnitDefinition,
 )
-from ..schemas import HybridGraph, IntermediateFlowLink
+from ..schemas import FlowPort, HybridGraph, IntermediateFlowLink
 from ..source_policy import SOURCE_SPACE_TIANGONG, classify_flow_source
+from .flow_versions import (
+    TG_LEGACY_NAMESPACE,
+    TG_LEGACY_VERSION,
+    get_flow_version,
+    normalized_flow_identity,
+)
 from .public_flow_mapping_service import (
     DEFAULT_PUBLIC_MAPPING_ROOT,
     PublicFlowMappingRegistry,
@@ -62,6 +69,12 @@ class IntermediateFlowResolution:
     mapping_reason: str
     rule_id: str
     rule_origin: str
+    source_flow_namespace: str | None = None
+    source_flow_version: str | None = None
+    source_flow_property_uuid: str | None = None
+    source_flow_property_version: str | None = None
+    source_unit_group_uuid: str | None = None
+    source_unit_group_version: str | None = None
     package_id: str | None = None
     package_version: str | None = None
     package_hash: str | None = None
@@ -72,6 +85,12 @@ class IntermediateFlowResolution:
     def to_dict(self) -> dict[str, Any]:
         return {
             "source_flow_uuid": self.source_flow_uuid,
+            "source_flow_namespace": self.source_flow_namespace,
+            "source_flow_version": self.source_flow_version,
+            "source_flow_property_uuid": self.source_flow_property_uuid,
+            "source_flow_property_version": self.source_flow_property_version,
+            "source_unit_group_uuid": self.source_unit_group_uuid,
+            "source_unit_group_version": self.source_unit_group_version,
             "target_flow_uuid": self.target_flow_uuid,
             "amount_factor": self.amount_factor,
             "source_unit": self.source_unit,
@@ -145,8 +164,89 @@ def clear_intermediate_flow_link_registry_cache() -> None:
     get_intermediate_flow_link_registry.cache_clear()
 
 
+@dataclass(frozen=True)
+class SourceFlowContext:
+    record: Any
+    namespace: str
+    version: str
+    inferred: bool = False
+
+
+def resolve_source_flow_context(
+    db: Session,
+    *,
+    flow_uuid: str,
+    source_namespace: str | None = None,
+    source_version: str | None = None,
+    source_unit: str | None = None,
+    source_unit_group: str | None = None,
+) -> tuple[SourceFlowContext | None, str | None]:
+    """Resolve immutable Flow semantics, inferring an old version only when unique."""
+    namespace, version = normalized_flow_identity(
+        source_namespace=source_namespace,
+        source_version=source_version,
+    )
+    explicit_identity = bool(str(source_namespace or "").strip() or str(source_version or "").strip())
+    record = get_flow_version(
+        db,
+        flow_uuid=flow_uuid,
+        source_namespace=namespace,
+        source_version=version,
+    )
+    expected_unit = str(source_unit or "").strip()
+    expected_group = str(source_unit_group or "").strip()
+    if record is not None and (
+        (expected_unit and expected_unit != str(record.default_unit or ""))
+        or (expected_group and _unit_group_key(expected_group) != _unit_group_key(record.unit_group))
+    ):
+        if explicit_identity:
+            return None, "SOURCE_FLOW_VERSION_SEMANTICS_MISMATCH"
+        candidates = db.query(type(record)).filter(type(record).flow_uuid == flow_uuid).all()
+        matches = [
+            item for item in candidates
+            if (not expected_unit or expected_unit == str(item.default_unit or ""))
+            and (not expected_group or _unit_group_key(expected_group) == _unit_group_key(item.unit_group))
+        ]
+        if len(matches) == 1:
+            match = matches[0]
+            return SourceFlowContext(match, match.source_namespace, match.source_version, True), None
+        return None, "SOURCE_FLOW_VERSION_AMBIGUOUS"
+    if record is not None:
+        return SourceFlowContext(record, namespace, version), None
+    if explicit_identity and not (
+        namespace == TG_LEGACY_NAMESPACE and version == TG_LEGACY_VERSION
+    ):
+        return None, "SOURCE_FLOW_VERSION_NOT_FOUND"
+    legacy = db.get(FlowRecord, flow_uuid)
+    if legacy is None:
+        return None, "SOURCE_FLOW_NOT_FOUND"
+    if expected_unit and expected_unit != str(legacy.default_unit or ""):
+        return None, "SOURCE_UNIT_DRIFT"
+    if expected_group and _unit_group_key(expected_group) != _unit_group_key(legacy.unit_group):
+        return None, "SOURCE_UNIT_GROUP_DRIFT"
+    return SourceFlowContext(legacy, TG_LEGACY_NAMESPACE, TG_LEGACY_VERSION), None
+
+
+def _bind_source_context(
+    resolution: IntermediateFlowResolution,
+    context: SourceFlowContext,
+) -> IntermediateFlowResolution:
+    record = context.record
+    return replace(
+        resolution,
+        source_flow_namespace=context.namespace,
+        source_flow_version=context.version,
+        source_flow_property_uuid=getattr(record, "flow_property_uuid", None),
+        source_flow_property_version=getattr(record, "flow_property_version", None),
+        source_unit_group_uuid=getattr(record, "unit_group_uuid", None),
+        source_unit_group_version=getattr(record, "unit_group_version", None),
+        source_unit=str(getattr(record, "default_unit", None) or resolution.source_unit),
+        source_unit_group=str(getattr(record, "unit_group", None) or resolution.source_unit_group or "") or None,
+    )
+
+
 def _validate_resolution_records(
-    source: FlowRecord | None,
+    source: Any | None,
     target: FlowRecord | None,
     resolution: IntermediateFlowResolution,
 ) -> str | None:
@@ -155,7 +255,8 @@ def _validate_resolution_records(
     if target is None:
         return "TARGET_FLOW_NOT_FOUND"
     if resolution.rule_origin == "builtin":
-        if classify_flow_source(str(source.source or "")) != SOURCE_SPACE_TIANGONG:
+        source_origin = getattr(source, "source", None) or getattr(source, "source_namespace", None)
+        if classify_flow_source(str(source_origin or "")) != SOURCE_SPACE_TIANGONG:
             return "SOURCE_FLOW_NOT_TIANGONG"
         if "ecoinvent" not in str(target.source or "").casefold():
             return "TARGET_FLOW_NOT_ECOINVENT"
@@ -223,17 +324,51 @@ def _resolution_with_catalog_units(
     )
 
 
-def resolve_intermediate_flow(db: Session, flow_uuid: str) -> tuple[IntermediateFlowResolution | None, str | None]:
+def resolve_intermediate_flow(
+    db: Session,
+    flow_uuid: str,
+    *,
+    source_namespace: str | None = None,
+    source_version: str | None = None,
+    source_unit: str | None = None,
+    source_unit_group: str | None = None,
+) -> tuple[IntermediateFlowResolution | None, str | None]:
     source_uuid = str(flow_uuid or "").strip()
-    user_rule = (
-        db.query(IntermediateFlowLinkRule)
+    context, context_issue = resolve_source_flow_context(
+        db,
+        flow_uuid=source_uuid,
+        source_namespace=source_namespace,
+        source_version=source_version,
+        source_unit=source_unit,
+        source_unit_group=source_unit_group,
+    )
+    if context_issue or context is None:
+        return None, context_issue
+    versioned_rule = (
+        db.query(IntermediateFlowLinkRuleVersion)
         .filter(
-            IntermediateFlowLinkRule.source_flow_uuid == source_uuid,
-            IntermediateFlowLinkRule.status == "active",
+            IntermediateFlowLinkRuleVersion.source_flow_uuid == source_uuid,
+            IntermediateFlowLinkRuleVersion.source_namespace == context.namespace,
+            IntermediateFlowLinkRuleVersion.source_version == context.version,
+            IntermediateFlowLinkRuleVersion.status == "active",
         )
-        .order_by(IntermediateFlowLinkRule.updated_at.desc())
+        .order_by(IntermediateFlowLinkRuleVersion.updated_at.desc())
         .first()
     )
+    legacy_rule = None
+    if versioned_rule is None and (
+        context.namespace == TG_LEGACY_NAMESPACE and context.version == TG_LEGACY_VERSION
+    ):
+        legacy_rule = (
+            db.query(IntermediateFlowLinkRule)
+            .filter(
+                IntermediateFlowLinkRule.source_flow_uuid == source_uuid,
+                IntermediateFlowLinkRule.status == "active",
+            )
+            .order_by(IntermediateFlowLinkRule.updated_at.desc())
+            .first()
+        )
+    user_rule = versioned_rule or legacy_rule
     if user_rule is not None:
         resolution = IntermediateFlowResolution(
             source_flow_uuid=user_rule.source_flow_uuid,
@@ -254,16 +389,19 @@ def resolve_intermediate_flow(db: Session, flow_uuid: str) -> tuple[Intermediate
         resolution = get_intermediate_flow_link_registry().resolve(source_uuid)
     if resolution is None:
         return None, None
-    source = db.get(FlowRecord, source_uuid)
     target = db.get(FlowRecord, resolution.target_flow_uuid)
-    resolution = _resolution_with_catalog_units(db, source, target, resolution)
-    return resolution, _validate_resolution_records(source, target, resolution)
+    resolution = _bind_source_context(resolution, context)
+    if context.namespace == TG_LEGACY_NAMESPACE and context.version == TG_LEGACY_VERSION:
+        resolution = _resolution_with_catalog_units(db, context.record, target, resolution)
+    return resolution, _validate_resolution_records(context.record, target, resolution)
 
 
 def validate_intermediate_flow_link(
     db: Session,
     source_flow_uuid: str,
     link: IntermediateFlowLink,
+    *,
+    port: FlowPort | None = None,
 ) -> str | None:
     """Validate persisted link evidence against the current DB and rule source."""
     if link.status not in {"auto", "user_confirmed"}:
@@ -271,12 +409,56 @@ def validate_intermediate_flow_link(
     if str(link.source_flow_uuid or "") != str(source_flow_uuid or ""):
         return "SOURCE_FLOW_UUID_MISMATCH"
 
+    port_namespace = port.flow_source_namespace if port is not None else None
+    port_version = port.flow_version if port is not None else None
+    link_namespace, link_version = normalized_flow_identity(
+        source_namespace=link.source_flow_namespace,
+        source_version=link.source_flow_version,
+    )
+    if port is not None:
+        expected_namespace, expected_version = normalized_flow_identity(
+            source_namespace=port_namespace,
+            source_version=port_version,
+        )
+        if (link_namespace, link_version) != (expected_namespace, expected_version):
+            return "SOURCE_FLOW_VERSION_MISMATCH"
+    context, context_issue = resolve_source_flow_context(
+        db,
+        flow_uuid=source_flow_uuid,
+        source_namespace=link.source_flow_namespace,
+        source_version=link.source_flow_version,
+    )
+    if context_issue or context is None:
+        return context_issue
+    if port is not None and not str(port.flow_version or "").strip():
+        switch = port.unitGroupSwitch if isinstance(port.unitGroupSwitch, dict) else {}
+        saved_default_unit = str(
+            switch.get("sourceUnit") or switch.get("source_unit") or port.unit or ""
+        )
+        saved_default_group = str(
+            switch.get("sourceUnitGroup") or switch.get("source_unit_group") or port.unitGroup or ""
+        )
+        if saved_default_unit and saved_default_unit != str(getattr(context.record, "default_unit", None) or ""):
+            return "SOURCE_UNIT_DRIFT"
+        if saved_default_group and (
+            _unit_group_key(saved_default_group)
+            != _unit_group_key(getattr(context.record, "unit_group", None))
+        ):
+            return "SOURCE_UNIT_GROUP_DRIFT"
+    if str(link.source_unit or "") != str(getattr(context.record, "default_unit", None) or ""):
+        return "SOURCE_UNIT_DRIFT"
+    if link.source_unit_group and (
+        _unit_group_key(link.source_unit_group)
+        != _unit_group_key(getattr(context.record, "unit_group", None))
+    ):
+        return "SOURCE_UNIT_GROUP_DRIFT"
+
     expected = None
     if link.mapping_level in {"L1", "L2"}:
         expected = get_intermediate_flow_link_registry().resolve(source_flow_uuid)
         if expected is None:
             return f"{link.mapping_level}_RULE_NOT_FOUND"
-    source = db.get(FlowRecord, source_flow_uuid)
+    source = context.record
     target = db.get(FlowRecord, link.target_flow_uuid)
     if expected is not None:
         expected = _resolution_with_catalog_units(db, source, target, expected)
@@ -349,7 +531,9 @@ def validate_intermediate_flow_link(
     if link.mapping_level == "L3":
         if link.status != "user_confirmed" or link.rule_origin != "user":
             return "L3_STATUS_OR_ORIGIN_MISMATCH"
-        rule = db.get(IntermediateFlowLinkRule, link.rule_id)
+        rule = db.get(IntermediateFlowLinkRuleVersion, link.rule_id)
+        if rule is None:
+            rule = db.get(IntermediateFlowLinkRule, link.rule_id)
         if rule is None or rule.status != "active":
             return "L3_RULE_NOT_ACTIVE"
         if (
@@ -358,6 +542,17 @@ def validate_intermediate_flow_link(
             or abs(float(rule.amount_factor) - link.amount_factor) > 1e-12
         ):
             return "L3_EVIDENCE_MISMATCH"
+        if isinstance(rule, IntermediateFlowLinkRuleVersion) and (
+            rule.source_namespace != link_namespace
+            or rule.source_version != link_version
+            or rule.source_unit != link.source_unit
+            or _unit_group_key(rule.source_unit_group) != _unit_group_key(link.source_unit_group)
+        ):
+            return "L3_FLOW_VERSION_EVIDENCE_MISMATCH"
+        if isinstance(rule, IntermediateFlowLinkRule) and (
+            link_namespace != TG_LEGACY_NAMESPACE or link_version != TG_LEGACY_VERSION
+        ):
+            return "L3_FLOW_VERSION_EVIDENCE_MISMATCH"
         return None
     return "UNSUPPORTED_MAPPING_LEVEL"
 
@@ -369,7 +564,7 @@ def validate_graph_intermediate_flow_links(db: Session, graph: HybridGraph) -> N
             link = port.intermediate_flow_link
             if link is None or link.status == "inactive":
                 continue
-            issue = validate_intermediate_flow_link(db, port.flowUuid, link)
+            issue = validate_intermediate_flow_link(db, port.flowUuid, link, port=port)
             if issue:
                 issues.append({
                     "node_id": node.id,

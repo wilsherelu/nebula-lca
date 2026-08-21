@@ -24,6 +24,12 @@ type Props = {
 
 const applyLinkToPort = (port: FlowPort, link: IntermediateFlowLink): FlowPort => ({
   ...port,
+  ...(link.sourceFlowNamespace ? { flowSourceNamespace: link.sourceFlowNamespace } : {}),
+  ...(link.sourceFlowVersion ? { flowVersion: link.sourceFlowVersion } : {}),
+  ...(link.sourceFlowPropertyUuid ? { flowPropertyUuid: link.sourceFlowPropertyUuid } : {}),
+  ...(link.sourceFlowPropertyVersion ? { flowPropertyVersion: link.sourceFlowPropertyVersion } : {}),
+  ...(link.sourceUnitGroupUuid ? { unitGroupUuid: link.sourceUnitGroupUuid } : {}),
+  ...(link.sourceUnitGroupVersion ? { unitGroupVersion: link.sourceUnitGroupVersion } : {}),
   ...(link.sourceUnit ? { unit: link.sourceUnit } : {}),
   ...(link.sourceUnitGroup ? { unitGroup: link.sourceUnitGroup } : {}),
   intermediateFlowLink: link,
@@ -60,6 +66,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
   );
   const linkedCount = inputs.filter((port) => (
     port.intermediateFlowLink && port.intermediateFlowLink.status !== "inactive"
+    && statusByPort[port.id] !== "blocked"
   )).length;
 
   const resolveCandidates = async () => {
@@ -137,7 +144,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
 
   const l1Count = Object.values(candidateByPort).filter((item) => item.mapping_level === "L1").length;
   const unmatchedCount = inputs.filter((port) => (
-    !port.intermediateFlowLink
+    (!port.intermediateFlowLink || statusByPort[port.id] === "blocked")
     && resolutionState === "ready"
     && ["unmatched", "blocked", "skipped"].includes(statusByPort[port.id] ?? "unmatched")
   )).length;
@@ -153,7 +160,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
     try {
       const confirmed = await Promise.all(selections.map(async ({ port, resolution }) => ({
         portId: port.id,
-        link: await confirmL2IntermediateFlowLink(port.flowUuid, resolution.rule_id),
+        link: await confirmL2IntermediateFlowLink(port, resolution.rule_id),
       })));
       const links = new Map(confirmed.map((item) => [item.portId, item.link]));
       updateNode(node.id, (current) => ({
@@ -188,7 +195,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
     setBusy(true);
     try {
       const link = resolution.mapping_level === "L2"
-        ? await confirmL2IntermediateFlowLink(port.flowUuid, resolution.rule_id)
+        ? await confirmL2IntermediateFlowLink(port, resolution.rule_id)
         : toIntermediateFlowLink(resolution);
       updateNode(node.id, (current) => ({
         ...current,
@@ -312,6 +319,9 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
         const link = port.intermediateFlowLink;
         const review = candidateByPort[port.id];
         const resolutionStatus = statusByPort[port.id];
+        const activeLinkIsValid = Boolean(
+          link && link.status !== "inactive" && resolutionStatus !== "blocked",
+        );
         const targetDisplayName = review
           ? (uiLanguage === "zh"
             ? review.target_flow_name || review.target_flow_name_en || review.target_flow_uuid
@@ -322,7 +332,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
             <div className="intermediate-flow-link-source">
               <strong title={sourceName}>{sourceName}</strong>
             </div>
-            {link && link.status !== "inactive" ? (
+            {activeLinkIsValid && link ? (
               <>
                 <div className="intermediate-flow-link-target">
                   <span>{t("ecoinvent 产品流", "ecoinvent product flow")}{` · ${link.targetUnit}`}</span>
@@ -380,7 +390,9 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
                   <span className="muted-text" title={reasonByPort[port.id] ?? resolutionStatus}>
                     {resolutionState === "loading" || resolutionState === "idle"
                       ? t("检测中", "Checking")
-                      : t("无自动候选", "No automatic candidate")}
+                      : resolutionStatus === "blocked"
+                        ? t("原转换与当前 Flow 版本或单位不匹配", "Existing conversion does not match this Flow version or unit")
+                        : t("无自动候选", "No automatic candidate")}
                   </span>
                 </div>
                 <div className="intermediate-flow-link-actions">
