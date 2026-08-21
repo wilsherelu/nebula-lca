@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import re
+import uuid
 from dataclasses import dataclass, replace
+from datetime import datetime
 from difflib import SequenceMatcher
 from functools import lru_cache
 from pathlib import Path
@@ -302,6 +304,226 @@ def deterministic_default_unit_factor(db: Session, source: FlowRecord, target: F
     return source_factor / target_factor
 
 
+def repair_legacy_intermediate_flow_links(db: Session, graph: HybridGraph) -> list[dict[str, Any]]:
+    """Pin uniquely resolvable legacy L3 links to their immutable Flow version.
+
+    Older projects could retain a TG 1.0 rule after a port had been repaired to
+    the semantics of a newer TIDAS Flow version.  Preserve the reviewed target,
+    but only migrate when the current port uniquely identifies that version and
+    the source/target conversion is deterministic within one unit group.
+    """
+    repairs: list[dict[str, Any]] = []
+    edges_by_target: dict[tuple[str, str], list[Any]] = {}
+    for edge in graph.exchanges:
+        target_port_id = str(edge.target_port_id or "").strip()
+        if not target_port_id and str(edge.targetHandle or "").startswith("in:"):
+            target_port_id = str(edge.targetHandle)[3:]
+        edges_by_target.setdefault((str(edge.toNode), target_port_id), []).append(edge)
+
+    for node in graph.nodes:
+        for port in node.inputs:
+            link = port.intermediate_flow_link
+            if (
+                link is None
+                or link.status not in {"auto", "user_confirmed"}
+                or link.mapping_level not in {"L1", "L2"}
+                or link.rule_origin != "builtin"
+                or str(link.source_flow_version or "").strip()
+            ):
+                continue
+            resolution, issue = resolve_intermediate_flow(
+                db,
+                port.flowUuid,
+                source_namespace=port.flow_source_namespace,
+                source_version=port.flow_version,
+                source_unit=port.unit,
+                source_unit_group=port.unitGroup,
+            )
+            if (
+                issue
+                or resolution is None
+                or resolution.mapping_level != link.mapping_level
+                or resolution.target_flow_uuid != link.target_flow_uuid
+                or resolution.rule_id != link.rule_id
+            ):
+                continue
+            port.flow_source_namespace = resolution.source_flow_namespace
+            port.flow_version = resolution.source_flow_version
+            port.flow_property_uuid = resolution.source_flow_property_uuid
+            port.flow_property_version = resolution.source_flow_property_version
+            port.unit_group_uuid = resolution.source_unit_group_uuid
+            port.unit_group_version = resolution.source_unit_group_version
+            port.unit = resolution.source_unit
+            port.unitGroup = resolution.source_unit_group
+            port.unitGroupSwitch = None
+            port.intermediate_flow_link = link.model_copy(update={
+                "source_flow_namespace": resolution.source_flow_namespace,
+                "source_flow_version": resolution.source_flow_version,
+                "source_flow_property_uuid": resolution.source_flow_property_uuid,
+                "source_flow_property_version": resolution.source_flow_property_version,
+                "source_unit_group_uuid": resolution.source_unit_group_uuid,
+                "source_unit_group_version": resolution.source_unit_group_version,
+                "amount_factor": resolution.amount_factor,
+                "source_unit": resolution.source_unit,
+                "target_unit": resolution.target_unit,
+                "source_unit_group": resolution.source_unit_group,
+                "target_unit_group": resolution.target_unit_group,
+                "mapping_reason": resolution.mapping_reason,
+                "package_id": resolution.package_id,
+                "package_version": resolution.package_version,
+                "package_hash": resolution.package_hash,
+                "application_mode": resolution.application_mode,
+                "source_flow_type": resolution.source_flow_type,
+                "target_flow_type": resolution.target_flow_type,
+                "flow_subtype_override": resolution.flow_subtype_override,
+                "warnings": list(resolution.warnings),
+            })
+            linked_edges = edges_by_target.get((str(node.id), str(port.id)), [])
+            converted_amount = float(port.amount) * resolution.amount_factor
+            updated_edges = 0
+            for edge in linked_edges:
+                if str(edge.consumer_flow_uuid or "") != str(port.flowUuid):
+                    continue
+                edge.amount = converted_amount
+                edge.consumerAmount = converted_amount
+                edge.unit = resolution.target_unit
+                edge.provider_unit = resolution.target_unit
+                edge.consumer_unit = resolution.source_unit
+                edge.intermediate_flow_link_rule_id = resolution.rule_id
+                edge.intermediate_flow_link_factor = resolution.amount_factor
+                updated_edges += 1
+            repairs.append({
+                "node_id": node.id,
+                "port_id": port.id,
+                "flow_uuid": port.flowUuid,
+                "source_namespace": resolution.source_flow_namespace,
+                "source_version": resolution.source_flow_version,
+                "rule_id": resolution.rule_id,
+                "amount_factor": resolution.amount_factor,
+                "updated_edges": updated_edges,
+            })
+
+    for node in graph.nodes:
+        for port in node.inputs:
+            link = port.intermediate_flow_link
+            if (
+                link is None
+                or link.status != "user_confirmed"
+                or link.mapping_level != "L3"
+                or link.rule_origin != "user"
+                or str(link.source_flow_version or "").strip()
+            ):
+                continue
+            legacy_rule = db.get(IntermediateFlowLinkRule, link.rule_id)
+            if (
+                legacy_rule is None
+                or legacy_rule.status != "active"
+                or legacy_rule.source_flow_uuid != port.flowUuid
+                or legacy_rule.target_flow_uuid != link.target_flow_uuid
+            ):
+                continue
+            context, issue = resolve_source_flow_context(
+                db,
+                flow_uuid=port.flowUuid,
+                source_namespace=port.flow_source_namespace,
+                source_version=port.flow_version,
+                source_unit=port.unit,
+                source_unit_group=port.unitGroup,
+            )
+            if issue or context is None or (
+                not context.inferred and not str(port.flow_version or "").strip()
+            ):
+                continue
+            target = db.get(FlowRecord, link.target_flow_uuid)
+            if target is None:
+                continue
+            factor = deterministic_default_unit_factor(db, context.record, target)
+            if factor is None:
+                continue
+
+            versioned_rule = (
+                db.query(IntermediateFlowLinkRuleVersion)
+                .filter(
+                    IntermediateFlowLinkRuleVersion.source_namespace == context.namespace,
+                    IntermediateFlowLinkRuleVersion.source_flow_uuid == port.flowUuid,
+                    IntermediateFlowLinkRuleVersion.source_version == context.version,
+                    IntermediateFlowLinkRuleVersion.target_flow_uuid == target.flow_uuid,
+                )
+                .one_or_none()
+            )
+            if versioned_rule is None:
+                versioned_rule = IntermediateFlowLinkRuleVersion(
+                    id=str(uuid.uuid4()),
+                    source_flow_uuid=port.flowUuid,
+                    source_namespace=context.namespace,
+                    source_version=context.version,
+                    target_flow_uuid=target.flow_uuid,
+                )
+                db.add(versioned_rule)
+            source = context.record
+            versioned_rule.amount_factor = factor
+            versioned_rule.source_unit = str(source.default_unit or "")
+            versioned_rule.source_unit_group = str(source.unit_group or "")
+            versioned_rule.target_unit = str(target.default_unit or "")
+            versioned_rule.target_unit_group = str(target.unit_group or "")
+            versioned_rule.mapping_level = "L3"
+            versioned_rule.mapping_reason = legacy_rule.mapping_reason
+            versioned_rule.rule_origin = "user"
+            versioned_rule.status = "active"
+            versioned_rule.updated_at = datetime.utcnow()
+            db.flush()
+
+            port.flow_source_namespace = context.namespace
+            port.flow_version = context.version
+            port.flow_property_uuid = getattr(source, "flow_property_uuid", None)
+            port.flow_property_version = getattr(source, "flow_property_version", None)
+            port.unit_group_uuid = getattr(source, "unit_group_uuid", None)
+            port.unit_group_version = getattr(source, "unit_group_version", None)
+            port.unit = str(source.default_unit or port.unit)
+            port.unitGroup = str(source.unit_group or port.unitGroup or "") or None
+            port.unitGroupSwitch = None
+            port.intermediate_flow_link = link.model_copy(update={
+                "source_flow_namespace": context.namespace,
+                "source_flow_version": context.version,
+                "source_flow_property_uuid": getattr(source, "flow_property_uuid", None),
+                "source_flow_property_version": getattr(source, "flow_property_version", None),
+                "source_unit_group_uuid": getattr(source, "unit_group_uuid", None),
+                "source_unit_group_version": getattr(source, "unit_group_version", None),
+                "amount_factor": factor,
+                "source_unit": str(source.default_unit or ""),
+                "target_unit": str(target.default_unit or ""),
+                "source_unit_group": str(source.unit_group or "") or None,
+                "target_unit_group": str(target.unit_group or "") or None,
+                "rule_id": versioned_rule.id,
+            })
+
+            linked_edges = edges_by_target.get((str(node.id), str(port.id)), [])
+            converted_amount = float(port.amount) * factor
+            updated_edges = 0
+            for edge in linked_edges:
+                if str(edge.consumer_flow_uuid or "") != str(port.flowUuid):
+                    continue
+                edge.amount = converted_amount
+                edge.consumerAmount = converted_amount
+                edge.unit = str(target.default_unit or edge.unit)
+                edge.provider_unit = str(target.default_unit or "")
+                edge.consumer_unit = str(source.default_unit or "")
+                edge.intermediate_flow_link_rule_id = versioned_rule.id
+                edge.intermediate_flow_link_factor = factor
+                updated_edges += 1
+            repairs.append({
+                "node_id": node.id,
+                "port_id": port.id,
+                "flow_uuid": port.flowUuid,
+                "source_namespace": context.namespace,
+                "source_version": context.version,
+                "rule_id": versioned_rule.id,
+                "amount_factor": factor,
+                "updated_edges": updated_edges,
+            })
+    return repairs
+
+
 def _resolution_with_catalog_units(
     db: Session,
     source: FlowRecord | None,
@@ -391,8 +613,7 @@ def resolve_intermediate_flow(
         return None, None
     target = db.get(FlowRecord, resolution.target_flow_uuid)
     resolution = _bind_source_context(resolution, context)
-    if context.namespace == TG_LEGACY_NAMESPACE and context.version == TG_LEGACY_VERSION:
-        resolution = _resolution_with_catalog_units(db, context.record, target, resolution)
+    resolution = _resolution_with_catalog_units(db, context.record, target, resolution)
     return resolution, _validate_resolution_records(context.record, target, resolution)
 
 

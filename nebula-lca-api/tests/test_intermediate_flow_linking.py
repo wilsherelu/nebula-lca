@@ -20,7 +20,7 @@ from app.api.intermediate_flow_links import (
     resolve_batch,
 )
 from app.main import app
-from app.models import FlowRecord, FlowVersionRecord, IntermediateFlowLinkRule, LciProcessVector, Model, ModelVersion, ReferenceProcess, UnitDefinition
+from app.models import FlowRecord, FlowVersionRecord, IntermediateFlowLinkRule, IntermediateFlowLinkRuleVersion, LciProcessVector, Model, ModelVersion, ReferenceProcess, UnitDefinition
 from app.schemas import FlowPort, HybridGraph, IntermediateFlowLink
 from app.services.graph_contract import analyze_handle_consistency, validate_graph_contract
 from app.services.intermediate_flow_linking_service import (
@@ -29,6 +29,7 @@ from app.services.intermediate_flow_linking_service import (
     backfill_ecoinvent_reference_flow_uuids,
     get_intermediate_flow_link_registry,
     list_provider_candidates,
+    repair_legacy_intermediate_flow_links,
     resolve_intermediate_flow,
     validate_graph_intermediate_flow_links,
     validate_intermediate_flow_link,
@@ -428,6 +429,203 @@ def test_alias_edge_preserves_consumer_uuid_and_requires_current_l1_evidence(db)
         validate_graph_intermediate_flow_links(db, stale)
     assert exc.value.detail["code"] == "INVALID_INTERMEDIATE_FLOW_LINK"
     assert exc.value.detail["evidence"][0]["reason"] == "L1_EVIDENCE_MISMATCH"
+
+
+def test_legacy_builtin_link_inherits_explicit_port_flow_version(db):
+    row = _seed_first_compatible_pair(db)
+    db.add(FlowVersionRecord(
+        source_namespace="tiangong_open_data",
+        flow_uuid=row["source_flow_uuid"],
+        source_version="01.01.001",
+        version_label="TIDAS 01.01.001",
+        flow_name=row["source_name"],
+        flow_type=row["source_flow_type"],
+        default_unit=row["source_unit"],
+        unit_group=row["source_unit_group"],
+    ))
+    db.commit()
+    graph = _graph(row)
+    port = graph.nodes[1].inputs[0]
+    port.flow_source_namespace = "tiangong_open_data"
+    port.flow_version = "01.01.001"
+
+    repairs = repair_legacy_intermediate_flow_links(db, graph)
+
+    assert len(repairs) == 1
+    assert port.intermediate_flow_link is not None
+    assert port.intermediate_flow_link.source_flow_namespace == "tiangong_open_data"
+    assert port.intermediate_flow_link.source_flow_version == "01.01.001"
+    assert graph.exchanges[0].intermediate_flow_link_factor == row["amount_factor"]
+    validate_graph_intermediate_flow_links(db, graph)
+
+
+def test_legacy_l3_link_is_pinned_to_unique_matching_flow_version(db):
+    source_uuid = "versioned-diesel"
+    target_uuid = "ecoinvent-diesel"
+    db.add_all([
+        FlowRecord(
+            flow_uuid=source_uuid,
+            flow_name="Diesel",
+            flow_type="Product flow",
+            default_unit="MJ",
+            unit_group="Units of energy",
+            source="Tiangong",
+        ),
+        FlowRecord(
+            flow_uuid=target_uuid,
+            flow_name="Diesel market",
+            flow_type="Product flow",
+            default_unit="kg",
+            unit_group="Units of mass",
+            source="ecoinvent_3.11",
+        ),
+        FlowVersionRecord(
+            source_namespace="tiangong_open_source",
+            flow_uuid=source_uuid,
+            source_version="TG-1.0",
+            version_label="TG 1.0",
+            flow_name="Diesel",
+            flow_type="Product flow",
+            default_unit="MJ",
+            unit_group="Units of energy",
+        ),
+        FlowVersionRecord(
+            source_namespace="tiangong_open_data",
+            flow_uuid=source_uuid,
+            source_version="2.0.0",
+            version_label="TIDAS 2.0.0",
+            flow_name="Diesel",
+            flow_type="Product flow",
+            default_unit="kg",
+            unit_group="Units of mass",
+            flow_property_uuid="mass-property",
+            unit_group_uuid="mass-group",
+        ),
+        IntermediateFlowLinkRule(
+            id="legacy-diesel-rule",
+            source_flow_uuid=source_uuid,
+            target_flow_uuid=target_uuid,
+            amount_factor=0.0234,
+            source_unit="MJ",
+            target_unit="kg",
+            mapping_level="L3",
+            mapping_reason="reviewed diesel proxy",
+            rule_origin="user",
+            status="active",
+        ),
+    ])
+    db.commit()
+    graph = HybridGraph.model_validate({
+        "functionalUnit": "1 kg",
+        "nodes": [
+            {
+                "id": "provider",
+                "node_kind": "lci_dataset",
+                "mode": "normalized",
+                "process_uuid": "provider-process",
+                "name": "Provider",
+                "location": "GLO",
+                "reference_product": "Diesel market",
+                "inputs": [],
+                "outputs": [{
+                    "id": "provider-out",
+                    "flowUuid": target_uuid,
+                    "name": "Diesel market",
+                    "unit": "kg",
+                    "unitGroup": "Units of mass",
+                    "amount": 1,
+                    "type": "technosphere",
+                    "direction": "output",
+                }],
+            },
+            {
+                "id": "consumer",
+                "node_kind": "unit_process",
+                "mode": "balanced",
+                "process_uuid": "consumer-process",
+                "name": "Consumer",
+                "location": "CN",
+                "reference_product": "result",
+                "inputs": [{
+                    "id": "diesel-in",
+                    "flowUuid": source_uuid,
+                    "name": "Diesel",
+                    "unit": "kg",
+                    "unitGroup": "Units of mass",
+                    "amount": 2,
+                    "type": "technosphere",
+                    "direction": "input",
+                    "unitGroupSwitch": {
+                        "sourceUnit": "MJ",
+                        "sourceUnitGroup": "Units of energy",
+                        "targetUnitGroup": "Units of mass",
+                        "factor": 0.0234,
+                    },
+                    "intermediateFlowLink": {
+                        "sourceFlowUuid": source_uuid,
+                        "targetFlowUuid": target_uuid,
+                        "amountFactor": 0.0234,
+                        "sourceUnit": "MJ",
+                        "targetUnit": "kg",
+                        "sourceUnitGroup": "Units of energy",
+                        "targetUnitGroup": "Units of mass",
+                        "mappingLevel": "L3",
+                        "mappingReason": "reviewed diesel proxy",
+                        "ruleId": "legacy-diesel-rule",
+                        "ruleOrigin": "user",
+                        "status": "user_confirmed",
+                    },
+                }],
+                "outputs": [{
+                    "id": "result-out",
+                    "flowUuid": "result-flow",
+                    "name": "result",
+                    "unit": "kg",
+                    "amount": 1,
+                    "type": "technosphere",
+                    "direction": "output",
+                }],
+            },
+        ],
+        "exchanges": [{
+            "id": "diesel-edge",
+            "fromNode": "provider",
+            "toNode": "consumer",
+            "sourceHandle": "out:provider-out",
+            "targetHandle": "in:diesel-in",
+            "flowUuid": target_uuid,
+            "consumerFlowUuid": source_uuid,
+            "flowName": "Diesel market",
+            "quantityMode": "dual",
+            "amount": 0.0468,
+            "providerAmount": 1,
+            "consumerAmount": 0.0468,
+            "unit": "kg",
+            "providerUnit": "kg",
+            "consumerUnit": "MJ",
+            "type": "technosphere",
+            "intermediateFlowLinkRuleId": "legacy-diesel-rule",
+            "intermediateFlowLinkFactor": 0.0234,
+        }],
+    })
+
+    repairs = repair_legacy_intermediate_flow_links(db, graph)
+
+    assert len(repairs) == 1
+    port = graph.nodes[1].inputs[0]
+    assert port.flow_source_namespace == "tiangong_open_data"
+    assert port.flow_version == "2.0.0"
+    assert port.unitGroupSwitch is None
+    assert port.intermediate_flow_link is not None
+    assert port.intermediate_flow_link.amount_factor == 1
+    assert port.intermediate_flow_link.source_unit == "kg"
+    assert db.get(IntermediateFlowLinkRuleVersion, port.intermediate_flow_link.rule_id) is not None
+    edge = graph.exchanges[0]
+    assert edge.amount == 2
+    assert edge.consumerAmount == 2
+    assert edge.consumer_unit == "kg"
+    assert edge.intermediate_flow_link_factor == 1
+    validate_graph_intermediate_flow_links(db, graph)
 
 
 def test_provider_candidates_are_all_returned_and_never_collapsed(db):
