@@ -158,6 +158,7 @@ from .services import graph_contract as _gc
 from .services import graph_storage as _gs
 from .services import catalog_cache as _cc
 from .services import pts_resources as _pr
+from .services.flow_versions import get_flow_version
 from .services.ef31_sparse_lcia_runtime import try_run_direct_sparse_lcia, try_run_hybrid_sparse_lcia
 from .services.ef31_runtime_csv import ACTIVE_MANIFEST_NAME, DEFAULT_EF31_RUNTIME_ROOT
 from .services.lci_runtime import expand_lci_vectors_into_graph
@@ -751,6 +752,27 @@ def _build_product_result_view_from_graph(
                 unit_factor_by_group_and_name=unit_factor_by_group_and_name,
                 reference_unit_by_group=reference_unit_by_group,
             ).as_dict()
+            flow_snapshot = get_flow_version(
+                db,
+                flow_uuid=product_flow_uuid,
+                source_namespace=port.flow_source_namespace,
+                source_version=port.flow_version,
+            )
+            catalog_flow = None
+            if flow_snapshot is None and not str(port.flow_version or "").strip():
+                catalog_flow = db.get(FlowRecord, product_flow_uuid)
+            product_name_zh = str(
+                getattr(flow_snapshot, "flow_name", None)
+                or getattr(catalog_flow, "flow_name", None)
+                or port.name
+                or product_flow_uuid
+            )
+            product_name_en = str(
+                getattr(flow_snapshot, "flow_name_en", None)
+                or getattr(catalog_flow, "flow_name_en", None)
+                or port.flow_name_en
+                or ""
+            )
             products_by_process.setdefault(process_uuid, []).append(
                 {
                     "product_key": product_key,
@@ -760,6 +782,8 @@ def _build_product_result_view_from_graph(
                     "product_port_id": product_port_id,
                     "product_flow_uuid": product_flow_uuid,
                     "product_name": str(port.name or product_flow_uuid),
+                    "product_name_zh": product_name_zh,
+                    "product_name_en": product_name_en,
                     "is_reference_product": bool(reference_port is not None and str(reference_port.id or "") == product_port_id),
                     "unit": str(port.unit or ""),
                     "unit_group": str(port.unitGroup or ""),
@@ -789,6 +813,8 @@ def _build_product_result_view_from_graph(
                     "product_port_id": item["product_port_id"],
                     "product_flow_uuid": item["product_flow_uuid"],
                     "product_name": item["product_name"],
+                    "product_name_zh": item["product_name_zh"],
+                    "product_name_en": item["product_name_en"],
                     "is_reference_product": bool(item["is_reference_product"]),
                     "product_conversion_factor": item.get("product_conversion_factor", 1.0),
                     "allocation_scale": 1.0 / float(item.get("product_conversion_factor") or 1.0),

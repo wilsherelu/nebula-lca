@@ -1,4 +1,5 @@
 import { getApiBase } from "./apiBase";
+import nebulaLogoUrl from "./assets/nebula-logo.png";
 import { findClimateChangeIndicatorIndex, getRunProcessCount } from "./resultAnalysis";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GraphCanvas } from "./components/GraphCanvas/GraphCanvas";
@@ -27,6 +28,7 @@ type ModelCreateResponse = {
   pts_failed_count?: number;
   pts_failed_items?: Array<Record<string, unknown>>;
   graph_repair_count?: number;
+  graph?: LcaGraphPayload;
 };
 
 type ModelVersionResponse = {
@@ -1089,6 +1091,11 @@ export const normalizeGraphPayload = (graph: LcaGraphPayload): LcaGraphPayload =
     },
   };
 };
+
+export const selectGraphSnapshotForRun = (
+  currentGraph: LcaGraphPayload,
+  savedSnapshot?: { graph?: LcaGraphPayload },
+): LcaGraphPayload => savedSnapshot?.graph ?? currentGraph;
 
 export const prepareGraphForRun = (
   graph: LcaGraphPayload,
@@ -2864,7 +2871,7 @@ export default function App() {
         );
         if (loadToken !== activeProjectLoadTokenRef.current) {
           closeFirstPaintReadySpan();
-          return;
+          return null;
         }
         if (latestResult.kind === "fresh" || latestResult.kind === "not_modified") {
           const latest = latestResult.payload;
@@ -2963,7 +2970,7 @@ export default function App() {
               endPostLoadUiSpan();
             }
           });
-          return;
+          return normalizedLatestGraph;
         }
 
         if (latestResult.status !== 404) {
@@ -3009,13 +3016,14 @@ export default function App() {
               endPostLoadUiSpan();
             }
           });
-          return;
+          return normalizedDraft;
         }
 
         ptsResourceHydrationRef.current = "";
         rootPtsProjectionHydrationRef.current = {};
+        const emptyGraph = { functionalUnit: "1 kg 对二甲苯", nodes: [], exchanges: [], metadata: {} };
         measureLoadPerformanceSync("project-load:import-root", () => {
-          importGraphWithLoadKey({ functionalUnit: "1 kg 对二甲苯", nodes: [], exchanges: [], metadata: {} });
+          importGraphWithLoadKey(emptyGraph);
         });
         setFlowNameSyncState({ needed: false, outdatedCount: 0, examples: [] });
         setProjectIntegrity(EMPTY_PROJECT_INTEGRITY);
@@ -3042,11 +3050,13 @@ export default function App() {
           }
           endPostLoadUiSpan();
         });
+        return emptyGraph;
       } catch {
         closeFirstPaintReadySpan();
         if (loadToken === activeProjectLoadTokenRef.current) {
           setStatusText("项目读取失败，已保留当前草稿。");
         }
+        return null;
       } finally {
         setTimeout(() => {
           if (loadToken === activeProjectLoadTokenRef.current) {
@@ -3470,9 +3480,10 @@ export default function App() {
         const serverRepairedGraph = Number(payload.graph_repair_count ?? 0) > 0;
         setUnitRepairRequired(false);
         void refreshProjects();
-        if (repairedUnits || serverRepairedGraph) {
-          await loadProjectGraph(payload.project_id, projectNameForMessage);
-        }
+        const repairedGraph =
+          repairedUnits || serverRepairedGraph
+            ? await loadProjectGraph(payload.project_id, projectNameForMessage)
+            : null;
 
         if (mode === "manual") {
           const ptsCompileCount = Number(payload.pts_compile_count ?? 0);
@@ -3504,7 +3515,7 @@ export default function App() {
               : `已保存项目 ${projectNameForMessage}: version=${payload.version}${ptsStatusText}`,
           );
         }
-        return payload;
+        return repairedGraph ? { ...payload, graph: repairedGraph } : payload;
       } catch (error) {
         if (mode === "manual") {
           setStatusText(`保存失败: ${formatApiError(error)}`);
@@ -3720,7 +3731,7 @@ export default function App() {
   ) => {
     repairRootEdgeHandles();
     const graph = prepareGraphForRun(
-      exportGraph(),
+      selectGraphSnapshotForRun(exportGraph(), savedSnapshot),
       selectedProductKey
         ? {
           processUuid: selectedProductKey.split("::")[0] ?? "",
@@ -5047,7 +5058,7 @@ export default function App() {
         unitRow.unit_group_switch && typeof unitRow.unit_group_switch === "object"
           ? (unitRow.unit_group_switch as Record<string, unknown>)
           : null;
-      const productNameZh = String(obj.product_name ?? obj.product_flow_uuid ?? productKey).trim();
+      const productNameZh = String(obj.product_name_zh ?? obj.product_name ?? obj.product_flow_uuid ?? productKey).trim();
       const productNameEn = String(obj.product_name_en ?? "").trim();
       let processUuid = rawProcessUuid;
       let processName = String(obj.process_name ?? obj.process_uuid ?? "");
@@ -5075,7 +5086,8 @@ export default function App() {
                 String(obj.product_name_en ?? "").trim() ||
                 String(matchedPort.name ?? "").trim() ||
                 String(obj.product_name ?? "").trim()
-                : String(matchedPort.name ?? "").trim() ||
+                : String(obj.product_name_zh ?? "").trim() ||
+                String(matchedPort.name ?? "").trim() ||
                 String(obj.product_name ?? "").trim() ||
                 String(matchedPort.flowNameEn ?? "").trim() ||
                 String(obj.product_name_en ?? "").trim();
@@ -5115,7 +5127,9 @@ export default function App() {
         const rootProductName =
           uiLanguage === "en"
             ? String(matchedRootPort.flowNameEn ?? "").trim() || String(matchedRootPort.name ?? "").trim()
-            : String(matchedRootPort.name ?? "").trim() || String(matchedRootPort.flowNameEn ?? "").trim();
+            : String(obj.product_name_zh ?? "").trim() ||
+              String(matchedRootPort.name ?? "").trim() ||
+              String(matchedRootPort.flowNameEn ?? "").trim();
         if (rootProductName) {
           productName = rootProductName;
         }
@@ -5635,7 +5649,7 @@ export default function App() {
             onClick={navigateToManagement}
             title={uiLanguage === "zh" ? "返回主页" : "Back home"}
           >
-            <img className="topbar-logo" src={`${import.meta.env.BASE_URL}favicon.ico`} alt="Nebula logo" />
+            <img className="topbar-logo" src={nebulaLogoUrl} alt="Nebula logo" />
             <span className="topbar-brand-copy">
               <span className="title">{i18n.appTitle}</span>
               <span className="topbar-brand-hint">{uiLanguage === "zh" ? "点击返回主页" : "Click to return home"}</span>

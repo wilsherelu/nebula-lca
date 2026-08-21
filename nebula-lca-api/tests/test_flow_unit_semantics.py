@@ -471,6 +471,57 @@ def test_product_result_unit_map_exposes_flow_default_unit_factor():
     assert product_values == [[0.001]]
 
 
+def test_product_result_view_uses_exact_flow_version_localized_names():
+    db = _FakeDb()
+    db.flow_versions = [
+        SimpleNamespace(
+            source_namespace="tiangong_open_data",
+            flow_uuid="oil-flow",
+            source_version="2.0",
+            flow_name="版本化原油",
+            flow_name_en="Versioned crude oil",
+            default_unit="m3",
+            unit_group="Units of volume",
+        )
+    ]
+    port = _switched_oil_port()
+    port.update({
+        "name": "Crude oil",
+        "flowNameEn": "Crude oil",
+        "flowSourceNamespace": "tiangong_open_data",
+        "flowVersion": "2.0",
+    })
+    graph = HybridGraph.model_validate({
+        "functionalUnit": "1 m3 oil",
+        "nodes": [{
+            "id": "node-1",
+            "node_kind": "unit_process",
+            "mode": "normalized",
+            "process_uuid": "process-1",
+            "name": "process",
+            "location": "CN",
+            "reference_product": "oil-flow",
+            "inputs": [],
+            "outputs": [port],
+            "emissions": [],
+        }],
+        "exchanges": [],
+    })
+    unit_factor_by_group_and_name, reference_unit_by_group = build_unit_reference_maps(db)
+
+    product_index, _, _ = _build_product_result_view_from_graph(
+        db=db,
+        graph=graph,
+        process_index=["process-1"],
+        values=[[1.0]],
+        unit_factor_by_group_and_name=unit_factor_by_group_and_name,
+        reference_unit_by_group=reference_unit_by_group,
+    )
+
+    assert product_index[0]["product_name_zh"] == "版本化原油"
+    assert product_index[0]["product_name_en"] == "Versioned crude oil"
+
+
 def test_product_result_view_excludes_hidden_lci_dataset_products():
     graph = HybridGraph.model_validate({
         "functionalUnit": "1 kg foreground product",

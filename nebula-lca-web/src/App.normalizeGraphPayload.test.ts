@@ -1,9 +1,22 @@
 import { describe, expect, it } from "vitest";
 import type { LcaGraphPayload } from "./model/exchange";
-import { normalizeGraphPayload, prepareGraphForRun, reconcileProjectTargetProductConfig } from "./App";
+import {
+  normalizeGraphPayload,
+  prepareGraphForRun,
+  reconcileProjectTargetProductConfig,
+  selectGraphSnapshotForRun,
+} from "./App";
 import { useLcaGraphStore } from "./store/lcaGraphStore";
 
 describe("normalizeGraphPayload", () => {
+  it("uses the repaired saved graph for the immediate calculation", () => {
+    const staleGraph = { functionalUnit: "1 kg", nodes: [], exchanges: [], metadata: { state: "stale" } };
+    const repairedGraph = { functionalUnit: "1 kg", nodes: [], exchanges: [], metadata: { state: "repaired" } };
+
+    expect(selectGraphSnapshotForRun(staleGraph, { graph: repairedGraph })).toBe(repairedGraph);
+    expect(selectGraphSnapshotForRun(staleGraph)).toBe(staleGraph);
+  });
+
   it("restores a persisted background LCI association from the slim storage shape", () => {
     const graph = {
       functionalUnit: "1 kg product",
