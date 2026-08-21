@@ -14,12 +14,14 @@ from app.api.intermediate_flow_links import (
     ConfirmL2Request,
     ResolveBatchRequest,
     ResolvePortRequest,
+    UserRuleCreateRequest,
     confirm_l2,
+    create_user_rule,
     resolve_batch,
 )
 from app.main import app
-from app.models import FlowRecord, LciProcessVector, Model, ModelVersion, ReferenceProcess, UnitDefinition
-from app.schemas import HybridGraph, IntermediateFlowLink
+from app.models import FlowRecord, FlowVersionRecord, IntermediateFlowLinkRule, LciProcessVector, Model, ModelVersion, ReferenceProcess, UnitDefinition
+from app.schemas import FlowPort, HybridGraph, IntermediateFlowLink
 from app.services.graph_contract import analyze_handle_consistency, validate_graph_contract
 from app.services.intermediate_flow_linking_service import (
     _validate_resolution_records,
@@ -659,3 +661,166 @@ def test_user_rule_accepts_explicit_cross_group_factor():
         })
         assert resolved.status_code == 200
         assert resolved.json()["items"][0]["status"] == "L3"
+
+
+def test_versioned_tidas_flow_does_not_reuse_legacy_cross_group_rule(db):
+    source_uuid = "versioned-diesel"
+    target_uuid = "eco-diesel"
+    db.add_all([
+        FlowRecord(
+            flow_uuid=source_uuid,
+            flow_name="Diesel",
+            flow_type="Product flow",
+            default_unit="kg",
+            unit_group="Units of mass",
+            source="tidas_bundle_import",
+        ),
+        FlowRecord(
+            flow_uuid=target_uuid,
+            flow_name="Diesel market",
+            flow_type="Product flow",
+            default_unit="kg",
+            unit_group="mass",
+            source="ecoinvent_3.11",
+        ),
+        FlowVersionRecord(
+            source_namespace="tiangong_open_source",
+            flow_uuid=source_uuid,
+            source_version="TG-1.0",
+            version_label="TG 1.0",
+            flow_name="Diesel",
+            flow_type="Product flow",
+            default_unit="MJ",
+            unit_group="Units of energy",
+        ),
+        FlowVersionRecord(
+            source_namespace="tiangong_open_data",
+            flow_uuid=source_uuid,
+            source_version="01.01.003",
+            version_label="TIDAS 01.01.003",
+            flow_name="Diesel",
+            flow_type="Product flow",
+            default_unit="kg",
+            unit_group="Units of mass",
+        ),
+        IntermediateFlowLinkRule(
+            id="legacy-diesel-rule",
+            source_flow_uuid=source_uuid,
+            target_flow_uuid=target_uuid,
+            amount_factor=0.0234,
+            source_unit="MJ",
+            target_unit="kg",
+            mapping_level="L3",
+            mapping_reason="legacy heating value",
+            rule_origin="user",
+            status="active",
+        ),
+    ])
+    db.commit()
+
+    resolution, issue = resolve_intermediate_flow(
+        db,
+        source_uuid,
+        source_namespace="tiangong_open_data",
+        source_version="01.01.003",
+        source_unit="kg",
+        source_unit_group="Units of mass",
+    )
+
+    assert issue is None
+    assert resolution is None
+
+    created = create_user_rule(UserRuleCreateRequest(
+        source_flow_uuid=source_uuid,
+        target_flow_uuid=target_uuid,
+        source_flow_namespace="tiangong_open_data",
+        source_flow_version="01.01.003",
+        source_unit="kg",
+        source_unit_group="Units of mass",
+    ), db)
+    assert created["amount_factor"] == 1.0
+    assert created["source_flow_version"] == "01.01.003"
+
+    resolved, issue = resolve_intermediate_flow(
+        db,
+        source_uuid,
+        source_namespace="tiangong_open_data",
+        source_version="01.01.003",
+        source_unit="kg",
+        source_unit_group="Units of mass",
+    )
+    assert issue is None
+    assert resolved is not None
+    assert resolved.rule_id == created["id"]
+    assert resolved.amount_factor == 1.0
+
+
+def test_unversioned_mass_port_rejects_legacy_energy_link(db):
+    source_uuid = "legacy-diesel-port"
+    target_uuid = "eco-diesel-port"
+    db.add_all([
+        FlowRecord(
+            flow_uuid=source_uuid,
+            flow_name="Diesel",
+            flow_type="Product flow",
+            default_unit="kg",
+            unit_group="Units of mass",
+            source="tidas_bundle_import",
+        ),
+        FlowRecord(
+            flow_uuid=target_uuid,
+            flow_name="Diesel market",
+            flow_type="Product flow",
+            default_unit="kg",
+            unit_group="mass",
+            source="ecoinvent_3.11",
+        ),
+        FlowVersionRecord(
+            source_namespace="tiangong_open_source",
+            flow_uuid=source_uuid,
+            source_version="TG-1.0",
+            version_label="TG 1.0",
+            flow_name="Diesel",
+            flow_type="Product flow",
+            default_unit="MJ",
+            unit_group="Units of energy",
+        ),
+        IntermediateFlowLinkRule(
+            id="legacy-port-rule",
+            source_flow_uuid=source_uuid,
+            target_flow_uuid=target_uuid,
+            amount_factor=0.0234,
+            source_unit="MJ",
+            target_unit="kg",
+            mapping_level="L3",
+            mapping_reason="legacy heating value",
+            rule_origin="user",
+            status="active",
+        ),
+    ])
+    db.commit()
+    link = IntermediateFlowLink.model_validate({
+        "sourceFlowUuid": source_uuid,
+        "targetFlowUuid": target_uuid,
+        "amountFactor": 0.0234,
+        "sourceUnit": "MJ",
+        "targetUnit": "kg",
+        "mappingLevel": "L3",
+        "mappingReason": "legacy heating value",
+        "ruleId": "legacy-port-rule",
+        "ruleOrigin": "user",
+        "status": "user_confirmed",
+    })
+    port = FlowPort(
+        id="diesel-input",
+        flowUuid=source_uuid,
+        name="Diesel",
+        unit="kg",
+        unitGroup="Units of mass",
+        amount=1,
+        type="technosphere",
+        direction="input",
+        intermediateFlowLink=link,
+    )
+
+    assert validate_intermediate_flow_link(db, source_uuid, link, port=port) == "SOURCE_UNIT_DRIFT"

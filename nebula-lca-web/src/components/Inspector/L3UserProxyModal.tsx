@@ -89,7 +89,7 @@ export function L3UserProxyModal({
     setConfirming(true);
     try {
       const link = await createUserProxyRule(
-        port.flowUuid,
+        port,
         selectedFlow.flow_uuid,
         reason.trim(),
         needsCustomFactor ? parsedAmountFactor : undefined,

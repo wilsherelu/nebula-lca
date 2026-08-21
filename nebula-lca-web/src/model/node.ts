@@ -37,6 +37,12 @@ export type UnitGroupSwitchSnapshot = {
 
 export type IntermediateFlowLink = {
   sourceFlowUuid: string;
+  sourceFlowNamespace?: string;
+  sourceFlowVersion?: string;
+  sourceFlowPropertyUuid?: string;
+  sourceFlowPropertyVersion?: string;
+  sourceUnitGroupUuid?: string;
+  sourceUnitGroupVersion?: string;
   targetFlowUuid: string;
   amountFactor: number;
   sourceUnit: string;

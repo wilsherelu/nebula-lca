@@ -5,6 +5,12 @@ const API_BASE = getApiBase();
 
 export type RawResolution = {
   source_flow_uuid: string;
+  source_flow_namespace?: string;
+  source_flow_version?: string;
+  source_flow_property_uuid?: string;
+  source_flow_property_version?: string;
+  source_unit_group_uuid?: string;
+  source_unit_group_version?: string;
   target_flow_uuid: string;
   amount_factor: number;
   source_unit: string;
@@ -64,6 +70,12 @@ export type EcoIntermediateFlow = {
 
 export const toIntermediateFlowLink = (raw: RawResolution): IntermediateFlowLink => ({
   sourceFlowUuid: raw.source_flow_uuid,
+  sourceFlowNamespace: raw.source_flow_namespace,
+  sourceFlowVersion: raw.source_flow_version,
+  sourceFlowPropertyUuid: raw.source_flow_property_uuid,
+  sourceFlowPropertyVersion: raw.source_flow_property_version,
+  sourceUnitGroupUuid: raw.source_unit_group_uuid,
+  sourceUnitGroupVersion: raw.source_unit_group_version,
   targetFlowUuid: raw.target_flow_uuid,
   amountFactor: raw.amount_factor,
   sourceUnit: raw.source_unit,
@@ -86,13 +98,20 @@ export const toIntermediateFlowLink = (raw: RawResolution): IntermediateFlowLink
 });
 
 export async function confirmL2IntermediateFlowLink(
-  sourceFlowUuid: string,
+  port: FlowPort,
   ruleId: string,
 ): Promise<IntermediateFlowLink> {
   const response = await fetch(`${API_BASE}/intermediate-flow-links/confirm-l2`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source_flow_uuid: sourceFlowUuid, rule_id: ruleId }),
+    body: JSON.stringify({
+      source_flow_uuid: port.flowUuid,
+      source_flow_namespace: port.flowSourceNamespace,
+      source_flow_version: port.flowVersion,
+      source_unit: port.unit,
+      source_unit_group: port.unitGroup,
+      rule_id: ruleId,
+    }),
   });
   if (!response.ok) throw new Error(`L2 confirmation failed (${response.status})`);
   return toIntermediateFlowLink(await response.json() as RawResolution);
@@ -112,6 +131,9 @@ export async function resolveIntermediateFlowPorts(ports: FlowPort[]): Promise<{
         direction: port.direction,
         exchange_type: port.type === "biosphere" ? "biosphere" : "technosphere",
         unit: port.unit,
+        unit_group: port.unitGroup,
+        flow_source_namespace: port.flowSourceNamespace,
+        flow_version: port.flowVersion,
         intermediate_flow_link: port.intermediateFlowLink,
       })),
     }),
@@ -161,7 +183,7 @@ export async function searchEcoIntermediateFlows(query: string): Promise<EcoInte
 }
 
 export async function createUserProxyRule(
-  sourceFlowUuid: string,
+  sourcePort: FlowPort,
   targetFlowUuid: string,
   mappingReason: string,
   amountFactor?: number,
@@ -170,7 +192,11 @@ export async function createUserProxyRule(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      source_flow_uuid: sourceFlowUuid,
+      source_flow_uuid: sourcePort.flowUuid,
+      source_flow_namespace: sourcePort.flowSourceNamespace,
+      source_flow_version: sourcePort.flowVersion,
+      source_unit: sourcePort.unit,
+      source_unit_group: sourcePort.unitGroup,
       target_flow_uuid: targetFlowUuid,
       mapping_reason: mappingReason,
       amount_factor: amountFactor,

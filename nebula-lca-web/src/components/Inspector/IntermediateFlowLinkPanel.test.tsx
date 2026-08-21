@@ -152,6 +152,47 @@ describe("IntermediateFlowLinkPanel", () => {
     expect(active.nodes.some((item) => item.id === providerNode.id)).toBe(false);
   });
 
+  it("does not present a stale conversion as completed when exact Flow semantics are blocked", async () => {
+    const staleNode: Node<LcaNodeData> = {
+      ...node,
+      data: {
+        ...node.data,
+        inputs: [{
+          ...node.data.inputs[0],
+          intermediateFlowLink: {
+            sourceFlowUuid: "tidas-flow-1",
+            targetFlowUuid: "eco-flow-1",
+            amountFactor: 0.0234,
+            sourceUnit: "MJ",
+            targetUnit: "kg",
+            mappingLevel: "L3",
+            mappingReason: "legacy",
+            ruleId: "legacy-rule",
+            ruleOrigin: "user",
+            status: "user_confirmed",
+            warnings: [],
+          },
+        }],
+      },
+    };
+    useLcaGraphStore.setState({ uiLanguage: "zh", edges: [] });
+    mockResolve.mockResolvedValueOnce({
+      counts: { blocked: 1 },
+      items: [{
+        port_id: "input-1",
+        status: "blocked",
+        reason: "SOURCE_UNIT_DRIFT",
+      }],
+    });
+
+    render(<IntermediateFlowLinkPanel node={staleNode} />);
+    fireEvent.click(screen.getByRole("button", { name: /中间流转换/ }));
+
+    await waitFor(() => expect(screen.getByText("原转换与当前 Flow 版本或单位不匹配")).toBeTruthy());
+    expect(screen.queryByText("转换完成")).toBeNull();
+    expect(screen.getByRole("button", { name: "手动转换" })).toBeTruthy();
+  });
+
   it("sets the foreground port unit to sourceUnit after L1 auto-conversion", async () => {
     const localNode: Node<LcaNodeData> = {
       ...node,

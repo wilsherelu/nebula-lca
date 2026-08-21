@@ -68,6 +68,12 @@ def flow_semantic_to_exchange_type(value: object) -> ExchangeType:
 
 class IntermediateFlowLink(BaseModel):
     source_flow_uuid: str = Field(alias="sourceFlowUuid")
+    source_flow_namespace: str | None = Field(default=None, alias="sourceFlowNamespace")
+    source_flow_version: str | None = Field(default=None, alias="sourceFlowVersion")
+    source_flow_property_uuid: str | None = Field(default=None, alias="sourceFlowPropertyUuid")
+    source_flow_property_version: str | None = Field(default=None, alias="sourceFlowPropertyVersion")
+    source_unit_group_uuid: str | None = Field(default=None, alias="sourceUnitGroupUuid")
+    source_unit_group_version: str | None = Field(default=None, alias="sourceUnitGroupVersion")
     target_flow_uuid: str = Field(alias="targetFlowUuid")
     amount_factor: float = Field(default=1.0, gt=0, alias="amountFactor")
     source_unit: str = Field(alias="sourceUnit")

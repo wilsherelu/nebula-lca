@@ -33,12 +33,14 @@ async function createWindow(): Promise<void> {
   const appRoot = app.getAppPath();
   const preloadPath =
     path.basename(appRoot) === "dist" ? path.join(appRoot, "preload.cjs") : path.join(appRoot, "dist", "preload.cjs");
+  const windowIcon = path.join(paths.webRoot, "favicon.ico");
   const win = new BrowserWindow({
     width: 1440,
     height: 920,
     minWidth: 1100,
     minHeight: 720,
     show: false,
+    icon: fs.existsSync(windowIcon) ? windowIcon : undefined,
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,

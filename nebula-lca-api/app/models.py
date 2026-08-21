@@ -114,6 +114,38 @@ class IntermediateFlowLinkRule(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class IntermediateFlowLinkRuleVersion(Base):
+    """User-reviewed proxy rule pinned to one immutable source Flow version."""
+
+    __tablename__ = "intermediate_flow_link_rule_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_namespace",
+            "source_flow_uuid",
+            "source_version",
+            "target_flow_uuid",
+            name="uq_intermediate_flow_link_rule_version_source_target",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source_flow_uuid: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source_namespace: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source_version: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    target_flow_uuid: Mapped[str] = mapped_column(String(64), nullable=False)
+    amount_factor: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    source_unit: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_unit_group: Mapped[str] = mapped_column(String(128), nullable=False)
+    target_unit: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_unit_group: Mapped[str] = mapped_column(String(128), nullable=False)
+    mapping_level: Mapped[str] = mapped_column(String(8), nullable=False, default="L3")
+    mapping_reason: Mapped[str] = mapped_column(String(1024), nullable=False)
+    rule_origin: Mapped[str] = mapped_column(String(32), nullable=False, default="user")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class UnitGroup(Base):
     __tablename__ = "unit_groups"
 

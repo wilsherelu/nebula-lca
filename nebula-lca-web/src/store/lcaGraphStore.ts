@@ -1185,6 +1185,12 @@ const normalizeIntermediateFlowLinkPort = (port: FlowPort): FlowPort => {
     || (mappingLevel === "L2" && ruleOrigin === "builtin" && applicationMode === "auto_compatible");
   const normalizedLink: FlowPort["intermediateFlowLink"] = {
     sourceFlowUuid: String(value.sourceFlowUuid ?? value.source_flow_uuid ?? ""),
+    sourceFlowNamespace: String(value.sourceFlowNamespace ?? value.source_flow_namespace ?? "") || undefined,
+    sourceFlowVersion: String(value.sourceFlowVersion ?? value.source_flow_version ?? "") || undefined,
+    sourceFlowPropertyUuid: String(value.sourceFlowPropertyUuid ?? value.source_flow_property_uuid ?? "") || undefined,
+    sourceFlowPropertyVersion: String(value.sourceFlowPropertyVersion ?? value.source_flow_property_version ?? "") || undefined,
+    sourceUnitGroupUuid: String(value.sourceUnitGroupUuid ?? value.source_unit_group_uuid ?? "") || undefined,
+    sourceUnitGroupVersion: String(value.sourceUnitGroupVersion ?? value.source_unit_group_version ?? "") || undefined,
     targetFlowUuid: String(value.targetFlowUuid ?? value.target_flow_uuid ?? ""),
     amountFactor: Number(value.amountFactor ?? value.amount_factor ?? 1),
     sourceUnit: String(value.sourceUnit ?? value.source_unit ?? ""),
