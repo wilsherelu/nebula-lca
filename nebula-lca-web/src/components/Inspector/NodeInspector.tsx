@@ -13,6 +13,7 @@ import { IntermediateFlowLinkPanel } from "./IntermediateFlowLinkPanel";
 import { BackgroundLciAssociationSection } from "./BackgroundLciAssociationSection";
 import type { SourcePolicy } from "../ProjectManagement/ProjectManagement";
 import { useTianGongFlowRefresh } from "../../services/tiangongFlowRefresh";
+import { fetchFlowReferenceCached } from "../../services/flowReferenceCache";
 import { getLocalizedText } from "../../utils/localizedText";
 import { FlowPickerDialog, type FlowPickerCatalogFlow } from "./FlowPickerDialog";
 
@@ -34,6 +35,8 @@ type Props = {
   sourcePolicy?: SourcePolicy;
   initialTab?: TabKey;
   openProcessInfoOnMount?: boolean;
+  initialAssociationPortId?: string;
+  initialAssociationRequestKey?: number;
 };
 
 type TabKey = "external_in" | "external_out";
@@ -474,7 +477,15 @@ function FlowSection({
   );
 }
 
-export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", initialTab, openProcessInfoOnMount = false }: Props) {
+export function NodeInspector({
+  node,
+  onStatus,
+  sourcePolicy = "open_mixed",
+  initialTab,
+  openProcessInfoOnMount = false,
+  initialAssociationPortId,
+  initialAssociationRequestKey,
+}: Props) {
   const [tab, setTab] = useState<TabKey>("external_in");
   const [flowPicker, setFlowPicker] = useState<{ open: boolean; target: FlowTarget | null }>({ open: false, target: null });
   const [createFlowDialog, setCreateFlowDialog] = useState<{ open: boolean; target: FlowTarget | null }>({ open: false, target: null });
@@ -593,6 +604,20 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
       setTab(initialTab);
     }
   }, [initialTab, node.id]);
+
+  useEffect(() => {
+    if (!initialAssociationPortId) {
+      return;
+    }
+    const port = node.data.inputs.find((item) => item.id === initialAssociationPortId && item.type !== "biosphere");
+    if (!port) {
+      return;
+    }
+    setTab("external_in");
+    setAssocDialog({ open: true, direction: "input", port });
+    setAssociationTab("background");
+    setSelectedNodeId("");
+  }, [initialAssociationPortId, initialAssociationRequestKey, node.id]);
 
   const unitOptionsByGroup = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -1732,14 +1757,7 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
     }
     let canceled = false;
     Promise.all(
-      needFetch.map(async (flowUuid) => {
-        const resp = await fetch(`${API_BASE}/reference/flows/${encodeURIComponent(flowUuid)}`);
-        if (!resp.ok) {
-          return null;
-        }
-        const row = (await resp.json()) as CatalogFlow;
-        return row.flow_uuid ? row : null;
-      }),
+      needFetch.map((flowUuid) => fetchFlowReferenceCached(API_BASE, flowUuid)),
     )
       .then((rows) => {
         if (canceled) {
@@ -1751,25 +1769,26 @@ export function NodeInspector({ node, onStatus, sourcePolicy = "open_mixed", ini
         const namePatch: Record<string, string> = {};
         const zhNamePatch: Record<string, string> = {};
         rows.forEach((row) => {
-          if (!row) {
+          const flowUuid = String(row?.flow_uuid ?? "").trim();
+          if (!row || !flowUuid) {
             return;
           }
           if (row.unit_group) {
-            unitPatch[row.flow_uuid] = row.unit_group;
+            unitPatch[flowUuid] = row.unit_group;
           }
           if (row.default_unit) {
-            defaultUnitPatch[row.flow_uuid] = row.default_unit;
+            defaultUnitPatch[flowUuid] = row.default_unit;
           }
           if (row.flow_type) {
-            typePatch[row.flow_uuid] = row.flow_type;
+            typePatch[flowUuid] = row.flow_type;
           }
           const englishName = String(row.flow_name_en ?? "").trim();
           if (englishName) {
-            namePatch[row.flow_uuid] = englishName;
+            namePatch[flowUuid] = englishName;
           }
           const chineseName = String(row.flow_name ?? "").trim();
           if (chineseName) {
-            zhNamePatch[row.flow_uuid] = chineseName;
+            zhNamePatch[flowUuid] = chineseName;
           }
         });
         if (Object.keys(unitPatch).length > 0) {

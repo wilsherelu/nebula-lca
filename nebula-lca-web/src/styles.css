@@ -929,6 +929,11 @@ body,
   font-variant-numeric: tabular-nums;
 }
 
+.run-analysis-warning-content {
+  line-height: 1.55;
+  color: #496571;
+}
+
 .run-analysis-raw {
   margin-top: 10px;
 }

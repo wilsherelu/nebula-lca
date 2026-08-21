@@ -3,6 +3,7 @@ import { Handle, Position, useUpdateNodeInternals, type NodeProps } from "@xyflo
 import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import type { FlowPort, LcaNodeData } from "../../model/node";
+import { fetchFlowReferenceCached } from "../../services/flowReferenceCache";
 import { useLcaGraphStore } from "../../store/lcaGraphStore";
 import { getLocalizedText } from "../../utils/localizedText";
 
@@ -288,14 +289,7 @@ export function LcaProcessNode(props: NodeProps) {
     }
     let canceled = false;
     Promise.all(
-      needFetch.map(async (flowUuid) => {
-        const resp = await fetch(`${API_BASE}/reference/flows/${encodeURIComponent(flowUuid)}`);
-        if (!resp.ok) {
-          return null;
-        }
-        const row = (await resp.json()) as { flow_uuid?: string; flow_name_en?: string | null };
-        return row.flow_uuid ? row : null;
-      }),
+      needFetch.map((flowUuid) => fetchFlowReferenceCached(API_BASE, flowUuid)),
     )
       .then((rows) => {
         if (canceled) {
@@ -518,6 +512,5 @@ export function LcaProcessNode(props: NodeProps) {
     </div>
   );
 }
-
 
 

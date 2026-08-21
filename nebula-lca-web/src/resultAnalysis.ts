@@ -36,3 +36,62 @@ export function getRunProcessCount(lastRun: { summary?: Record<string, unknown>;
   const processIndex = lastRun?.lci_result?.process_index;
   return Array.isArray(processIndex) ? processIndex.length : 0;
 }
+
+export const UNLINKED_TECHNOSPHERE_INPUT_CODE = "UNLINKED_POSITIVE_TECHNOSPHERE_INPUT";
+
+export type RunIssueAssociationTarget = {
+  nodeId: string;
+  portId: string;
+};
+
+export function isUnlinkedTechnosphereInput(issue: unknown): boolean {
+  return Boolean(
+    issue
+    && typeof issue === "object"
+    && String((issue as Record<string, unknown>).code ?? "") === UNLINKED_TECHNOSPHERE_INPUT_CODE,
+  );
+}
+
+export function getRunIssueAssociationTarget(issue: unknown): RunIssueAssociationTarget | null {
+  if (!isUnlinkedTechnosphereInput(issue)) {
+    return null;
+  }
+  const record = issue as Record<string, unknown>;
+  const nodeId = String(record.node_id ?? "").trim();
+  const portId = String(record.port_id ?? "").trim();
+  return nodeId && portId ? { nodeId, portId } : null;
+}
+
+export function getUnlinkedTechnosphereInputCount(issues: unknown[]): number {
+  return issues.filter(isUnlinkedTechnosphereInput).length;
+}
+
+export function formatRunIssue(issue: unknown, language: "zh" | "en"): string {
+  if (isUnlinkedTechnosphereInput(issue)) {
+    const record = issue as Record<string, unknown>;
+    const nodeName = String(record.node_name ?? record.node_id ?? "");
+    const flowName = String(record.flow_name ?? record.port_id ?? "");
+    const amount = String(record.amount ?? "");
+    const unit = String(record.unit ?? "");
+    return language === "zh"
+      ? `${nodeName} / ${flowName}（${amount} ${unit}）。该输入已从计算中省略。`
+      : `${nodeName} / ${flowName} (${amount} ${unit}). This input was omitted from the calculation.`;
+  }
+  if (issue && typeof issue === "object") {
+    return JSON.stringify(issue);
+  }
+  return String(issue ?? "");
+}
+
+export function formatRunWarningBanner(issues: unknown[], language: "zh" | "en"): string {
+  const unlinkedCount = getUnlinkedTechnosphereInputCount(issues);
+  if (unlinkedCount > 0) {
+    return language === "zh"
+      ? `${unlinkedCount} 条中间流输入未关联背景数据集。`
+      : `${unlinkedCount} intermediate-flow inputs have no linked background dataset.`;
+  }
+  if (issues.length === 0) {
+    return "";
+  }
+  return language === "zh" ? `发现 ${issues.length} 条计算警告。` : `${issues.length} calculation warnings found.`;
+}

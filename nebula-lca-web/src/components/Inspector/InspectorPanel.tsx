@@ -8,9 +8,20 @@ type InspectorPanelProps = {
   sourcePolicy?: SourcePolicy;
   initialNodeTab?: "external_in" | "external_out";
   initialProcessInfoNodeId?: string;
+  initialAssociationNodeId?: string;
+  initialAssociationPortId?: string;
+  initialAssociationRequestKey?: number;
 };
 
-export function InspectorPanel({ onStatus, sourcePolicy = "open_mixed", initialNodeTab, initialProcessInfoNodeId }: InspectorPanelProps) {
+export function InspectorPanel({
+  onStatus,
+  sourcePolicy = "open_mixed",
+  initialNodeTab,
+  initialProcessInfoNodeId,
+  initialAssociationNodeId,
+  initialAssociationPortId,
+  initialAssociationRequestKey,
+}: InspectorPanelProps) {
   const selection = useLcaGraphStore((state) => state.selection);
   const nodes = useLcaGraphStore((state) => state.nodes);
   const edges = useLcaGraphStore((state) => state.edges);
@@ -59,6 +70,10 @@ export function InspectorPanel({ onStatus, sourcePolicy = "open_mixed", initialN
           sourcePolicy={sourcePolicy}
           initialTab={initialNodeTab}
           openProcessInfoOnMount={initialProcessInfoNodeId === node.id || initialProcessInfoNodeId === node.data.processUuid}
+          initialAssociationPortId={initialAssociationNodeId === node.id || initialAssociationNodeId === node.data.processUuid
+            ? initialAssociationPortId
+            : undefined}
+          initialAssociationRequestKey={initialAssociationRequestKey}
         />
       )}
       {edge && <EdgeInspector edge={edge} />}
