@@ -27,6 +27,10 @@ from ..services.graph_storage import (
     repair_impossible_flow_units,
     slim_graph_for_storage,
 )
+from ..services.intermediate_flow_linking_service import (
+    repair_legacy_intermediate_flow_links,
+    validate_graph_intermediate_flow_links,
+)
 
 # ── graph_contract import (already exists, no circular) ───────────────────
 from ..services.graph_contract import (
@@ -193,6 +197,8 @@ def _create_project_version_from_graph_json(*, db: Session, project_id: str, gra
     validate_graph_flow_type_contract(graph, db=db, stage="import_model")
     validate_graph_port_names_against_flow_catalog(graph, db=db, stage="import_model")
     repair_impossible_flow_units(graph, db, apply_catalog_updates=True)
+    repair_legacy_intermediate_flow_links(db, graph)
+    validate_graph_intermediate_flow_links(db, graph)
     normalize_graph_flow_unit_switches(graph, db)
     _bind_pts_published_versions_for_graph(db=db, project_id=project_id, graph=graph)
 

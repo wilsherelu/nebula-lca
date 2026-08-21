@@ -267,7 +267,10 @@ from .services.graph_contract import (
     analyze_handle_consistency,
     analyze_handle_consistency_from_graph_json,
 )
-from .services.intermediate_flow_linking_service import validate_graph_intermediate_flow_links
+from .services.intermediate_flow_linking_service import (
+    repair_legacy_intermediate_flow_links,
+    validate_graph_intermediate_flow_links,
+)
 
 # Re-export project/version helpers from services
 from .services.project_versions import (
@@ -3633,10 +3636,11 @@ def create_model(payload: ModelCreateRequest, db: Session = Depends(get_db)) -> 
 
     _canonicalize_pts_nodes_for_main_graph_save(db=db, project_id=model.id, graph=payload.graph)
     validate_graph_contract(payload.graph, require_non_empty=True, allow_pts_nodes=True)
-    validate_graph_intermediate_flow_links(db, payload.graph)
     validate_graph_flow_type_contract(payload.graph, db=db, stage="save_model")
     validate_graph_port_names_against_flow_catalog(payload.graph, db=db, stage="save_model")
     _repair_impossible_flow_units(payload.graph, db, apply_catalog_updates=True)
+    repair_legacy_intermediate_flow_links(db, payload.graph)
+    validate_graph_intermediate_flow_links(db, payload.graph)
     normalize_graph_flow_unit_switches(payload.graph, db)
     flow_default_unit_violations = collect_flow_default_unit_conversion_violations(payload.graph, db)
     if flow_default_unit_violations:
@@ -4571,6 +4575,7 @@ def run_solver_and_persist(
 @app.post("/api/model/run", response_model=RunResponse)
 @app.post("/model/run", response_model=RunResponse)
 def run_model(payload: RunRequest, db: Session = Depends(get_db)) -> RunResponse:
+    repair_legacy_intermediate_flow_links(db, payload.graph)
     validate_graph_contract(
         payload.graph,
         require_non_empty=False,

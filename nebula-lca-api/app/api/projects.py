@@ -56,6 +56,10 @@ from ..services.graph_storage import (
     repair_tidas_product_flags,
     slim_graph_for_storage,
 )
+from ..services.intermediate_flow_linking_service import (
+    repair_legacy_intermediate_flow_links,
+    validate_graph_intermediate_flow_links,
+)
 from ..schemas import HybridGraph
 
 # ── Cache helpers ────────────────────────────────────────────────────────
@@ -334,6 +338,9 @@ def create_project_version(
     validate_graph_flow_type_contract(payload.graph, db=db, stage="save_version")
     validate_graph_port_names_against_flow_catalog(payload.graph, db=db, stage="save_version")
     graph_repairs = repair_impossible_flow_units(payload.graph, db, apply_catalog_updates=True)
+    link_repairs = repair_legacy_intermediate_flow_links(db, payload.graph)
+    graph_repairs.extend(link_repairs)
+    validate_graph_intermediate_flow_links(db, payload.graph)
     normalize_graph_flow_unit_switches(payload.graph, db)
     flow_default_unit_violations = collect_flow_default_unit_conversion_violations(payload.graph, db)
     if flow_default_unit_violations:
