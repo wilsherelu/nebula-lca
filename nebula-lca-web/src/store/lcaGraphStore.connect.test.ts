@@ -61,7 +61,7 @@ describe("manual foreground connection", () => {
     });
   });
 
-  it("reuses an explicitly selected semantic-equivalent port without replacing either UUID", () => {
+  it("rejects an explicitly selected port when the Flow UUID differs", () => {
     useLcaGraphStore.getState().onConnect({
       source: "provider",
       target: "consumer",
@@ -69,14 +69,11 @@ describe("manual foreground connection", () => {
       targetHandle: "in:consumer-input",
     });
 
-    expect(useLcaGraphStore.getState().nodes.find((node) => node.id === "consumer")?.data.inputs).toHaveLength(1);
-
+    const stateAfterConnect = useLcaGraphStore.getState();
+    expect(stateAfterConnect.nodes.find((node) => node.id === "consumer")?.data.inputs).toHaveLength(1);
+    expect(stateAfterConnect.pendingEdges).toHaveLength(0);
+    expect(stateAfterConnect.connectionHint).toContain("UUID");
     useLcaGraphStore.getState().flushPendingEdges();
-    const edge = useLcaGraphStore.getState().edges[0];
-    expect(edge?.targetHandle).toBe("in:consumer-input");
-    expect(edge?.data?.flowUuid).toBe(providerFlowUuid);
-    expect(edge?.data?.consumerFlowUuid).toBe(consumerFlowUuid);
-    expect(edge?.data?.providerUnit).toBe("MJ");
-    expect(edge?.data?.consumerUnit).toBe("MJ");
+    expect(useLcaGraphStore.getState().edges).toHaveLength(0);
   });
 });

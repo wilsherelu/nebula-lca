@@ -12,11 +12,7 @@ import { create } from "zustand";
 import { processLibrary } from "../data/processLibrary";
 import type { LcaEdgeData, LcaExchange, LcaGraphPayload } from "../model/exchange";
 import type { FlowPort, LcaNodeData, LcaProcessTemplate, LciRole, ProcessMode } from "../model/node";
-import {
-  flowPortIdentityKey,
-  flowPortsAreForegroundAliases,
-  flowPortsAreVersionCompatible,
-} from "../model/flowVersionIdentity";
+import { flowPortIdentityKey, flowPortsAreVersionCompatible } from "../model/flowVersionIdentity";
 import {
   buildGraphRelations,
   createEmptyGraphRelations,
@@ -389,6 +385,7 @@ const RULE_HINTS = {
   marketSingleFlowOnly: `无法连线：市场过程只能处理单一中间流 UUID。`,
   marketInputRequiresProductSource: `无法连线：市场过程输入只能连接已定义为产品的来源端口。`,
   invalidFlowUuid: `无法连线：流 UUID 缺失或非法，请先从数据库引用中间流或基本流。`,
+  flowUuidMismatch: `无法连线：两端流 UUID 不一致。请使用同一条流，或先在天工数据平台修正流数据。`,
   targetNoMatchingInput: `目标过程不存在同 UUID 输入端口，是否自动创建？`,
   targetNoMatchingInputCanceled: `已取消连线：目标过程未创建同 UUID 输入端口。`,
 };
@@ -1647,14 +1644,14 @@ const hasInputHandleId = (node: Node<LcaNodeData>, handleId: string | undefined)
 const resolveTargetInputAmount = (
   targetNode: Node<LcaNodeData>,
   targetHandle: string | undefined,
-  _flowUuid: string,
+  flowUuid: string,
   fallback: number,
 ): number => {
   const targetPortId = parseHandlePortId(targetHandle, "in:");
   if (!targetPortId) {
     return fallback;
   }
-  const targetPort = targetNode.data.inputs.find((p) => p.id === targetPortId);
+  const targetPort = targetNode.data.inputs.find((p) => p.id === targetPortId && p.flowUuid === flowUuid);
   return targetPort && Number.isFinite(targetPort.amount) ? targetPort.amount : fallback;
 };
 
@@ -1700,11 +1697,6 @@ const resolveEdgeDataByNodes = (
     && sourcePort.flowUuid === resolvedFlowUuid
     && targetPort.flowUuid === resolvedFlowUuid;
 
-  const sameSemanticAliasMatch = Boolean(resolvedFlowUuid)
-    && sourcePort.flowUuid === resolvedFlowUuid
-    && targetPort.flowUuid === edge.data?.consumerFlowUuid
-    && flowPortsAreForegroundAliases(sourcePort, targetPort);
-
   let isConvertedEdge = false;
   if (!sameFlowMatch && edgeFlowUuid) {
     const link = targetPort.intermediateFlowLink;
@@ -1729,7 +1721,7 @@ const resolveEdgeDataByNodes = (
     }
   }
 
-  if (!sameFlowMatch && !sameSemanticAliasMatch && !isConvertedEdge) {
+  if (!sameFlowMatch && !isConvertedEdge) {
     return undefined;
   }
 
@@ -1923,9 +1915,7 @@ const attachEdgeToCanvas = (
 
   const targetPortId = parseHandlePortId(targetHandle, "in:");
   const targetPort =
-    targetPortId && targetNode.data.inputs.find(
-      (port) => port.id === targetPortId && flowPortsAreForegroundAliases(sourcePort, port),
-    );
+    targetPortId && targetNode.data.inputs.find((port) => port.id === targetPortId && port.flowUuid === flowUuid);
   if (!targetPort) {
     return { canvas, attached: false };
   }
@@ -2595,11 +2585,10 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         (!isInputHandleId(explicitConsumerHandle) || (Boolean(explicitPortId) && explicitOccupied));
       let targetHandle: string | undefined;
       if (isInputHandleId(explicitConsumerHandle)) {
-        if (
-          explicitPort
-          && flowPortsAreForegroundAliases(providerPort, explicitPort)
-          && !(isMarketProcessNode(nextConsumerNode) && explicitOccupied)
-        ) {
+        if (explicitPort && explicitPort.flowUuid !== providerPort.flowUuid) {
+          return { connectionHint: RULE_HINTS.flowUuidMismatch };
+        }
+        if (explicitPort?.flowUuid === providerPort.flowUuid && !(isMarketProcessNode(nextConsumerNode) && explicitOccupied)) {
           targetHandle = explicitConsumerHandle ?? undefined;
           nextConsumerNode = ensureNodePortVisibleByFlow(nextConsumerNode, "input", providerPort.flowUuid, explicitPort.id);
         }
@@ -2694,9 +2683,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
 
       const targetPortId = parseHandlePortId(targetHandle, "in:");
       const targetPort =
-        (targetPortId && nextConsumerNode.data.inputs.find(
-          (p) => p.id === targetPortId && flowPortsAreForegroundAliases(providerPort, p),
-        )) ||
+        (targetPortId && nextConsumerNode.data.inputs.find((p) => p.id === targetPortId && p.flowUuid === providerPort.flowUuid)) ||
         nextConsumerNode.data.inputs.find((p) => p.flowUuid === providerPort.flowUuid);
       if (!targetPort) {
         return { connectionHint: RULE_HINTS.targetNoMatchingInputCanceled };
@@ -2803,9 +2790,6 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
           type: providerPort.type,
           allocation: "physical",
           dbMapping: "",
-          consumerFlowUuid: targetPort.flowUuid === providerPort.flowUuid ? undefined : targetPort.flowUuid,
-          providerUnit: providerPort.unit,
-          consumerUnit: targetPort.unit,
         },
       };
 
