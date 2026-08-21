@@ -118,12 +118,65 @@ describe("manual foreground connection", () => {
     });
   });
 
-  it("repairs an input auto-created by the previous build without requiring reimport", () => {
+  it("does not reuse an orphaned same-UUID input from another Flow version", () => {
+    const sourcePort = electricityPort("provider-output", providerFlowUuid, "output", 3.6, "tidas");
+    const staleInput = electricityPort("in_oldbug", providerFlowUuid, "input", 3.6, "legacy");
+    useLcaGraphStore.getState().importGraph({
+      functionalUnit: "1 unit",
+      nodes: [
+        {
+          id: "provider",
+          node_kind: "unit_process",
+          process_uuid: "provider-process",
+          name: "供给过程",
+          location: "CN",
+          reference_product: "交流电",
+          inputs: [],
+          outputs: [sourcePort],
+        },
+        {
+          id: "consumer",
+          node_kind: "unit_process",
+          process_uuid: "consumer-process",
+          name: "消费过程",
+          location: "CN",
+          reference_product: "产品",
+          inputs: [staleInput],
+          outputs: [],
+        },
+      ],
+      exchanges: [],
+      metadata: {},
+    });
+
+    useLcaGraphStore.getState().onConnect({
+      source: "provider",
+      target: "consumer",
+      sourceHandle: "out:provider-output",
+      targetHandle: "in:in_oldbug",
+    });
+
+    const consumerInputs = useLcaGraphStore.getState().nodes.find((node) => node.id === "consumer")?.data.inputs ?? [];
+    expect(consumerInputs).toHaveLength(2);
+    expect(consumerInputs[0]).toMatchObject({
+      id: "in_oldbug",
+      flowSourceNamespace: "tiangong_open_source",
+      flowVersion: "TG-1.0",
+    });
+    expect(consumerInputs[1]).toMatchObject({
+      flowUuid: sourcePort.flowUuid,
+      flowSourceNamespace: sourcePort.flowSourceNamespace,
+      flowVersion: sourcePort.flowVersion,
+    });
+
+    useLcaGraphStore.getState().flushPendingEdges();
+    expect(useLcaGraphStore.getState().edges[0]?.targetHandle).toBe(`in:${consumerInputs[1].id}`);
+  });
+
+  it("repairs a version-mismatched auto input from the previous build without requiring reimport", () => {
     const sourcePort = electricityPort("provider-output", providerFlowUuid, "output", 3.6, "tidas");
     const staleAutoInput = {
       ...electricityPort("in_oldbug", providerFlowUuid, "input", 3.6),
-      flowSourceNamespace: undefined,
-      flowVersion: undefined,
       flowPropertyVersion: undefined,
       unitGroupUuid: undefined,
       unitGroupVersion: undefined,
