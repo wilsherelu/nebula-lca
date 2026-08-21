@@ -12,6 +12,6 @@ Version 1.0.0 contains 11,143 accepted relationships: 1,379 intermediate-flow ma
 
 Mappings that require one of these generic conversions reference it through `conversion_rule_id`; no numerical conversion or impact factor is embedded in a mapping row.
 
-L1 is strict identity within the published L1 subgraph: every TianGong UUID and ecoinvent UUID occurs at most once. L2 is reviewed compatibility: each TianGong UUID selects one ecoinvent UUID, while one ecoinvent UUID may be reused by several TianGong Flows. L2 should be confirmed by the consuming user. L3 candidates are not included in this release.
+L1 is strict identity within the published L1 subgraph: every TianGong UUID and ecoinvent UUID occurs at most once. L2 is reviewed compatibility: each TianGong UUID selects one ecoinvent UUID, while one ecoinvent UUID may be reused by several TianGong Flows. L2 should be confirmed by the consuming user.
 
 The dataset is an identifier interoperability layer. Users must obtain lawful access to the underlying databases separately.

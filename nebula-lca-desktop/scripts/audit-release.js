@@ -38,7 +38,27 @@ if (publicMappingDirs.length !== 1) fail(`expected one public mapping release, f
 const publicMappingDir = path.join(mappingRoot, publicMappingDirs[0].name);
 const manifest = JSON.parse(fs.readFileSync(path.join(publicMappingDir, "MANIFEST.json"), "utf8"));
 const acceptance = JSON.parse(fs.readFileSync(path.join(publicMappingDir, "ACCEPTANCE.json"), "utf8"));
-if (manifest.forbidden_content_included !== false || manifest.l3_included !== false || acceptance.status !== "passed") {
+const manifestKeys = ["dataset_version", "elementary", "intermediate", "license", "mapping_direction", "release_date", "schema_version", "source_compatibility"];
+const acceptanceKeys = ["dataset_version", "elementary_mapping_count", "intermediate_mapping_count", "l1_bilateral_uniqueness", "status", "tiangong_uuid_uniqueness_per_scope", "total_mapping_count"];
+const scopeKeys = ["file", "mapping_count", "mapping_levels", "sha256"];
+const exactKeys = (value, expected) => JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...expected].sort());
+const mappingCount = Number(manifest.intermediate?.mapping_count || 0) + Number(manifest.elementary?.mapping_count || 0);
+if (!exactKeys(manifest, manifestKeys)
+  || !exactKeys(acceptance, acceptanceKeys)
+  || !exactKeys(manifest.intermediate || {}, scopeKeys)
+  || !exactKeys(manifest.elementary || {}, scopeKeys)
+  || !/^\d+\.\d+\.\d+$/.test(String(manifest.dataset_version || ""))
+  || manifest.schema_version !== "nebula-flow-mapping-release.v1"
+  || manifest.mapping_direction !== "TIANGONG_TO_ECOINVENT"
+  || manifest.license !== "CC-BY-4.0"
+  || JSON.stringify(manifest.source_compatibility) !== JSON.stringify({ ecoinvent_release: "3.11" })
+  || acceptance.dataset_version !== manifest.dataset_version
+  || acceptance.status !== "passed"
+  || acceptance.l1_bilateral_uniqueness !== true
+  || acceptance.tiangong_uuid_uniqueness_per_scope !== true
+  || acceptance.intermediate_mapping_count !== manifest.intermediate?.mapping_count
+  || acceptance.elementary_mapping_count !== manifest.elementary?.mapping_count
+  || acceptance.total_mapping_count !== mappingCount) {
   fail("public mapping release is not accepted for publication");
 }
 

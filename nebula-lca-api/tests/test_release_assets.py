@@ -14,15 +14,30 @@ def _write_mapping_release(root: Path, version: str, *, status: str = "passed", 
         "dataset_version": version,
         "schema_version": "nebula-flow-mapping-release.v1",
         "mapping_direction": "TIANGONG_TO_ECOINVENT",
-        "forbidden_content_included": False,
-        "l3_included": l3,
+        "license": "CC-BY-4.0",
+        "release_date": "2026-08-05",
+        "source_compatibility": {"ecoinvent_release": "3.11"},
+        "intermediate": {
+            "file": "data/intermediate.jsonl", "mapping_count": 1,
+            "mapping_levels": {"L1": 1, "L2": 0}, "sha256": "a",
+        },
+        "elementary": {
+            "file": "data/elementary.jsonl", "mapping_count": 2,
+            "mapping_levels": {"L1": 1, "L2": 1}, "sha256": "b",
+        },
     }), encoding="utf-8")
-    (root / "ACCEPTANCE.json").write_text(json.dumps({
+    acceptance = {
         "dataset_version": version,
         "status": status,
-        "l3_included": l3,
-        "forbidden_public_fields": 0,
-    }), encoding="utf-8")
+        "intermediate_mapping_count": 1,
+        "elementary_mapping_count": 2,
+        "total_mapping_count": 3,
+        "l1_bilateral_uniqueness": True,
+        "tiangong_uuid_uniqueness_per_scope": True,
+    }
+    if l3:
+        acceptance["l3_included"] = True
+    (root / "ACCEPTANCE.json").write_text(json.dumps(acceptance), encoding="utf-8")
 
 
 def test_latest_accepted_mapping_release_wins_and_smoke_is_ignored(tmp_path: Path) -> None:

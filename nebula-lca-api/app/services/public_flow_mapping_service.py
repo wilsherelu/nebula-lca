@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from ..release_assets import select_latest_public_mapping_root, stable_release_version
+from ..release_assets import public_mapping_contract_is_accepted, select_latest_public_mapping_root
 
 
 PUBLIC_MAPPING_PARENT = (
@@ -18,6 +18,11 @@ PUBLIC_MAPPING_PARENT = (
     / "flow_mappings"
 )
 DEFAULT_PUBLIC_MAPPING_ROOT = select_latest_public_mapping_root(PUBLIC_MAPPING_PARENT)
+_PUBLIC_MAPPING_ROW_KEYS = {
+    "conversion_required", "conversion_rule_id", "ecoinvent_flow_uuid", "flow_scope",
+    "manual_confirmation_recommended", "mapping_direction", "mapping_level",
+    "relationship", "tiangong_flow_uuid",
+}
 
 
 @dataclass(frozen=True)
@@ -42,14 +47,9 @@ class PublicFlowMappingRegistry:
         manifest_path = root / "MANIFEST.json"
         manifest_raw = manifest_path.read_bytes()
         manifest = json.loads(manifest_raw.decode("utf-8"))
-        if stable_release_version(manifest.get("dataset_version")) is None:
-            raise ValueError("unsupported public flow-mapping dataset version")
-        if manifest.get("schema_version") != "nebula-flow-mapping-release.v1":
-            raise ValueError("unsupported public flow-mapping schema version")
-        if manifest.get("mapping_direction") != "TIANGONG_TO_ECOINVENT":
-            raise ValueError("unsupported public flow-mapping direction")
-        if manifest.get("forbidden_content_included") is not False:
-            raise ValueError("public flow-mapping package contains forbidden content")
+        acceptance = json.loads((root / "ACCEPTANCE.json").read_text(encoding="utf-8"))
+        if not public_mapping_contract_is_accepted(manifest, acceptance):
+            raise ValueError("unsupported public flow-mapping package contract")
 
         conversions = self._load_conversions(root / "data" / "unit-conversions.v1.json")
         self.intermediate = self._load_scope(root, manifest, "intermediate", conversions)
@@ -95,6 +95,8 @@ class PublicFlowMappingRegistry:
         expected_scope = scope.upper()
         for line_number, line in enumerate(raw.decode("utf-8").splitlines(), start=1):
             row = json.loads(line)
+            if not isinstance(row, dict) or set(row) != _PUBLIC_MAPPING_ROW_KEYS:
+                raise ValueError(f"invalid public {scope} fields at line {line_number}")
             source_uuid = str(row.get("tiangong_flow_uuid") or "").strip()
             target_uuid = str(row.get("ecoinvent_flow_uuid") or "").strip()
             mapping_level = str(row.get("mapping_level") or "")
