@@ -95,6 +95,54 @@ def test_graph_contract_rejects_edge_between_different_flow_versions():
     assert "incompatible Flow versions" in error.value.detail["evidence"][0]["issues"][0]
 
 
+def test_graph_contract_accepts_explicit_same_version_foreground_alias():
+    payload = _balanced_graph(provider_amount=3, consumer_amount=3)
+    source_port = payload["nodes"][0]["outputs"][0]
+    target_port = payload["nodes"][1]["inputs"][0]
+    source_port.update({
+        "flowUuid": "provider-electricity-flow",
+        "name": "alternating current",
+        "unit": "MJ",
+        "unitGroup": "Units of energy",
+        "flowSourceNamespace": "tiangong_open_source",
+        "flowVersion": "TG-1.0",
+    })
+    target_port.update({
+        "flowUuid": "consumer-electricity-flow",
+        "name": "alternating current",
+        "unit": "MJ",
+        "unitGroup": "Units of energy",
+        "flowSourceNamespace": "tiangong_open_source",
+        "flowVersion": "TG-1.0",
+    })
+    edge = payload["exchanges"][0]
+    edge.update({
+        "flowUuid": "provider-electricity-flow",
+        "consumerFlowUuid": "consumer-electricity-flow",
+        "flowName": "alternating current",
+        "unit": "MJ",
+        "providerUnit": "MJ",
+        "consumerUnit": "MJ",
+    })
+
+    validate_graph_contract(HybridGraph.model_validate(payload))
+
+
+def test_graph_contract_rejects_foreground_alias_with_different_unit_group():
+    payload = _balanced_graph(provider_amount=3, consumer_amount=3)
+    payload["nodes"][0]["outputs"][0]["flowUuid"] = "provider-flow"
+    payload["nodes"][1]["inputs"][0]["flowUuid"] = "consumer-flow"
+    payload["exchanges"][0].update({
+        "flowUuid": "provider-flow",
+        "consumerFlowUuid": "consumer-flow",
+    })
+
+    with pytest.raises(HTTPException) as error:
+        validate_graph_contract(HybridGraph.model_validate(payload))
+
+    assert error.value.detail["code"] == "INVALID_EDGE_PORT_BINDING"
+
+
 def _same_name_graph(node_kind: str):
     return HybridGraph.model_validate({
         "functionalUnit": "1 unit",
