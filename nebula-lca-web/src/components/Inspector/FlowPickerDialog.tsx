@@ -89,36 +89,40 @@ export function FlowPickerDialog({
           <button type="button" className="drawer-close-btn" onClick={onClose}>{t("关闭", "Close")}</button>
         </header>
         <div className="overlay-filters flow-picker-toolbar">
-          <input
-            value={searchInput}
-            aria-label={t("按流名称检索", "Search by flow name")}
-            onChange={(event) => onSearchInputChange(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                onSearch();
-              }
-            }}
-            placeholder={t("输入中文名、英文名或 UUID", "Chinese name, English name, or UUID")}
-          />
-          <select value={category} aria-label={t("分类", "Category")} onChange={(event) => onCategoryChange(event.target.value)}>
-            <option value="">{t("全部分类", "All Categories")}</option>
-            {categories.map((item) => <option key={item.category} value={item.category}>{`${item.category} (${item.count})`}</option>)}
-          </select>
-          <select value={source} aria-label={t("来源", "Source")} onChange={(event) => onSourceChange(event.target.value)}>
-            <option value="">{t("全部来源", "All Sources")}</option>
-            <option value="ecoinvent">ecoinvent</option>
-            <option value="tiangong">TIDAS / EF</option>
-            <option value="custom">custom</option>
-          </select>
-          {elementary && (
-            <label className="flow-picker-compatible-toggle">
-              <input type="checkbox" checked={compatibleOnly} onChange={(event) => onCompatibleOnlyChange(event.target.checked)} />
-              <span>{t("仅可转换", "Convertible only")}</span>
-            </label>
-          )}
-          <button type="button" className="search-btn" onClick={onSearch}>{t("检索", "Search")}</button>
-          {!elementary && <button type="button" className="search-btn flow-picker-create-btn" onClick={onCreate}>{t("新建自定义流", "Create Custom Flow")}</button>}
+          <div className="flow-picker-toolbar-filters">
+            <input
+              value={searchInput}
+              aria-label={t("按流名称检索", "Search by flow name")}
+              onChange={(event) => onSearchInputChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  onSearch();
+                }
+              }}
+              placeholder={t("输入中文名、英文名或 UUID", "Chinese name, English name, or UUID")}
+            />
+            <select value={category} aria-label={t("分类", "Category")} onChange={(event) => onCategoryChange(event.target.value)}>
+              <option value="">{t("全部分类", "All Categories")}</option>
+              {categories.map((item) => <option key={item.category} value={item.category}>{`${item.category} (${item.count})`}</option>)}
+            </select>
+            <select value={source} aria-label={t("来源", "Source")} onChange={(event) => onSourceChange(event.target.value)}>
+              <option value="">{t("全部来源", "All Sources")}</option>
+              <option value="ecoinvent">ecoinvent</option>
+              <option value="tiangong">TIDAS / EF</option>
+              <option value="custom">custom</option>
+            </select>
+          </div>
+          <div className="flow-picker-toolbar-actions">
+            {elementary && (
+              <label className="flow-picker-compatible-toggle">
+                <input type="checkbox" checked={compatibleOnly} onChange={(event) => onCompatibleOnlyChange(event.target.checked)} />
+                <span>{t("仅可转换", "Convertible only")}</span>
+              </label>
+            )}
+            <button type="button" className="search-btn" onClick={onSearch}>{t("检索", "Search")}</button>
+            {!elementary && <button type="button" className="search-btn flow-picker-create-btn" onClick={onCreate}>{t("新建自定义流", "Create Custom Flow")}</button>}
+          </div>
         </div>
         <div className="overlay-table flow-picker-results">
           {loading && <div className="table-empty">{t("正在加载…", "Loading…")}</div>}
@@ -159,8 +163,10 @@ export function FlowPickerDialog({
                         {(flow.version_label || flow.source_version) && <small>{flow.version_label || flow.source_version}</small>}
                       </td>
                       <td className="flow-picker-action-cell">
-                        {flow.source === "tiangong" && <button type="button" className="pm-link-btn" onClick={() => onRefresh(flow.flow_uuid)} disabled={Boolean(refreshingFlowUuid)}>{refreshingFlowUuid === flow.flow_uuid ? t("刷新中", "Refreshing") : t("刷新", "Refresh")}</button>}
-                        <button type="button" className="pm-link-btn" onClick={() => onUse(flow)}>{t("引用", "Use")}</button>
+                        <div className="flow-picker-action-group">
+                          {flow.source === "tiangong" && <button type="button" className="pm-link-btn" onClick={() => onRefresh(flow.flow_uuid)} disabled={Boolean(refreshingFlowUuid)}>{refreshingFlowUuid === flow.flow_uuid ? t("刷新中", "Refreshing") : t("刷新", "Refresh")}</button>}
+                          <button type="button" className="pm-link-btn" onClick={() => onUse(flow)}>{t("引用", "Use")}</button>
+                        </div>
                       </td>
                     </tr>
                   );

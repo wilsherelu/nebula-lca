@@ -4,6 +4,7 @@ import {
   findClimateChangeIndicatorIndex,
   formatRunIssue,
   formatRunWarningBanner,
+  getRunIssuePresentation,
   getRunIssueAssociationTarget,
   getRunProcessCount,
 } from "./resultAnalysis";
@@ -1865,7 +1866,8 @@ const formatApiError = (raw: unknown): string => {
       code?: string;
       message?: string;
       violations?: Array<Record<string, unknown>>;
-      detail?: { code?: string; message?: string; violations?: Array<Record<string, unknown>> };
+      evidence?: Array<Record<string, unknown>>;
+      detail?: { code?: string; message?: string; violations?: Array<Record<string, unknown>>; evidence?: Array<Record<string, unknown>> };
     };
     const payload = parsed.detail && typeof parsed.detail === "object" ? parsed.detail : parsed;
     if (payload.code === "AMBIGUOUS_PTS_OUTPUT_PRODUCER") {
@@ -1875,6 +1877,14 @@ const formatApiError = (raw: unknown): string => {
       return "PTS 内部连线数量无效（需 > 0），请检查边数量设置。";
     }
     if (payload.code === "INVALID_EDGE_PORT_BINDING") {
+      const evidence = Array.isArray(payload.evidence) ? payload.evidence : [];
+      const versionMismatch = evidence.some((item) =>
+        Array.isArray(item.issues)
+        && item.issues.some((issue) => String(issue).includes("incompatible Flow versions")),
+      );
+      if (versionMismatch) {
+        return "连线两端的 Flow 版本身份不一致。自动新增输入端口应继承供给端版本；请重新加载项目后再保存。";
+      }
       return "连线端口绑定无效：请检查 source/target 端口与 flowUuid 是否一致。";
     }
     if (payload.code === "DUPLICATE_EDGE_BINDING") {
@@ -6088,20 +6098,36 @@ export default function App() {
                       <thead>
                         <tr>
                           <th style={{ width: 64 }}>#</th>
-                          <th>{uiLanguage === "zh" ? "未关联输入" : "Unlinked Input"}</th>
-                          <th style={{ width: 132 }}>{uiLanguage === "zh" ? "处理" : "Action"}</th>
+                          <th>{uiLanguage === "zh" ? "过程" : "Process"}</th>
+                          <th>{uiLanguage === "zh" ? "未关联中间流" : "Unlinked Intermediate Flow"}</th>
+                          <th style={{ width: 116 }}>{uiLanguage === "zh" ? "数量" : "Amount"}</th>
+                          <th style={{ width: 152 }}>{uiLanguage === "zh" ? "计算处理" : "Calculation"}</th>
+                          <th style={{ width: 132 }}>{uiLanguage === "zh" ? "操作" : "Action"}</th>
                         </tr>
                       </thead>
                       <tbody>
                         {runIssues.map((issue, idx) => {
-                          const text = formatRunIssue(issue, uiLanguage);
                           const associationTarget = getRunIssueAssociationTarget(issue);
+                          const matchedNode = associationTarget
+                            ? nodes.find((node) => node.id === associationTarget.nodeId)
+                            : undefined;
+                          const matchedPort = associationTarget
+                            ? matchedNode?.data.inputs.find((port) => port.id === associationTarget.portId)
+                            : undefined;
+                          const presentation = getRunIssuePresentation(issue, uiLanguage, {
+                            nodeName: matchedNode?.data.name,
+                            flowName: uiLanguage === "zh"
+                              ? matchedPort?.name
+                              : matchedPort?.flowNameEn || matchedPort?.displayNameEn || matchedPort?.name,
+                          });
+                          const text = formatRunIssue(issue, uiLanguage);
                           return (
                             <tr key={`warn_dialog_${idx}`}>
                               <td className="run-analysis-warning-index">{idx + 1}</td>
-                              <td title={text}>
-                                <div className="run-analysis-warning-content">{text}</div>
-                              </td>
+                              <td title={presentation.processName}><div className="run-analysis-warning-cell">{presentation.processName}</div></td>
+                              <td title={text}><div className="run-analysis-warning-cell run-analysis-warning-flow">{presentation.flowName}</div></td>
+                              <td className="run-analysis-warning-amount">{presentation.amount}</td>
+                              <td><span className="run-analysis-warning-status">{presentation.status}</span></td>
                               <td>
                                 {associationTarget ? (
                                   <button type="button" className="link-btn" onClick={() => openRunIssueAssociation(issue)}>
@@ -6114,7 +6140,7 @@ export default function App() {
                         })}
                         {runIssues.length === 0 && (
                           <tr>
-                            <td colSpan={3}>{uiLanguage === "zh" ? "无警告" : "No warnings"}</td>
+                            <td colSpan={6}>{uiLanguage === "zh" ? "无警告" : "No warnings"}</td>
                           </tr>
                         )}
                       </tbody>

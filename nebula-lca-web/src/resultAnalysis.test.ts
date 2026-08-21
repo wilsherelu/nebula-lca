@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatRunIssue,
   formatRunWarningBanner,
+  getRunIssuePresentation,
   getRunIssueAssociationTarget,
   getUnlinkedTechnosphereInputCount,
 } from "./resultAnalysis";
@@ -26,5 +27,14 @@ describe("run issue presentation", () => {
   it("marks an unlinked input as omitted and exposes its association target", () => {
     expect(formatRunIssue(unlinkedIssue, "zh")).toContain("该输入已从计算中省略");
     expect(getRunIssueAssociationTarget(unlinkedIssue)).toEqual({ nodeId: "node-1", portId: "port-1" });
+  });
+
+  it("separates process and localized flow fields for the warning table", () => {
+    expect(getRunIssuePresentation(unlinkedIssue, "zh", { flowName: "交流电" })).toEqual({
+      processName: "原煤生产",
+      flowName: "交流电",
+      amount: "0.06336 MJ",
+      status: "已从计算中省略",
+    });
   });
 });
