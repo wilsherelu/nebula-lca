@@ -881,6 +881,20 @@ def test_resolve_and_provider_apis_keep_provider_choice_explicit():
             {"api-provider-0", "api-provider-1"}
         )
 
+        missing = client.get(
+            "/api/intermediate-flow-links/providers",
+            params={"target_flow_uuid": "not-an-ecoinvent-target"},
+        )
+        assert missing.status_code == 200
+        assert missing.json() == {
+            "target_flow_uuid": "not-an-ecoinvent-target",
+            "target_flow_name": "",
+            "target_unit": "",
+            "providers": [],
+            "total": 0,
+            "auto_selected": False,
+        }
+
         created = client.post("/api/intermediate-flow-links/user-rules", json={
             "source_flow_uuid": row["source_flow_uuid"],
             "target_flow_uuid": row["target_flow_uuid"],

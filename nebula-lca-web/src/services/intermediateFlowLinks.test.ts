@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  fetchIntermediateFlowProviders,
   searchEcoIntermediateFlows,
   toIntermediateFlowLink,
   type RawResolution,
@@ -51,6 +52,18 @@ describe("toIntermediateFlowLink", () => {
 
     expect(link.applicationMode).toBe("auto_compatible");
     expect(link.flowSubtypeOverride).toBe(true);
+  });
+});
+
+describe("fetchIntermediateFlowProviders", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("treats a missing ecoinvent target as an empty provider result", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404 }));
+
+    await expect(fetchIntermediateFlowProviders("tidas-flow")).resolves.toEqual([]);
   });
 });
 

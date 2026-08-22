@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Node } from "@xyflow/react";
 import type { FlowPort, IntermediateFlowLink, LcaNodeData } from "../../model/node";
 import { useLcaGraphStore } from "../../store/lcaGraphStore";
@@ -22,6 +22,7 @@ type Props = {
   node: Node<LcaNodeData>;
   onStatus?: (text: string) => void;
   getPortDisplayName?: (port: FlowPort) => string;
+  openRequestKey?: number;
 };
 
 const applyLinkToPort = (port: FlowPort, link: IntermediateFlowLink): FlowPort => ({
@@ -37,7 +38,7 @@ const applyLinkToPort = (port: FlowPort, link: IntermediateFlowLink): FlowPort =
   intermediateFlowLink: link,
 });
 
-export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }: Props) {
+export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName, openRequestKey = 0 }: Props) {
   const uiLanguage = useLcaGraphStore((state) => state.uiLanguage);
   const edges = useLcaGraphStore((state) => state.edges);
   const updateNode = useLcaGraphStore((state) => state.updateNode);
@@ -125,6 +126,10 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
   const closeDialog = () => {
     setOpen(false);
   };
+
+  useEffect(() => {
+    if (openRequestKey > 0) openDialog();
+  }, [openRequestKey]);
 
   const applyAllL1 = () => {
     const links = new Map<string, ReturnType<typeof toIntermediateFlowLink>>();

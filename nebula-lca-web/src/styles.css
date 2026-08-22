@@ -2410,16 +2410,60 @@ body,
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  padding: 8px 10px;
-  border-bottom: 1px solid #e7edf0;
+  min-height: 54px;
+  padding: 9px 14px;
+  border-top: 1px solid #e7edf0;
+  background: #f8fbfd;
 }
 
 .inventory-section-pagination {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   color: #5b7682;
-  font-size: 12px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.inventory-pagination-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 86px;
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 1px solid #b9cfdb;
+  border-radius: 8px;
+  background: #fff;
+  color: #285c75;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+.inventory-pagination-button:hover:not(:disabled) {
+  border-color: #6aa9ce;
+  background: #eef7fc;
+  color: #0f6dad;
+}
+
+.inventory-pagination-button:focus-visible {
+  outline: 2px solid #1b8cff;
+  outline-offset: 2px;
+}
+
+.inventory-pagination-button:disabled {
+  border-color: #d9e4e9;
+  background: #f3f7f9;
+  color: #9aadb6;
+  cursor: not-allowed;
+}
+
+.inventory-pagination-status {
+  min-width: 48px;
+  text-align: center;
 }
 
 .overlay-head {
@@ -7034,7 +7078,19 @@ body,
 
 .background-lci-association-header {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.background-lci-association-header-copy {
+  display: grid;
   gap: 2px;
+  min-width: 0;
+}
+
+.background-lci-convert-action {
+  white-space: nowrap;
 }
 
 .background-lci-status-badge {
@@ -7125,6 +7181,11 @@ body,
 }
 
 @media (max-width: 768px) {
+  .background-lci-association-header {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
   .background-lci-association-controls {
     grid-template-columns: 1fr;
     align-items: stretch;
