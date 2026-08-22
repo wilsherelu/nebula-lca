@@ -17,6 +17,7 @@ type Props = {
   onLinked: () => void;
   onStatus?: (text: string) => void;
   sourceFlowName?: string;
+  onRequestConversion: () => void;
 };
 
 const API_BASE = getApiBase();
@@ -28,6 +29,7 @@ export function BackgroundLciAssociationSection({
   onLinked,
   onStatus,
   sourceFlowName,
+  onRequestConversion,
 }: Props) {
   const connectProvider = useLcaGraphStore((state) => state.connectIntermediateProvider);
   const [providers, setProviders] = useState<ProviderCandidate[]>([]);
@@ -52,8 +54,11 @@ export function BackgroundLciAssociationSection({
       .then((rows) => {
         if (!canceled) setProviders(rows);
       })
-      .catch((reason) => {
-        if (!canceled) setError(reason instanceof Error ? reason.message : t("背景 LCI 加载失败", "Background LCI lookup failed"));
+      .catch(() => {
+        if (!canceled) setError(t(
+          "背景供应查询暂不可用，请稍后重试。",
+          "Background provider lookup is temporarily unavailable. Please try again.",
+        ));
       })
       .finally(() => {
         if (!canceled) setLoading(false);
@@ -161,14 +166,19 @@ export function BackgroundLciAssociationSection({
   return (
     <section className="background-lci-association-section">
       <div className="background-lci-association-header">
-        <div className="background-lci-association-title">
-          <strong>{t("关联背景 LCI", "Link Background LCI")}</strong>
-          <span className={`background-lci-status-badge background-lci-status-badge--${statusClass}`}>{statusLabel}</span>
+        <div className="background-lci-association-header-copy">
+          <div className="background-lci-association-title">
+            <strong>{t("关联背景 LCI", "Link Background LCI")}</strong>
+            <span className={`background-lci-status-badge background-lci-status-badge--${statusClass}`}>{statusLabel}</span>
+          </div>
+          {targetFlowUuid && <span className="background-lci-match-hint">{t(
+            convertedTargetFlowUuid ? "按转换后的产品流精确匹配" : "按当前产品流精确匹配；跨库数据请先转换到目标产品流",
+            convertedTargetFlowUuid ? "Matched exactly by converted product flow" : "Matched exactly by current product flow; convert cross-source data to its target product flow first",
+          )}</span>}
         </div>
-        {targetFlowUuid && <span className="background-lci-match-hint">{t(
-          convertedTargetFlowUuid ? "按转换后的产品流精确匹配" : "按当前产品流精确匹配；跨库数据请先手动转换到目标产品流",
-          convertedTargetFlowUuid ? "Matched exactly by converted product flow" : "Matched exactly by current product flow; convert cross-source data to its target product flow first",
-        )}</span>}
+        <button type="button" className="flow-link-button secondary background-lci-convert-action" onClick={onRequestConversion}>
+          {t("转换中间流", "Convert Flow")}
+        </button>
       </div>
       {!targetFlowUuid ? (
         <div className="background-lci-hint">

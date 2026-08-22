@@ -233,7 +233,16 @@ def get_providers(
     target_flow_uuid: str = Query(min_length=1),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    target = _flow_or_404(db, target_flow_uuid)
+    target = resolve_ecoinvent_target_flow(db, target_flow_uuid)
+    if target is None:
+        return {
+            "target_flow_uuid": target_flow_uuid,
+            "target_flow_name": "",
+            "target_unit": "",
+            "providers": [],
+            "total": 0,
+            "auto_selected": False,
+        }
     providers = list_provider_candidates(db, target.flow_uuid)
     return {
         "target_flow_uuid": target.flow_uuid,

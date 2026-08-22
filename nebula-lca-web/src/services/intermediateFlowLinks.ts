@@ -152,6 +152,7 @@ export async function fetchIntermediateFlowProviders(
   const response = await fetch(
     `${API_BASE}/intermediate-flow-links/providers?${params.toString()}`,
   );
+  if (response.status === 404) return [];
   if (!response.ok) {
     throw new Error(`Provider lookup failed (${response.status})`);
   }

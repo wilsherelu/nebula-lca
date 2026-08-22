@@ -334,41 +334,6 @@ function FlowSection({
           </button>
         )}
       </div>
-      {totalItems > pageSize && (
-        <div className="inventory-section-controls">
-          <div className="inventory-section-pagination">
-            <button
-              type="button"
-              className="ghost-btn"
-              disabled={currentPage <= 1 || remoteLoading}
-              onClick={() => {
-                if (remoteMode) {
-                  onRemotePageChange?.(Math.max(1, currentPage - 1));
-                } else {
-                  setPage((value) => Math.max(1, value - 1));
-                }
-              }}
-            >
-              {t("上一页", "Previous")}
-            </button>
-            <span>{currentPage} / {pageCount}</span>
-            <button
-              type="button"
-              className="ghost-btn"
-              disabled={currentPage >= pageCount || remoteLoading}
-              onClick={() => {
-                if (remoteMode) {
-                  onRemotePageChange?.(Math.min(pageCount, currentPage + 1));
-                } else {
-                  setPage((value) => Math.min(pageCount, value + 1));
-                }
-              }}
-            >
-              {t("下一页", "Next")}
-            </button>
-          </div>
-        </div>
-      )}
       {remoteLoading && <div className="table-empty">{t("加载中", "Loading")}</div>}
       {!remoteLoading && remoteError && <div className="table-empty">{remoteError}</div>}
       <div className="inventory-grid-header">
@@ -473,6 +438,41 @@ function FlowSection({
         </div>
       ))}
       {!remoteLoading && !remoteError && ports.length === 0 && <div className="table-empty">{t("暂无数据", "No data")}</div>}
+      {totalItems > pageSize && (
+        <div className="inventory-section-controls">
+          <div className="inventory-section-pagination" aria-label={t("分页", "Pagination")}>
+            <button
+              type="button"
+              className="inventory-pagination-button"
+              disabled={currentPage <= 1 || remoteLoading}
+              onClick={() => {
+                if (remoteMode) {
+                  onRemotePageChange?.(Math.max(1, currentPage - 1));
+                } else {
+                  setPage((value) => Math.max(1, value - 1));
+                }
+              }}
+            >
+              <span aria-hidden="true">‹</span>{t("上一页", "Previous")}
+            </button>
+            <span className="inventory-pagination-status">{currentPage} / {pageCount}</span>
+            <button
+              type="button"
+              className="inventory-pagination-button"
+              disabled={currentPage >= pageCount || remoteLoading}
+              onClick={() => {
+                if (remoteMode) {
+                  onRemotePageChange?.(Math.min(pageCount, currentPage + 1));
+                } else {
+                  setPage((value) => Math.min(pageCount, value + 1));
+                }
+              }}
+            >
+              {t("下一页", "Next")}<span aria-hidden="true">›</span>
+            </button>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -526,6 +526,7 @@ export function NodeInspector({
     port: null,
   });
   const [associationTab, setAssociationTab] = useState<"background" | "existing">("existing");
+  const [intermediateFlowOpenRequestKey, setIntermediateFlowOpenRequestKey] = useState(0);
   const [saleDialog, setSaleDialog] = useState<{ open: boolean; portId: string | null; value: number }>({
     open: false,
     portId: null,
@@ -2218,7 +2219,12 @@ export function NodeInspector({
             </label>
           )}
           {!marketProcess && !ptsNode && !lciNode && (
-            <IntermediateFlowLinkPanel node={node} onStatus={onStatus} getPortDisplayName={getPortDisplayName} />
+            <IntermediateFlowLinkPanel
+              node={node}
+              onStatus={onStatus}
+              getPortDisplayName={getPortDisplayName}
+              openRequestKey={intermediateFlowOpenRequestKey}
+            />
           )}
           {marketProcess && (
             <label className="inline-checkbox">
@@ -2732,6 +2738,10 @@ export function NodeInspector({
                   onStatus={onStatus}
                   onLinked={closeAssociationDialog}
                   sourceFlowName={getPortDisplayName(assocDialog.port)}
+                  onRequestConversion={() => {
+                    closeAssociationDialog();
+                    setIntermediateFlowOpenRequestKey((value) => value + 1);
+                  }}
                 />
               ) : (
                 <>

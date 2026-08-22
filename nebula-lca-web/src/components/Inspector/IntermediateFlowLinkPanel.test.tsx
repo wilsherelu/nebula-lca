@@ -44,6 +44,16 @@ const node: Node<LcaNodeData> = {
 };
 
 describe("IntermediateFlowLinkPanel", () => {
+  it("opens when another inspector workflow requests intermediate-flow conversion", async () => {
+    useLcaGraphStore.setState({ uiLanguage: "zh", edges: [] });
+    const { rerender } = render(<IntermediateFlowLinkPanel node={node} openRequestKey={0} />);
+
+    expect(screen.queryByRole("dialog", { name: "中间流转换" })).toBeNull();
+    rerender(<IntermediateFlowLinkPanel node={node} openRequestKey={1} />);
+
+    await waitFor(() => expect(screen.getByRole("dialog", { name: "中间流转换" })).toBeTruthy());
+  });
+
   it("closes the dialog without mutating ports when close button is clicked", async () => {
     useLcaGraphStore.setState({ uiLanguage: "zh", edges: [] });
     render(<IntermediateFlowLinkPanel node={node} />);
