@@ -6905,7 +6905,7 @@ body,
 }
 
 .intermediate-flow-l2-review-columns,
-label.intermediate-flow-l2-review-row {
+.intermediate-flow-l2-review-row {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr) 76px minmax(0, 0.8fr);
   gap: 12px;
@@ -6961,6 +6961,25 @@ label.intermediate-flow-l2-review-row {
 
 .intermediate-flow-l2-risk {
   justify-self: start;
+}
+
+.intermediate-flow-factor-editor {
+  display: grid;
+  grid-template-columns: auto minmax(64px, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  color: #795a1a;
+  white-space: nowrap;
+}
+
+.intermediate-flow-factor-editor input {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 7px;
+  border: 1px solid #d7b55d;
+  border-radius: 6px;
+  background: #fff;
+  color: #183844;
 }
 
 .intermediate-flow-l2-review-footer {
@@ -7612,13 +7631,14 @@ label.intermediate-flow-l2-review-row {
     display: none;
   }
 
-  label.intermediate-flow-l2-review-row {
+  .intermediate-flow-l2-review-row {
     grid-template-columns: 28px minmax(0, 1fr);
   }
 
   .intermediate-flow-l2-review-target,
   .intermediate-flow-l2-review-unit,
-  .intermediate-flow-l2-risk {
+  .intermediate-flow-l2-risk,
+  .intermediate-flow-factor-editor {
     grid-column: 2;
   }
 }

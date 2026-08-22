@@ -27,6 +27,7 @@ export type RawResolution = {
   application_mode?: "strict_identity" | "auto_compatible";
   flow_subtype_override?: boolean;
   warnings?: string[];
+  requires_manual_factor?: boolean;
   status?: "active" | "auto" | "user_confirmed";
   target_flow_name?: string;
   target_flow_name_en?: string;

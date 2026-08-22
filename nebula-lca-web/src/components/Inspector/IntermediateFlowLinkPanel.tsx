@@ -5,6 +5,7 @@ import { useLcaGraphStore } from "../../store/lcaGraphStore";
 import { getLocalizedText } from "../../utils/localizedText";
 import {
   confirmL2IntermediateFlowLink,
+  createUserProxyRule,
   resolveIntermediateFlowPorts,
   toIntermediateFlowLink,
   type RawResolution,
@@ -13,6 +14,7 @@ import {
 import {
   IntermediateFlowL2ReviewDialog,
   type IntermediateFlowL2ReviewItem,
+  type IntermediateFlowReviewSelection,
 } from "./IntermediateFlowL2ReviewDialog";
 import { L3UserProxyModal } from "./L3UserProxyModal";
 
@@ -55,6 +57,18 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
       : level === "L2"
         ? t("需确认转换", "Conversion needs confirmation")
         : t("有转换记忆", "Conversion memory available");
+  const blockedReasonLabel = (reason?: string) => {
+    if (reason?.startsWith("SOURCE_FLOW_VERSION_")) {
+      return t("原转换与当前 Flow 版本不匹配", "Existing conversion does not match this Flow version");
+    }
+    if (reason?.includes("UNIT") || reason === "UNIT_GROUP_MISMATCH") {
+      return t("原转换的单位证据与当前 Flow 不匹配", "Existing conversion unit evidence does not match this Flow");
+    }
+    if (reason === "TARGET_FLOW_NOT_FOUND" || reason === "TARGET_FLOW_NOT_ECOINVENT") {
+      return t("映射目标在当前 ecoinvent 背景库中不可用", "Mapping target is unavailable in the current ecoinvent database");
+    }
+    return t("原转换证据不适用于当前 Flow", "Existing conversion evidence does not apply to this Flow");
+  };
 
   const inputs = useMemo(
     () => node.data.inputs.filter((port) => port.type !== "biosphere"),
@@ -115,7 +129,9 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
   const applyAllL1 = () => {
     const links = new Map<string, ReturnType<typeof toIntermediateFlowLink>>();
     for (const [portId, resolution] of Object.entries(candidateByPort)) {
-      if (resolution.mapping_level === "L1") links.set(portId, toIntermediateFlowLink(resolution));
+      if (resolution.mapping_level === "L1" && statusByPort[portId] === "L1") {
+        links.set(portId, toIntermediateFlowLink(resolution));
+      }
     }
     if (links.size === 0) return;
     updateNode(node.id, (current) => ({
@@ -139,28 +155,39 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
 
   const l2ReviewItems = useMemo<IntermediateFlowL2ReviewItem[]>(() => inputs.flatMap((port) => {
     const resolution = candidateByPort[port.id];
-    return resolution?.mapping_level === "L2" ? [{ port, resolution }] : [];
-  }), [candidateByPort, inputs]);
+    return resolution && statusByPort[port.id] === "L2" ? [{ port, resolution }] : [];
+  }), [candidateByPort, inputs, statusByPort]);
 
-  const l1Count = Object.values(candidateByPort).filter((item) => item.mapping_level === "L1").length;
+  const l1Count = Object.entries(candidateByPort).filter(([portId, item]) => (
+    item.mapping_level === "L1" && statusByPort[portId] === "L1"
+  )).length;
   const unmatchedCount = inputs.filter((port) => (
     (!port.intermediateFlowLink || statusByPort[port.id] === "blocked")
     && resolutionState === "ready"
     && ["unmatched", "blocked", "skipped"].includes(statusByPort[port.id] ?? "unmatched")
   )).length;
 
-  const applySelectedL2 = async (portIds: string[]) => {
-    const selections = portIds.flatMap((portId) => {
+  const applySelectedL2 = async (reviewSelections: IntermediateFlowReviewSelection[]) => {
+    const selections = reviewSelections.flatMap(({ portId, amountFactor }) => {
       const port = inputs.find((item) => item.id === portId);
       const resolution = candidateByPort[portId];
-      return port && resolution?.mapping_level === "L2" ? [{ port, resolution }] : [];
+      return port && resolution && statusByPort[portId] === "L2"
+        ? [{ port, resolution, amountFactor }]
+        : [];
     });
     if (selections.length === 0) return;
     setBusy(true);
     try {
-      const confirmed = await Promise.all(selections.map(async ({ port, resolution }) => ({
+      const confirmed = await Promise.all(selections.map(async ({ port, resolution, amountFactor }) => ({
         portId: port.id,
-        link: await confirmL2IntermediateFlowLink(port, resolution.rule_id),
+        link: resolution.requires_manual_factor
+          ? await createUserProxyRule(
+            port,
+            resolution.target_flow_uuid,
+            "user_confirmed_cross_unit_group_conversion",
+            amountFactor,
+          )
+          : await confirmL2IntermediateFlowLink(port, resolution.rule_id),
       })));
       const links = new Map(confirmed.map((item) => [item.portId, item.link]));
       updateNode(node.id, (current) => ({
@@ -363,7 +390,9 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
                 </div>
                 <div className="intermediate-flow-link-status">
                   <span className="intermediate-flow-level-badge review">
-                    {conversionLabel(review.mapping_level)}
+                    {review.requires_manual_factor
+                      ? t("需录入换算系数", "Conversion factor required")
+                      : conversionLabel(review.mapping_level)}
                   </span>
                 </div>
                 <div className="intermediate-flow-link-actions">
@@ -391,7 +420,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName }
                     {resolutionState === "loading" || resolutionState === "idle"
                       ? t("检测中", "Checking")
                       : resolutionStatus === "blocked"
-                        ? t("原转换与当前 Flow 版本或单位不匹配", "Existing conversion does not match this Flow version or unit")
+                        ? blockedReasonLabel(reasonByPort[port.id])
                         : t("无自动候选", "No automatic candidate")}
                   </span>
                 </div>

@@ -174,6 +174,83 @@ class SourceFlowContext:
     inferred: bool = False
 
 
+@dataclass(frozen=True)
+class EcoinventTargetFlowContext:
+    flow_uuid: str
+    flow_name: str
+    flow_name_en: str | None
+    flow_type: str
+    default_unit: str
+    unit_group: str
+    source: str = "ecoinvent_3.11"
+
+
+def resolve_ecoinvent_target_flow(
+    db: Session,
+    target_flow_uuid: str,
+    *,
+    source: Any | None = None,
+) -> FlowRecord | EcoinventTargetFlowContext | None:
+    """Resolve an ecoinvent product independently of the shared Flow catalog.
+
+    A TianGong Flow can legitimately reuse an ecoinvent UUID. In that case the
+    compatibility catalog contains the TianGong record, while the imported LCI
+    reference process remains the authoritative ecoinvent product definition.
+    """
+    catalog = db.get(FlowRecord, target_flow_uuid)
+    if catalog is not None and "ecoinvent" in str(catalog.source or "").casefold():
+        return catalog
+
+    providers = (
+        db.query(ReferenceProcess)
+        .filter(
+            ReferenceProcess.process_type == "lci_dataset",
+            ReferenceProcess.reference_flow_uuid == target_flow_uuid,
+        )
+        .all()
+    )
+    definitions: dict[tuple[str, str], dict[str, str]] = {}
+    for provider in providers:
+        payload = provider.process_json if isinstance(provider.process_json, dict) else {}
+        unit = str(payload.get("reference_product_unit") or "").strip()
+        name = str(payload.get("reference_product") or "").strip()
+        if unit and name:
+            definitions[(unit, name.casefold())] = {"unit": unit, "name": name}
+    units = {item["unit"] for item in definitions.values()}
+    if not definitions or len(units) != 1:
+        return None
+
+    definition = next(iter(definitions.values()))
+    target_unit = definition["unit"]
+    target_group = ""
+    if source is not None:
+        source_group = str(getattr(source, "unit_group", None) or "")
+        unit_definitions = db.query(UnitDefinition).filter(
+            UnitDefinition.unit_name == target_unit,
+        ).all()
+        if any(_unit_group_key(item.unit_group) == _unit_group_key(source_group) for item in unit_definitions):
+            target_group = source_group
+        elif target_unit == str(getattr(source, "default_unit", None) or ""):
+            target_group = source_group
+        else:
+            candidate_groups = {
+                str(item.unit_group or "").strip()
+                for item in unit_definitions
+                if str(item.unit_group or "").strip()
+            }
+            if len(candidate_groups) == 1:
+                target_group = next(iter(candidate_groups))
+
+    return EcoinventTargetFlowContext(
+        flow_uuid=target_flow_uuid,
+        flow_name=definition["name"],
+        flow_name_en=definition["name"],
+        flow_type="Product flow",
+        default_unit=target_unit,
+        unit_group=target_group,
+    )
+
+
 def resolve_source_flow_context(
     db: Session,
     *,
@@ -461,7 +538,7 @@ def repair_legacy_intermediate_flow_links(db: Session, graph: HybridGraph) -> li
                 not context.inferred and not str(port.flow_version or "").strip()
             ):
                 continue
-            target = db.get(FlowRecord, link.target_flow_uuid)
+            target = resolve_ecoinvent_target_flow(db, link.target_flow_uuid, source=context.record)
             if target is None:
                 continue
             factor = deterministic_default_unit_factor(db, context.record, target)
@@ -638,7 +715,7 @@ def resolve_intermediate_flow(
         resolution = get_intermediate_flow_link_registry().resolve(source_uuid)
     if resolution is None:
         return None, None
-    target = db.get(FlowRecord, resolution.target_flow_uuid)
+    target = resolve_ecoinvent_target_flow(db, resolution.target_flow_uuid, source=context.record)
     resolution = _bind_source_context(resolution, context)
     resolution = _resolution_with_catalog_units(db, context.record, target, resolution)
     return resolution, _validate_resolution_records(context.record, target, resolution)
@@ -707,7 +784,7 @@ def validate_intermediate_flow_link(
         if expected is None:
             return f"{link.mapping_level}_RULE_NOT_FOUND"
     source = context.record
-    target = db.get(FlowRecord, link.target_flow_uuid)
+    target = resolve_ecoinvent_target_flow(db, link.target_flow_uuid, source=source)
     if expected is not None:
         expected = _resolution_with_catalog_units(db, source, target, expected)
     record_issue = _validate_resolution_records(

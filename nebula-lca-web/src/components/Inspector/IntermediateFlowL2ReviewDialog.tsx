@@ -8,13 +8,18 @@ export type IntermediateFlowL2ReviewItem = {
   resolution: RawResolution;
 };
 
+export type IntermediateFlowReviewSelection = {
+  portId: string;
+  amountFactor?: number;
+};
+
 type Props = {
   open: boolean;
   busy: boolean;
   items: IntermediateFlowL2ReviewItem[];
   language: "zh" | "en";
   onClose: () => void;
-  onConfirm: (portIds: string[]) => void;
+  onConfirm: (selections: IntermediateFlowReviewSelection[]) => void;
   getSourceDisplayName?: (port: FlowPort) => string;
 };
 
@@ -28,16 +33,24 @@ export function IntermediateFlowL2ReviewDialog({
   getSourceDisplayName,
 }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [factorByPort, setFactorByPort] = useState<Record<string, string>>({});
   const t = (zh: string, en: string) => (language === "zh" ? zh : en);
 
   useEffect(() => {
     if (open) {
       setSelected(new Set(items.map((item) => item.port.id)));
+      setFactorByPort({});
     }
   }, [items, open]);
 
   const allSelected = items.length > 0 && selected.size === items.length;
   const selectedIds = useMemo(() => Array.from(selected), [selected]);
+  const invalidFactorIds = useMemo(() => selectedIds.filter((portId) => {
+    const item = items.find((candidate) => candidate.port.id === portId);
+    if (!item?.resolution.requires_manual_factor) return false;
+    const factor = Number(factorByPort[portId]);
+    return !Number.isFinite(factor) || factor <= 0;
+  }), [factorByPort, items, selectedIds]);
 
   if (!open) return null;
   return (
@@ -85,7 +98,7 @@ export function IntermediateFlowL2ReviewDialog({
           <span>{t("来源流", "Source flow")}</span>
           <span>{t("转换目标", "Conversion target")}</span>
           <span>{t("单位", "Unit")}</span>
-          <span>{t("状态", "Status")}</span>
+          <span>{t("确认信息", "Confirmation")}</span>
         </div>
         <div className="intermediate-flow-l2-review-list">
           {items.map(({ port, resolution }) => {
@@ -99,8 +112,8 @@ export function IntermediateFlowL2ReviewDialog({
               ? resolution.target_flow_name || resolution.target_flow_name_en || resolution.target_flow_uuid
               : resolution.target_flow_name_en || resolution.target_flow_name || resolution.target_flow_uuid;
             return (
-              <label className="intermediate-flow-l2-review-row" key={port.id}>
-                <span className="app-checkbox">
+              <div className="intermediate-flow-l2-review-row" key={port.id}>
+                <label className="app-checkbox">
                   <input
                     type="checkbox"
                     checked={checked}
@@ -113,7 +126,7 @@ export function IntermediateFlowL2ReviewDialog({
                     })}
                   />
                   <span className="app-checkbox-control" aria-hidden="true" />
-                </span>
+                </label>
                 <span className="intermediate-flow-l2-review-flow" title={sourceName}>
                   <strong>{sourceName}</strong>
                 </span>
@@ -121,10 +134,33 @@ export function IntermediateFlowL2ReviewDialog({
                   <strong>{targetName}</strong>
                 </span>
                 <span className="intermediate-flow-l2-review-unit">{resolution.source_unit} → {resolution.target_unit}</span>
-                <span className="intermediate-flow-l2-risk" title={(resolution.warnings ?? []).join(" · ")}>
-                  {t("待核对", "Review needed")}
-                </span>
-              </label>
+                {resolution.requires_manual_factor ? (
+                  <span className="intermediate-flow-factor-editor">
+                    <span>{t(
+                      `1 ${resolution.source_unit} =`,
+                      `1 ${resolution.source_unit} =`,
+                    )}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      inputMode="decimal"
+                      value={factorByPort[port.id] ?? ""}
+                      disabled={busy}
+                      aria-label={t(`${sourceName} 换算系数`, `${sourceName} conversion factor`)}
+                      onChange={(event) => setFactorByPort((current) => ({
+                        ...current,
+                        [port.id]: event.target.value,
+                      }))}
+                    />
+                    <span>{resolution.target_unit}</span>
+                  </span>
+                ) : (
+                  <span className="intermediate-flow-l2-risk" title={(resolution.warnings ?? []).join(" · ")}>
+                    {t("待核对", "Review needed")}
+                  </span>
+                )}
+              </div>
             );
           })}
         </div>
@@ -135,8 +171,13 @@ export function IntermediateFlowL2ReviewDialog({
           <button
             type="button"
             className="flow-link-button primary"
-            disabled={busy || selectedIds.length === 0}
-            onClick={() => onConfirm(selectedIds)}
+            disabled={busy || selectedIds.length === 0 || invalidFactorIds.length > 0}
+            onClick={() => onConfirm(selectedIds.map((portId) => {
+              const item = items.find((candidate) => candidate.port.id === portId);
+              return item?.resolution.requires_manual_factor
+                ? { portId, amountFactor: Number(factorByPort[portId]) }
+                : { portId };
+            }))}
           >
             {busy
               ? t("确认中…", "Confirming…")

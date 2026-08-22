@@ -723,6 +723,63 @@ def test_unreviewed_name_candidates_are_opt_in_only(db):
     assert audit_result["items"][0]["l2_candidates"][0]["target_flow_uuid"] == "unreviewed-target"
 
 
+def test_builtin_cross_group_mapping_is_reviewable_with_manual_factor(db):
+    row = _seed_first_compatible_pair(db)
+    source = db.get(FlowRecord, row["source_flow_uuid"])
+    source.unit_group = (
+        "Units of mass"
+        if "energy" in row["target_unit_group"].casefold()
+        else "Units of energy"
+    )
+    db.commit()
+
+    result = resolve_batch(ResolveBatchRequest(items=[ResolvePortRequest(
+        port_id="cross-group-input",
+        flow_uuid=row["source_flow_uuid"],
+        unit=row["source_unit"],
+        unit_group=source.unit_group,
+    )]), db)
+
+    item = result["items"][0]
+    assert item["status"] == "L2"
+    assert item["resolution"]["requires_manual_factor"] is True
+    assert "CROSS_GROUP_FACTOR_REQUIRED" in item["resolution"]["warnings"]
+    assert item["resolution"]["target_flow_uuid"] == row["target_flow_uuid"]
+
+
+def test_ecoinvent_reference_product_wins_over_tidas_catalog_uuid_collision(db):
+    row = _seed_first_compatible_pair(db)
+    target = db.get(FlowRecord, row["target_flow_uuid"])
+    target.source = "tidas_bundle_import"
+    target.flow_name = "Conflicting Tiangong Flow"
+    target.default_unit = "m3"
+    target.unit_group = "Units of volume"
+    db.add(ReferenceProcess(
+        process_uuid="ecoinvent-collision-provider",
+        process_name="Authoritative ecoinvent provider",
+        process_type="lci_dataset",
+        reference_flow_uuid=row["target_flow_uuid"],
+        process_json={
+            "reference_product_id": row["target_flow_uuid"],
+            "reference_product": row["target_name"],
+            "reference_product_unit": row["target_unit"],
+        },
+    ))
+    db.commit()
+
+    result = resolve_batch(ResolveBatchRequest(items=[ResolvePortRequest(
+        port_id="collision-input",
+        flow_uuid=row["source_flow_uuid"],
+        unit=row["source_unit"],
+        unit_group=row["source_unit_group"],
+    )]), db)
+
+    item = result["items"][0]
+    assert item["status"] == "L2"
+    assert item["resolution"]["target_flow_name"] == row["target_name"]
+    assert item["resolution"]["target_unit"] == row["target_unit"]
+
+
 def test_reference_flow_backfill_is_uuid_only_dry_run_commit_and_idempotent(db):
     row = _seed_first_l1_pair(db)
     db.add_all([
