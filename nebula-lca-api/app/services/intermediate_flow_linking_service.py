@@ -190,6 +190,7 @@ def resolve_ecoinvent_target_flow(
     target_flow_uuid: str,
     *,
     source: Any | None = None,
+    allow_mapped_catalog: bool = False,
 ) -> FlowRecord | EcoinventTargetFlowContext | None:
     """Resolve an ecoinvent product independently of the shared Flow catalog.
 
@@ -218,7 +219,16 @@ def resolve_ecoinvent_target_flow(
             definitions[(unit, name.casefold())] = {"unit": unit, "name": name}
     units = {item["unit"] for item in definitions.values()}
     if not definitions or len(units) != 1:
-        return None
+        if not allow_mapped_catalog or catalog is None:
+            return None
+        return EcoinventTargetFlowContext(
+            flow_uuid=target_flow_uuid,
+            flow_name=str(catalog.flow_name or ""),
+            flow_name_en=catalog.flow_name_en,
+            flow_type=str(catalog.flow_type or "Product flow"),
+            default_unit=str(catalog.default_unit or ""),
+            unit_group=str(catalog.unit_group or ""),
+        )
 
     definition = next(iter(definitions.values()))
     target_unit = definition["unit"]
@@ -715,7 +725,12 @@ def resolve_intermediate_flow(
         resolution = get_intermediate_flow_link_registry().resolve(source_uuid)
     if resolution is None:
         return None, None
-    target = resolve_ecoinvent_target_flow(db, resolution.target_flow_uuid, source=context.record)
+    target = resolve_ecoinvent_target_flow(
+        db,
+        resolution.target_flow_uuid,
+        source=context.record,
+        allow_mapped_catalog=resolution.rule_origin == "builtin",
+    )
     resolution = _bind_source_context(resolution, context)
     resolution = _resolution_with_catalog_units(db, context.record, target, resolution)
     return resolution, _validate_resolution_records(context.record, target, resolution)
@@ -784,7 +799,12 @@ def validate_intermediate_flow_link(
         if expected is None:
             return f"{link.mapping_level}_RULE_NOT_FOUND"
     source = context.record
-    target = resolve_ecoinvent_target_flow(db, link.target_flow_uuid, source=source)
+    target = resolve_ecoinvent_target_flow(
+        db,
+        link.target_flow_uuid,
+        source=source,
+        allow_mapped_catalog=expected is not None,
+    )
     if expected is not None:
         expected = _resolution_with_catalog_units(db, source, target, expected)
     record_issue = _validate_resolution_records(

@@ -780,6 +780,30 @@ def test_ecoinvent_reference_product_wins_over_tidas_catalog_uuid_collision(db):
     assert item["resolution"]["target_unit"] == row["target_unit"]
 
 
+def test_builtin_mapping_uses_target_flow_definition_without_imported_provider(db):
+    row = _seed_first_compatible_pair(db)
+    target = db.get(FlowRecord, row["target_flow_uuid"])
+    target.source = "tidas_bundle_import"
+    db.query(ReferenceProcess).filter(
+        ReferenceProcess.reference_flow_uuid == row["target_flow_uuid"],
+    ).delete(synchronize_session=False)
+    db.commit()
+
+    result = resolve_batch(ResolveBatchRequest(items=[ResolvePortRequest(
+        port_id="mapped-without-provider",
+        flow_uuid=row["source_flow_uuid"],
+        unit=row["source_unit"],
+        unit_group=row["source_unit_group"],
+    )]), db)
+
+    item = result["items"][0]
+    assert item["status"] == "L2"
+    assert item["resolution"]["target_flow_uuid"] == row["target_flow_uuid"]
+    assert item["resolution"]["target_flow_name"] == row["target_name"]
+    assert item["resolution"]["target_unit"] == row["target_unit"]
+    assert list_provider_candidates(db, row["target_flow_uuid"]) == []
+
+
 def test_reference_flow_backfill_is_uuid_only_dry_run_commit_and_idempotent(db):
     row = _seed_first_l1_pair(db)
     db.add_all([
