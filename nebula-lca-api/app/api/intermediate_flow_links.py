@@ -19,6 +19,7 @@ from ..services.intermediate_flow_linking_service import (
     deterministic_default_unit_factor,
     list_l2_candidates,
     list_provider_candidates,
+    resolve_ecoinvent_target_flow,
     resolve_intermediate_flow,
     resolve_source_flow_context,
     validate_intermediate_flow_link,
@@ -65,8 +66,8 @@ class ConfirmL2Request(BaseModel):
     source_flow_version: str | None = None
 
 
-def _flow_or_404(db: Session, flow_uuid: str) -> FlowRecord:
-    row = db.get(FlowRecord, str(flow_uuid or "").strip())
+def _flow_or_404(db: Session, flow_uuid: str) -> Any:
+    row = resolve_ecoinvent_target_flow(db, str(flow_uuid or "").strip())
     if row is None:
         raise HTTPException(
             status_code=404,
@@ -77,7 +78,7 @@ def _flow_or_404(db: Session, flow_uuid: str) -> FlowRecord:
 
 def _rule_payload(db: Session, row: IntermediateFlowLinkRule | IntermediateFlowLinkRuleVersion) -> dict[str, Any]:
     source = db.get(FlowRecord, row.source_flow_uuid)
-    target = db.get(FlowRecord, row.target_flow_uuid)
+    target = resolve_ecoinvent_target_flow(db, row.target_flow_uuid, source=source)
     versioned = isinstance(row, IntermediateFlowLinkRuleVersion)
     return {
         "id": row.id,
@@ -101,7 +102,7 @@ def _rule_payload(db: Session, row: IntermediateFlowLinkRule | IntermediateFlowL
 
 def _resolution_payload(db: Session, resolution: Any) -> dict[str, Any]:
     payload = resolution.to_dict()
-    target = db.get(FlowRecord, resolution.target_flow_uuid)
+    target = resolve_ecoinvent_target_flow(db, resolution.target_flow_uuid)
     payload["target_flow_name"] = target.flow_name if target is not None else ""
     payload["target_flow_name_en"] = target.flow_name_en if target is not None else ""
     return payload
@@ -165,6 +166,18 @@ def resolve_batch(payload: ResolveBatchRequest, db: Session = Depends(get_db)) -
             source_unit=item.unit,
             source_unit_group=item.unit_group,
         )
+        if issue == "UNIT_GROUP_MISMATCH" and resolution is not None and resolution.rule_origin == "builtin":
+            candidate = _resolution_payload(db, resolution)
+            candidate["requires_manual_factor"] = True
+            candidate["warnings"] = [*candidate.get("warnings", []), "CROSS_GROUP_FACTOR_REQUIRED"]
+            results.append({
+                **base,
+                "status": "L2",
+                "resolution": candidate,
+                "l2_candidates": [],
+            })
+            counts["L2"] += 1
+            continue
         if issue:
             results.append({**base, "status": "blocked", "reason": issue})
             counts["blocked"] += 1
@@ -262,7 +275,9 @@ def create_user_rule(payload: UserRuleCreateRequest, db: Session = Depends(get_d
     if context_issue or context is None:
         raise HTTPException(status_code=422, detail={"code": context_issue or "SOURCE_FLOW_VERSION_NOT_FOUND"})
     source = context.record
-    target = _flow_or_404(db, payload.target_flow_uuid)
+    target = resolve_ecoinvent_target_flow(db, payload.target_flow_uuid, source=source)
+    if target is None:
+        raise HTTPException(status_code=404, detail={"code": "TARGET_FLOW_NOT_FOUND"})
     source_type = "waste" if "waste" in source.flow_type.casefold() else "product"
     target_type = "waste" if "waste" in target.flow_type.casefold() else "product"
     if source_type != target_type:

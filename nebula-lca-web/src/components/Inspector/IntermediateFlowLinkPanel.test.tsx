@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { Node } from "@xyflow/react";
 import { describe, expect, it, vi } from "vitest";
 import type { LcaNodeData } from "../../model/node";
-import { resolveIntermediateFlowPorts } from "../../services/intermediateFlowLinks";
+import { createUserProxyRule, resolveIntermediateFlowPorts } from "../../services/intermediateFlowLinks";
 import { useLcaGraphStore } from "../../store/lcaGraphStore";
 import { IntermediateFlowLinkPanel } from "./IntermediateFlowLinkPanel";
 
@@ -11,10 +11,12 @@ vi.mock("../../services/intermediateFlowLinks", async (importOriginal) => {
   return {
     ...actual,
     resolveIntermediateFlowPorts: vi.fn().mockResolvedValue({ items: [] }),
+    createUserProxyRule: vi.fn(),
   };
 });
 
 const mockResolve = vi.mocked(resolveIntermediateFlowPorts);
+const mockCreateUserProxyRule = vi.mocked(createUserProxyRule);
 
 const node: Node<LcaNodeData> = {
   id: "process-1",
@@ -188,9 +190,65 @@ describe("IntermediateFlowLinkPanel", () => {
     render(<IntermediateFlowLinkPanel node={staleNode} />);
     fireEvent.click(screen.getByRole("button", { name: /中间流转换/ }));
 
-    await waitFor(() => expect(screen.getByText("原转换与当前 Flow 版本或单位不匹配")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("原转换的单位证据与当前 Flow 不匹配")).toBeTruthy());
     expect(screen.queryByText("转换完成")).toBeNull();
     expect(screen.getByRole("button", { name: "手动转换" })).toBeTruthy();
+  });
+
+  it("submits a cross-unit-group candidate with its reviewed factor", async () => {
+    useLcaGraphStore.setState({ uiLanguage: "zh", edges: [] });
+    mockResolve.mockResolvedValueOnce({
+      counts: { L2: 1 },
+      items: [{
+        port_id: "input-1",
+        status: "L2",
+        resolution: {
+          source_flow_uuid: "tidas-flow-1",
+          target_flow_uuid: "eco-flow-1",
+          amount_factor: 1,
+          source_unit: "MJ",
+          target_unit: "kg",
+          source_unit_group: "Units of energy",
+          target_unit_group: "Units of mass",
+          mapping_level: "L1",
+          mapping_reason: "package_mapping",
+          rule_id: "cross-group-rule",
+          rule_origin: "builtin",
+          target_flow_name: "目标产品流",
+          requires_manual_factor: true,
+          warnings: ["CROSS_GROUP_FACTOR_REQUIRED"],
+        },
+      }],
+    });
+    mockCreateUserProxyRule.mockResolvedValueOnce({
+      sourceFlowUuid: "tidas-flow-1",
+      targetFlowUuid: "eco-flow-1",
+      amountFactor: 0.0234,
+      sourceUnit: "MJ",
+      targetUnit: "kg",
+      mappingLevel: "L3",
+      mappingReason: "user_confirmed_cross_unit_group_conversion",
+      ruleId: "user-rule-1",
+      ruleOrigin: "user",
+      status: "user_confirmed",
+      warnings: [],
+    });
+
+    render(<IntermediateFlowLinkPanel node={node} />);
+    fireEvent.click(screen.getByRole("button", { name: /中间流转换/ }));
+    await waitFor(() => expect(screen.getByText("需录入换算系数")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "确认转换（1）" }));
+    fireEvent.change(screen.getByRole("spinbutton", { name: "天工中间流 换算系数" }), {
+      target: { value: "0.0234" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "确认并转换 1 条" }));
+
+    await waitFor(() => expect(mockCreateUserProxyRule).toHaveBeenCalledWith(
+      node.data.inputs[0],
+      "eco-flow-1",
+      "user_confirmed_cross_unit_group_conversion",
+      0.0234,
+    ));
   });
 
   it("sets the foreground port unit to sourceUnit after L1 auto-conversion", async () => {

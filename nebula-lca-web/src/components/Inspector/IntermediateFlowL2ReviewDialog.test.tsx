@@ -51,11 +51,11 @@ describe("IntermediateFlowL2ReviewDialog", () => {
 
     expect(screen.getByText("确认转换")).toBeTruthy();
     expect(screen.getByText("请核对转换目标后确认。")).toBeTruthy();
-    expect(screen.getByText("状态")).toBeTruthy();
+    expect(screen.getByText("确认信息")).toBeTruthy();
     expect(screen.getByText("待核对")).toBeTruthy();
     expect(screen.queryByText("HEAD_NAME_MISMATCH")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "确认并转换 1 条" }));
-    expect(onConfirm).toHaveBeenCalledWith(["diesel-port"]);
+    expect(onConfirm).toHaveBeenCalledWith([{ portId: "diesel-port" }]);
   });
 
   it("prefers flowNameEn for source display in English UI", () => {
@@ -109,5 +109,40 @@ describe("IntermediateFlowL2ReviewDialog", () => {
     const targetCell = cells[2] as HTMLElement;
     expect(getComputedStyle(flowCell).display).not.toBe("grid");
     expect(getComputedStyle(targetCell).display).not.toBe("grid");
+  });
+
+  it("requires an independent positive factor for a cross-unit-group row", () => {
+    const onConfirm = vi.fn();
+    render(
+      <IntermediateFlowL2ReviewDialog
+        open
+        busy={false}
+        language="zh"
+        items={[{
+          port,
+          resolution: {
+            ...baseResolution,
+            source_unit: "MJ",
+            target_unit: "kg",
+            source_unit_group: "Units of energy",
+            target_unit_group: "Units of mass",
+            requires_manual_factor: true,
+          },
+        }]}
+        onClose={vi.fn()}
+        onConfirm={onConfirm}
+      />,
+    );
+
+    const confirmButton = screen.getByRole("button", { name: "确认并转换 1 条" }) as HTMLButtonElement;
+    expect(confirmButton.disabled).toBe(true);
+    expect(screen.getByText("1 MJ =")).toBeTruthy();
+
+    fireEvent.change(screen.getByRole("spinbutton", { name: "柴油 换算系数" }), {
+      target: { value: "0.0234" },
+    });
+    expect(confirmButton.disabled).toBe(false);
+    fireEvent.click(confirmButton);
+    expect(onConfirm).toHaveBeenCalledWith([{ portId: "diesel-port", amountFactor: 0.0234 }]);
   });
 });
