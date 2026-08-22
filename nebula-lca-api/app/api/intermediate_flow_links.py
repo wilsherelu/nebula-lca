@@ -102,7 +102,11 @@ def _rule_payload(db: Session, row: IntermediateFlowLinkRule | IntermediateFlowL
 
 def _resolution_payload(db: Session, resolution: Any) -> dict[str, Any]:
     payload = resolution.to_dict()
-    target = resolve_ecoinvent_target_flow(db, resolution.target_flow_uuid)
+    target = resolve_ecoinvent_target_flow(
+        db,
+        resolution.target_flow_uuid,
+        allow_mapped_catalog=resolution.rule_origin == "builtin",
+    )
     payload["target_flow_name"] = target.flow_name if target is not None else ""
     payload["target_flow_name_en"] = target.flow_name_en if target is not None else ""
     return payload
