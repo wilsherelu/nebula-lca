@@ -53,6 +53,17 @@ describe("toIntermediateFlowLink", () => {
     expect(link.applicationMode).toBe("auto_compatible");
     expect(link.flowSubtypeOverride).toBe(true);
   });
+
+  it("preserves localized target flow names for saved conversions", () => {
+    const link = toIntermediateFlowLink({
+      ...resolution("L1"),
+      target_flow_name: "低压电力",
+      target_flow_name_en: "electricity, low voltage",
+    });
+
+    expect(link.targetFlowName).toBe("低压电力");
+    expect(link.targetFlowNameEn).toBe("electricity, low voltage");
+  });
 });
 
 describe("fetchIntermediateFlowProviders", () => {

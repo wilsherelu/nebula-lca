@@ -84,6 +84,8 @@ def _rule_payload(db: Session, row: IntermediateFlowLinkRule | IntermediateFlowL
         "id": row.id,
         "source_flow_uuid": row.source_flow_uuid,
         "target_flow_uuid": row.target_flow_uuid,
+        "target_flow_name": target.flow_name if target is not None else "",
+        "target_flow_name_en": target.flow_name_en if target is not None else "",
         "amount_factor": row.amount_factor,
         "source_unit": row.source_unit,
         "target_unit": row.target_unit,
@@ -110,6 +112,18 @@ def _resolution_payload(db: Session, resolution: Any) -> dict[str, Any]:
     payload["target_flow_name"] = target.flow_name if target is not None else ""
     payload["target_flow_name_en"] = target.flow_name_en if target is not None else ""
     return payload
+
+
+def _explicit_target_payload(db: Session, link: IntermediateFlowLink) -> dict[str, str]:
+    target = resolve_ecoinvent_target_flow(
+        db,
+        link.target_flow_uuid,
+        allow_mapped_catalog=link.rule_origin == "builtin",
+    )
+    return {
+        "target_flow_name": target.flow_name if target is not None else (link.target_flow_name or ""),
+        "target_flow_name_en": target.flow_name_en if target is not None else (link.target_flow_name_en or ""),
+    }
 
 
 @api_router.post("/resolve-batch")
@@ -148,13 +162,25 @@ def resolve_batch(payload: ResolveBatchRequest, db: Session = Depends(get_db)) -
             except (TypeError, ValueError) as exc:
                 issue = f"INVALID_EXPLICIT_LINK: {exc}"
             if issue == "PACKAGE_HASH_DRIFT":
-                results.append({**base, "status": "explicit", "resolution": explicit, "l2_candidates": []})
+                results.append({
+                    **base,
+                    "status": "explicit",
+                    "resolution": explicit,
+                    "l2_candidates": [],
+                    **_explicit_target_payload(db, parsed_link),
+                })
                 counts["explicit"] += 1
             elif issue:
                 results.append({**base, "status": "blocked", "reason": issue})
                 counts["blocked"] += 1
             else:
-                results.append({**base, "status": "explicit", "resolution": explicit, "l2_candidates": []})
+                results.append({
+                    **base,
+                    "status": "explicit",
+                    "resolution": explicit,
+                    "l2_candidates": [],
+                    **_explicit_target_payload(db, parsed_link),
+                })
                 counts["explicit"] += 1
             continue
         source = db.get(FlowRecord, item.flow_uuid)

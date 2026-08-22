@@ -47,6 +47,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName, 
   const [busy, setBusy] = useState(false);
   const [resolutionState, setResolutionState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [candidateByPort, setCandidateByPort] = useState<Record<string, RawResolution>>({});
+  const [targetMetadataByPort, setTargetMetadataByPort] = useState<Record<string, { name?: string; nameEn?: string }>>({});
   const [statusByPort, setStatusByPort] = useState<Record<string, ResolveItem["status"]>>({});
   const [reasonByPort, setReasonByPort] = useState<Record<string, string>>({});
   const [l2ReviewOpen, setL2ReviewOpen] = useState(false);
@@ -89,24 +90,36 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName, 
     setResolutionState("loading");
     try {
       const payload = await resolveIntermediateFlowPorts(
-        inputs.filter((port) => !connectedPortIds.has(port.id)),
+        inputs.filter((port) => port.intermediateFlowLink || !connectedPortIds.has(port.id)),
       );
       const nextCandidates: Record<string, RawResolution> = {};
+      const nextTargetMetadata: Record<string, { name?: string; nameEn?: string }> = {};
       const nextStatuses: Record<string, ResolveItem["status"]> = {};
       const nextReasons: Record<string, string> = {};
       for (const item of payload.items) {
         if (!item.port_id) continue;
         nextStatuses[item.port_id] = item.status;
         if (item.reason) nextReasons[item.port_id] = item.reason;
+        if (item.target_flow_name || item.target_flow_name_en) {
+          nextTargetMetadata[item.port_id] = {
+            name: item.target_flow_name,
+            nameEn: item.target_flow_name_en,
+          };
+        }
         if (
           (item.status === "L1" || item.status === "L2" || item.status === "L3")
           && item.resolution
           && "source_flow_uuid" in item.resolution
         ) {
           nextCandidates[item.port_id] = item.resolution;
+          nextTargetMetadata[item.port_id] = {
+            name: item.resolution.target_flow_name,
+            nameEn: item.resolution.target_flow_name_en,
+          };
         }
       }
       setCandidateByPort(nextCandidates);
+      setTargetMetadataByPort(nextTargetMetadata);
       setStatusByPort(nextStatuses);
       setReasonByPort(nextReasons);
       setResolutionState("ready");
@@ -351,6 +364,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName, 
         const link = port.intermediateFlowLink;
         const review = candidateByPort[port.id];
         const resolutionStatus = statusByPort[port.id];
+        const targetMetadata = targetMetadataByPort[port.id];
         const activeLinkIsValid = Boolean(
           link && link.status !== "inactive" && resolutionStatus !== "blocked",
         );
@@ -358,6 +372,11 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName, 
           ? (uiLanguage === "zh"
             ? review.target_flow_name || review.target_flow_name_en || review.target_flow_uuid
             : review.target_flow_name_en || review.target_flow_name || review.target_flow_uuid)
+          : "";
+        const activeTargetDisplayName = link
+          ? (uiLanguage === "zh"
+            ? link.targetFlowName || targetMetadata?.name || link.targetFlowNameEn || targetMetadata?.nameEn || link.targetFlowUuid
+            : link.targetFlowNameEn || targetMetadata?.nameEn || link.targetFlowName || targetMetadata?.name || link.targetFlowUuid)
           : "";
         return (
           <div className="intermediate-flow-link-row" key={port.id}>
@@ -367,7 +386,8 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName, 
             {activeLinkIsValid && link ? (
               <>
                 <div className="intermediate-flow-link-target">
-                  <span>{t("ecoinvent 产品流", "ecoinvent product flow")}{` · ${link.targetUnit}`}</span>
+                  <span title={activeTargetDisplayName}>{activeTargetDisplayName}{` · ${link.targetUnit}`}</span>
+                  <span className="intermediate-flow-target-source">ecoinvent</span>
                   {link.applicationMode === "auto_compatible" && (
                     <span className="muted-text" title={(link.warnings ?? []).join(", ")}>
                       {t("语义泛化，计算前请核对", "Review semantic generalization before calculation")}
@@ -387,6 +407,7 @@ export function IntermediateFlowLinkPanel({ node, onStatus, getPortDisplayName, 
               <>
                 <div className="intermediate-flow-link-target">
                   <span>{targetDisplayName}{` · ${review.target_unit}`}</span>
+                  <span className="intermediate-flow-target-source">ecoinvent</span>
                   {(review.warnings ?? []).length > 0 && (
                     <span className="intermediate-flow-review-hint" title={(review.warnings ?? []).join(" · ")}>
                       {t("需核对产品范围和限定词", "Review product scope and qualifiers")}

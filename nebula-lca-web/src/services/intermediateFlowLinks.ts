@@ -46,6 +46,8 @@ export type ResolveItem = {
   reason?: string;
   resolution?: RawResolution | IntermediateFlowLink | null;
   l2_candidates?: LinkCandidate[];
+  target_flow_name?: string;
+  target_flow_name_en?: string;
 };
 
 export type ProviderCandidate = {
@@ -78,6 +80,8 @@ export const toIntermediateFlowLink = (raw: RawResolution): IntermediateFlowLink
   sourceUnitGroupUuid: raw.source_unit_group_uuid,
   sourceUnitGroupVersion: raw.source_unit_group_version,
   targetFlowUuid: raw.target_flow_uuid,
+  targetFlowName: raw.target_flow_name,
+  targetFlowNameEn: raw.target_flow_name_en,
   amountFactor: raw.amount_factor,
   sourceUnit: raw.source_unit,
   targetUnit: raw.target_unit,
