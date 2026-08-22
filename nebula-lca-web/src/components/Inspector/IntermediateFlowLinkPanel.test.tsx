@@ -101,6 +101,8 @@ describe("IntermediateFlowLinkPanel", () => {
           intermediateFlowLink: {
             sourceFlowUuid: "tidas-flow-1",
             targetFlowUuid: "eco-flow-1",
+            targetFlowName: "目标产品流",
+            targetFlowNameEn: "target product flow",
             amountFactor: 1,
             sourceUnit: "kg",
             targetUnit: "kg",
@@ -157,6 +159,9 @@ describe("IntermediateFlowLinkPanel", () => {
     render(<IntermediateFlowLinkPanel node={linkedNode} />);
     fireEvent.click(screen.getByRole("button", { name: /中间流转换/ }));
     await waitFor(() => expect(screen.getByRole("button", { name: "更换代理" })).toBeTruthy());
+    expect(screen.getByText("目标产品流 · kg")).toBeTruthy();
+    expect(screen.getByText("ecoinvent")).toBeTruthy();
+    expect(screen.queryByText("ecoinvent 产品流 · kg")).toBeNull();
 
     useLcaGraphStore.getState().disconnectIntermediateProvider(linkedNode.id, "input-1");
     const active = useLcaGraphStore.getState().canvases[useLcaGraphStore.getState().activeCanvasId];
@@ -203,6 +208,46 @@ describe("IntermediateFlowLinkPanel", () => {
     await waitFor(() => expect(screen.getByText("原转换的单位证据与当前 Flow 不匹配")).toBeTruthy());
     expect(screen.queryByText("转换完成")).toBeNull();
     expect(screen.getByRole("button", { name: "手动转换" })).toBeTruthy();
+  });
+
+  it("rehydrates the target name for a legacy saved conversion", async () => {
+    const legacyNode: Node<LcaNodeData> = {
+      ...node,
+      data: {
+        ...node.data,
+        inputs: [{
+          ...node.data.inputs[0],
+          intermediateFlowLink: {
+            sourceFlowUuid: "tidas-flow-1",
+            targetFlowUuid: "eco-flow-1",
+            amountFactor: 1,
+            sourceUnit: "kg",
+            targetUnit: "kg",
+            mappingLevel: "L1",
+            mappingReason: "exact",
+            ruleId: "legacy-link",
+            ruleOrigin: "builtin",
+            status: "auto",
+          },
+        }],
+      },
+    };
+    useLcaGraphStore.setState({ uiLanguage: "zh", edges: [] });
+    mockResolve.mockResolvedValueOnce({
+      counts: {},
+      items: [{
+        port_id: "input-1",
+        status: "explicit",
+        resolution: legacyNode.data.inputs[0].intermediateFlowLink,
+        target_flow_name: "低压电力",
+        target_flow_name_en: "electricity, low voltage",
+      }],
+    });
+
+    render(<IntermediateFlowLinkPanel node={legacyNode} />);
+    fireEvent.click(screen.getByRole("button", { name: /中间流转换/ }));
+
+    await waitFor(() => expect(screen.getByText("低压电力 · kg")).toBeTruthy());
   });
 
   it("submits a cross-unit-group candidate with its reviewed factor", async () => {

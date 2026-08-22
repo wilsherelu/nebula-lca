@@ -6804,6 +6804,17 @@ body,
   white-space: nowrap;
 }
 
+.intermediate-flow-link-target > .intermediate-flow-target-source {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border: 1px solid #c9dce7;
+  border-radius: 999px;
+  background: #f4f9fc;
+  color: #58717d;
+  font-size: 11px;
+  line-height: 18px;
+}
+
 .flow-link-text-action {
   border: 0;
   padding: 0;

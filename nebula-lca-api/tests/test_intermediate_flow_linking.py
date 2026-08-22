@@ -892,7 +892,9 @@ def test_resolve_and_provider_apis_keep_provider_choice_explicit():
             }],
         })
         assert metadata_drift.status_code == 200
-        assert metadata_drift.json()["items"][0]["status"] == "explicit"
+        explicit_item = metadata_drift.json()["items"][0]
+        assert explicit_item["status"] == "explicit"
+        assert explicit_item["target_flow_name"] == row["target_name"]
 
         providers = client.get(
             "/api/intermediate-flow-links/providers",
@@ -925,6 +927,7 @@ def test_resolve_and_provider_apis_keep_provider_choice_explicit():
         })
         assert created.status_code == 201
         assert created.json()["mapping_level"] == "L3"
+        assert created.json()["target_flow_name"] == row["target_name"]
         assert created.json()["amount_factor"] == 1.0
         assert created.json()["mapping_reason"] == ""
         assert created.json()["source_unit_group"] == row["source_unit_group"]

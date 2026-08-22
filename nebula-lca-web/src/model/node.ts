@@ -44,6 +44,8 @@ export type IntermediateFlowLink = {
   sourceUnitGroupUuid?: string;
   sourceUnitGroupVersion?: string;
   targetFlowUuid: string;
+  targetFlowName?: string;
+  targetFlowNameEn?: string;
   amountFactor: number;
   sourceUnit: string;
   targetUnit: string;

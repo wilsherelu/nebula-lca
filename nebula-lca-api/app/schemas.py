@@ -75,6 +75,8 @@ class IntermediateFlowLink(BaseModel):
     source_unit_group_uuid: str | None = Field(default=None, alias="sourceUnitGroupUuid")
     source_unit_group_version: str | None = Field(default=None, alias="sourceUnitGroupVersion")
     target_flow_uuid: str = Field(alias="targetFlowUuid")
+    target_flow_name: str | None = Field(default=None, alias="targetFlowName")
+    target_flow_name_en: str | None = Field(default=None, alias="targetFlowNameEn")
     amount_factor: float = Field(default=1.0, gt=0, alias="amountFactor")
     source_unit: str = Field(alias="sourceUnit")
     target_unit: str = Field(alias="targetUnit")
