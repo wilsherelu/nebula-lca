@@ -90,34 +90,42 @@ export function FlowPickerDialog({
         </header>
         <div className="overlay-filters flow-picker-toolbar">
           <div className="flow-picker-toolbar-filters">
-            <input
-              value={searchInput}
-              aria-label={t("按流名称检索", "Search by flow name")}
-              onChange={(event) => onSearchInputChange(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  onSearch();
-                }
-              }}
-              placeholder={t("输入中文名、英文名或 UUID", "Chinese name, English name, or UUID")}
-            />
-            <select value={category} aria-label={t("分类", "Category")} onChange={(event) => onCategoryChange(event.target.value)}>
-              <option value="">{t("全部分类", "All Categories")}</option>
-              {categories.map((item) => <option key={item.category} value={item.category}>{`${item.category} (${item.count})`}</option>)}
-            </select>
-            <select value={source} aria-label={t("来源", "Source")} onChange={(event) => onSourceChange(event.target.value)}>
-              <option value="">{t("全部来源", "All Sources")}</option>
-              <option value="ecoinvent">ecoinvent</option>
-              <option value="tiangong">TIDAS / EF</option>
-              <option value="custom">custom</option>
-            </select>
+            <label className="flow-picker-filter-field flow-picker-keyword-field">
+              <span>{t("关键词", "Keyword")}</span>
+              <input
+                value={searchInput}
+                onChange={(event) => onSearchInputChange(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    onSearch();
+                  }
+                }}
+                placeholder={t("输入中文名、英文名或 UUID", "Chinese name, English name, or UUID")}
+              />
+            </label>
+            <label className="flow-picker-filter-field">
+              <span>{t("分类", "Category")}</span>
+              <select value={category} onChange={(event) => onCategoryChange(event.target.value)}>
+                <option value="">{t("全部分类", "All Categories")}</option>
+                {categories.map((item) => <option key={item.category} value={item.category}>{`${item.category} (${item.count})`}</option>)}
+              </select>
+            </label>
+            <label className="flow-picker-filter-field">
+              <span>{t("来源", "Source")}</span>
+              <select value={source} onChange={(event) => onSourceChange(event.target.value)}>
+                <option value="">{t("全部来源", "All Sources")}</option>
+                <option value="ecoinvent">ecoinvent</option>
+                <option value="tiangong">TIDAS / EF</option>
+                <option value="custom">custom</option>
+              </select>
+            </label>
           </div>
           <div className="flow-picker-toolbar-actions">
             {elementary && (
               <label className="flow-picker-compatible-toggle">
                 <input type="checkbox" checked={compatibleOnly} onChange={(event) => onCompatibleOnlyChange(event.target.checked)} />
-                <span>{t("仅可转换", "Convertible only")}</span>
+                <span>{t("仅显示可转换流", "Convertible flows only")}</span>
               </label>
             )}
             <button type="button" className="search-btn" onClick={onSearch}>{t("检索", "Search")}</button>

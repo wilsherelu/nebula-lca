@@ -623,6 +623,16 @@ def _extract_tidas_model_record(row: dict) -> tuple[dict | None, str | None]:
             "instance_id": _safe_str(instance.get("@dataSetInternalID") or instance.get("dataSetInternalID")),
             "process_uuid": process_uuid,
             "output_connections": output_connections,
+            "position": (
+                instance.get("position")
+                if isinstance(instance.get("position"), dict)
+                else {
+                    "x": instance.get("@x") if instance.get("@x") is not None else instance.get("x"),
+                    "y": instance.get("@y") if instance.get("@y") is not None else instance.get("y"),
+                }
+                if any(instance.get(key) is not None for key in ("@x", "x", "@y", "y"))
+                else None
+            ),
         })
     json_tg = row.get("json_tg") if isinstance(row.get("json_tg"), dict) else {}
     xflow = json_tg.get("xflow") if isinstance(json_tg.get("xflow"), dict) else {}
@@ -673,6 +683,7 @@ def _build_tidas_graph_from_model_record(
             {
                 "id": node_id_by_instance[instance_id],
                 "data": {"id": _safe_str(item.get("process_uuid"))},
+                **({"position": item["position"]} if isinstance(item.get("position"), dict) else {}),
             }
             for item in model_instances
             if (instance_id := _safe_str(item.get("instance_id"))) in node_id_by_instance
@@ -733,6 +744,89 @@ def _build_tidas_graph_from_model_record(
     if not nodes:
         return None, unresolved
     return {"functionalUnit": "1 unit", "nodes": nodes, "exchanges": [], "metadata": {"source": "tidas_import"}}, unresolved
+
+
+def _apply_tidas_node_positions(
+    *,
+    nodes: list[dict],
+    xflow_edges: list[dict],
+    positions: dict[str, dict[str, float]],
+) -> None:
+    """Keep source layout and place missing nodes from provider to consumer."""
+    node_ids = [_safe_str(node.get("id")) for node in nodes if _safe_str(node.get("id"))]
+    node_id_set = set(node_ids)
+    node_by_id = {_safe_str(node.get("id")): node for node in nodes}
+    order = {node_id: index for index, node_id in enumerate(node_ids)}
+    links: list[tuple[str, str]] = []
+    for xedge in xflow_edges:
+        source = xedge.get("source") if isinstance(xedge.get("source"), dict) else {}
+        target = xedge.get("target") if isinstance(xedge.get("target"), dict) else {}
+        source_id = _safe_str(source.get("cell"))
+        target_id = _safe_str(target.get("cell"))
+        if source_id in node_id_set and target_id in node_id_set and source_id != target_id:
+            links.append((source_id, target_id))
+
+    def estimated_height(node: dict) -> float:
+        visible_port_count = sum(
+            1
+            for port in [*list(node.get("inputs") or []), *list(node.get("outputs") or [])]
+            if isinstance(port, dict) and bool(port.get("showOnNode"))
+        )
+        return max(220.0, 150.0 + visible_port_count * 30.0)
+
+    if not links:
+        column_count = 6
+        column_y = [100.0] * column_count
+        for index, node_id in enumerate(node_ids):
+            node = node_by_id[node_id]
+            if node_id in positions:
+                node["position"] = dict(positions[node_id])
+                continue
+            column = index % column_count
+            position = {"x": 120.0 + column * 430.0, "y": column_y[column]}
+            positions[node_id] = position
+            node["position"] = dict(position)
+            column_y[column] += estimated_height(node) + 100.0
+        return
+
+    adjacency = {node_id: set() for node_id in node_ids}
+    indegree = {node_id: 0 for node_id in node_ids}
+    levels = {node_id: 0 for node_id in node_ids}
+    for source_id, target_id in links:
+        if target_id in adjacency[source_id]:
+            continue
+        adjacency[source_id].add(target_id)
+        indegree[target_id] += 1
+    queue = sorted((node_id for node_id in node_ids if indegree[node_id] == 0), key=order.__getitem__)
+    while queue:
+        source_id = queue.pop(0)
+        for target_id in sorted(adjacency[source_id], key=order.__getitem__):
+            levels[target_id] = max(levels[target_id], levels[source_id] + 1)
+            indegree[target_id] -= 1
+            if indegree[target_id] == 0:
+                queue.append(target_id)
+                queue.sort(key=order.__getitem__)
+
+    layer_y: dict[int, float] = {}
+    for node_id in node_ids:
+        if node_id not in positions:
+            continue
+        node = node_by_id[node_id]
+        node["position"] = dict(positions[node_id])
+        level = levels[node_id]
+        layer_y[level] = max(
+            layer_y.get(level, 100.0),
+            positions[node_id]["y"] + estimated_height(node) + 100.0,
+        )
+    for node_id in node_ids:
+        if node_id in positions:
+            continue
+        node = node_by_id[node_id]
+        level = levels[node_id]
+        position = {"x": 120.0 + level * 430.0, "y": layer_y.get(level, 100.0)}
+        positions[node_id] = position
+        node["position"] = dict(position)
+        layer_y[level] = position["y"] + estimated_height(node) + 100.0
 
 
 def _build_tidas_graph_from_xflow_record(
@@ -947,24 +1041,7 @@ def _build_tidas_graph_from_xflow_record(
                 "y": _numeric_value(position.get("y")),
             }
 
-    if len(positions) < len(nodes):
-        column_count = 6
-        column_y = [100.0] * column_count
-        for index, node in enumerate(nodes):
-            node_id = _safe_str(node.get("id"))
-            if node_id in positions:
-                continue
-            column = min(range(column_count), key=column_y.__getitem__)
-            position = {"x": 120.0 + column * 430.0, "y": column_y[column]}
-            positions[node_id] = position
-            node["position"] = dict(position)
-            visible_port_count = sum(
-                1
-                for port in [*list(node.get("inputs") or []), *list(node.get("outputs") or [])]
-                if isinstance(port, dict) and bool(port.get("showOnNode"))
-            )
-            estimated_height = max(220.0, 150.0 + visible_port_count * 30.0)
-            column_y[column] += estimated_height + 100.0
+    _apply_tidas_node_positions(nodes=nodes, xflow_edges=xflow_edges, positions=positions)
 
     output_port_ids_by_node = {
         str(node.get("id")): {str(port.get("id")) for port in list(node.get("outputs") or [])}
