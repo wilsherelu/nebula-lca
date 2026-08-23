@@ -1310,10 +1310,6 @@ def _upsert_flow_record(
     flow_uuid = str(flow_record["flow_uuid"])
     existing = db.get(FlowRecord, flow_uuid)
     incoming_source = _safe_str(flow_record.get("source"))
-    if existing is not None and _is_protected_builtin_flow(existing) and incoming_source != _safe_str(existing.source):
-        report["skipped"] += 1
-        report["warnings"].append(f"{flow_uuid}: built-in flow source={existing.source}; skipped overwrite from TIDAS flow import")
-        return flow_uuid
     snapshot, snapshot_created = create_flow_version_snapshot(
         db,
         flow_record=flow_record,
@@ -1325,6 +1321,12 @@ def _upsert_flow_record(
         # SessionLocal disables autoflush.  Flush each new immutable version so
         # later process imports in the same transaction can resolve it exactly.
         db.flush()
+    if existing is not None and _is_protected_builtin_flow(existing) and incoming_source != _safe_str(existing.source):
+        report["skipped"] += 1
+        report["warnings"].append(
+            f"{flow_uuid}@{source_version}: immutable version stored; protected built-in catalog row was not overwritten"
+        )
+        return flow_uuid
     if existing is not None and upsert_mode == "skip" and not snapshot_created:
         report["skipped"] += 1
         return flow_uuid
@@ -1357,9 +1359,23 @@ def _upsert_flow_record(
         return flow_uuid
     report["updated"] += 1
     if not dry_run:
-        report["warnings"].append(
-            f"{flow_uuid}@{source_version}: stored as an immutable Flow version; compatibility catalog was not overwritten"
-        )
+        if source_namespace == TG_LEGACY_NAMESPACE and existing.source_namespace in (None, TG_LEGACY_NAMESPACE):
+            # The bundled package is authoritative for the TG 1.0 baseline.
+            # This also repairs compatibility rows created by the retired
+            # catalog-to-snapshot migration, without touching remote versions.
+            existing.flow_name = str(flow_record.get("flow_name") or existing.flow_name)
+            existing.flow_name_en = _safe_str(flow_record.get("flow_name_en")) or None
+            existing.flow_type = str(flow_record.get("flow_type") or existing.flow_type)
+            existing.default_unit = str(flow_record.get("default_unit") or existing.default_unit)
+            existing.unit_group = str(flow_record.get("unit_group") or existing.unit_group)
+            existing.tidas_flow_property_uuid = _safe_str(flow_record.get("tidas_flow_property_uuid")) or None
+            existing.source_namespace = source_namespace
+            existing.source_version = source_version
+            existing.version_label = snapshot.version_label
+        else:
+            report["warnings"].append(
+                f"{flow_uuid}@{source_version}: stored as an immutable Flow version; compatibility catalog was not overwritten"
+            )
     return flow_uuid
 
 
