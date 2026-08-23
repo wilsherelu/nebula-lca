@@ -2625,7 +2625,7 @@ body,
   box-shadow: none;
 }
 
-.flow-picker-compatible-toggle {
+.flow-picker-panel .flow-picker-compatible-toggle {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -2635,16 +2635,18 @@ body,
   font-weight: 650;
   white-space: nowrap;
   cursor: pointer;
+  margin: 0;
   padding: 0 10px;
   border: 1px solid #c7d8e2;
   border-radius: 9px;
   background: #fff;
 }
 
-.flow-picker-compatible-toggle input {
+.flow-picker-panel .flow-picker-compatible-toggle input {
   width: 16px;
   height: 16px;
   margin: 0;
+  padding: 0;
   accent-color: #0876df;
 }
 
