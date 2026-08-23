@@ -34,7 +34,7 @@ describe("FlowPickerDialog", () => {
       />,
     );
 
-    expect(screen.getByLabelText("关键词")).toBeTruthy();
+    expect(screen.getByLabelText("按流名称检索")).toBeTruthy();
     expect(screen.getByLabelText("分类")).toBeTruthy();
     expect(screen.getByLabelText("来源")).toBeTruthy();
     expect(screen.getByLabelText("仅显示可转换流")).toBeTruthy();

@@ -2601,16 +2601,6 @@ body,
   min-width: 0;
 }
 
-.flow-picker-filter-field {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  color: #526d7c;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 16px;
-}
-
 .flow-picker-toolbar-actions {
   display: flex;
   align-items: center;
