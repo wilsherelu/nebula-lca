@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ..models import FlowRecord, FlowVersionRecord
+from ..models import FlowVersionRecord
 
 
 TG_LEGACY_NAMESPACE = "tiangong_open_source"
@@ -117,9 +117,29 @@ def create_flow_version_snapshot(
     content_hash = flow_snapshot_content_hash(semantic_payload)
     if existing is not None:
         if existing.content_hash and existing.content_hash != content_hash:
-            raise ValueError(
-                f"Flow snapshot conflict for {flow_uuid}@{source_version}; immutable version already exists."
-            )
+            existing_metadata = existing.metadata_json if isinstance(existing.metadata_json, dict) else {}
+            if existing_metadata.get("migration") != "existing_open_source_catalog":
+                raise ValueError(
+                    f"Flow snapshot conflict for {flow_uuid}@{source_version}; immutable version already exists."
+                )
+            # Early desktop builds guessed TG 1.0 snapshots from the mutable
+            # compatibility catalog.  An authoritative package payload may
+            # replace only those explicitly marked provisional snapshots.
+            existing.flow_name = semantic_payload["flow_name"]
+            existing.flow_name_en = semantic_payload["flow_name_en"]
+            existing.flow_type = semantic_payload["flow_type"]
+            existing.default_unit = semantic_payload["default_unit"]
+            existing.unit_group = semantic_payload["unit_group"]
+            existing.flow_property_uuid = semantic_payload["flow_property_uuid"]
+            existing.flow_property_version = semantic_payload["flow_property_version"]
+            existing.unit_group_uuid = semantic_payload["unit_group_uuid"]
+            existing.unit_group_version = semantic_payload["unit_group_version"]
+            existing.source_updated_at = flow_record.get("source_updated_at")
+            existing.content_hash = content_hash
+            existing.metadata_json = {
+                **(metadata or {}),
+                "replaced_provisional_migration": True,
+            }
         return existing, False
     row = FlowVersionRecord(
         source_namespace=source_namespace,
@@ -144,39 +164,9 @@ def create_flow_version_snapshot(
 
 
 def backfill_tg_legacy_flow_versions(db: Session) -> int:
-    """Pin existing TianGong catalog rows as the immutable TG 1.0 baseline."""
-    rows = (
-        db.query(FlowRecord)
-        .filter(FlowRecord.source.in_(("tiangong", "tidas_import", "tidas_bundle")))
-        .all()
-    )
-    versioned_flow_uuids = {
-        flow_uuid
-        for (flow_uuid,) in db.query(FlowVersionRecord.flow_uuid).distinct().all()
-    }
-    created = 0
-    for row in rows:
-        if row.flow_uuid in versioned_flow_uuids:
-            continue
-        row.source_namespace = TG_LEGACY_NAMESPACE
-        row.source_version = TG_LEGACY_VERSION
-        row.version_label = TG_LEGACY_LABEL
-        _, inserted = create_flow_version_snapshot(
-            db,
-            flow_record={
-                "flow_uuid": row.flow_uuid,
-                "flow_name": row.flow_name,
-                "flow_name_en": row.flow_name_en,
-                "flow_type": row.flow_type,
-                "default_unit": row.default_unit,
-                "unit_group": row.unit_group,
-                "tidas_flow_property_uuid": row.tidas_flow_property_uuid,
-                "source_updated_at": row.source_updated_at,
-            },
-            source_namespace=TG_LEGACY_NAMESPACE,
-            source_version=TG_LEGACY_VERSION,
-            metadata={"migration": "existing_open_source_catalog"},
-        )
-        created += int(inserted)
-        versioned_flow_uuids.add(row.flow_uuid)
-    return created
+    """Deprecated: mutable catalog rows cannot prove immutable TG 1.0 semantics.
+
+    Kept as a no-op for callers from older deployments.  Re-importing the
+    bundled TG 1.0 package creates exact snapshots from authoritative payloads.
+    """
+    return 0

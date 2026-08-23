@@ -5,7 +5,6 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from .models import FlowVersionRecord, LciBiosphereFlowKey, LciExchangeMatrix, LciProcessVector, LciVectorAxis, UnitGroup, ImportJob, ImportJobPauseRequest, DatasetCheckpoint, GlobalDatasetImport
-from .services.flow_versions import backfill_tg_legacy_flow_versions
 from .tidas_reference import load_tidas_reference_seed
 
 
@@ -70,12 +69,12 @@ def ensure_flow_catalog_tidas_columns(engine: Engine) -> dict:
 
 def ensure_flow_version_storage(engine: Engine, db: Session) -> dict:
     FlowVersionRecord.__table__.create(bind=engine, checkfirst=True)
-    created = backfill_tg_legacy_flow_versions(db)
-    if created:
-        db.commit()
     return {
         "table": "flow_versions",
-        "legacy_snapshots_created": created,
+        # A mutable compatibility-catalog row is not authoritative evidence
+        # for an immutable TG 1.0 snapshot.  Package imports create snapshots
+        # from their own Flow payloads instead.
+        "legacy_snapshots_created": 0,
         "status": "ok",
     }
 

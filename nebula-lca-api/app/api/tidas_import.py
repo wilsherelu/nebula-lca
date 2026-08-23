@@ -19,7 +19,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import DebugDiagnostic, FlowRecord, Model, ReferenceProcess
+from ..models import DebugDiagnostic, Model, ReferenceProcess
 from ..schemas import (
     FilteredExchangeEvidence,
     ProcessImportReportResponse,
@@ -70,6 +70,12 @@ def _ensure_tidas_helpers():
         _top_missing_flow_uuids,
         _create_project_version_from_graph_json,
         _invalidate_management_caches,
+        _upsert_flow_record,
+    )
+    from ..services.flow_versions import (
+        TG_LEGACY_NAMESPACE,
+        TG_LEGACY_VERSION,
+        TIDAS_NAMESPACE,
     )
     # fmt: on
     _tidas_helpers = {
@@ -100,6 +106,10 @@ def _ensure_tidas_helpers():
         "_top_missing_flow_uuids": _top_missing_flow_uuids,
         "_create_project_version_from_graph_json": _create_project_version_from_graph_json,
         "_invalidate_management_caches": _invalidate_management_caches,
+        "_upsert_flow_record": _upsert_flow_record,
+        "TG_LEGACY_NAMESPACE": TG_LEGACY_NAMESPACE,
+        "TG_LEGACY_VERSION": TG_LEGACY_VERSION,
+        "TIDAS_NAMESPACE": TIDAS_NAMESPACE,
     }
 
 
@@ -225,15 +235,17 @@ async def import_tidas_flows(
     db: Session = Depends(get_db),
 ) -> TidasImportReportResponse:
     _coerce = _h("_coerce_form_bool")
-    _safe = _h("_safe_str")
     _build_base = _h("_build_tidas_base_report")
     _parse = _h("_parse_tidas_uploaded_json")
     _extract = _h("_extract_tidas_flow_record")
     _label = _h("_label_imported_elementary_flow_source")
     _persist = _h("_persist_tidas_import_report")
-    _is_protected = _h("_is_protected_builtin_flow")
+    _upsert_flow = _h("_upsert_flow_record")
     _invalidate = _h("_invalidate_management_caches")
     TIDAS_SRC = _h("TIDAS_FLOW_IMPORT_SOURCE")
+    TG_NAMESPACE = _h("TG_LEGACY_NAMESPACE")
+    TG_VERSION = _h("TG_LEGACY_VERSION")
+    REMOTE_NAMESPACE = _h("TIDAS_NAMESPACE")
 
     payload = TidasImportRequest(
         dry_run=_coerce(dry_run, default=False),
@@ -256,38 +268,22 @@ async def import_tidas_flows(
                 report["errors"].append(f"{source_name}: {err}")
                 continue
             _label(flow_record, TIDAS_SRC)
-            flow_uuid = str(flow_record["flow_uuid"])
-            existing = db.get(FlowRecord, flow_uuid)
-            if existing is not None and payload.upsert_mode == "skip":
-                report["skipped"] += 1
-                continue
-            if existing is not None and _is_protected(existing):
-                report["skipped"] += 1
-                report["warnings"].append(
-                    f"{flow_uuid}: built-in flow source={existing.source}; skipped overwrite from TIDAS flow import"
+            incoming_version = str(flow_record.get("source_version") or "").strip()
+            source_namespace = REMOTE_NAMESPACE if incoming_version else TG_NAMESPACE
+            source_version = incoming_version or TG_VERSION
+            try:
+                _upsert_flow(
+                    db,
+                    flow_record,
+                    report,
+                    dry_run=payload.dry_run,
+                    upsert_mode=payload.upsert_mode,
+                    source_namespace=source_namespace,
+                    source_version=source_version,
                 )
-                continue
-
-            if existing is None:
-                report["inserted"] += 1
-                if payload.dry_run:
-                    continue
-                db.add(FlowRecord(**flow_record))
-                continue
-
-            report["updated"] += 1
-            if payload.dry_run:
-                continue
-            existing.flow_name = str(flow_record.get("flow_name") or existing.flow_name)
-            existing.flow_name_en = _safe(flow_record.get("flow_name_en"))
-            existing.flow_type = str(flow_record.get("flow_type") or existing.flow_type)
-            existing.default_unit = str(flow_record.get("default_unit") or existing.default_unit)
-            existing.unit_group = str(flow_record.get("unit_group") or existing.unit_group)
-            new_compartment = _safe(flow_record.get("compartment"))
-            if new_compartment and new_compartment != "[]":
-                existing.compartment = new_compartment
-            existing.source_updated_at = _safe(flow_record.get("source_updated_at"))
-            existing.source = _safe(flow_record.get("source")) or existing.source
+            except ValueError as exc:
+                report["failed"] += 1
+                report["errors"].append(f"{source_name}: {exc}")
 
     if payload.strict_mode and report["failed"] > 0:
         db.rollback()
@@ -332,7 +328,7 @@ async def import_tidas_processes(
     _extract_proc = _h("_extract_tidas_process_record")
     _hydrate_semantics = _h("_hydrate_exchange_flow_semantics")
     _label = _h("_label_imported_elementary_flow_source")
-    _is_protected = _h("_is_protected_builtin_flow")
+    _upsert_flow = _h("_upsert_flow_record")
     _flow_uuid = _h("_flow_uuid_set_cached")
     _refresh = _h("_refresh_flow_runtime_caches_for_current_request")
     _persist = _h("_persist_tidas_import_report")
@@ -341,6 +337,9 @@ async def import_tidas_processes(
     _top_miss = _h("_top_missing_flow_uuids")
     _invalidate = _h("_invalidate_management_caches")
     TIDAS_BUNDLE_SRC = _h("TIDAS_BUNDLE_FLOW_IMPORT_SOURCE")
+    TG_NAMESPACE = _h("TG_LEGACY_NAMESPACE")
+    TG_VERSION = _h("TG_LEGACY_VERSION")
+    REMOTE_NAMESPACE = _h("TIDAS_NAMESPACE")
 
     payload = TidasImportRequest(
         dry_run=_coerce(dry_run, default=False),
@@ -399,34 +398,19 @@ async def import_tidas_processes(
                 seen_flow_uuids_in_batch.add(flow_uuid)
                 bundle_flow_uuids.add(flow_uuid)
                 staged_flow_records[flow_uuid] = flow_record
-                existing = db.get(FlowRecord, flow_uuid)
-                if existing is not None and payload.upsert_mode == "skip":
-                    report["skipped"] += 1
-                    continue
-                if existing is not None and _is_protected(existing):
-                    report["skipped"] += 1
-                    report["warnings"].append(
-                        f"{flow_uuid}: built-in flow source={existing.source}; skipped overwrite from TIDAS bundle import"
+                try:
+                    _upsert_flow(
+                        db,
+                        flow_record,
+                        report,
+                        dry_run=payload.dry_run,
+                        upsert_mode=payload.upsert_mode,
+                        source_namespace=TG_NAMESPACE,
+                        source_version=TG_VERSION,
                     )
-                    continue
-                if existing is None:
-                    report["inserted"] += 1
-                    if not payload.dry_run:
-                        db.add(FlowRecord(**flow_record))
-                    continue
-                report["updated"] += 1
-                if payload.dry_run:
-                    continue
-                existing.flow_name = str(flow_record.get("flow_name") or existing.flow_name)
-                existing.flow_name_en = _safe(flow_record.get("flow_name_en"))
-                existing.flow_type = str(flow_record.get("flow_type") or existing.flow_type)
-                existing.default_unit = str(flow_record.get("default_unit") or existing.default_unit)
-                existing.unit_group = str(flow_record.get("unit_group") or existing.unit_group)
-                new_compartment = _safe(flow_record.get("compartment"))
-                if new_compartment and new_compartment != "[]":
-                    existing.compartment = new_compartment
-                existing.source_updated_at = _safe(flow_record.get("source_updated_at"))
-                existing.source = _safe(flow_record.get("source")) or existing.source
+                except ValueError as exc:
+                    report["failed"] += 1
+                    report["errors"].append(f"{source_entry}: {exc}")
 
         valid_flow_uuids = _flow_uuid(db).union(bundle_flow_uuids)
         if not payload.dry_run:
@@ -470,6 +454,16 @@ async def import_tidas_processes(
                 exchanges=list(process_record.get("exchanges") or []),
                 valid_flow_uuids=valid_flow_uuids,
             )
+            for exchange in kept_exchanges:
+                exchange_version = str(exchange.get("flow_version") or "").strip()
+                if is_zip_upload:
+                    exchange["flow_source_namespace"] = TG_NAMESPACE
+                    exchange["flow_version"] = TG_VERSION
+                elif exchange_version:
+                    exchange["flow_source_namespace"] = REMOTE_NAMESPACE
+                else:
+                    exchange["flow_source_namespace"] = TG_NAMESPACE
+                    exchange["flow_version"] = TG_VERSION
             _hydrate_semantics(db, kept_exchanges, staged_flow_records)
             reference_flow_uuid, product_warnings = _reference_flow(process_record, kept_exchanges)
             report["warnings"].extend([f"{process_uuid}: {msg}" for msg in product_warnings])
@@ -724,7 +718,7 @@ async def import_tidas_bundle(
     _hydrate_semantics = _h("_hydrate_exchange_flow_semantics")
     _extract_model = _h("_extract_tidas_model_record")
     _label = _h("_label_imported_elementary_flow_source")
-    _is_protected = _h("_is_protected_builtin_flow")
+    _upsert_flow = _h("_upsert_flow_record")
     _flow_uuid = _h("_flow_uuid_set_cached")
     _refresh = _h("_refresh_flow_runtime_caches_for_current_request")
     _persist = _h("_persist_tidas_import_report")
@@ -737,6 +731,8 @@ async def import_tidas_bundle(
     _create_version = _h("_create_project_version_from_graph_json")
     _invalidate = _h("_invalidate_management_caches")
     TIDAS_BUNDLE_SRC = _h("TIDAS_BUNDLE_FLOW_IMPORT_SOURCE")
+    TG_NAMESPACE = _h("TG_LEGACY_NAMESPACE")
+    TG_VERSION = _h("TG_LEGACY_VERSION")
 
     payload = TidasImportRequest(
         dry_run=_coerce(dry_run, default=False),
@@ -797,28 +793,19 @@ async def import_tidas_bundle(
             staged_flow_records[flow_uuid] = flow_record
             if str(flow_record.get("flow_type") or "") == "Elementary flow":
                 bundle_elementary_flow_uuids.add(flow_uuid)
-            existing = db.get(FlowRecord, flow_uuid)
-            if existing is not None and payload.upsert_mode == "skip":
-                report["skipped"] += 1
-                continue
-            if existing is None:
-                report["inserted"] += 1
-                if not payload.dry_run:
-                    db.add(FlowRecord(**flow_record))
-                continue
-            report["updated"] += 1
-            if payload.dry_run:
-                continue
-            existing.flow_name = str(flow_record.get("flow_name") or existing.flow_name)
-            existing.flow_name_en = _safe(flow_record.get("flow_name_en"))
-            existing.flow_type = str(flow_record.get("flow_type") or existing.flow_type)
-            existing.default_unit = str(flow_record.get("default_unit") or existing.default_unit)
-            existing.unit_group = str(flow_record.get("unit_group") or existing.unit_group)
-            new_compartment = _safe(flow_record.get("compartment"))
-            if new_compartment and new_compartment != "[]":
-                existing.compartment = new_compartment
-            existing.source_updated_at = _safe(flow_record.get("source_updated_at"))
-            existing.source = _safe(flow_record.get("source")) or existing.source
+            try:
+                _upsert_flow(
+                    db,
+                    flow_record,
+                    report,
+                    dry_run=payload.dry_run,
+                    upsert_mode=payload.upsert_mode,
+                    source_namespace=TG_NAMESPACE,
+                    source_version=TG_VERSION,
+                )
+            except ValueError as exc:
+                report["failed"] += 1
+                report["errors"].append(f"{source_entry}: {exc}")
 
     valid_flow_uuids = _flow_uuid(db).union(bundle_flow_uuids)
     if not payload.dry_run:
@@ -849,6 +836,9 @@ async def import_tidas_bundle(
                 exchanges=list(process_record.get("exchanges") or []),
                 valid_flow_uuids=valid_flow_uuids,
             )
+            for exchange in kept_exchanges:
+                exchange["flow_source_namespace"] = TG_NAMESPACE
+                exchange["flow_version"] = TG_VERSION
             _hydrate_semantics(db, kept_exchanges, staged_flow_records)
             reference_flow_uuid, product_warnings = _reference_flow(process_record, kept_exchanges)
             report["warnings"].extend([f"{process_uuid}: {msg}" for msg in product_warnings])
