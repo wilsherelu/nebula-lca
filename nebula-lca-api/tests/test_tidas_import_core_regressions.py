@@ -1,4 +1,5 @@
 from app.services.tidas_import_core import (
+    _apply_tidas_node_positions,
     _build_tidas_graph_from_xflow_record,
     _extract_tidas_flow_record,
     _extract_tidas_model_record,
@@ -14,6 +15,40 @@ from app.services.reference_catalog import (
     _materialize_process_exchanges_for_graph,
 )
 import pytest
+
+
+def test_tidas_layout_preserves_source_coordinates() -> None:
+    nodes = [
+        {"id": "upstream", "inputs": [], "outputs": []},
+        {"id": "downstream", "inputs": [], "outputs": []},
+    ]
+    positions = {
+        "upstream": {"x": 880.0, "y": 420.0},
+        "downstream": {"x": 120.0, "y": 80.0},
+    }
+
+    _apply_tidas_node_positions(nodes=nodes, xflow_edges=[], positions=positions)
+
+    assert nodes[0]["position"] == {"x": 880.0, "y": 420.0}
+    assert nodes[1]["position"] == {"x": 120.0, "y": 80.0}
+
+
+def test_tidas_layout_fallback_places_provider_left_of_consumer() -> None:
+    nodes = [
+        {"id": "consumer", "inputs": [], "outputs": []},
+        {"id": "provider", "inputs": [], "outputs": []},
+        {"id": "middle", "inputs": [], "outputs": []},
+    ]
+    edges = [
+        {"source": {"cell": "provider"}, "target": {"cell": "middle"}},
+        {"source": {"cell": "middle"}, "target": {"cell": "consumer"}},
+    ]
+    positions: dict[str, dict[str, float]] = {}
+
+    _apply_tidas_node_positions(nodes=nodes, xflow_edges=edges, positions=positions)
+
+    assert positions["provider"]["x"] < positions["middle"]["x"] < positions["consumer"]["x"]
+    assert all(node.get("position") == positions[node["id"]] for node in nodes)
 
 
 def _flow_row(flow_type: str, classification: dict) -> dict:
@@ -114,6 +149,8 @@ def test_extract_model_record_preserves_standard_ilcd_connections() -> None:
                         "processInstance": [
                             {
                                 "@dataSetInternalID": "0",
+                                "@x": "120",
+                                "@y": "240",
                                 "referenceToProcess": {"@refObjectId": "process-a"},
                                 "connections": {
                                     "outputExchange": {
@@ -143,6 +180,7 @@ def test_extract_model_record_preserves_standard_ilcd_connections() -> None:
         "downstream_instance_id": "1",
         "downstream_flow_uuid": "flow-a",
     }]
+    assert record["model_instances"][0]["position"] == {"x": "120", "y": "240"}
 
 
 def test_xflow_reused_process_is_materialized_as_unique_node_instance() -> None:

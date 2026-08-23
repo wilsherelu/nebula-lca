@@ -2555,7 +2555,7 @@ body,
 }
 
 .flow-picker-panel {
-  width: min(1180px, 94vw);
+  width: min(1360px, 96vw);
   height: min(78vh, 720px);
   border-radius: 12px;
   box-shadow: 0 14px 36px rgba(11, 27, 35, 0.22);
@@ -2586,19 +2586,29 @@ body,
 }
 
 .flow-picker-panel .flow-picker-toolbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
   gap: 8px;
-  align-items: center;
+  align-items: end;
   padding: 10px 16px;
   background: #f8fbfd;
 }
 
 .flow-picker-toolbar-filters {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(160px, 220px) minmax(126px, 150px);
+  grid-template-columns: minmax(240px, 1fr) minmax(150px, 210px) minmax(150px, 190px);
   gap: 8px;
   min-width: 0;
-  flex: 1 1 auto;
+}
+
+.flow-picker-filter-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: #526d7c;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 16px;
 }
 
 .flow-picker-toolbar-actions {
@@ -2635,6 +2645,10 @@ body,
   font-weight: 650;
   white-space: nowrap;
   cursor: pointer;
+  padding: 0 10px;
+  border: 1px solid #c7d8e2;
+  border-radius: 9px;
+  background: #fff;
 }
 
 .flow-picker-compatible-toggle input {
@@ -2820,18 +2834,25 @@ body,
   cursor: not-allowed;
 }
 
-@media (max-width: 820px) {
+@media (max-width: 1100px) {
   .flow-picker-panel .flow-picker-toolbar {
     align-items: stretch;
-    flex-direction: column;
+    grid-template-columns: 1fr;
   }
 
+  .flow-picker-toolbar-actions {
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 820px) {
   .flow-picker-toolbar-filters {
     grid-template-columns: 1fr;
   }
 
   .flow-picker-toolbar-actions {
     justify-content: stretch;
+    flex-wrap: wrap;
   }
 
   .flow-picker-create-btn {
