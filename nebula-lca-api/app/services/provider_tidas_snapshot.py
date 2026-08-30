@@ -11,7 +11,11 @@ from typing import Any
 
 from ..config import settings
 from ..provider_schemas import ExactFlowPropertyRef
-from .provider_ef31 import resolve_standard_flow_property_binding
+from .provider_ef31 import (
+    ProviderEf31Error,
+    resolve_snapshot_elementary_flow,
+    resolve_standard_flow_property_binding,
+)
 from .provider_tidas_reference_snapshot import (
     ProviderTidasReferenceSnapshotError,
     TidasReferenceDependencySnapshot,
@@ -25,6 +29,7 @@ DATASET_KIND = "flow"
 STATE_SCOPE = "open"
 VERSION_RE = re.compile(r"^\d{2}\.\d{2}\.\d{3}$")
 TECHNOSPHERE_FLOW_TYPES = {"Product flow", "Waste flow"}
+ELEMENTARY_FLOW_TYPE = "Elementary flow"
 SNAPSHOT_BODY_FIELDS = (
     "schema_version",
     "source_namespace",
@@ -159,6 +164,38 @@ def _flow_type(payload: dict[str, Any]) -> str:
     return str(method.get("typeOfDataSet") if isinstance(method, dict) else "").strip()
 
 
+def _elementary_classification_path(payload: dict[str, Any]) -> tuple[str, ...]:
+    root = payload.get("flowDataSet")
+    information = root.get("flowInformation") if isinstance(root, dict) else None
+    data_information = information.get("dataSetInformation") if isinstance(information, dict) else None
+    classification_information = (
+        data_information.get("classificationInformation")
+        if isinstance(data_information, dict)
+        else None
+    )
+    categorization = (
+        classification_information.get("common:elementaryFlowCategorization")
+        if isinstance(classification_information, dict)
+        else None
+    )
+    raw_categories = categorization.get("common:category") if isinstance(categorization, dict) else None
+    categories = [row for row in _as_list(raw_categories) if isinstance(row, dict)]
+    try:
+        categories.sort(key=lambda row: int(row.get("@level")))
+    except (TypeError, ValueError) as exc:
+        raise ProviderTidasSnapshotError(
+            "ELEMENTARY_FLOW_SNAPSHOT_CLASSIFICATION_INVALID",
+            "An exact elementary Flow snapshot has invalid classification levels.",
+        ) from exc
+    path = tuple(str(row.get("#text") or "").strip() for row in categories)
+    if not path or any(not item for item in path):
+        raise ProviderTidasSnapshotError(
+            "ELEMENTARY_FLOW_SNAPSHOT_COMPARTMENT_MISSING",
+            "An exact elementary Flow snapshot must include a complete classification path.",
+        )
+    return path
+
+
 @dataclass(frozen=True)
 class TidasFlowSnapshotRecord:
     source_namespace: str
@@ -170,6 +207,7 @@ class TidasFlowSnapshotRecord:
     flow_property_mean_value: float
     content_hash: str
     source_modified_at: str | None
+    classification_path: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -177,6 +215,9 @@ class TidasFlowSnapshot:
     snapshot_hash: str
     records: dict[tuple[str, str], TidasFlowSnapshotRecord]
     reference_dependencies: TidasReferenceDependencySnapshot | None = None
+
+    def contains_uuid(self, flow_uuid: str) -> bool:
+        return any(identity_uuid == flow_uuid for identity_uuid, _ in self.records)
 
     def resolve(self, flow_uuid: str, version: str) -> dict[str, Any] | None:
         record = self.records.get((flow_uuid, version))
@@ -209,6 +250,21 @@ class TidasFlowSnapshot:
                 flow_property_uuid=record.flow_property_uuid,
                 flow_property_version=record.flow_property_version,
             )
+        if record.flow_type == ELEMENTARY_FLOW_TYPE:
+            try:
+                return resolve_snapshot_elementary_flow(
+                    flow_uuid=record.flow_uuid,
+                    version=record.version,
+                    flow_property_uuid=record.flow_property_uuid,
+                    flow_property_version=record.flow_property_version,
+                    classification_path=list(record.classification_path),
+                    content_hash=record.content_hash,
+                    snapshot_hash=self.snapshot_hash,
+                    source_modified_at=record.source_modified_at,
+                    flow_property_binding=binding,
+                )
+            except ProviderEf31Error as exc:
+                raise ProviderTidasSnapshotError(exc.code, exc.message, **exc.details) from exc
         flow_property = binding["flow_property"]
         unit_group = binding["unit_group"]
         unit = binding["unit"]
@@ -370,10 +426,10 @@ def _load_snapshot(
                 flow_uuid=flow_uuid,
                 version=version,
             )
-        if flow_type not in TECHNOSPHERE_FLOW_TYPES:
+        if flow_type not in TECHNOSPHERE_FLOW_TYPES | {ELEMENTARY_FLOW_TYPE}:
             raise ProviderTidasSnapshotError(
-                "TIDAS_TECHNOSPHERE_FLOW_TYPE_UNSUPPORTED",
-                "Provider technosphere resolution accepts only exact Product or Waste Flows.",
+                "TIDAS_FLOW_TYPE_UNSUPPORTED",
+                "Provider exact Flow resolution accepts Product, Waste, or Elementary Flows.",
                 flow_uuid=flow_uuid,
                 version=version,
                 flow_type=flow_type,
@@ -390,6 +446,11 @@ def _load_snapshot(
             content_hash=actual_content_hash,
             source_modified_at=(
                 str(raw_record.get("source_modified_at") or "").strip() or None
+            ),
+            classification_path=(
+                _elementary_classification_path(payload)
+                if flow_type == ELEMENTARY_FLOW_TYPE
+                else ()
             ),
         )
     identities = list(records)

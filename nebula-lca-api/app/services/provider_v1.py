@@ -534,6 +534,16 @@ def _technosphere_flow_receipts(
                             version=version,
                             snapshot_hash=snapshot.snapshot_hash,
                         )
+                    if value.get("flow_type") not in {"Product flow", "Waste flow"}:
+                        raise ProviderContractError(
+                            422,
+                            "TIDAS_TECHNOSPHERE_FLOW_TYPE_MISMATCH",
+                            "A technosphere exchange must resolve to an exact Product or Waste Flow.",
+                            exchange_id=exchange_id,
+                            flow_uuid=port.flowUuid,
+                            version=version,
+                            flow_type=value.get("flow_type"),
+                        )
                     row = _exact_flow_version_row(
                         db,
                         source_namespace=source_namespace,
@@ -855,12 +865,43 @@ def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveR
         ),
     )
     if request.lcia_methods:
+        elementary_snapshot = _configured_tidas_snapshot()
+
+        def exact_elementary_flow(ref):
+            if elementary_snapshot is None or ref.source_namespace != TIDAS_SOURCE_NAMESPACE:
+                return None
+            value = _resolve_tidas_snapshot_value(
+                elementary_snapshot,
+                flow_uuid=ref.flow_uuid,
+                version=ref.version,
+            )
+            if value is not None and value.get("flow_type") != "Elementary flow":
+                raise ProviderContractError(
+                    422,
+                    "ELEMENTARY_FLOW_TYPE_MISMATCH",
+                    "An elementary reference must resolve to an exact Elementary Flow snapshot record.",
+                    flow_uuid=ref.flow_uuid,
+                    version=ref.version,
+                    flow_type=value.get("flow_type"),
+                )
+            if value is None and elementary_snapshot.contains_uuid(ref.flow_uuid):
+                raise ProviderContractError(
+                    422,
+                    "ELEMENTARY_FLOW_EXACT_VERSION_NOT_IN_SNAPSHOT",
+                    "The configured snapshot contains this elementary Flow UUID, but not the requested version.",
+                    flow_uuid=ref.flow_uuid,
+                    version=ref.version,
+                    snapshot_hash=elementary_snapshot.snapshot_hash,
+                )
+            return value
+
         try:
             lcia, receipts = characterize_scaled_inventory(
                 methods=request.lcia_methods,
                 elementary_refs=request.elementary_flows,
                 scaled_exchanges=response.scaled_exchanges,
                 inventory_totals=response.inventory_totals,
+                exact_flow_resolver=exact_elementary_flow,
             )
         except ProviderEf31Error as exc:
             raise ProviderContractError(422, exc.code, exc.message, **exc.details) from exc
@@ -970,43 +1011,7 @@ def resolve_catalog(db: Session, request: ProviderCatalogResolveRequest) -> list
         )
     for ref in request.flows:
         key = ref.model_dump(mode="python")
-        try:
-            standard = resolve_standard_flow(ref)
-        except ProviderEf31Error as exc:
-            items.append(
-                ProviderCatalogResolution(
-                    kind="flow",
-                    key=key,
-                    status="unsupported",
-                    code=exc.code,
-                    message=exc.message,
-                )
-            )
-            continue
-        if standard is not None:
-            items.append(ProviderCatalogResolution(kind="flow", key=key, status="resolved", value=standard))
-            continue
-        if ref.source_namespace == TIDAS_SOURCE_NAMESPACE and tidas_snapshot is None:
-            items.append(
-                ProviderCatalogResolution(
-                    kind="flow",
-                    key=key,
-                    status="unsupported",
-                    code="TIDAS_FLOW_SNAPSHOT_REQUIRED",
-                    message=(
-                        "Exact TIDAS technosphere Flow resolution requires a configured read-only snapshot; "
-                        "the database is not a substitute receipt."
-                    ),
-                )
-            )
-            continue
-        row = _exact_flow_version_row(
-            db,
-            source_namespace=ref.source_namespace,
-            flow_uuid=ref.flow_uuid,
-            version=ref.version,
-        )
-        if tidas_snapshot is not None and ref.source_namespace == TIDAS_SOURCE_NAMESPACE:
+        if ref.source_namespace == TIDAS_SOURCE_NAMESPACE and tidas_snapshot is not None:
             try:
                 snapshot_value = tidas_snapshot.resolve(ref.flow_uuid, ref.version)
             except ProviderTidasSnapshotError as exc:
@@ -1022,6 +1027,12 @@ def resolve_catalog(db: Session, request: ProviderCatalogResolveRequest) -> list
                 )
                 continue
             if snapshot_value is not None:
+                row = _exact_flow_version_row(
+                    db,
+                    source_namespace=ref.source_namespace,
+                    flow_uuid=ref.flow_uuid,
+                    version=ref.version,
+                )
                 conflicts = _snapshot_database_conflicts(row, snapshot_value)
                 if conflicts:
                     items.append(
@@ -1029,10 +1040,7 @@ def resolve_catalog(db: Session, request: ProviderCatalogResolveRequest) -> list
                             kind="flow",
                             key=key,
                             status="unsupported",
-                            value={
-                                **snapshot_value,
-                                "database_conflicts": conflicts,
-                            },
+                            value={**snapshot_value, "database_conflicts": conflicts},
                             code="TIDAS_FLOW_DATABASE_CONTENT_CONFLICT",
                             message=(
                                 "The configured exact TIDAS Flow snapshot conflicts with the database row "
@@ -1050,6 +1058,65 @@ def resolve_catalog(db: Session, request: ProviderCatalogResolveRequest) -> list
                         )
                     )
                 continue
+            if tidas_snapshot.contains_uuid(ref.flow_uuid):
+                items.append(
+                    ProviderCatalogResolution(
+                        kind="flow",
+                        key=key,
+                        status="not_found",
+                        value={"snapshot_hash": tidas_snapshot.snapshot_hash},
+                        code="EXACT_FLOW_VERSION_NOT_FOUND",
+                        message="The configured snapshot contains this Flow UUID, but not the requested version.",
+                    )
+                )
+                continue
+        try:
+            standard = resolve_standard_flow(ref)
+        except ProviderEf31Error as exc:
+            items.append(
+                ProviderCatalogResolution(
+                    kind="flow",
+                    key=key,
+                    status="unsupported",
+                    code=exc.code,
+                    message=exc.message,
+                )
+            )
+            continue
+        if standard is not None:
+            items.append(ProviderCatalogResolution(kind="flow", key=key, status="resolved", value=standard))
+            continue
+        if ref.source_namespace == TIDAS_SOURCE_NAMESPACE:
+            if tidas_snapshot is None:
+                items.append(
+                    ProviderCatalogResolution(
+                        kind="flow",
+                        key=key,
+                        status="unsupported",
+                        code="TIDAS_FLOW_SNAPSHOT_REQUIRED",
+                        message=(
+                            "Exact non-built-in TIDAS Flow resolution requires a configured read-only snapshot; "
+                            "the database is not a substitute receipt."
+                        ),
+                    )
+                )
+            else:
+                items.append(
+                    ProviderCatalogResolution(
+                        kind="flow",
+                        key=key,
+                        status="not_found",
+                        value={"snapshot_hash": tidas_snapshot.snapshot_hash},
+                        code="EXACT_FLOW_VERSION_NOT_FOUND",
+                    )
+                )
+            continue
+        row = _exact_flow_version_row(
+            db,
+            source_namespace=ref.source_namespace,
+            flow_uuid=ref.flow_uuid,
+            version=ref.version,
+        )
         if row is None:
             items.append(ProviderCatalogResolution(kind="flow", key=key, status="not_found", code="EXACT_FLOW_VERSION_NOT_FOUND"))
             continue

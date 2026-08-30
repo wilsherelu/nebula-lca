@@ -1,0 +1,115 @@
+{
+  "schema_version": "tiangong-open-dataset-snapshot.v1",
+  "source_namespace": "tiangong_open_data",
+  "dataset_kind": "flow",
+  "state_scope": "open",
+  "filters": {
+    "exact_refs": [
+      "f79d0f8f-2b0e-49cb-bed0-b1ea0fbd8625@01.00.004",
+      "fe0acd60-3ddc-11dd-a6f8-0050c2490048@04.00.004"
+    ]
+  },
+  "declared_total": 2,
+  "records": [
+    {
+      "dataset_kind": "flow",
+      "source_namespace": "tiangong_open_data",
+      "source_object_id": "f79d0f8f-2b0e-49cb-bed0-b1ea0fbd8625",
+      "source_version": "01.00.004",
+      "source_modified_at": "2026-08-31T00:00:00+00:00",
+      "type_of_data_set": "Elementary flow",
+      "payload": {
+        "flowDataSet": {
+          "flowInformation": {
+            "dataSetInformation": {
+              "common:UUID": "f79d0f8f-2b0e-49cb-bed0-b1ea0fbd8625",
+              "name": {
+                "baseName": {
+                  "#text": "Nitrogen oxides",
+                  "@xml:lang": "en"
+                }
+              },
+              "classificationInformation": {
+                "common:elementaryFlowCategorization": {
+                  "common:category": [
+                    {"#text": "Emissions", "@level": "0"},
+                    {"#text": "Emissions to air", "@level": "1"},
+                    {"#text": "Emissions to air, unspecified", "@level": "2"}
+                  ]
+                }
+              }
+            },
+            "quantitativeReference": {
+              "referenceToReferenceFlowProperty": "0"
+            }
+          },
+          "flowProperties": {
+            "flowProperty": {
+              "@dataSetInternalID": "0",
+              "meanValue": "1",
+              "referenceToFlowPropertyDataSet": {
+                "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "@version": "03.00.003"
+              }
+            }
+          },
+          "modellingAndValidation": {
+            "LCIMethod": {"typeOfDataSet": "Elementary flow"}
+          }
+        }
+      },
+      "content_hash": "b95c007f1cbafe80f58defb64f09420b7c86877167bc1b47799e05258222cbaf"
+    },
+    {
+      "dataset_kind": "flow",
+      "source_namespace": "tiangong_open_data",
+      "source_object_id": "fe0acd60-3ddc-11dd-a6f8-0050c2490048",
+      "source_version": "04.00.004",
+      "source_modified_at": "2026-08-31T00:00:00+00:00",
+      "type_of_data_set": "Elementary flow",
+      "payload": {
+        "flowDataSet": {
+          "flowInformation": {
+            "dataSetInformation": {
+              "common:UUID": "fe0acd60-3ddc-11dd-a6f8-0050c2490048",
+              "name": {
+                "baseName": {
+                  "#text": "crude oil",
+                  "@xml:lang": "en"
+                }
+              },
+              "classificationInformation": {
+                "common:elementaryFlowCategorization": {
+                  "common:category": [
+                    {"#text": "Resources", "@level": "0"},
+                    {"#text": "Resources from ground", "@level": "1"},
+                    {"#text": "Non-renewable energy resources from ground", "@level": "2"}
+                  ]
+                }
+              }
+            },
+            "quantitativeReference": {
+              "referenceToReferenceFlowProperty": "0"
+            }
+          },
+          "flowProperties": {
+            "flowProperty": {
+              "@dataSetInternalID": "0",
+              "meanValue": "1",
+              "referenceToFlowPropertyDataSet": {
+                "@refObjectId": "93a60a56-a3c8-11da-a746-0800200c9a66",
+                "@version": "03.00.003"
+              }
+            }
+          },
+          "modellingAndValidation": {
+            "LCIMethod": {"typeOfDataSet": "Elementary flow"}
+          }
+        }
+      },
+      "content_hash": "ee2a387a6b534f4a209a279d69f67ca6f7d99a065dffc08baa9402e029d2ef3c"
+    }
+  ],
+  "snapshot_hash": "c7d94df703c41ee19197e3b4d86500a6a698cc49266df86d38ebf4e1816ee6c6",
+  "counts": {"flow": 2}
+}

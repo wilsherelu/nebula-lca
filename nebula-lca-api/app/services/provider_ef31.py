@@ -6,7 +6,7 @@ import importlib
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ..config import PROJECT_ROOT
 from ..provider_schemas import (
@@ -351,6 +351,169 @@ def resolve_standard_flow(ref: ExactFlowRef) -> dict[str, Any] | None:
     }
 
 
+@lru_cache(maxsize=4)
+def _runtime_factor_coverage(runtime_dir_raw: str) -> dict[int, dict[str, Any]]:
+    factors: dict[int, list[dict[str, Any]]] = {}
+    path = Path(runtime_dir_raw) / "lcia_factors.csv"
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle, delimiter=";"):
+            try:
+                flow_index = int(row.get("column") or -1)
+                indicator_index = int(row.get("row") or -1)
+                coefficient = float(row.get("coefficient") or 0.0)
+            except (TypeError, ValueError) as exc:
+                raise ProviderEf31Error(
+                    "EF31_FACTOR_RUNTIME_INVALID",
+                    "The EF3.1 runtime factor file contains an invalid row.",
+                    asset=str(path),
+                ) from exc
+            if coefficient == 0.0:
+                continue
+            factors.setdefault(flow_index, []).append(
+                {
+                    "indicator_index": indicator_index,
+                    "coefficient": coefficient,
+                }
+            )
+    return {
+        flow_index: {
+            "factor_count": len(rows),
+            "factor_hash": _canonical_hash(
+                sorted(rows, key=lambda item: (item["indicator_index"], item["coefficient"]))
+            ),
+        }
+        for flow_index, rows in factors.items()
+    }
+
+
+def resolve_snapshot_elementary_flow(
+    *,
+    flow_uuid: str,
+    version: str,
+    flow_property_uuid: str,
+    flow_property_version: str,
+    classification_path: list[str],
+    content_hash: str,
+    snapshot_hash: str,
+    source_modified_at: str | None,
+    flow_property_binding: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    local = _elementary_catalog().get(flow_uuid)
+    if local is None:
+        raise ProviderEf31Error(
+            "ELEMENTARY_FLOW_NOT_IN_EF31_RUNTIME_CATALOG",
+            "The exact snapshot Flow UUID is absent from the provider EF3.1 elementary catalog.",
+            flow_uuid=flow_uuid,
+            version=version,
+        )
+    if not classification_path:
+        raise ProviderEf31Error(
+            "ELEMENTARY_FLOW_SNAPSHOT_COMPARTMENT_MISSING",
+            "An exact elementary Flow snapshot must include its complete classification path.",
+            flow_uuid=flow_uuid,
+            version=version,
+        )
+    root = classification_path[0].casefold()
+    if root == "emissions":
+        direction = "output"
+    elif root == "resources":
+        direction = "input"
+    else:
+        raise ProviderEf31Error(
+            "ELEMENTARY_FLOW_SNAPSHOT_DIRECTION_UNSUPPORTED",
+            "The elementary Flow classification does not establish an emissions or resources direction.",
+            flow_uuid=flow_uuid,
+            version=version,
+            classification_path=classification_path,
+        )
+    binding = flow_property_binding or resolve_standard_flow_property_binding(
+        ExactFlowPropertyRef(
+            flow_property_uuid=flow_property_uuid,
+            version=flow_property_version,
+        )
+    )
+    if binding is None:
+        raise ProviderEf31Error(
+            "ELEMENTARY_FLOW_SNAPSHOT_PROPERTY_UNSUPPORTED",
+            "The exact elementary Flow Property cannot be bound to a complete provider Unit Group.",
+            flow_uuid=flow_uuid,
+            version=version,
+            flow_property_uuid=flow_property_uuid,
+            flow_property_version=flow_property_version,
+        )
+    unit_group = binding["unit_group"]
+    unit = binding["unit"]
+    comparisons = {
+        "unit_group": (unit_group["name"], local["unit_group"]),
+        "unit": (unit["unit"], local["unit"]),
+        "direction": (direction, local["direction"]),
+        "classification_path": (classification_path, local["classification_path"]),
+        "compartment": (classification_path[-1], local["compartment"]),
+    }
+    conflicts = {
+        field: {"snapshot": snapshot_value, "runtime": runtime_value}
+        for field, (snapshot_value, runtime_value) in comparisons.items()
+        if snapshot_value != runtime_value
+    }
+    if conflicts:
+        raise ProviderEf31Error(
+            "ELEMENTARY_FLOW_SNAPSHOT_RUNTIME_CONFLICT",
+            "The exact elementary Flow snapshot conflicts with provider EF3.1 property, unit, or compartment metadata.",
+            flow_uuid=flow_uuid,
+            version=version,
+            conflicts=conflicts,
+        )
+    runtime_match: tuple[int, dict[str, Any]] | None = None
+    for runtime_dir in _runtime_dirs():
+        runtime_key = str(runtime_dir.resolve())
+        flow_index = _runtime_flow_index(runtime_key).get(flow_uuid)
+        if flow_index is None:
+            continue
+        coverage = _runtime_factor_coverage(runtime_key).get(flow_index)
+        if coverage is not None:
+            runtime_match = (flow_index, coverage)
+            break
+    if runtime_match is None:
+        raise ProviderEf31Error(
+            "ELEMENTARY_FLOW_CF_NOT_FOUND",
+            "The exact elementary Flow has no non-zero EF3.1 characterization factor coverage.",
+            flow_uuid=flow_uuid,
+            version=version,
+        )
+    flow_index, coverage = runtime_match
+    return {
+        **local,
+        "resolution_source": "tidas_exact_elementary_snapshot",
+        "version": version,
+        "flow_property_uuid": flow_property_uuid,
+        "flow_property_version": flow_property_version,
+        "unit_group_uuid": unit_group["unit_group_uuid"],
+        "unit_group_version": unit_group["version"],
+        "unit_group": unit_group["name"],
+        "unit": unit["unit"],
+        "default_unit": unit["unit"],
+        "classification_path": classification_path,
+        "compartment": classification_path[-1],
+        "direction": direction,
+        "runtime_flow_index": flow_index,
+        "database_release": EF31_DATABASE_RELEASE,
+        "content_hash": content_hash,
+        "content_hash_scope": "tidas_exact_snapshot_payload",
+        "snapshot_hash": snapshot_hash,
+        "flow_property_content_hash": binding["flow_property"]["content_hash"],
+        "unit_group_content_hash": unit_group["content_hash"],
+        "unit_content_hash": unit["content_hash"],
+        "reference_dependency_resolution_source": binding.get(
+            "resolution_source",
+            "provider_reference_seed",
+        ),
+        "reference_dependency_snapshot_hash": binding.get("snapshot_hash"),
+        "source_modified_at": source_modified_at,
+        "factor_count": coverage["factor_count"],
+        "factor_hash": coverage["factor_hash"],
+    }
+
+
 def resolve_standard_flow_property(ref: ExactFlowPropertyRef) -> dict[str, Any] | None:
     item = _reference_catalog()["flow_properties"].get((ref.flow_property_uuid, ref.version))
     if item is None:
@@ -475,6 +638,7 @@ def characterize_scaled_inventory(
     elementary_refs: list[ProviderElementaryFlowRef],
     scaled_exchanges: list[ProviderScaledExchange],
     inventory_totals: list[ProviderInventoryTotal],
+    exact_flow_resolver: Callable[[ExactFlowRef], dict[str, Any] | None] | None = None,
 ) -> tuple[dict[str, Any], list[ProviderElementaryFlowReceipt]]:
     if not methods or any(method != EF31_METHOD for method in methods):
         raise ProviderEf31Error(
@@ -513,13 +677,13 @@ def characterize_scaled_inventory(
     standard_by_exchange: dict[str, dict[str, Any]] = {}
     for exchange in scaled_elementary:
         ref = ref_by_exchange[exchange.exchange_id]
-        standard = resolve_standard_flow(
-            ExactFlowRef(
-                source_namespace=ref.source_namespace,
-                flow_uuid=ref.flow_uuid,
-                version=ref.version,
-            )
+        exact_ref = ExactFlowRef(
+            source_namespace=ref.source_namespace,
+            flow_uuid=ref.flow_uuid,
+            version=ref.version,
         )
+        standard = exact_flow_resolver(exact_ref) if exact_flow_resolver is not None else None
+        standard = standard or resolve_standard_flow(exact_ref)
         if standard is None:
             raise ProviderEf31Error(
                 "ELEMENTARY_FLOW_NOT_IN_EF31_RUNTIME",
@@ -638,6 +802,13 @@ def characterize_scaled_inventory(
                 direction=standard["direction"],
                 compartment=standard["compartment"],
                 content_hash=standard["content_hash"],
+                snapshot_hash=standard.get("snapshot_hash"),
+                flow_property_content_hash=standard.get("flow_property_content_hash"),
+                unit_group_content_hash=standard.get("unit_group_content_hash"),
+                unit_content_hash=standard.get("unit_content_hash"),
+                reference_dependency_snapshot_hash=standard.get(
+                    "reference_dependency_snapshot_hash"
+                ),
                 runtime_flow_index=int(standard["runtime_flow_index"]),
                 method=EF31_METHOD,
                 factor_count=int(factor_receipt["factor_count"]),
