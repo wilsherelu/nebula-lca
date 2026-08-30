@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -16,8 +17,10 @@ from ..services.provider_v1 import (
     get_model_snapshot,
     resolve_catalog,
     resolve_flow_candidates,
+    provider_solve_runtime_fingerprint,
     solve_provider,
 )
+from ..services.provider_idempotency import execute_idempotent_solve
 
 
 router = APIRouter(prefix="/api/provider/v1", tags=["provider-v1"])
@@ -27,7 +30,11 @@ def _raise_contract_error(exc: ProviderContractError) -> None:
     detail = {"code": exc.code, "message": exc.message}
     if exc.details:
         detail["details"] = exc.details
-    raise HTTPException(status_code=exc.status_code, detail=detail) from exc
+    headers = None
+    retry_after = exc.details.get("retry_after_seconds")
+    if exc.code == "IDEMPOTENCY_REQUEST_IN_PROGRESS" and retry_after is not None:
+        headers = {"Retry-After": str(retry_after)}
+    raise HTTPException(status_code=exc.status_code, detail=detail, headers=headers) from exc
 
 
 @router.get(
@@ -42,8 +49,22 @@ def model_snapshot(project_id: str, version: int, db: Session = Depends(get_db))
 
 
 @router.post("/solve", response_model=ProviderSolveResponse)
-def solve(payload: ProviderSolveRequest, db: Session = Depends(get_db)) -> ProviderSolveResponse:
+def solve(
+    payload: ProviderSolveRequest,
+    db: Session = Depends(get_db),
+) -> ProviderSolveResponse | Response:
     try:
+        if payload.idempotency_key is not None:
+            frozen_body = execute_idempotent_solve(
+                db,
+                payload,
+                runtime_fingerprint_factory=lambda: provider_solve_runtime_fingerprint(
+                    db,
+                    payload,
+                ),
+                solve=lambda run_id: solve_provider(db, payload, run_id=run_id),
+            )
+            return Response(content=frozen_body, media_type="application/json")
         response = solve_provider(db, payload)
     except ProviderContractError as exc:
         _raise_contract_error(exc)

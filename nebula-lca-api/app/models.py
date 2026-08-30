@@ -215,6 +215,29 @@ class RunJob(Base):
     finished_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class ProviderSolveIdempotency(Base):
+    __tablename__ = "provider_solve_idempotency"
+
+    idempotency_key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    response_body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_json: Mapped[dict | None] = mapped_column(JsonType, nullable=True)
+    error_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    runtime_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    claim_token: Mapped[str] = mapped_column(String(36), nullable=False)
+    lease_expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class PtsCompileArtifact(Base):
     __tablename__ = "pts_compile_artifacts"
     __table_args__ = (

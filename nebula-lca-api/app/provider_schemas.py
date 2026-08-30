@@ -134,11 +134,17 @@ class ProviderSolveRequest(BaseModel):
     elementary_flows: list[ProviderElementaryFlowRef] = Field(default_factory=list)
     background_process_pins: list[ProviderBackgroundProcessPin] = Field(default_factory=list)
     process_identities: list[ProviderProcessIdentityRef] = Field(default_factory=list)
+    idempotency_key: str | None = Field(default=None, max_length=128)
 
     @model_validator(mode="after")
     def require_one_snapshot_source(self) -> "ProviderSolveRequest":
         if (self.snapshot_ref is None) == (self.inline_snapshot is None):
             raise ValueError("exactly one of snapshot_ref or inline_snapshot is required")
+        if self.idempotency_key is not None:
+            normalized = self.idempotency_key.strip()
+            if not normalized:
+                raise ValueError("idempotency_key must not be blank")
+            self.idempotency_key = normalized
         return self
 
 
@@ -305,6 +311,8 @@ class ProviderSolveProvenance(BaseModel):
     process_identities_hash: str | None = None
     flow_snapshot_hash: str | None = None
     reference_dependency_snapshot_hash: str | None = None
+    idempotency_key: str | None = None
+    request_hash: str | None = None
     activity_vector_semantics: str = "x in A*x=f"
     inventory_scope: str = "boundary elementary exchanges"
 
@@ -313,6 +321,8 @@ class ProviderSolveResponse(BaseModel):
     schema_version: str = "provider.solve.response.v1"
     run_id: str
     status: Literal["completed"] = "completed"
+    idempotency_key: str | None = None
+    request_hash: str | None = None
     snapshot_ref: ProviderSnapshotRef | None = None
     demand: list[ProviderDemand]
     activity_vector: list[ProviderActivity]

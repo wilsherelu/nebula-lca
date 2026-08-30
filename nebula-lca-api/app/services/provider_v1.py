@@ -55,6 +55,7 @@ from .provider_background_leaf import (
     expand_background_process_pins,
 )
 from .provider_process_identity import build_process_identity_receipts
+from .provider_runtime_identity import build_solve_runtime_fingerprint
 from .provider_tidas_snapshot import (
     SOURCE_NAMESPACE as TIDAS_SOURCE_NAMESPACE,
     ProviderTidasSnapshotError,
@@ -92,6 +93,20 @@ def engine_identity() -> ProviderEngineIdentity:
         except (OSError, subprocess.SubprocessError):
             commit = None
     return ProviderEngineIdentity(version=version, commit=commit)
+
+
+def provider_solve_runtime_fingerprint(
+    db: Session,
+    request: ProviderSolveRequest,
+) -> str:
+    return build_solve_runtime_fingerprint(
+        db,
+        request,
+        engine=engine_identity(),
+        resolve_snapshot=_resolve_solve_snapshot,
+        load_flow_snapshot=_configured_tidas_snapshot,
+        load_process_snapshot=_configured_tidas_process_snapshot,
+    )
 
 
 def _functional_unit(graph: HybridGraph, display_fallback: str | None = None) -> tuple[ProviderFunctionalUnit, list[ProviderIssue]]:
@@ -670,7 +685,12 @@ def _resolve_demand_process(demand: Any, base: dict[str, Any]) -> tuple[str, dic
     return matches[0]
 
 
-def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveResponse:
+def solve_provider(
+    db: Session,
+    request: ProviderSolveRequest,
+    *,
+    run_id: str | None = None,
+) -> ProviderSolveResponse:
     graph, consumer_graph_hash, provider_graph_hash, snapshot_ref, issues = _resolve_solve_snapshot(db, request)
     tidas_flow_snapshot = (
         _configured_tidas_snapshot()
@@ -920,7 +940,7 @@ def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveR
         else None
     )
     response = ProviderSolveResponse(
-        run_id=str(uuid.uuid4()),
+        run_id=run_id or str(uuid.uuid4()),
         snapshot_ref=solved_snapshot_ref,
         demand=list(request.demand),
         activity_vector=activities,
