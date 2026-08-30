@@ -185,6 +185,8 @@ class ProviderTechnosphereFlowReceipt(BaseModel):
     unit_group_content_hash: str | None = None
     unit: str
     unit_content_hash: str | None = None
+    reference_dependency_resolution_source: str | None = None
+    reference_dependency_snapshot_hash: str | None = None
 
 
 class ProviderSolveProvenance(BaseModel):

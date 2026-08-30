@@ -87,6 +87,12 @@ class Settings(BaseModel):
     provider_tidas_process_snapshot_path: str = Field(
         default_factory=lambda: os.getenv("NEBULA_PROVIDER_TIDAS_PROCESS_SNAPSHOT_PATH", "").strip()
     )
+    provider_tidas_reference_dependency_snapshot_path: str = Field(
+        default_factory=lambda: os.getenv(
+            "NEBULA_PROVIDER_TIDAS_REFERENCE_DEPENDENCY_SNAPSHOT_PATH",
+            "",
+        ).strip()
+    )
     nebula_lca_runtime_root: str = Field(default_factory=lambda: str(_default_runtime_root()))
     import_cache_root: str = Field(default_factory=lambda: str(_default_import_cache_root()))
     nebula_lca_solver_api_url: str = Field(default_factory=lambda: os.getenv("NEBULA_LCA_SOLVER_API_URL", "http://127.0.0.1:8000"))

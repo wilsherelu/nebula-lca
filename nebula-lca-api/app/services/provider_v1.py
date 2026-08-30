@@ -59,6 +59,11 @@ from .provider_tidas_process_snapshot import (
     canonical_hash as canonical_process_hash,
     configured_tidas_process_snapshot,
 )
+from .provider_tidas_reference_snapshot import (
+    ProviderTidasReferenceSnapshotError,
+    TidasReferenceDependencySnapshot,
+    configured_tidas_reference_dependency_snapshot,
+)
 
 
 class ProviderContractError(RuntimeError):
@@ -393,6 +398,13 @@ def _configured_tidas_process_snapshot() -> TidasProcessSnapshot | None:
         raise ProviderContractError(422, exc.code, exc.message, **exc.details) from exc
 
 
+def _configured_tidas_reference_snapshot() -> TidasReferenceDependencySnapshot | None:
+    try:
+        return configured_tidas_reference_dependency_snapshot()
+    except ProviderTidasReferenceSnapshotError as exc:
+        raise ProviderContractError(422, exc.code, exc.message, **exc.details) from exc
+
+
 def _process_snapshot_database_conflicts(
     row: ReferenceProcess | None,
     value: dict[str, Any],
@@ -595,6 +607,12 @@ def _technosphere_flow_receipts(
                     unit_group_content_hash=(value.get("unit_group_content_hash") if value else None),
                     unit=port.unit,
                     unit_content_hash=value.get("unit_content_hash") if value else None,
+                    reference_dependency_resolution_source=(
+                        value.get("reference_dependency_resolution_source") if value else None
+                    ),
+                    reference_dependency_snapshot_hash=(
+                        value.get("reference_dependency_snapshot_hash") if value else None
+                    ),
                 )
             )
     return receipts
@@ -856,6 +874,11 @@ def resolve_catalog(db: Session, request: ProviderCatalogResolveRequest) -> list
     items: list[ProviderCatalogResolution] = []
     tidas_snapshot = _configured_tidas_snapshot()
     process_snapshot = _configured_tidas_process_snapshot() if request.processes else None
+    reference_snapshot = (
+        _configured_tidas_reference_snapshot()
+        if request.flow_properties or request.unit_groups or request.units
+        else None
+    )
     for ref in request.processes:
         key = ref.model_dump(mode="python")
         if ref.source_namespace != TIDAS_SOURCE_NAMESPACE:
@@ -1072,6 +1095,18 @@ def resolve_catalog(db: Session, request: ProviderCatalogResolveRequest) -> list
             )
         )
     for ref in request.flow_properties:
+        if reference_snapshot is not None:
+            exact = reference_snapshot.resolve_flow_property(ref.flow_property_uuid, ref.version)
+            if exact is not None:
+                items.append(
+                    ProviderCatalogResolution(
+                        kind="flow_property",
+                        key=ref.model_dump(mode="python"),
+                        status="resolved",
+                        value=exact,
+                    )
+                )
+                continue
         standard = resolve_standard_flow_property(ref)
         if standard is not None:
             items.append(
@@ -1094,6 +1129,18 @@ def resolve_catalog(db: Session, request: ProviderCatalogResolveRequest) -> list
         )
     for ref in request.unit_groups:
         key = ref.model_dump(mode="python")
+        if reference_snapshot is not None:
+            exact = reference_snapshot.resolve_unit_group(ref.unit_group_uuid, ref.version)
+            if exact is not None:
+                items.append(
+                    ProviderCatalogResolution(
+                        kind="unit_group",
+                        key=key,
+                        status="resolved",
+                        value=exact,
+                    )
+                )
+                continue
         standard = resolve_standard_unit_group(ref)
         if standard is not None:
             items.append(ProviderCatalogResolution(kind="unit_group", key=key, status="resolved", value=standard))
@@ -1125,6 +1172,18 @@ def resolve_catalog(db: Session, request: ProviderCatalogResolveRequest) -> list
             )
     for ref in request.units:
         key = ref.model_dump(mode="python")
+        if reference_snapshot is not None:
+            exact = reference_snapshot.resolve_unit(ref.unit_group_uuid, ref.version, ref.unit)
+            if exact is not None:
+                items.append(
+                    ProviderCatalogResolution(
+                        kind="unit",
+                        key=key,
+                        status="resolved",
+                        value=exact,
+                    )
+                )
+                continue
         standard = resolve_standard_unit(ref)
         if standard is not None:
             items.append(ProviderCatalogResolution(kind="unit", key=key, status="resolved", value=standard))
