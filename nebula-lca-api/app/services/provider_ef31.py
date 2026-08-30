@@ -29,6 +29,7 @@ TIANGONG_ELEMENTARY_FLOW_VERSION = "03.00.004"
 
 _REFERENCE_SEED = PROJECT_ROOT / "data" / "Tiangong" / "tidas_reference_seed.json"
 _ELEMENTARY_CATALOG = PROJECT_ROOT / "data" / "Tiangong" / "elementary_flows_sample.csv"
+_INDICATOR_METHOD_METADATA = PROJECT_ROOT / "data" / "EF3.1" / "indicator_index.csv"
 
 
 class ProviderEf31Error(RuntimeError):
@@ -146,6 +147,172 @@ def _file_sha256(path_raw: str) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _csv_rows_by_indicator_index(path: Path) -> dict[int, dict[str, str]]:
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        sample = handle.read(2048)
+        handle.seek(0)
+        delimiter = ";" if sample.count(";") >= sample.count(",") else ","
+        rows: dict[int, dict[str, str]] = {}
+        for row in csv.DictReader(handle, delimiter=delimiter):
+            raw_index = str(row.get("indicator_index") or "").strip()
+            if not raw_index:
+                continue
+            try:
+                indicator_index = int(raw_index)
+            except ValueError as exc:
+                raise ProviderEf31Error(
+                    "EF31_INDICATOR_METADATA_INVALID",
+                    "EF3.1 indicator metadata contains a non-integer indicator index.",
+                    asset=path.name,
+                    indicator_index=raw_index,
+                ) from exc
+            if indicator_index in rows:
+                raise ProviderEf31Error(
+                    "EF31_INDICATOR_METADATA_DUPLICATE",
+                    "EF3.1 indicator metadata contains a duplicate indicator index.",
+                    asset=path.name,
+                    indicator_index=indicator_index,
+                )
+            rows[indicator_index] = {
+                key: str(value or "").strip()
+                for key, value in row.items()
+                if key is not None
+            }
+    return rows
+
+
+def _indicator_unit_metadata(runtime_dirs: list[Path]) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    if not _INDICATOR_METHOD_METADATA.exists():
+        raise ProviderEf31Error(
+            "EF31_INDICATOR_UNIT_METADATA_UNAVAILABLE",
+            "The authoritative EF3.1 indicator-unit metadata asset is unavailable.",
+            asset="data/EF3.1/indicator_index.csv",
+        )
+    method_rows = _csv_rows_by_indicator_index(_INDICATOR_METHOD_METADATA)
+    unit_by_index: dict[int, str] = {}
+    for indicator_index, row in sorted(method_rows.items()):
+        method_en = row.get("method_en", "")
+        indicator_en = row.get("indicator_en", "")
+        unit = row.get("LCIA_unit", "") or row.get("lcia_unit", "")
+        if not method_en or not indicator_en or not unit:
+            raise ProviderEf31Error(
+                "EF31_INDICATOR_UNIT_NOT_FOUND",
+                "An EF3.1 indicator lacks an authoritative result unit.",
+                indicator_index=indicator_index,
+                method_en=method_en,
+                indicator_en=indicator_en,
+            )
+        unit_by_index[indicator_index] = unit
+
+    runtime_sources = [
+        (runtime_dir, _csv_rows_by_indicator_index(runtime_dir / "indicator_index.csv"))
+        for runtime_dir in runtime_dirs
+    ]
+    reference_runtime: tuple[Path, dict[int, dict[str, str]]] | None = None
+    for runtime_dir, runtime_rows in runtime_sources:
+        if set(runtime_rows) != set(method_rows):
+            continue
+        if all(
+            runtime_rows[indicator_index].get(field, "") == method_rows[indicator_index].get(field, "")
+            for indicator_index in method_rows
+            for field in ("method_en", "indicator_en")
+        ):
+            reference_runtime = (runtime_dir, runtime_rows)
+            break
+    if reference_runtime is None:
+        raise ProviderEf31Error(
+            "EF31_INDICATOR_METADATA_MISMATCH",
+            "No configured EF3.1 runtime exactly binds the authoritative indicator-unit metadata to canonical identities.",
+            unit_metadata_sha256=_file_sha256(str(_INDICATOR_METHOD_METADATA.resolve())),
+        )
+
+    unit_rows: dict[str, dict[str, Any]] = {}
+    canonical_rows = []
+    reference_dir, reference_rows = reference_runtime
+    for indicator_index, method_row in sorted(method_rows.items()):
+        runtime_row = reference_rows[indicator_index]
+        canonical_key = str(runtime_row.get("ecoinvent_category") or "").strip().casefold()
+        if not canonical_key:
+            raise ProviderEf31Error(
+                "EF31_INDICATOR_IDENTITY_UNAVAILABLE",
+                "The EF3.1 runtime indicator lacks a canonical category identity.",
+                indicator_index=indicator_index,
+            )
+        if canonical_key in unit_rows:
+            raise ProviderEf31Error(
+                "EF31_INDICATOR_IDENTITY_AMBIGUOUS",
+                "The EF3.1 runtime contains a duplicate canonical indicator identity.",
+                canonical_indicator_key=canonical_key,
+            )
+        canonical = {
+            "indicator_index": indicator_index,
+            "canonical_indicator_key": canonical_key,
+            "method_en": method_row["method_en"],
+            "indicator_en": method_row["indicator_en"],
+            "unit": unit_by_index[indicator_index],
+        }
+        canonical["content_hash"] = _canonical_hash(canonical)
+        canonical_rows.append(canonical)
+        unit_rows[canonical_key] = canonical
+
+    expected_keys = set(unit_rows)
+    validated_runtime_hashes = []
+    for runtime_dir, runtime_rows in runtime_sources:
+        runtime_hash = _file_sha256(str((runtime_dir / "indicator_index.csv").resolve()))
+        explicit_ef31_rows = [
+            row
+            for row in runtime_rows.values()
+            if str(row.get("method_en") or "").strip() == EF31_METHOD
+        ]
+        if explicit_ef31_rows:
+            runtime_keys = {
+                str(row.get("ecoinvent_category") or "").strip().casefold()
+                for row in explicit_ef31_rows
+                if str(row.get("ecoinvent_category") or "").strip()
+            }
+            if runtime_keys != expected_keys:
+                raise ProviderEf31Error(
+                    "EF31_INDICATOR_METADATA_MISMATCH",
+                    "An EF3.1 runtime source does not expose the authoritative canonical indicator set.",
+                    runtime_indicator_sha256=runtime_hash,
+                    missing_canonical_indicators=sorted(expected_keys.difference(runtime_keys)),
+                    unexpected_canonical_indicators=sorted(runtime_keys.difference(expected_keys)),
+                )
+        else:
+            is_legacy_exact = set(runtime_rows) == set(method_rows) and all(
+                runtime_rows[indicator_index].get(field, "") == method_rows[indicator_index].get(field, "")
+                for indicator_index in method_rows
+                for field in ("method_en", "indicator_en")
+            ) and all(
+                runtime_rows[indicator_index].get("ecoinvent_category", "")
+                == reference_rows[indicator_index].get("ecoinvent_category", "")
+                for indicator_index in method_rows
+            )
+            if not is_legacy_exact:
+                raise ProviderEf31Error(
+                    "EF31_INDICATOR_METADATA_MISMATCH",
+                    "A legacy EF3.1 runtime source cannot be tied exactly to the indicator-unit metadata.",
+                    runtime_indicator_sha256=runtime_hash,
+                )
+        validated_runtime_hashes.append(runtime_hash)
+
+    metadata_path = _INDICATOR_METHOD_METADATA.resolve()
+    receipt = {
+        "schema_version": "provider.lcia.indicator_metadata.v1",
+        "method": EF31_METHOD,
+        "database_release": EF31_DATABASE_RELEASE,
+        "asset": "data/EF3.1/indicator_index.csv",
+        "sha256": _file_sha256(str(metadata_path)),
+        "content_hash": _canonical_hash(canonical_rows),
+        "indicator_count": len(canonical_rows),
+        "identity_runtime_indicator_sha256": _file_sha256(
+            str((reference_dir / "indicator_index.csv").resolve())
+        ),
+        "validated_runtime_indicator_sha256s": sorted(set(validated_runtime_hashes)),
+    }
+    return unit_rows, receipt
 
 
 def _runtime_dirs() -> list[Path]:
@@ -435,10 +602,29 @@ def characterize_scaled_inventory(
             )
         )
 
+    indicator_units, indicator_metadata = _indicator_unit_metadata(runtime_dirs)
     indicators = []
     for row_pos, row_id in enumerate(c_matrix["rows"]):
         info = dict(indicator_lookup.get(row_id, {}))
-        indicators.append({**info, "value": values[row_pos]})
+        canonical_key = str(info.get("canonical_indicator_key") or "").strip().casefold()
+        unit_record = indicator_units.get(canonical_key)
+        if unit_record is None:
+            raise ProviderEf31Error(
+                "EF31_INDICATOR_UNIT_NOT_FOUND",
+                "The solved EF3.1 indicator has no exact result-unit metadata match.",
+                method_en=str(info.get("method_en") or ""),
+                indicator_en=str(info.get("indicator_en") or ""),
+                canonical_indicator_key=canonical_key,
+            )
+        indicators.append(
+            {
+                **info,
+                "indicator_unit": unit_record["unit"],
+                "unit": unit_record["unit"],
+                "indicator_metadata_hash": unit_record["content_hash"],
+                "value": values[row_pos],
+            }
+        )
     runtime_assets = []
     for runtime_dir in runtime_dirs:
         runtime_assets.append(
@@ -460,6 +646,7 @@ def characterize_scaled_inventory(
         "database_release": EF31_DATABASE_RELEASE,
         "inventory_hash": _canonical_hash([item.model_dump(mode="json") for item in inventory_totals]),
         "indicator_results": indicators,
+        "indicator_metadata": indicator_metadata,
         "runtime_assets": runtime_assets,
         "runtime_source_count": len(runtime_dirs),
     }

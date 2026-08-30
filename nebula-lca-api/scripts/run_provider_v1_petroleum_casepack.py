@@ -230,9 +230,10 @@ def _audit(
     }
     inventory = {row["flow_uuid"]: row["amount"] for row in result["inventory_totals"]}
     indicators = {
-        row["canonical_indicator_key"]: row["value"]
+        row["canonical_indicator_key"]: row
         for row in result["lcia"]["indicator_results"]
     }
+    indicator_metadata = result["lcia"].get("indicator_metadata") or {}
     checks = {
         "health_ok": health.get("status") in {"ok", "healthy"},
         "openapi_has_provider_solve": "/api/provider/v1/solve" in openapi.get("paths", {}),
@@ -240,8 +241,20 @@ def _audit(
         "solve_completed": result["status"] == "completed",
         "activity_vector_is_a_x_equals_f": result["provenance"]["activity_vector_semantics"] == "x in A*x=f",
         "co2_inventory_is_0_7_kg": abs(inventory["08a91e70-3ddc-11dd-923d-0050c2490048"] - 0.7) < 1e-10,
-        "climate_change_is_0_7": abs(indicators["climate change"] - 0.7) < 1e-10,
-        "climate_change_fossil_is_0_7": abs(indicators["climate change: fossil"] - 0.7) < 1e-10,
+        "climate_change_is_0_7": abs(indicators["climate change"]["value"] - 0.7) < 1e-10,
+        "climate_change_fossil_is_0_7": abs(indicators["climate change: fossil"]["value"] - 0.7) < 1e-10,
+        "indicator_units_are_complete": all(
+            row.get("unit")
+            and row.get("indicator_unit") == row.get("unit")
+            and row.get("indicator_metadata_hash")
+            for row in indicators.values()
+        ),
+        "climate_change_unit_is_kg_co2_eq": indicators["climate change"]["unit"] == "kg CO2-Eq",
+        "indicator_metadata_is_hashed": bool(
+            indicator_metadata.get("sha256")
+            and indicator_metadata.get("content_hash")
+            and indicator_metadata.get("indicator_count") == len(indicators)
+        ),
         "elementary_receipts_present": len(result["elementary_flow_receipts"]) == 2,
         "sankey_links_trace_to_scaled_exchanges": traced_ids <= exchange_ids and bool(traced_ids),
     }

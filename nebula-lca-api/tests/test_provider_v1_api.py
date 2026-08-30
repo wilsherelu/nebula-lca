@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.database as db_module
+import app.services.provider_ef31 as provider_ef31
 from app.database import Base
 from app.main import app
 from app.models import FlowRecord, FlowVersionRecord, Model, ModelVersion, UnitDefinition, UnitGroup
@@ -494,12 +495,39 @@ def test_inline_custom_technosphere_with_exact_ef31_lcia_does_not_write_catalog_
     assert body["lcia"]["method"] == "EF v3.1"
     assert body["lcia"]["database_release"] == "EF3.1"
     assert body["lcia"]["indicator_results"]
+    indicator_metadata = body["lcia"]["indicator_metadata"]
+    assert {
+        key: indicator_metadata[key]
+        for key in (
+            "schema_version",
+            "method",
+            "database_release",
+            "asset",
+            "sha256",
+            "indicator_count",
+        )
+    } == {
+        "schema_version": "provider.lcia.indicator_metadata.v1",
+        "method": "EF v3.1",
+        "database_release": "EF3.1",
+        "asset": "data/EF3.1/indicator_index.csv",
+        "sha256": "d41e72b826f39c93958cab0ed1eec5b0ef6153c502dddcd98e54bd7e4daf99fe",
+        "indicator_count": 25,
+    }
+    assert indicator_metadata["content_hash"]
+    assert indicator_metadata["identity_runtime_indicator_sha256"]
+    assert indicator_metadata["validated_runtime_indicator_sha256s"]
     climate = {
-        item["canonical_indicator_key"]: item["value"]
+        item["canonical_indicator_key"]: item
         for item in body["lcia"]["indicator_results"]
         if item.get("canonical_indicator_key") in {"climate change", "climate change: fossil"}
     }
-    assert climate == pytest.approx({"climate change": 0.7, "climate change: fossil": 0.7})
+    assert {key: item["value"] for key, item in climate.items()} == pytest.approx(
+        {"climate change": 0.7, "climate change: fossil": 0.7}
+    )
+    assert {item["unit"] for item in climate.values()} == {"kg CO2-Eq"}
+    assert {item["indicator_unit"] for item in climate.values()} == {"kg CO2-Eq"}
+    assert all(item["indicator_metadata_hash"] for item in climate.values())
     assert len(body["elementary_flow_receipts"]) == 2
     assert all(item["factor_count"] == 2 for item in body["elementary_flow_receipts"])
     assert all(item["factor_hash"] for item in body["elementary_flow_receipts"])
@@ -544,6 +572,22 @@ def test_inline_custom_technosphere_requires_complete_identity(client):
     )
     assert response.status_code == 422, response.text
     assert response.json()["detail"]["code"] == "CUSTOM_TECHNOSPHERE_IDENTITY_INCOMPLETE"
+
+
+def test_inline_ef31_lcia_fails_closed_when_indicator_unit_is_unresolved(client, monkeypatch):
+    monkeypatch.setattr(provider_ef31, "_indicator_unit_metadata", lambda _runtime_dirs: ({}, {}))
+    graph = _petrochemical_graph()
+    response = client.post(
+        "/api/provider/v1/solve",
+        json={
+            "inline_snapshot": _inline_snapshot(graph),
+            "demand": [{"process_uuid": "process-desulfurization", "amount": 1.0, "unit": "kg"}],
+            "lcia_methods": ["EF v3.1"],
+            "elementary_flows": _co2_refs(graph),
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "EF31_INDICATOR_UNIT_NOT_FOUND"
 
 
 @pytest.mark.parametrize(
