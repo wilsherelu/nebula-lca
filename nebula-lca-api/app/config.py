@@ -103,6 +103,14 @@ class Settings(BaseModel):
     auto_vacuum_after_prune_on_startup: bool = Field(default_factory=lambda: _env_bool("AUTO_VACUUM_AFTER_PRUNE_ON_STARTUP", False))
     auto_bootstrap_reference_data_on_startup: bool = Field(default_factory=lambda: _env_bool("AUTO_BOOTSTRAP_REFERENCE_DATA_ON_STARTUP", True))
     auto_startup_maintenance_on_startup: bool = Field(default_factory=lambda: _env_bool("AUTO_STARTUP_MAINTENANCE_ON_STARTUP", True))
+    provider_idempotency_lease_seconds: float = Field(
+        default_factory=lambda: float(os.getenv("PROVIDER_IDEMPOTENCY_LEASE_SECONDS", "300")),
+        gt=0,
+    )
+    provider_idempotency_wait_seconds: float = Field(
+        default_factory=lambda: float(os.getenv("PROVIDER_IDEMPOTENCY_WAIT_SECONDS", "30")),
+        ge=0,
+    )
     import_cache_retention_hours: int = Field(default_factory=lambda: int(os.getenv("IMPORT_CACHE_RETENTION_HOURS", "24")))
     import_cache_cleanup_on_terminal: bool = Field(default_factory=lambda: _env_bool("IMPORT_CACHE_CLEANUP_ON_TERMINAL", True))
     data_platform_credential_key: str = Field(default_factory=lambda: os.getenv("DATA_PLATFORM_CREDENTIAL_KEY", ""))

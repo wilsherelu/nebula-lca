@@ -323,6 +323,26 @@ def _runtime_dirs() -> list[Path]:
     return dirs
 
 
+def provider_runtime_identity() -> dict[str, Any]:
+    assets = []
+    for runtime_dir in _runtime_dirs():
+        assets.append(
+            {
+                name: _file_sha256(str((runtime_dir / name).resolve()))
+                for name in ("flow_index.csv", "indicator_index.csv", "lcia_factors.csv")
+            }
+        )
+    if not assets or any(len(value) != 64 for item in assets for value in item.values()):
+        raise ProviderEf31Error(
+            "EF31_RUNTIME_IDENTITY_UNAVAILABLE",
+            "The EF3.1 runtime cannot provide complete content hashes for idempotent execution.",
+        )
+    return {
+        "database_release": EF31_DATABASE_RELEASE,
+        "assets": sorted(assets, key=lambda item: tuple(item.values())),
+    }
+
+
 def resolve_standard_flow(ref: ExactFlowRef) -> dict[str, Any] | None:
     if ref.source_namespace != TIANGONG_OPEN_NAMESPACE:
         return None
