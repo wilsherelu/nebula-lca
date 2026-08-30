@@ -63,6 +63,31 @@ def _as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else [value]
 
 
+def _localized_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, dict):
+        text = value.get("#text") or value.get("text")
+        return str(text).strip() if text is not None and str(text).strip() else None
+    rows = _as_list(value)
+    for row in rows:
+        if isinstance(row, dict) and row.get("@xml:lang") == "en":
+            return _localized_text(row)
+    for row in rows:
+        text = _localized_text(row)
+        if text:
+            return text
+    return None
+
+
+def _flow_name(payload: dict[str, Any]) -> str | None:
+    root = payload.get("flowDataSet")
+    information = root.get("flowInformation") if isinstance(root, dict) else None
+    data_information = information.get("dataSetInformation") if isinstance(information, dict) else None
+    name = data_information.get("name") if isinstance(data_information, dict) else None
+    return _localized_text(name.get("baseName") if isinstance(name, dict) else None)
+
+
 def _exact_uuid(value: Any, *, field: str) -> str:
     raw = str(value or "").strip()
     try:
@@ -202,6 +227,7 @@ class TidasFlowSnapshotRecord:
     flow_uuid: str
     version: str
     flow_type: str
+    name: str | None
     flow_property_uuid: str
     flow_property_version: str
     flow_property_mean_value: float
@@ -218,6 +244,10 @@ class TidasFlowSnapshot:
 
     def contains_uuid(self, flow_uuid: str) -> bool:
         return any(identity_uuid == flow_uuid for identity_uuid, _ in self.records)
+
+    def display_name(self, flow_uuid: str, version: str) -> str | None:
+        record = self.records.get((flow_uuid, version))
+        return record.name if record is not None else None
 
     def resolve(self, flow_uuid: str, version: str) -> dict[str, Any] | None:
         record = self.records.get((flow_uuid, version))
@@ -440,6 +470,7 @@ def _load_snapshot(
             flow_uuid=flow_uuid,
             version=version,
             flow_type=flow_type,
+            name=_flow_name(payload),
             flow_property_uuid=flow_property_uuid,
             flow_property_version=flow_property_version,
             flow_property_mean_value=mean_value,

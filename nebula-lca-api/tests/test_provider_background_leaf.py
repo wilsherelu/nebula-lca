@@ -343,6 +343,7 @@ def test_closed_leaf_scales_exact_process_inventory_and_lcia(
     assert response.status_code == 200, response.text
     body = response.json()
     receipt = body["background_process_receipts"][0]
+    assert receipt["process_name"] == "Closed background leaf"
     assert receipt["claim_role"] == "partial_background_leaf"
     assert receipt["claim_limit"] == "partial_background_leaf_only_not_complete_cradle_to_gate"
     assert receipt["quantitative_reference_amount"] == pytest.approx(3.6)
@@ -354,6 +355,15 @@ def test_closed_leaf_scales_exact_process_inventory_and_lcia(
     assert scaled_by_internal_id == pytest.approx(
         {"1": 1.25 * expected_scale, "2": 3.6 * expected_scale, "3": 0.5 * expected_scale, "4": 0.25 * expected_scale}
     )
+    names_by_internal_id = {
+        item["exchange_internal_id"]: item["flow_name"] for item in receipt["exchanges"]
+    }
+    assert names_by_internal_id == {
+        "1": "carbon dioxide (fossil)",
+        "2": "electricity",
+        "3": "Nitrogen oxides",
+        "4": "sulfur dioxide",
+    }
     assert body["lcia"]["method"] == "EF v3.1"
     assert body["lcia"]["indicator_results"]
     assert len(body["elementary_flow_receipts"]) == 3
@@ -375,6 +385,39 @@ def test_closed_leaf_rejects_process_hash_drift(client, monkeypatch, tmp_path):
     response = client.post("/api/provider/v1/solve", json=request)
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "BACKGROUND_PROCESS_CONTENT_HASH_MISMATCH"
+
+
+def test_missing_display_names_are_null_without_changing_solve(client, monkeypatch, tmp_path):
+    flow_document, process_document = _configure(monkeypatch, tmp_path)
+    qref_record = next(
+        row for row in flow_document["records"] if row["source_object_id"] == QREF_UUID
+    )
+    qref_record["payload"]["flowDataSet"]["flowInformation"]["dataSetInformation"].pop("name")
+    flow_document = _snapshot("flow", flow_document["records"])
+    flow_path = _write(tmp_path / "flow-without-name.json", flow_document)
+    monkeypatch.setattr(
+        flow_snapshot_service.settings,
+        "provider_tidas_flow_snapshot_path",
+        str(flow_path),
+    )
+    process_record = process_document["records"][0]
+    process_record["payload"]["processDataSet"]["processInformation"]["dataSetInformation"].pop("name")
+    process_document = _snapshot("process", process_document["records"])
+    process_path = _write(tmp_path / "process-without-name.json", process_document)
+    monkeypatch.setattr(
+        process_snapshot_service.settings,
+        "provider_tidas_process_snapshot_path",
+        str(process_path),
+    )
+    graph = _graph(3.6)
+    response = client.post("/api/provider/v1/solve", json=_request(graph, process_document))
+    assert response.status_code == 200, response.text
+    receipt = response.json()["background_process_receipts"][0]
+    assert receipt["process_name"] is None
+    qref = next(item for item in receipt["exchanges"] if item["role"] == "quantitative_reference")
+    assert qref["flow_name"] is None
+    assert receipt["activity_amount"] == pytest.approx(3.6)
+    assert receipt["process_scale"] == pytest.approx(1.0)
 
 
 def test_closed_leaf_rejects_qref_unit_drift(client, monkeypatch, tmp_path):
