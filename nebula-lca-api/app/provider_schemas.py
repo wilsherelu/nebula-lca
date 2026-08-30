@@ -161,6 +161,11 @@ class ProviderElementaryFlowReceipt(BaseModel):
     direction: Literal["input", "output"]
     compartment: str
     content_hash: str
+    snapshot_hash: str | None = None
+    flow_property_content_hash: str | None = None
+    unit_group_content_hash: str | None = None
+    unit_content_hash: str | None = None
+    reference_dependency_snapshot_hash: str | None = None
     runtime_flow_index: int
     method: str
     factor_count: int
