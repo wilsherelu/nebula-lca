@@ -13,7 +13,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..config import WORKSPACE_ROOT
-from ..models import FlowVersionRecord, Model, ModelVersion, UnitDefinition, UnitGroup
+from ..models import FlowVersionRecord, Model, ModelVersion, ReferenceProcess, UnitDefinition, UnitGroup
 from ..provider_schemas import (
     ProviderActivity,
     ProviderCatalogResolution,
@@ -52,6 +52,12 @@ from .provider_tidas_snapshot import (
     ProviderTidasSnapshotError,
     TidasFlowSnapshot,
     configured_tidas_flow_snapshot,
+)
+from .provider_tidas_process_snapshot import (
+    ProviderTidasProcessSnapshotError,
+    TidasProcessSnapshot,
+    canonical_hash as canonical_process_hash,
+    configured_tidas_process_snapshot,
 )
 
 
@@ -378,6 +384,53 @@ def _configured_tidas_snapshot() -> TidasFlowSnapshot | None:
         return configured_tidas_flow_snapshot()
     except ProviderTidasSnapshotError as exc:
         raise ProviderContractError(422, exc.code, exc.message, **exc.details) from exc
+
+
+def _configured_tidas_process_snapshot() -> TidasProcessSnapshot | None:
+    try:
+        return configured_tidas_process_snapshot()
+    except ProviderTidasProcessSnapshotError as exc:
+        raise ProviderContractError(422, exc.code, exc.message, **exc.details) from exc
+
+
+def _process_snapshot_database_conflicts(
+    row: ReferenceProcess | None,
+    value: dict[str, Any],
+) -> dict[str, Any]:
+    if row is None or not isinstance(row.import_report_json, dict):
+        return {}
+    report = row.import_report_json
+    database_namespace = str(report.get("source_namespace") or "").strip()
+    database_version = str(report.get("source_version") or "").strip()
+    if (
+        database_namespace != str(value.get("source_namespace") or "").strip()
+        or database_version != str(value.get("version") or "").strip()
+    ):
+        return {}
+    database_hash = _pinned_process_database_content_hash(row)
+    qref = value.get("quantitative_reference") if isinstance(value.get("quantitative_reference"), dict) else {}
+    qref_flow = qref.get("flow") if isinstance(qref.get("flow"), dict) else {}
+    comparisons = {
+        "content_hash": (database_hash, value.get("content_hash")),
+        "process_type": (report.get("type_of_data_set"), value.get("process_type")),
+        "reference_flow_uuid": (row.reference_flow_uuid, qref_flow.get("flow_uuid")),
+        "reference_flow_internal_id": (row.reference_flow_internal_id, qref.get("exchange_internal_id")),
+    }
+    return {
+        field: {"database": database_value, "snapshot": snapshot_value}
+        for field, (database_value, snapshot_value) in comparisons.items()
+        if str(database_value or "").strip()
+        and str(snapshot_value or "").strip()
+        and str(database_value).strip() != str(snapshot_value).strip()
+    }
+
+
+def _pinned_process_database_content_hash(row: ReferenceProcess) -> str:
+    report = row.import_report_json if isinstance(row.import_report_json, dict) else {}
+    database_hash = str(report.get("content_hash") or "").strip()
+    if not database_hash and isinstance(row.process_json, dict) and "processDataSet" in row.process_json:
+        database_hash = canonical_process_hash(row.process_json)
+    return database_hash
 
 
 def _snapshot_database_conflicts(row: FlowVersionRecord | None, value: dict[str, Any]) -> dict[str, Any]:
@@ -802,6 +855,96 @@ def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveR
 def resolve_catalog(db: Session, request: ProviderCatalogResolveRequest) -> list[ProviderCatalogResolution]:
     items: list[ProviderCatalogResolution] = []
     tidas_snapshot = _configured_tidas_snapshot()
+    process_snapshot = _configured_tidas_process_snapshot() if request.processes else None
+    for ref in request.processes:
+        key = ref.model_dump(mode="python")
+        if ref.source_namespace != TIDAS_SOURCE_NAMESPACE:
+            items.append(
+                ProviderCatalogResolution(
+                    kind="process",
+                    key=key,
+                    status="unsupported",
+                    code="PROCESS_CATALOG_NAMESPACE_UNSUPPORTED",
+                    message="Provider v1 currently resolves only exact open TianGong Process snapshots.",
+                )
+            )
+            continue
+        if process_snapshot is None:
+            items.append(
+                ProviderCatalogResolution(
+                    kind="process",
+                    key=key,
+                    status="unsupported",
+                    code="TIDAS_PROCESS_SNAPSHOT_REQUIRED",
+                    message=(
+                        "Exact TIDAS Process resolution requires a configured read-only snapshot; "
+                        "the database is not a substitute receipt."
+                    ),
+                )
+            )
+            continue
+        value = process_snapshot.resolve(ref.process_uuid, ref.version)
+        if value is None:
+            items.append(
+                ProviderCatalogResolution(
+                    kind="process",
+                    key=key,
+                    status="not_found",
+                    value={"snapshot_hash": process_snapshot.snapshot_hash},
+                    code="EXACT_PROCESS_VERSION_NOT_FOUND",
+                    message="The exact Process UUID and version are absent from the configured snapshot.",
+                )
+            )
+            continue
+        row = db.get(ReferenceProcess, ref.process_uuid)
+        same_identity = (
+            row is not None
+            and isinstance(row.import_report_json, dict)
+            and row.import_report_json.get("source_namespace") == ref.source_namespace
+            and row.import_report_json.get("source_version") == ref.version
+        )
+        if same_identity and not _pinned_process_database_content_hash(row):
+            items.append(
+                ProviderCatalogResolution(
+                    kind="process",
+                    key=key,
+                    status="unsupported",
+                    value={**value, "database_identity_status": "same_identity_unverifiable"},
+                    code="TIDAS_PROCESS_DATABASE_IDENTITY_INCOMPLETE",
+                    message=(
+                        "The database row claims the same exact Process identity but has no canonical "
+                        "content hash or complete raw payload for comparison."
+                    ),
+                )
+            )
+            continue
+        conflicts = _process_snapshot_database_conflicts(row, value)
+        if conflicts:
+            items.append(
+                ProviderCatalogResolution(
+                    kind="process",
+                    key=key,
+                    status="unsupported",
+                    value={**value, "database_conflicts": conflicts},
+                    code="TIDAS_PROCESS_DATABASE_CONTENT_CONFLICT",
+                    message=(
+                        "The configured exact TIDAS Process snapshot conflicts with the database row "
+                        "for the same pinned identity."
+                    ),
+                )
+            )
+            continue
+        value["database_identity_status"] = (
+            "same_identity_consistent" if same_identity else "not_pinned_or_absent"
+        )
+        items.append(
+            ProviderCatalogResolution(
+                kind="process",
+                key=key,
+                status="resolved",
+                value=value,
+            )
+        )
     for ref in request.flows:
         key = ref.model_dump(mode="python")
         try:
