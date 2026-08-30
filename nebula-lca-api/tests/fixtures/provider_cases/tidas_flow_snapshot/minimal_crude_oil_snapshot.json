@@ -1,0 +1,61 @@
+{
+  "schema_version": "tiangong-open-dataset-snapshot.v1",
+  "source_namespace": "tiangong_open_data",
+  "dataset_kind": "flow",
+  "state_scope": "open",
+  "filters": {
+    "exact_refs": [
+      "95151b26-d16b-4669-b433-fc0bd633f564@01.01.002"
+    ]
+  },
+  "declared_total": 1,
+  "records": [
+    {
+      "dataset_kind": "flow",
+      "source_namespace": "tiangong_open_data",
+      "source_object_id": "95151b26-d16b-4669-b433-fc0bd633f564",
+      "source_version": "01.01.002",
+      "source_modified_at": "2026-08-31T00:00:00+00:00",
+      "type_of_data_set": "Product flow",
+      "payload": {
+        "flowDataSet": {
+          "flowInformation": {
+            "dataSetInformation": {
+              "common:UUID": "95151b26-d16b-4669-b433-fc0bd633f564",
+              "name": {
+                "baseName": {
+                  "#text": "Crude Oil",
+                  "@xml:lang": "en"
+                }
+              }
+            },
+            "quantitativeReference": {
+              "referenceToReferenceFlowProperty": "0"
+            }
+          },
+          "flowProperties": {
+            "flowProperty": {
+              "@dataSetInternalID": "0",
+              "meanValue": "1.0",
+              "referenceToFlowPropertyDataSet": {
+                "@refObjectId": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "@version": "03.00.003"
+              }
+            }
+          },
+          "modellingAndValidation": {
+            "LCIMethod": {
+              "typeOfDataSet": "Product flow"
+            }
+          }
+        }
+      },
+      "content_hash": "73197a675ed5596ec8fe9f8b532250daf63e47e28d5c1df1595d4f553df55566"
+    }
+  ],
+  "snapshot_hash": "e6d37ac32d1e661d30ebcd04f6160617657ab4c8e47bccd897e455cf0b97f90e",
+  "generated_at": "2026-08-31T00:00:00+00:00",
+  "counts": {
+    "flow": 1
+  }
+}

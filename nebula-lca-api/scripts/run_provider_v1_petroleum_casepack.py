@@ -60,9 +60,13 @@ def _json_request(
         raise RuntimeError(f"{method} {path} returned {exc.code}: {body}") from exc
 
 
-def _catalog_request(solve_request: dict[str, Any]) -> dict[str, Any]:
+def _catalog_request(
+    solve_request: dict[str, Any],
+    *,
+    include_tidas_technosphere: bool = False,
+) -> dict[str, Any]:
     elementary = solve_request["elementary_flows"][0]
-    return {
+    request = {
         "schema_version": "provider.catalog.resolve.request.v1",
         "flows": [
             {
@@ -104,6 +108,16 @@ def _catalog_request(solve_request: dict[str, Any]) -> dict[str, Any]:
             }
         ],
     }
+    if include_tidas_technosphere:
+        request["flows"].append(
+            {
+                "source_namespace": "tiangong_open_data",
+                "flow_uuid": "95151b26-d16b-4669-b433-fc0bd633f564",
+                "version": "01.01.002",
+                "correlation_id": "casepack-crude-oil",
+            }
+        )
+    return request
 
 
 def _chart_data(result: dict[str, Any]) -> dict[str, Any]:
@@ -221,6 +235,8 @@ def _audit(
     catalog: dict[str, Any],
     result: dict[str, Any],
     chart: dict[str, Any],
+    *,
+    require_tidas_snapshot_receipt: bool = False,
 ) -> dict[str, Any]:
     exchange_ids = {row["exchange_id"] for row in result["scaled_exchanges"]}
     traced_ids = {
@@ -234,6 +250,11 @@ def _audit(
         for row in result["lcia"]["indicator_results"]
     }
     indicator_metadata = result["lcia"].get("indicator_metadata") or {}
+    tidas_receipts = [
+        row
+        for row in result.get("technosphere_flow_receipts") or []
+        if row.get("resolution") == "tidas_exact_snapshot"
+    ]
     checks = {
         "health_ok": health.get("status") in {"ok", "healthy"},
         "openapi_has_provider_solve": "/api/provider/v1/solve" in openapi.get("paths", {}),
@@ -258,6 +279,17 @@ def _audit(
         "elementary_receipts_present": len(result["elementary_flow_receipts"]) == 2,
         "sankey_links_trace_to_scaled_exchanges": traced_ids <= exchange_ids and bool(traced_ids),
     }
+    if require_tidas_snapshot_receipt:
+        checks["tidas_snapshot_receipt_is_complete"] = any(
+            row.get("flow_uuid") == "95151b26-d16b-4669-b433-fc0bd633f564"
+            and row.get("version") == "01.01.002"
+            and row.get("content_hash")
+            and row.get("snapshot_hash")
+            and row.get("flow_property_uuid")
+            and row.get("unit_group_uuid")
+            and row.get("unit")
+            for row in tidas_receipts
+        )
     return {
         "schema_version": "provider.casepack.audit.v1",
         "status": "passed" if all(checks.values()) else "failed",
@@ -278,12 +310,16 @@ def main() -> int:
     parser.add_argument("--base-url", default="http://127.0.0.1:8001")
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--require-tidas-snapshot-receipt", action="store_true")
     args = parser.parse_args()
 
     solve_request = json.loads(args.input.read_text(encoding="utf-8"))
     graph_hash = _canonical_hash(solve_request["inline_snapshot"]["graph"])
     solve_request["inline_snapshot"]["graph_hash"] = graph_hash
-    catalog_request = _catalog_request(solve_request)
+    catalog_request = _catalog_request(
+        solve_request,
+        include_tidas_technosphere=args.require_tidas_snapshot_receipt,
+    )
 
     health = _json_request(args.base_url, "/health")
     openapi = _json_request(args.base_url, "/openapi.json")
@@ -300,7 +336,14 @@ def main() -> int:
         method="POST",
     )
     chart = _chart_data(result)
-    audit = _audit(health, openapi, catalog, result, chart)
+    audit = _audit(
+        health,
+        openapi,
+        catalog,
+        result,
+        chart,
+        require_tidas_snapshot_receipt=args.require_tidas_snapshot_receipt,
+    )
 
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)

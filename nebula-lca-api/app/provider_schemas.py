@@ -165,6 +165,26 @@ class ProviderElementaryFlowReceipt(BaseModel):
     factor_hash: str
 
 
+class ProviderTechnosphereFlowReceipt(BaseModel):
+    exchange_id: str
+    process_uuid: str
+    resolution: Literal["tidas_exact_snapshot", "inline_custom"]
+    source_namespace: str
+    flow_uuid: str
+    version: str
+    flow_type: str | None = None
+    content_hash: str | None = None
+    snapshot_hash: str | None = None
+    flow_property_uuid: str
+    flow_property_version: str
+    flow_property_content_hash: str | None = None
+    unit_group_uuid: str
+    unit_group_version: str
+    unit_group_content_hash: str | None = None
+    unit: str
+    unit_content_hash: str | None = None
+
+
 class ProviderSolveProvenance(BaseModel):
     engine: ProviderEngineIdentity
     snapshot_ref: ProviderSnapshotRef | None = None
@@ -191,6 +211,7 @@ class ProviderSolveResponse(BaseModel):
     activity_vector: list[ProviderActivity]
     scaled_exchanges: list[ProviderScaledExchange]
     inventory_totals: list[ProviderInventoryTotal]
+    technosphere_flow_receipts: list[ProviderTechnosphereFlowReceipt] = Field(default_factory=list)
     elementary_flow_receipts: list[ProviderElementaryFlowReceipt] = Field(default_factory=list)
     lcia: dict[str, Any] | None = None
     process_residuals: list[dict[str, Any]] = Field(default_factory=list)
