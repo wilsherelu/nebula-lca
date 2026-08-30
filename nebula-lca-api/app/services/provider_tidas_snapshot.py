@@ -12,6 +12,11 @@ from typing import Any
 from ..config import settings
 from ..provider_schemas import ExactFlowPropertyRef
 from .provider_ef31 import resolve_standard_flow_property_binding
+from .provider_tidas_reference_snapshot import (
+    ProviderTidasReferenceSnapshotError,
+    TidasReferenceDependencySnapshot,
+    configured_tidas_reference_dependency_snapshot,
+)
 
 
 SCHEMA_VERSION = "tiangong-open-dataset-snapshot.v1"
@@ -171,20 +176,33 @@ class TidasFlowSnapshotRecord:
 class TidasFlowSnapshot:
     snapshot_hash: str
     records: dict[tuple[str, str], TidasFlowSnapshotRecord]
+    reference_dependencies: TidasReferenceDependencySnapshot | None = None
 
     def resolve(self, flow_uuid: str, version: str) -> dict[str, Any] | None:
         record = self.records.get((flow_uuid, version))
         if record is None:
             return None
-        binding = resolve_standard_flow_property_binding(
-            ExactFlowPropertyRef(
-                flow_property_uuid=record.flow_property_uuid,
-                version=record.flow_property_version,
-            )
+        exact_ref = ExactFlowPropertyRef(
+            flow_property_uuid=record.flow_property_uuid,
+            version=record.flow_property_version,
         )
+        binding = None
+        if self.reference_dependencies is not None:
+            try:
+                binding = self.reference_dependencies.resolve_flow_property_binding(
+                    record.flow_property_uuid,
+                    record.flow_property_version,
+                )
+            except ProviderTidasReferenceSnapshotError as exc:
+                raise ProviderTidasSnapshotError(exc.code, exc.message, **exc.details) from exc
+        binding = binding or resolve_standard_flow_property_binding(exact_ref)
         if binding is None:
             raise ProviderTidasSnapshotError(
-                "TIDAS_FLOW_PROPERTY_DEPENDENCY_UNAVAILABLE",
+                (
+                    "TIDAS_REFERENCE_DEPENDENCY_SNAPSHOT_REQUIRED"
+                    if self.reference_dependencies is None
+                    else "TIDAS_FLOW_PROPERTY_DEPENDENCY_UNAVAILABLE"
+                ),
                 "The exact TIDAS Flow Property cannot be bound to a complete provider Unit Group dependency.",
                 flow_uuid=record.flow_uuid,
                 version=record.version,
@@ -208,8 +226,14 @@ class TidasFlowSnapshot:
             "unit_group_version": unit_group["version"],
             "unit_group": unit_group["name"],
             "unit_group_content_hash": unit_group["content_hash"],
+            "units": unit_group["units"],
             "default_unit": unit["unit"],
             "unit_content_hash": unit["content_hash"],
+            "reference_dependency_resolution_source": binding.get(
+                "resolution_source",
+                "provider_reference_seed",
+            ),
+            "reference_dependency_snapshot_hash": binding.get("snapshot_hash"),
             "content_hash": record.content_hash,
             "snapshot_hash": self.snapshot_hash,
             "snapshot_schema_version": SCHEMA_VERSION,
@@ -218,7 +242,10 @@ class TidasFlowSnapshot:
         }
 
 
-def _load_snapshot(path: Path) -> TidasFlowSnapshot:
+def _load_snapshot(
+    path: Path,
+    reference_dependencies: TidasReferenceDependencySnapshot | None,
+) -> TidasFlowSnapshot:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -379,7 +406,11 @@ def _load_snapshot(path: Path) -> TidasFlowSnapshot:
             declared_count=counts.get(DATASET_KIND) if isinstance(counts, dict) else None,
             actual_count=len(records),
         )
-    return TidasFlowSnapshot(snapshot_hash=actual_snapshot_hash, records=records)
+    return TidasFlowSnapshot(
+        snapshot_hash=actual_snapshot_hash,
+        records=records,
+        reference_dependencies=reference_dependencies,
+    )
 
 
 def configured_tidas_flow_snapshot() -> TidasFlowSnapshot | None:
@@ -392,4 +423,8 @@ def configured_tidas_flow_snapshot() -> TidasFlowSnapshot | None:
             "TIDAS_FLOW_SNAPSHOT_FILE_NOT_FOUND",
             "The configured TIDAS Flow snapshot file does not exist.",
         )
-    return _load_snapshot(path)
+    try:
+        reference_dependencies = configured_tidas_reference_dependency_snapshot()
+    except ProviderTidasReferenceSnapshotError as exc:
+        raise ProviderTidasSnapshotError(exc.code, exc.message, **exc.details) from exc
+    return _load_snapshot(path, reference_dependencies)

@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 import app.database as db_module
 import app.services.provider_ef31 as provider_ef31
+import app.services.provider_tidas_reference_snapshot as provider_tidas_reference_snapshot
 import app.services.provider_tidas_snapshot as provider_tidas_snapshot
 from app.database import Base
 from app.main import app
@@ -22,12 +23,19 @@ from app.services.graph_storage import compute_graph_hash_from_graph
 @pytest.fixture(autouse=True)
 def isolated_database():
     previous_snapshot_path = provider_tidas_snapshot.settings.provider_tidas_flow_snapshot_path
+    previous_reference_snapshot_path = (
+        provider_tidas_reference_snapshot.settings.provider_tidas_reference_dependency_snapshot_path
+    )
     provider_tidas_snapshot.settings.provider_tidas_flow_snapshot_path = ""
+    provider_tidas_reference_snapshot.settings.provider_tidas_reference_dependency_snapshot_path = ""
     Base.metadata.drop_all(bind=db_module.engine)
     Base.metadata.create_all(bind=db_module.engine)
     yield
     db_module.engine.dispose()
     provider_tidas_snapshot.settings.provider_tidas_flow_snapshot_path = previous_snapshot_path
+    provider_tidas_reference_snapshot.settings.provider_tidas_reference_dependency_snapshot_path = (
+        previous_reference_snapshot_path
+    )
 
 
 @pytest.fixture()
@@ -567,8 +575,11 @@ def test_tidas_snapshot_exact_catalog_and_solve_receipts_do_not_write_database(c
         "unit_group_version": "03.00.003",
         "unit_group": "Units of mass",
         "unit_group_content_hash": item["value"]["unit_group_content_hash"],
+        "units": item["value"]["units"],
         "default_unit": "kg",
         "unit_content_hash": item["value"]["unit_content_hash"],
+        "reference_dependency_resolution_source": "provider_reference_seed",
+        "reference_dependency_snapshot_hash": None,
         "content_hash": "73197a675ed5596ec8fe9f8b532250daf63e47e28d5c1df1595d4f553df55566",
         "snapshot_hash": "e6d37ac32d1e661d30ebcd04f6160617657ab4c8e47bccd897e455cf0b97f90e",
         "snapshot_schema_version": "tiangong-open-dataset-snapshot.v1",
@@ -611,6 +622,8 @@ def test_tidas_snapshot_exact_catalog_and_solve_receipts_do_not_write_database(c
     assert receipt["flow_property_uuid"] == MASS_PROPERTY_UUID
     assert receipt["unit_group_uuid"] == MASS_UNIT_GROUP_UUID
     assert receipt["unit"] == "kg"
+    assert receipt["reference_dependency_resolution_source"] == "provider_reference_seed"
+    assert receipt["reference_dependency_snapshot_hash"] is None
     custom_receipts = [
         row for row in body["technosphere_flow_receipts"] if row["resolution"] == "inline_custom"
     ]
@@ -794,7 +807,7 @@ def test_tidas_snapshot_missing_dependency_is_unsupported(client, monkeypatch, t
     assert response.status_code == 200, response.text
     item = response.json()["items"][0]
     assert item["status"] == "unsupported"
-    assert item["code"] == "TIDAS_FLOW_PROPERTY_DEPENDENCY_UNAVAILABLE"
+    assert item["code"] == "TIDAS_REFERENCE_DEPENDENCY_SNAPSHOT_REQUIRED"
 
 
 def test_tidas_snapshot_database_conflict_fails_closed(client, monkeypatch):

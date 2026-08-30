@@ -1,0 +1,74 @@
+{
+  "schema_version": "tiangong-exact-reference-dependency.v1",
+  "state_scope": "open",
+  "records": [
+    {
+      "dataset_kind": "flow_property",
+      "source_namespace": "tiangong_open_data",
+      "source_object_id": "93a60a56-a3c8-11da-a746-0800200c9a66",
+      "source_version": "03.00.003",
+      "state_code": 100,
+      "source_modified_at": "2026-08-22T16:20:05.964935+00:00",
+      "content_hash": "d88e33518a26eb26c6f206caf2263913edbc20b07c0514bc44908dcba6ed04f5",
+      "payload": {
+        "flowPropertyDataSet": {
+          "flowPropertiesInformation": {
+            "dataSetInformation": {
+              "common:UUID": "93a60a56-a3c8-11da-a746-0800200c9a66",
+              "common:name": {
+                "#text": "Net calorific value",
+                "@xml:lang": "en"
+              }
+            },
+            "quantitativeReference": {
+              "referenceToReferenceUnitGroup": {
+                "@refObjectId": "93a60a57-a3c8-11da-a746-0800200c9a66",
+                "@version": "03.00.003"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "dataset_kind": "unit_group",
+      "source_namespace": "tiangong_open_data",
+      "source_object_id": "93a60a57-a3c8-11da-a746-0800200c9a66",
+      "source_version": "03.00.003",
+      "state_code": 100,
+      "source_modified_at": "2026-08-28T04:11:17.815838+00:00",
+      "content_hash": "ef969b8a5fb05fa6f4fd438c79850a363853800df3ca641142c4f44dcd972939",
+      "payload": {
+        "unitGroupDataSet": {
+          "unitGroupInformation": {
+            "dataSetInformation": {
+              "common:UUID": "93a60a57-a3c8-11da-a746-0800200c9a66",
+              "common:name": {
+                "#text": "Units of energy",
+                "@xml:lang": "en"
+              }
+            },
+            "quantitativeReference": {
+              "referenceToReferenceUnit": "0"
+            }
+          },
+          "units": {
+            "unit": [
+              {
+                "@dataSetInternalID": "0",
+                "name": "MJ",
+                "meanValue": "1.0"
+              },
+              {
+                "@dataSetInternalID": "1",
+                "name": "kWh",
+                "meanValue": "3.6"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "snapshot_hash": "a2dd2e73af7f461213b626ab1d940eebe360edb06479c49d92a8411dedba3f16"
+}
