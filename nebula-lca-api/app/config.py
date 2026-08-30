@@ -81,6 +81,9 @@ class Settings(BaseModel):
     database_url: str = Field(default_factory=_default_database_url)
     cors_origins: list[str] = Field(default_factory=lambda: _env_list("NEBULA_CORS_ORIGINS", ["http://localhost:5173", "http://127.0.0.1:5173"]))
     nebula_lca_ef31_dir: str = Field(default_factory=lambda: os.getenv("NEBULA_LCA_EF31_DIR", _default_ef31_dir()))
+    provider_tidas_flow_snapshot_path: str = Field(
+        default_factory=lambda: os.getenv("NEBULA_PROVIDER_TIDAS_FLOW_SNAPSHOT_PATH", "").strip()
+    )
     nebula_lca_runtime_root: str = Field(default_factory=lambda: str(_default_runtime_root()))
     import_cache_root: str = Field(default_factory=lambda: str(_default_import_cache_root()))
     nebula_lca_solver_api_url: str = Field(default_factory=lambda: os.getenv("NEBULA_LCA_SOLVER_API_URL", "http://127.0.0.1:8000"))

@@ -56,7 +56,10 @@ def catalog_resolve(
     payload: ProviderCatalogResolveRequest,
     db: Session = Depends(get_db),
 ) -> ProviderCatalogResolveResponse:
-    return ProviderCatalogResolveResponse(
-        items=resolve_catalog(db, payload),
-        candidate_sets=resolve_flow_candidates(db, payload),
-    )
+    try:
+        return ProviderCatalogResolveResponse(
+            items=resolve_catalog(db, payload),
+            candidate_sets=resolve_flow_candidates(db, payload),
+        )
+    except ProviderContractError as exc:
+        _raise_contract_error(exc)

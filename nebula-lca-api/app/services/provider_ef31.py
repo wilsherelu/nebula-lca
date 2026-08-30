@@ -76,6 +76,7 @@ def _reference_catalog() -> dict[str, Any]:
         "unit_group_by_name": unit_group_by_name,
         "flow_properties": flow_properties,
         "flow_property_by_unit_group_name": flow_property_by_unit_group_name,
+        "unit_group_mappings": seed.get("unit_group_mappings") or [],
     }
 
 
@@ -362,6 +363,48 @@ def resolve_standard_flow_property(ref: ExactFlowPropertyRef) -> dict[str, Any] 
     }
     value["content_hash"] = _canonical_hash(value)
     return value
+
+
+def resolve_standard_flow_property_binding(ref: ExactFlowPropertyRef) -> dict[str, Any] | None:
+    flow_property = resolve_standard_flow_property(ref)
+    if flow_property is None:
+        return None
+    reference = _reference_catalog()
+    group_names = {
+        str(mapping.get("source_unit_group") or "").strip()
+        for mapping in reference["unit_group_mappings"]
+        if str(mapping.get("flow_property_uuid") or "").strip() == ref.flow_property_uuid
+        and str(mapping.get("version") or "").strip() == ref.version
+        and str(mapping.get("mapping_status") or "").strip() == "allowed"
+    }
+    group_names.discard("")
+    if len(group_names) != 1:
+        return None
+    unit_group_item = reference["unit_group_by_name"].get(next(iter(group_names)))
+    if unit_group_item is None:
+        return None
+    unit_group = resolve_standard_unit_group(
+        ExactUnitGroupRef(
+            unit_group_uuid=str(unit_group_item["uuid"]),
+            version=str(unit_group_item["version"]),
+        )
+    )
+    if unit_group is None or not str(unit_group.get("reference_unit") or "").strip():
+        return None
+    unit = resolve_standard_unit(
+        ExactUnitRef(
+            unit_group_uuid=str(unit_group["unit_group_uuid"]),
+            version=str(unit_group["version"]),
+            unit=str(unit_group["reference_unit"]),
+        )
+    )
+    if unit is None:
+        return None
+    return {
+        "flow_property": flow_property,
+        "unit_group": unit_group,
+        "unit": unit,
+    }
 
 
 def resolve_standard_unit_group(ref: ExactUnitGroupRef) -> dict[str, Any] | None:

@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import copy
+import hashlib
+import json
 import uuid
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 import app.database as db_module
 import app.services.provider_ef31 as provider_ef31
+import app.services.provider_tidas_snapshot as provider_tidas_snapshot
 from app.database import Base
 from app.main import app
 from app.models import FlowRecord, FlowVersionRecord, Model, ModelVersion, UnitDefinition, UnitGroup
@@ -16,10 +21,13 @@ from app.services.graph_storage import compute_graph_hash_from_graph
 
 @pytest.fixture(autouse=True)
 def isolated_database():
+    previous_snapshot_path = provider_tidas_snapshot.settings.provider_tidas_flow_snapshot_path
+    provider_tidas_snapshot.settings.provider_tidas_flow_snapshot_path = ""
     Base.metadata.drop_all(bind=db_module.engine)
     Base.metadata.create_all(bind=db_module.engine)
     yield
     db_module.engine.dispose()
+    provider_tidas_snapshot.settings.provider_tidas_flow_snapshot_path = previous_snapshot_path
 
 
 @pytest.fixture()
@@ -137,9 +145,59 @@ def _inline_snapshot(graph: HybridGraph, base_ref: dict | None = None) -> dict:
 CO2_UUID = "08a91e70-3ddc-11dd-923d-0050c2490048"
 MASS_PROPERTY_UUID = "93a60a56-a3c8-11da-a746-0800200b9a66"
 MASS_UNIT_GROUP_UUID = "93a60a57-a4c8-11da-a746-0800200c9a66"
+CRUDE_OIL_UUID = "95151b26-d16b-4669-b433-fc0bd633f564"
+CRUDE_OIL_VERSION = "01.01.002"
+TIDAS_SNAPSHOT_FIXTURE = (
+    Path(__file__).parent
+    / "fixtures"
+    / "provider_cases"
+    / "tidas_flow_snapshot"
+    / "minimal_crude_oil_snapshot.json"
+)
 
 
-def _petrochemical_graph() -> HybridGraph:
+def _canonical_hash(value) -> str:
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _recompute_snapshot_hashes(document: dict) -> None:
+    for record in document["records"]:
+        record["content_hash"] = _canonical_hash(record["payload"])
+    document["counts"] = {"flow": len(document["records"])}
+    body = {
+        key: document[key]
+        for key in (
+            "schema_version",
+            "source_namespace",
+            "dataset_kind",
+            "state_scope",
+            "filters",
+            "declared_total",
+            "records",
+        )
+    }
+    document["snapshot_hash"] = _canonical_hash(body)
+
+
+def _snapshot_copy() -> dict:
+    return copy.deepcopy(json.loads(TIDAS_SNAPSHOT_FIXTURE.read_text(encoding="utf-8")))
+
+
+def _write_snapshot(path: Path, document: dict) -> Path:
+    path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def _configure_tidas_snapshot(monkeypatch, path: Path = TIDAS_SNAPSHOT_FIXTURE) -> None:
+    monkeypatch.setattr(
+        provider_tidas_snapshot.settings,
+        "provider_tidas_flow_snapshot_path",
+        str(path),
+    )
+
+
+def _petrochemical_graph(*, include_tidas_crude: bool = False) -> HybridGraph:
     custom_namespace = "nebula-one.casepack.petroleum"
     custom_version = "casepack-1"
 
@@ -171,6 +229,20 @@ def _petrochemical_graph() -> HybridGraph:
         )
         return value
 
+    def crude_oil_port():
+        value = _port("in-crude-oil", CRUDE_OIL_UUID, "Crude Oil", 1.5, "input", "technosphere")
+        value.update(
+            {
+                "flowSourceNamespace": "tiangong_open_data",
+                "flowVersion": CRUDE_OIL_VERSION,
+                "flowPropertyUuid": MASS_PROPERTY_UUID,
+                "flowPropertyVersion": "03.00.003",
+                "unitGroupUuid": MASS_UNIT_GROUP_UUID,
+                "unitGroupVersion": "03.00.003",
+            }
+        )
+        return value
+
     return HybridGraph.model_validate(
         {
             "functionalUnit": "1 kg low-sulfur diesel",
@@ -183,7 +255,7 @@ def _petrochemical_graph() -> HybridGraph:
                     "name": "Cracking",
                     "location": "CN",
                     "reference_product": "Cracked diesel",
-                    "inputs": [],
+                    "inputs": [crude_oil_port()] if include_tidas_crude else [],
                     "outputs": [
                         custom_port("out-cracked", "custom-cracked-diesel", "Cracked diesel", 1.0, "output", product=True),
                         co2_port("out-co2-cracking", 0.5),
@@ -462,6 +534,318 @@ def test_catalog_resolve_is_exact_and_never_falls_back_to_current_or_name(client
     assert body["items"][2]["code"] == "EXACT_FLOW_VERSION_NOT_FOUND"
     assert body["items"][3]["code"] == "FLOW_PROPERTY_RESOURCE_UNAVAILABLE"
     assert body["candidate_sets"][0]["candidates"][0]["flow_uuid"] == "flow-a"
+
+
+def test_tidas_snapshot_exact_catalog_and_solve_receipts_do_not_write_database(client, monkeypatch):
+    _configure_tidas_snapshot(monkeypatch)
+    response = client.post(
+        "/api/provider/v1/catalog/resolve",
+        json={
+            "flows": [
+                {
+                    "source_namespace": "tiangong_open_data",
+                    "flow_uuid": CRUDE_OIL_UUID,
+                    "version": CRUDE_OIL_VERSION,
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    item = response.json()["items"][0]
+    assert item["status"] == "resolved"
+    assert item["value"] == {
+        "resolution_source": "tidas_exact_snapshot",
+        "source_namespace": "tiangong_open_data",
+        "flow_uuid": CRUDE_OIL_UUID,
+        "version": CRUDE_OIL_VERSION,
+        "flow_type": "Product flow",
+        "flow_property_uuid": MASS_PROPERTY_UUID,
+        "flow_property_version": "03.00.003",
+        "flow_property_mean_value": 1.0,
+        "flow_property_content_hash": item["value"]["flow_property_content_hash"],
+        "unit_group_uuid": MASS_UNIT_GROUP_UUID,
+        "unit_group_version": "03.00.003",
+        "unit_group": "Units of mass",
+        "unit_group_content_hash": item["value"]["unit_group_content_hash"],
+        "default_unit": "kg",
+        "unit_content_hash": item["value"]["unit_content_hash"],
+        "content_hash": "73197a675ed5596ec8fe9f8b532250daf63e47e28d5c1df1595d4f553df55566",
+        "snapshot_hash": "e6d37ac32d1e661d30ebcd04f6160617657ab4c8e47bccd897e455cf0b97f90e",
+        "snapshot_schema_version": "tiangong-open-dataset-snapshot.v1",
+        "snapshot_state_scope": "open",
+        "source_modified_at": "2026-08-31T00:00:00+00:00",
+    }
+    assert item["value"]["flow_property_content_hash"]
+    assert item["value"]["unit_group_content_hash"]
+    assert item["value"]["unit_content_hash"]
+
+    db = db_module.SessionLocal()
+    try:
+        before = {
+            "projects": db.query(Model).count(),
+            "flows": db.query(FlowRecord).count(),
+            "flow_versions": db.query(FlowVersionRecord).count(),
+        }
+    finally:
+        db.close()
+    graph = _petrochemical_graph(include_tidas_crude=True)
+    response = client.post(
+        "/api/provider/v1/solve",
+        json={
+            "inline_snapshot": _inline_snapshot(graph),
+            "demand": [{"process_uuid": "process-desulfurization", "amount": 1.0, "unit": "kg"}],
+            "lcia_methods": ["EF v3.1"],
+            "elementary_flows": _co2_refs(graph),
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    receipt = next(
+        row
+        for row in body["technosphere_flow_receipts"]
+        if row["flow_uuid"] == CRUDE_OIL_UUID
+    )
+    assert receipt["resolution"] == "tidas_exact_snapshot"
+    assert receipt["content_hash"] == item["value"]["content_hash"]
+    assert receipt["snapshot_hash"] == item["value"]["snapshot_hash"]
+    assert receipt["flow_property_uuid"] == MASS_PROPERTY_UUID
+    assert receipt["unit_group_uuid"] == MASS_UNIT_GROUP_UUID
+    assert receipt["unit"] == "kg"
+    custom_receipts = [
+        row for row in body["technosphere_flow_receipts"] if row["resolution"] == "inline_custom"
+    ]
+    assert custom_receipts
+    assert "INLINE_CUSTOM_TECHNOSPHERE_FLOW" in {issue["code"] for issue in body["issues"]}
+    db = db_module.SessionLocal()
+    try:
+        after = {
+            "projects": db.query(Model).count(),
+            "flows": db.query(FlowRecord).count(),
+            "flow_versions": db.query(FlowVersionRecord).count(),
+        }
+    finally:
+        db.close()
+    assert after == before == {"projects": 0, "flows": 0, "flow_versions": 0}
+
+
+def test_tidas_snapshot_unconfigured_fails_closed(client):
+    graph = _petrochemical_graph(include_tidas_crude=True)
+    response = client.post(
+        "/api/provider/v1/solve",
+        json={
+            "inline_snapshot": _inline_snapshot(graph),
+            "demand": [{"process_uuid": "process-desulfurization", "amount": 1.0, "unit": "kg"}],
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "TIDAS_FLOW_SNAPSHOT_REQUIRED"
+
+    db = db_module.SessionLocal()
+    try:
+        db.add(
+            FlowVersionRecord(
+                source_namespace="tiangong_open_data",
+                flow_uuid=CRUDE_OIL_UUID,
+                source_version=CRUDE_OIL_VERSION,
+                version_label=CRUDE_OIL_VERSION,
+                flow_name="Crude Oil",
+                flow_type="Product flow",
+                default_unit="kg",
+                unit_group="Units of mass",
+                flow_property_uuid=MASS_PROPERTY_UUID,
+                flow_property_version="03.00.003",
+                unit_group_uuid=MASS_UNIT_GROUP_UUID,
+                unit_group_version="03.00.003",
+                content_hash="73197a675ed5596ec8fe9f8b532250daf63e47e28d5c1df1595d4f553df55566",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+    response = client.post(
+        "/api/provider/v1/catalog/resolve",
+        json={
+            "flows": [
+                {
+                    "source_namespace": "tiangong_open_data",
+                    "flow_uuid": CRUDE_OIL_UUID,
+                    "version": CRUDE_OIL_VERSION,
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    item = response.json()["items"][0]
+    assert item["status"] == "unsupported"
+    assert item["code"] == "TIDAS_FLOW_SNAPSHOT_REQUIRED"
+
+
+def test_tidas_snapshot_invalid_hash_fails_closed(client, monkeypatch, tmp_path):
+    document = _snapshot_copy()
+    document["snapshot_hash"] = "0" * 64
+    path = _write_snapshot(tmp_path / "bad-hash.json", document)
+    _configure_tidas_snapshot(monkeypatch, path)
+    response = client.post("/api/provider/v1/catalog/resolve", json={"flows": []})
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "TIDAS_FLOW_SNAPSHOT_HASH_MISMATCH"
+
+
+def test_tidas_snapshot_record_content_hash_fails_closed(client, monkeypatch, tmp_path):
+    document = _snapshot_copy()
+    document["records"][0]["content_hash"] = "0" * 64
+    body = {
+        key: document[key]
+        for key in (
+            "schema_version",
+            "source_namespace",
+            "dataset_kind",
+            "state_scope",
+            "filters",
+            "declared_total",
+            "records",
+        )
+    }
+    document["snapshot_hash"] = _canonical_hash(body)
+    path = _write_snapshot(tmp_path / "bad-record-hash.json", document)
+    _configure_tidas_snapshot(monkeypatch, path)
+    response = client.post("/api/provider/v1/catalog/resolve", json={"flows": []})
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "TIDAS_FLOW_RECORD_HASH_MISMATCH"
+
+
+def test_tidas_snapshot_duplicate_identity_fails_closed(client, monkeypatch, tmp_path):
+    document = _snapshot_copy()
+    document["records"].append(copy.deepcopy(document["records"][0]))
+    _recompute_snapshot_hashes(document)
+    path = _write_snapshot(tmp_path / "duplicate.json", document)
+    _configure_tidas_snapshot(monkeypatch, path)
+    response = client.post("/api/provider/v1/catalog/resolve", json={"flows": []})
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "TIDAS_FLOW_SNAPSHOT_IDENTITY_DUPLICATE"
+
+
+def test_tidas_snapshot_exact_version_does_not_fall_back(client, monkeypatch):
+    _configure_tidas_snapshot(monkeypatch)
+    response = client.post(
+        "/api/provider/v1/catalog/resolve",
+        json={
+            "flows": [
+                {
+                    "source_namespace": "tiangong_open_data",
+                    "flow_uuid": CRUDE_OIL_UUID,
+                    "version": "01.01.001",
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["items"][0]["status"] == "not_found"
+    assert response.json()["items"][0]["code"] == "EXACT_FLOW_VERSION_NOT_FOUND"
+
+    graph = _petrochemical_graph(include_tidas_crude=True)
+    graph.nodes[0].inputs[0].flow_version = "01.01.001"
+    response = client.post(
+        "/api/provider/v1/solve",
+        json={
+            "inline_snapshot": _inline_snapshot(graph),
+            "demand": [{"process_uuid": "process-desulfurization", "amount": 1.0, "unit": "kg"}],
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "TIDAS_FLOW_EXACT_VERSION_NOT_IN_SNAPSHOT"
+
+
+def test_tidas_snapshot_graph_identity_mismatch_fails_closed(client, monkeypatch):
+    _configure_tidas_snapshot(monkeypatch)
+    graph = _petrochemical_graph(include_tidas_crude=True)
+    graph.nodes[0].inputs[0].unit_group_version = "99.00.000"
+    response = client.post(
+        "/api/provider/v1/solve",
+        json={
+            "inline_snapshot": _inline_snapshot(graph),
+            "demand": [{"process_uuid": "process-desulfurization", "amount": 1.0, "unit": "kg"}],
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "TIDAS_FLOW_GRAPH_IDENTITY_MISMATCH"
+
+
+def test_tidas_snapshot_missing_dependency_is_unsupported(client, monkeypatch, tmp_path):
+    document = _snapshot_copy()
+    reference = document["records"][0]["payload"]["flowDataSet"]["flowProperties"]["flowProperty"][
+        "referenceToFlowPropertyDataSet"
+    ]
+    reference["@refObjectId"] = "11111111-1111-4111-8111-111111111111"
+    _recompute_snapshot_hashes(document)
+    path = _write_snapshot(tmp_path / "missing-dependency.json", document)
+    _configure_tidas_snapshot(monkeypatch, path)
+    response = client.post(
+        "/api/provider/v1/catalog/resolve",
+        json={
+            "flows": [
+                {
+                    "source_namespace": "tiangong_open_data",
+                    "flow_uuid": CRUDE_OIL_UUID,
+                    "version": CRUDE_OIL_VERSION,
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    item = response.json()["items"][0]
+    assert item["status"] == "unsupported"
+    assert item["code"] == "TIDAS_FLOW_PROPERTY_DEPENDENCY_UNAVAILABLE"
+
+
+def test_tidas_snapshot_database_conflict_fails_closed(client, monkeypatch):
+    _configure_tidas_snapshot(monkeypatch)
+    db = db_module.SessionLocal()
+    try:
+        db.add(
+            FlowVersionRecord(
+                source_namespace="tiangong_open_data",
+                flow_uuid=CRUDE_OIL_UUID,
+                source_version=CRUDE_OIL_VERSION,
+                version_label=CRUDE_OIL_VERSION,
+                flow_name="Crude Oil",
+                flow_type="Product flow",
+                default_unit="kg",
+                unit_group="Units of mass",
+                flow_property_uuid=MASS_PROPERTY_UUID,
+                flow_property_version="03.00.003",
+                unit_group_uuid=MASS_UNIT_GROUP_UUID,
+                unit_group_version="03.00.003",
+                content_hash="conflicting-content-hash",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+    request = {
+        "flows": [
+            {
+                "source_namespace": "tiangong_open_data",
+                "flow_uuid": CRUDE_OIL_UUID,
+                "version": CRUDE_OIL_VERSION,
+            }
+        ]
+    }
+    response = client.post("/api/provider/v1/catalog/resolve", json=request)
+    assert response.status_code == 200, response.text
+    item = response.json()["items"][0]
+    assert item["status"] == "unsupported"
+    assert item["code"] == "TIDAS_FLOW_DATABASE_CONTENT_CONFLICT"
+
+    graph = _petrochemical_graph(include_tidas_crude=True)
+    response = client.post(
+        "/api/provider/v1/solve",
+        json={
+            "inline_snapshot": _inline_snapshot(graph),
+            "demand": [{"process_uuid": "process-desulfurization", "amount": 1.0, "unit": "kg"}],
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "TIDAS_FLOW_DATABASE_CONTENT_CONFLICT"
 
 
 def test_inline_custom_technosphere_with_exact_ef31_lcia_does_not_write_catalog_or_projects(client):

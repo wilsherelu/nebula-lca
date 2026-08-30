@@ -28,6 +28,7 @@ from ..provider_schemas import (
     ProviderSolveProvenance,
     ProviderSolveRequest,
     ProviderSolveResponse,
+    ProviderTechnosphereFlowReceipt,
 )
 from ..schemas import FlowPort, HybridGraph
 from ..solver import to_tiangong_like
@@ -45,6 +46,12 @@ from .provider_ef31 import (
     resolve_standard_flow_property,
     resolve_standard_unit,
     resolve_standard_unit_group,
+)
+from .provider_tidas_snapshot import (
+    SOURCE_NAMESPACE as TIDAS_SOURCE_NAMESPACE,
+    ProviderTidasSnapshotError,
+    TidasFlowSnapshot,
+    configured_tidas_flow_snapshot,
 )
 
 
@@ -366,6 +373,180 @@ def _validate_inline_foreground(graph: HybridGraph) -> None:
             )
 
 
+def _configured_tidas_snapshot() -> TidasFlowSnapshot | None:
+    try:
+        return configured_tidas_flow_snapshot()
+    except ProviderTidasSnapshotError as exc:
+        raise ProviderContractError(422, exc.code, exc.message, **exc.details) from exc
+
+
+def _snapshot_database_conflicts(row: FlowVersionRecord | None, value: dict[str, Any]) -> dict[str, Any]:
+    if row is None:
+        return {}
+    comparisons = {
+        "content_hash": (row.content_hash, value.get("content_hash")),
+        "flow_property_uuid": (row.flow_property_uuid, value.get("flow_property_uuid")),
+        "flow_property_version": (row.flow_property_version, value.get("flow_property_version")),
+        "unit_group_uuid": (row.unit_group_uuid, value.get("unit_group_uuid")),
+        "unit_group_version": (row.unit_group_version, value.get("unit_group_version")),
+        "default_unit": (row.default_unit, value.get("default_unit")),
+        "flow_type": (row.flow_type, value.get("flow_type")),
+    }
+    return {
+        field: {"database": database_value, "snapshot": snapshot_value}
+        for field, (database_value, snapshot_value) in comparisons.items()
+        if str(database_value or "").strip()
+        and str(snapshot_value or "").strip()
+        and str(database_value).strip() != str(snapshot_value).strip()
+    }
+
+
+def _exact_flow_version_row(
+    db: Session,
+    *,
+    source_namespace: str,
+    flow_uuid: str,
+    version: str,
+) -> FlowVersionRecord | None:
+    return (
+        db.query(FlowVersionRecord)
+        .filter(
+            FlowVersionRecord.source_namespace == source_namespace,
+            FlowVersionRecord.flow_uuid == flow_uuid,
+            FlowVersionRecord.source_version == version,
+        )
+        .one_or_none()
+    )
+
+
+def _resolve_tidas_snapshot_value(
+    snapshot: TidasFlowSnapshot,
+    *,
+    flow_uuid: str,
+    version: str,
+) -> dict[str, Any] | None:
+    try:
+        return snapshot.resolve(flow_uuid, version)
+    except ProviderTidasSnapshotError as exc:
+        raise ProviderContractError(422, exc.code, exc.message, **exc.details) from exc
+
+
+def _technosphere_flow_receipts(
+    db: Session,
+    graph: HybridGraph,
+    issues: list[ProviderIssue],
+) -> list[ProviderTechnosphereFlowReceipt]:
+    snapshot = _configured_tidas_snapshot()
+    receipts: list[ProviderTechnosphereFlowReceipt] = []
+    for node in graph.nodes:
+        for port in node.inputs + node.outputs:
+            if port.type != "technosphere":
+                continue
+            exchange_id = f"{node.id}::{port.id}"
+            source_namespace = str(port.flow_source_namespace or "")
+            version = str(port.flow_version or "")
+            resolution = "inline_custom"
+            value: dict[str, Any] | None = None
+            if source_namespace == TIDAS_SOURCE_NAMESPACE:
+                if snapshot is None:
+                    raise ProviderContractError(
+                        422,
+                        "TIDAS_FLOW_SNAPSHOT_REQUIRED",
+                        "An inline TIDAS technosphere Flow requires a configured exact read-only snapshot.",
+                        exchange_id=exchange_id,
+                        flow_uuid=port.flowUuid,
+                        version=version,
+                    )
+                else:
+                    value = _resolve_tidas_snapshot_value(snapshot, flow_uuid=port.flowUuid, version=version)
+                    if value is None:
+                        raise ProviderContractError(
+                            422,
+                            "TIDAS_FLOW_EXACT_VERSION_NOT_IN_SNAPSHOT",
+                            "An inline TIDAS technosphere Flow is not present at the exact version in the configured snapshot.",
+                            exchange_id=exchange_id,
+                            flow_uuid=port.flowUuid,
+                            version=version,
+                            snapshot_hash=snapshot.snapshot_hash,
+                        )
+                    row = _exact_flow_version_row(
+                        db,
+                        source_namespace=source_namespace,
+                        flow_uuid=port.flowUuid,
+                        version=version,
+                    )
+                    conflicts = _snapshot_database_conflicts(row, value)
+                    if conflicts:
+                        raise ProviderContractError(
+                            422,
+                            "TIDAS_FLOW_DATABASE_CONTENT_CONFLICT",
+                            "The configured exact TIDAS Flow snapshot conflicts with the database row for the same identity.",
+                            exchange_id=exchange_id,
+                            flow_uuid=port.flowUuid,
+                            version=version,
+                            conflicts=conflicts,
+                        )
+                    graph_identity = {
+                        "flow_property_uuid": port.flow_property_uuid,
+                        "flow_property_version": port.flow_property_version,
+                        "unit_group_uuid": port.unit_group_uuid,
+                        "unit_group_version": port.unit_group_version,
+                        "default_unit": port.unit,
+                    }
+                    mismatches = {
+                        field: {"graph": graph_value, "snapshot": value.get(field)}
+                        for field, graph_value in graph_identity.items()
+                        if str(graph_value or "").strip() != str(value.get(field) or "").strip()
+                    }
+                    if mismatches:
+                        raise ProviderContractError(
+                            422,
+                            "TIDAS_FLOW_GRAPH_IDENTITY_MISMATCH",
+                            "An inline graph TIDAS Flow identity does not match the configured exact snapshot.",
+                            exchange_id=exchange_id,
+                            flow_uuid=port.flowUuid,
+                            version=version,
+                            mismatches=mismatches,
+                        )
+                    resolution = "tidas_exact_snapshot"
+            else:
+                issues.append(
+                    ProviderIssue(
+                        code="INLINE_CUSTOM_TECHNOSPHERE_FLOW",
+                        message="The technosphere Flow is an inline custom identity, not a provider catalog record.",
+                        severity="info",
+                        path=f"scaled_exchanges.{exchange_id}",
+                        details={
+                            "source_namespace": source_namespace,
+                            "flow_uuid": port.flowUuid,
+                            "version": version,
+                        },
+                    )
+                )
+            receipts.append(
+                ProviderTechnosphereFlowReceipt(
+                    exchange_id=exchange_id,
+                    process_uuid=node.process_uuid,
+                    resolution=resolution,
+                    source_namespace=source_namespace,
+                    flow_uuid=port.flowUuid,
+                    version=version,
+                    flow_type=value.get("flow_type") if value else None,
+                    content_hash=value.get("content_hash") if value else None,
+                    snapshot_hash=value.get("snapshot_hash") if value else None,
+                    flow_property_uuid=str(port.flow_property_uuid or ""),
+                    flow_property_version=str(port.flow_property_version or ""),
+                    flow_property_content_hash=(value.get("flow_property_content_hash") if value else None),
+                    unit_group_uuid=str(port.unit_group_uuid or ""),
+                    unit_group_version=str(port.unit_group_version or ""),
+                    unit_group_content_hash=(value.get("unit_group_content_hash") if value else None),
+                    unit=port.unit,
+                    unit_content_hash=value.get("unit_content_hash") if value else None,
+                )
+            )
+    return receipts
+
+
 def _resolve_demand_process(demand: Any, base: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     refs: dict[str, dict[str, Any]] = base["reference_products"]
     if demand.process_uuid:
@@ -394,8 +575,10 @@ def _resolve_demand_process(demand: Any, base: dict[str, Any]) -> tuple[str, dic
 
 def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveResponse:
     graph, consumer_graph_hash, provider_graph_hash, snapshot_ref, issues = _resolve_solve_snapshot(db, request)
+    technosphere_receipts: list[ProviderTechnosphereFlowReceipt] = []
     if request.inline_snapshot is not None:
         _validate_inline_foreground(graph)
+        technosphere_receipts = _technosphere_flow_receipts(db, graph, issues)
     raw_database_release = (graph.metadata or {}).get("database_release")
     database_release = raw_database_release.strip() if isinstance(raw_database_release, str) else ""
     if not database_release:
@@ -583,6 +766,7 @@ def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveR
         activity_vector=activities,
         scaled_exchanges=scaled,
         inventory_totals=inventory,
+        technosphere_flow_receipts=technosphere_receipts,
         process_residuals=[],
         contribution_graph={},
         issues=issues,
@@ -617,6 +801,7 @@ def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveR
 
 def resolve_catalog(db: Session, request: ProviderCatalogResolveRequest) -> list[ProviderCatalogResolution]:
     items: list[ProviderCatalogResolution] = []
+    tidas_snapshot = _configured_tidas_snapshot()
     for ref in request.flows:
         key = ref.model_dump(mode="python")
         try:
@@ -635,15 +820,70 @@ def resolve_catalog(db: Session, request: ProviderCatalogResolveRequest) -> list
         if standard is not None:
             items.append(ProviderCatalogResolution(kind="flow", key=key, status="resolved", value=standard))
             continue
-        row = (
-            db.query(FlowVersionRecord)
-            .filter(
-                FlowVersionRecord.source_namespace == ref.source_namespace,
-                FlowVersionRecord.flow_uuid == ref.flow_uuid,
-                FlowVersionRecord.source_version == ref.version,
+        if ref.source_namespace == TIDAS_SOURCE_NAMESPACE and tidas_snapshot is None:
+            items.append(
+                ProviderCatalogResolution(
+                    kind="flow",
+                    key=key,
+                    status="unsupported",
+                    code="TIDAS_FLOW_SNAPSHOT_REQUIRED",
+                    message=(
+                        "Exact TIDAS technosphere Flow resolution requires a configured read-only snapshot; "
+                        "the database is not a substitute receipt."
+                    ),
+                )
             )
-            .one_or_none()
+            continue
+        row = _exact_flow_version_row(
+            db,
+            source_namespace=ref.source_namespace,
+            flow_uuid=ref.flow_uuid,
+            version=ref.version,
         )
+        if tidas_snapshot is not None and ref.source_namespace == TIDAS_SOURCE_NAMESPACE:
+            try:
+                snapshot_value = tidas_snapshot.resolve(ref.flow_uuid, ref.version)
+            except ProviderTidasSnapshotError as exc:
+                items.append(
+                    ProviderCatalogResolution(
+                        kind="flow",
+                        key=key,
+                        status="unsupported",
+                        value={"snapshot_hash": tidas_snapshot.snapshot_hash, "details": exc.details},
+                        code=exc.code,
+                        message=exc.message,
+                    )
+                )
+                continue
+            if snapshot_value is not None:
+                conflicts = _snapshot_database_conflicts(row, snapshot_value)
+                if conflicts:
+                    items.append(
+                        ProviderCatalogResolution(
+                            kind="flow",
+                            key=key,
+                            status="unsupported",
+                            value={
+                                **snapshot_value,
+                                "database_conflicts": conflicts,
+                            },
+                            code="TIDAS_FLOW_DATABASE_CONTENT_CONFLICT",
+                            message=(
+                                "The configured exact TIDAS Flow snapshot conflicts with the database row "
+                                "for the same identity."
+                            ),
+                        )
+                    )
+                else:
+                    items.append(
+                        ProviderCatalogResolution(
+                            kind="flow",
+                            key=key,
+                            status="resolved",
+                            value=snapshot_value,
+                        )
+                    )
+                continue
         if row is None:
             items.append(ProviderCatalogResolution(kind="flow", key=key, status="not_found", code="EXACT_FLOW_VERSION_NOT_FOUND"))
             continue
