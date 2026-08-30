@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 import app.database as db_module
 from app.database import Base
 from app.main import app
-from app.models import FlowVersionRecord, Model, ModelVersion, UnitDefinition, UnitGroup
+from app.models import FlowRecord, FlowVersionRecord, Model, ModelVersion, UnitDefinition, UnitGroup
 from app.schemas import HybridGraph
 from app.services.graph_storage import compute_graph_hash_from_graph
 
@@ -131,6 +131,134 @@ def _inline_snapshot(graph: HybridGraph, base_ref: dict | None = None) -> dict:
         "source_policy": "open_mixed",
         "allowed_lcia_scope": "ef31_only",
     }
+
+
+CO2_UUID = "08a91e70-3ddc-11dd-923d-0050c2490048"
+MASS_PROPERTY_UUID = "93a60a56-a3c8-11da-a746-0800200b9a66"
+MASS_UNIT_GROUP_UUID = "93a60a57-a4c8-11da-a746-0800200c9a66"
+
+
+def _petrochemical_graph() -> HybridGraph:
+    custom_namespace = "nebula-one.casepack.petroleum"
+    custom_version = "casepack-1"
+
+    def custom_port(port_id, flow_uuid, name, amount, direction, *, product=False):
+        value = _port(port_id, flow_uuid, name, amount, direction, "technosphere", product=product)
+        value.update(
+            {
+                "flowSourceNamespace": custom_namespace,
+                "flowVersion": custom_version,
+                "flowPropertyUuid": MASS_PROPERTY_UUID,
+                "flowPropertyVersion": "03.00.003",
+                "unitGroupUuid": MASS_UNIT_GROUP_UUID,
+                "unitGroupVersion": "03.00.003",
+            }
+        )
+        return value
+
+    def co2_port(port_id, amount):
+        value = _port(port_id, CO2_UUID, "carbon dioxide (fossil)", amount, "output", "biosphere")
+        value.update(
+            {
+                "flowSourceNamespace": "tiangong_open_data",
+                "flowVersion": "03.00.004",
+                "flowPropertyUuid": MASS_PROPERTY_UUID,
+                "flowPropertyVersion": "03.00.003",
+                "unitGroupUuid": MASS_UNIT_GROUP_UUID,
+                "unitGroupVersion": "03.00.003",
+            }
+        )
+        return value
+
+    return HybridGraph.model_validate(
+        {
+            "functionalUnit": "1 kg low-sulfur diesel",
+            "nodes": [
+                {
+                    "id": "node-cracking",
+                    "node_kind": "unit_process",
+                    "mode": "normalized",
+                    "process_uuid": "process-cracking",
+                    "name": "Cracking",
+                    "location": "CN",
+                    "reference_product": "Cracked diesel",
+                    "inputs": [],
+                    "outputs": [
+                        custom_port("out-cracked", "custom-cracked-diesel", "Cracked diesel", 1.0, "output", product=True),
+                        co2_port("out-co2-cracking", 0.5),
+                    ],
+                },
+                {
+                    "id": "node-desulfurization",
+                    "node_kind": "unit_process",
+                    "mode": "normalized",
+                    "process_uuid": "process-desulfurization",
+                    "name": "Desulfurization",
+                    "location": "CN",
+                    "reference_product": "Low-sulfur diesel",
+                    "inputs": [
+                        custom_port("in-cracked", "custom-cracked-diesel", "Cracked diesel", 1.2, "input"),
+                    ],
+                    "outputs": [
+                        custom_port("out-final", "custom-low-sulfur-diesel", "Low-sulfur diesel", 1.0, "output", product=True),
+                        co2_port("out-co2-desulfurization", 0.1),
+                    ],
+                },
+            ],
+            "exchanges": [
+                {
+                    "id": "edge-cracked-diesel",
+                    "fromNode": "node-cracking",
+                    "toNode": "node-desulfurization",
+                    "sourceHandle": "out:out-cracked",
+                    "targetHandle": "in:in-cracked",
+                    "flowUuid": "custom-cracked-diesel",
+                    "flowName": "Cracked diesel",
+                    "quantityMode": "single",
+                    "amount": 1.2,
+                    "unit": "kg",
+                    "type": "technosphere",
+                }
+            ],
+            "metadata": {
+                "database_release": "EF3.1",
+                "functional_unit": {
+                    "display_text": "1 kg low-sulfur diesel",
+                    "amount": 1.0,
+                    "flow_uuid": "custom-low-sulfur-diesel",
+                    "flow_source_namespace": custom_namespace,
+                    "flow_version": custom_version,
+                    "unit": "kg",
+                    "unit_group_uuid": MASS_UNIT_GROUP_UUID,
+                    "unit_group_version": "03.00.003",
+                },
+            },
+        }
+    )
+
+
+def _co2_refs(graph: HybridGraph) -> list[dict]:
+    refs = []
+    for node in graph.nodes:
+        for port in node.outputs:
+            if port.flowUuid != CO2_UUID:
+                continue
+            refs.append(
+                {
+                    "exchange_id": f"{node.id}::{port.id}",
+                    "source_namespace": "tiangong_open_data",
+                    "flow_uuid": CO2_UUID,
+                    "version": "03.00.004",
+                    "flow_property_uuid": MASS_PROPERTY_UUID,
+                    "flow_property_version": "03.00.003",
+                    "unit_group_uuid": MASS_UNIT_GROUP_UUID,
+                    "unit_group_version": "03.00.003",
+                    "unit": "kg",
+                    "direction": "output",
+                    "compartment": "Emissions to air, unspecified",
+                }
+            )
+    return refs
 
 
 def test_snapshot_returns_full_graph_engine_and_exact_identity_issues(client):
@@ -278,6 +406,7 @@ def test_catalog_resolve_is_exact_and_never_falls_back_to_current_or_name(client
                 flow_property_version="1.0",
                 unit_group_uuid="ug-mass",
                 unit_group_version="1.0",
+                content_hash="flow-a-content-hash",
             )
         )
         db.add(UnitGroup(name="Mass", reference_unit="kg", source_uuid="ug-mass", source_version="1.0"))
@@ -290,12 +419,24 @@ def test_catalog_resolve_is_exact_and_never_falls_back_to_current_or_name(client
         "/api/provider/v1/catalog/resolve",
         json={
             "flows": [
+                {
+                    "source_namespace": "tiangong_open_data",
+                    "flow_uuid": CO2_UUID,
+                    "version": "03.00.004",
+                },
                 {"source_namespace": "test-catalog", "flow_uuid": "flow-a", "version": "1.0"},
                 {"source_namespace": "test-catalog", "flow_uuid": "flow-a", "version": "2.0"},
             ],
             "flow_properties": [{"flow_property_uuid": "fp-mass", "version": "1.0"}],
-            "unit_groups": [{"unit_group_uuid": "ug-mass", "version": "1.0"}],
-            "units": [{"unit_group_uuid": "ug-mass", "version": "1.0", "unit": "kg"}],
+            "unit_groups": [
+                {"unit_group_uuid": MASS_UNIT_GROUP_UUID, "version": "03.00.003"},
+                {"unit_group_uuid": "ug-mass", "version": "1.0"},
+            ],
+            "units": [
+                {"unit_group_uuid": MASS_UNIT_GROUP_UUID, "version": "03.00.003", "unit": "kg"},
+                {"unit_group_uuid": "ug-mass", "version": "1.0", "unit": "kg"},
+            ],
+            "flow_candidates": [{"query": "Flow A", "flow_type": "Product flow", "unit": "kg"}],
         },
     )
     assert response.status_code == 200, response.text
@@ -303,13 +444,153 @@ def test_catalog_resolve_is_exact_and_never_falls_back_to_current_or_name(client
     assert body["issues"] == []
     assert [item["status"] for item in body["items"]] == [
         "resolved",
+        "resolved",
         "not_found",
         "unsupported",
         "resolved",
         "resolved",
+        "resolved",
+        "resolved",
     ]
-    assert body["items"][1]["code"] == "EXACT_FLOW_VERSION_NOT_FOUND"
-    assert body["items"][2]["code"] == "FLOW_PROPERTY_RESOURCE_UNAVAILABLE"
+    exact_co2 = body["items"][0]["value"]
+    assert exact_co2["runtime_flow_index"] == 86033
+    assert exact_co2["flow_property_uuid"] == MASS_PROPERTY_UUID
+    assert exact_co2["unit_group_uuid"] == MASS_UNIT_GROUP_UUID
+    assert exact_co2["compartment"] == "Emissions to air, unspecified"
+    assert exact_co2["content_hash"]
+    assert body["items"][2]["code"] == "EXACT_FLOW_VERSION_NOT_FOUND"
+    assert body["items"][3]["code"] == "FLOW_PROPERTY_RESOURCE_UNAVAILABLE"
+    assert body["candidate_sets"][0]["candidates"][0]["flow_uuid"] == "flow-a"
+
+
+def test_inline_custom_technosphere_with_exact_ef31_lcia_does_not_write_catalog_or_projects(client):
+    graph = _petrochemical_graph()
+    db = db_module.SessionLocal()
+    try:
+        before = {
+            "projects": db.query(Model).count(),
+            "flows": db.query(FlowRecord).count(),
+            "flow_versions": db.query(FlowVersionRecord).count(),
+        }
+    finally:
+        db.close()
+    response = client.post(
+        "/api/provider/v1/solve",
+        json={
+            "inline_snapshot": _inline_snapshot(graph),
+            "demand": [{"process_uuid": "process-desulfurization", "amount": 1.0, "unit": "kg"}],
+            "lcia_methods": ["EF v3.1"],
+            "elementary_flows": _co2_refs(graph),
+            "scenario_id": "petroleum-baseline",
+            "operation_hash": "petroleum-operation-hash",
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    activities = {item["process_uuid"]: item["activity_amount"] for item in body["activity_vector"]}
+    assert activities == pytest.approx({"process-cracking": 1.2, "process-desulfurization": 1.0})
+    inventory = {item["flow_uuid"]: item["amount"] for item in body["inventory_totals"]}
+    assert inventory[CO2_UUID] == pytest.approx(0.7)
+    assert body["lcia"]["method"] == "EF v3.1"
+    assert body["lcia"]["database_release"] == "EF3.1"
+    assert body["lcia"]["indicator_results"]
+    climate = {
+        item["canonical_indicator_key"]: item["value"]
+        for item in body["lcia"]["indicator_results"]
+        if item.get("canonical_indicator_key") in {"climate change", "climate change: fossil"}
+    }
+    assert climate == pytest.approx({"climate change": 0.7, "climate change: fossil": 0.7})
+    assert len(body["elementary_flow_receipts"]) == 2
+    assert all(item["factor_count"] == 2 for item in body["elementary_flow_receipts"])
+    assert all(item["factor_hash"] for item in body["elementary_flow_receipts"])
+    db = db_module.SessionLocal()
+    try:
+        after = {
+            "projects": db.query(Model).count(),
+            "flows": db.query(FlowRecord).count(),
+            "flow_versions": db.query(FlowVersionRecord).count(),
+        }
+    finally:
+        db.close()
+    assert after == before
+
+
+def test_inline_custom_technosphere_mfa_without_lcia_remains_available(client):
+    graph = _petrochemical_graph()
+    response = client.post(
+        "/api/provider/v1/solve",
+        json={
+            "inline_snapshot": _inline_snapshot(graph),
+            "demand": [{"process_uuid": "process-desulfurization", "amount": 1.0, "unit": "kg"}],
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["lcia"] is None
+    assert body["elementary_flow_receipts"] == []
+    assert body["activity_vector"]
+    assert body["scaled_exchanges"]
+
+
+def test_inline_custom_technosphere_requires_complete_identity(client):
+    graph = _petrochemical_graph()
+    graph.nodes[0].outputs[0].flow_property_version = None
+    response = client.post(
+        "/api/provider/v1/solve",
+        json={
+            "inline_snapshot": _inline_snapshot(graph),
+            "demand": [{"process_uuid": "process-desulfurization", "amount": 1.0, "unit": "kg"}],
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "CUSTOM_TECHNOSPHERE_IDENTITY_INCOMPLETE"
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_code"),
+    [
+        ("missing_reference", "ELEMENTARY_FLOW_REFERENCE_REQUIRED"),
+        ("unknown_uuid", "ELEMENTARY_FLOW_NOT_IN_EF31_RUNTIME"),
+        ("wrong_unit", "ELEMENTARY_FLOW_IDENTITY_MISMATCH"),
+        ("wrong_direction", "ELEMENTARY_FLOW_IDENTITY_MISMATCH"),
+        ("wrong_compartment", "ELEMENTARY_FLOW_IDENTITY_MISMATCH"),
+        ("wrong_flow_property", "ELEMENTARY_FLOW_IDENTITY_MISMATCH"),
+        ("wrong_unit_group_version", "ELEMENTARY_FLOW_IDENTITY_MISMATCH"),
+    ],
+)
+def test_inline_ef31_lcia_fails_closed_for_unknown_or_mismatched_elementary_identity(client, mutation, expected_code):
+    graph = _petrochemical_graph()
+    refs = _co2_refs(graph)
+    if mutation == "missing_reference":
+        refs.pop()
+    elif mutation == "unknown_uuid":
+        for node in graph.nodes:
+            for port in node.outputs:
+                if port.flowUuid == CO2_UUID:
+                    port.flowUuid = "00000000-0000-0000-0000-000000000000"
+        for ref in refs:
+            ref["flow_uuid"] = "00000000-0000-0000-0000-000000000000"
+    elif mutation == "wrong_unit":
+        refs[0]["unit"] = "g"
+    elif mutation == "wrong_direction":
+        refs[0]["direction"] = "input"
+    elif mutation == "wrong_compartment":
+        refs[0]["compartment"] = "Emissions to water, unspecified"
+    elif mutation == "wrong_flow_property":
+        refs[0]["flow_property_uuid"] = "wrong-flow-property"
+    elif mutation == "wrong_unit_group_version":
+        refs[0]["unit_group_version"] = "99.00.000"
+    response = client.post(
+        "/api/provider/v1/solve",
+        json={
+            "inline_snapshot": _inline_snapshot(graph),
+            "demand": [{"process_uuid": "process-desulfurization", "amount": 1.0, "unit": "kg"}],
+            "lcia_methods": ["EF v3.1"],
+            "elementary_flows": refs,
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == expected_code
 
 
 def test_existing_model_run_openapi_contract_is_unchanged(client):

@@ -9,6 +9,7 @@ from functools import lru_cache
 from typing import Any
 
 import numpy as np
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..config import WORKSPACE_ROOT
@@ -35,6 +36,15 @@ from .graph_storage import (
     compute_graph_hash_from_graph,
     compute_graph_hash_from_slim_graph,
     hydrate_graph_for_api,
+)
+from .provider_ef31 import (
+    EF31_DATABASE_RELEASE,
+    ProviderEf31Error,
+    characterize_scaled_inventory,
+    resolve_standard_flow,
+    resolve_standard_flow_property,
+    resolve_standard_unit,
+    resolve_standard_unit_group,
 )
 
 
@@ -266,6 +276,96 @@ def _internal_exchange_ids(graph: HybridGraph) -> set[str]:
     return linked
 
 
+def _validate_inline_foreground(graph: HybridGraph) -> None:
+    ports_by_node_and_id: dict[tuple[str, str], FlowPort] = {}
+    required_identity_fields = (
+        "flow_source_namespace",
+        "flow_version",
+        "flow_property_uuid",
+        "flow_property_version",
+        "unit_group_uuid",
+        "unit_group_version",
+    )
+    for node in graph.nodes:
+        for port in node.inputs + node.outputs:
+            if port.type == "technosphere":
+                missing = [field for field in required_identity_fields if not str(getattr(port, field) or "").strip()]
+                if missing:
+                    raise ProviderContractError(
+                        422,
+                        "CUSTOM_TECHNOSPHERE_IDENTITY_INCOMPLETE",
+                        "Inline technosphere Flows must carry complete namespace/version/property/unit-group identity.",
+                        exchange_id=f"{node.id}::{port.id}",
+                        missing_fields=missing,
+                    )
+            ports_by_node_and_id[(node.id, port.id)] = port
+    for edge in graph.exchanges:
+        source_id = _handle_port_id(edge.source_port_id or edge.sourceHandle)
+        target_id = _handle_port_id(edge.target_port_id or edge.targetHandle)
+        source = ports_by_node_and_id.get((edge.fromNode, source_id))
+        target = ports_by_node_and_id.get((edge.toNode, target_id))
+        if source is None or target is None:
+            raise ProviderContractError(
+                422,
+                "INLINE_EDGE_PORT_NOT_FOUND",
+                "An inline edge cannot be tied to both exact graph ports.",
+                edge_id=edge.id,
+            )
+        if source.type != "technosphere" or target.type != "technosphere":
+            raise ProviderContractError(
+                422,
+                "INLINE_EDGE_ELEMENTARY_CONNECTION_FORBIDDEN",
+                "Elementary exchanges cannot be connected as internal technosphere edges.",
+                edge_id=edge.id,
+            )
+        if source.direction != "output" or target.direction != "input":
+            raise ProviderContractError(
+                422,
+                "INLINE_EDGE_DIRECTION_MISMATCH",
+                "Internal edges must connect an output port to an input port.",
+                edge_id=edge.id,
+            )
+        source_identity = (
+            source.flow_source_namespace,
+            source.flowUuid,
+            source.flow_version,
+            source.flow_property_uuid,
+            source.flow_property_version,
+            source.unit_group_uuid,
+            source.unit_group_version,
+        )
+        target_identity = (
+            target.flow_source_namespace,
+            target.flowUuid,
+            target.flow_version,
+            target.flow_property_uuid,
+            target.flow_property_version,
+            target.unit_group_uuid,
+            target.unit_group_version,
+        )
+        has_explicit_conversion = bool(
+            edge.intermediate_flow_link_rule_id
+            and edge.intermediate_flow_link_factor
+            and edge.intermediate_flow_link_factor > 0
+        )
+        if source_identity != target_identity and not has_explicit_conversion:
+            raise ProviderContractError(
+                422,
+                "INLINE_EDGE_FLOW_IDENTITY_MISMATCH",
+                "Internal ports must share exact Flow identity unless an explicit conversion rule is pinned.",
+                edge_id=edge.id,
+            )
+        provider_unit = edge.provider_unit or edge.unit
+        consumer_unit = edge.consumer_unit or edge.unit
+        if source.unit != provider_unit or target.unit != consumer_unit:
+            raise ProviderContractError(
+                422,
+                "INLINE_EDGE_UNIT_MISMATCH",
+                "Edge units must match the connected provider and consumer port units.",
+                edge_id=edge.id,
+            )
+
+
 def _resolve_demand_process(demand: Any, base: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     refs: dict[str, dict[str, Any]] = base["reference_products"]
     if demand.process_uuid:
@@ -294,6 +394,8 @@ def _resolve_demand_process(demand: Any, base: dict[str, Any]) -> tuple[str, dic
 
 def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveResponse:
     graph, consumer_graph_hash, provider_graph_hash, snapshot_ref, issues = _resolve_solve_snapshot(db, request)
+    if request.inline_snapshot is not None:
+        _validate_inline_foreground(graph)
     raw_database_release = (graph.metadata or {}).get("database_release")
     database_release = raw_database_release.strip() if isinstance(raw_database_release, str) else ""
     if not database_release:
@@ -474,7 +576,7 @@ def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveR
         if snapshot_ref is not None
         else None
     )
-    return ProviderSolveResponse(
+    response = ProviderSolveResponse(
         run_id=str(uuid.uuid4()),
         snapshot_ref=solved_snapshot_ref,
         demand=list(request.demand),
@@ -497,12 +599,42 @@ def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveR
             provider_graph_hash=provider_graph_hash,
         ),
     )
+    if request.lcia_methods:
+        try:
+            lcia, receipts = characterize_scaled_inventory(
+                methods=request.lcia_methods,
+                elementary_refs=request.elementary_flows,
+                scaled_exchanges=response.scaled_exchanges,
+                inventory_totals=response.inventory_totals,
+            )
+        except ProviderEf31Error as exc:
+            raise ProviderContractError(422, exc.code, exc.message, **exc.details) from exc
+        response.lcia = lcia
+        response.elementary_flow_receipts = receipts
+        response.provenance.database_release = EF31_DATABASE_RELEASE
+    return response
 
 
 def resolve_catalog(db: Session, request: ProviderCatalogResolveRequest) -> list[ProviderCatalogResolution]:
     items: list[ProviderCatalogResolution] = []
     for ref in request.flows:
         key = ref.model_dump(mode="python")
+        try:
+            standard = resolve_standard_flow(ref)
+        except ProviderEf31Error as exc:
+            items.append(
+                ProviderCatalogResolution(
+                    kind="flow",
+                    key=key,
+                    status="unsupported",
+                    code=exc.code,
+                    message=exc.message,
+                )
+            )
+            continue
+        if standard is not None:
+            items.append(ProviderCatalogResolution(kind="flow", key=key, status="resolved", value=standard))
+            continue
         row = (
             db.query(FlowVersionRecord)
             .filter(
@@ -515,30 +647,59 @@ def resolve_catalog(db: Session, request: ProviderCatalogResolveRequest) -> list
         if row is None:
             items.append(ProviderCatalogResolution(kind="flow", key=key, status="not_found", code="EXACT_FLOW_VERSION_NOT_FOUND"))
             continue
+        value = {
+            "source_namespace": row.source_namespace,
+            "flow_uuid": row.flow_uuid,
+            "version": row.source_version,
+            "version_label": row.version_label,
+            "name": row.flow_name,
+            "name_en": row.flow_name_en,
+            "flow_type": row.flow_type,
+            "default_unit": row.default_unit,
+            "unit_group": row.unit_group,
+            "flow_property_uuid": row.flow_property_uuid,
+            "flow_property_version": row.flow_property_version,
+            "unit_group_uuid": row.unit_group_uuid,
+            "unit_group_version": row.unit_group_version,
+            "content_hash": row.content_hash,
+        }
+        missing = [
+            field
+            for field in (
+                "flow_property_uuid",
+                "flow_property_version",
+                "unit_group_uuid",
+                "unit_group_version",
+                "content_hash",
+            )
+            if not str(value.get(field) or "").strip()
+        ]
         items.append(
             ProviderCatalogResolution(
                 kind="flow",
                 key=key,
-                status="resolved",
-                value={
-                    "source_namespace": row.source_namespace,
-                    "flow_uuid": row.flow_uuid,
-                    "version": row.source_version,
-                    "version_label": row.version_label,
-                    "name": row.flow_name,
-                    "name_en": row.flow_name_en,
-                    "flow_type": row.flow_type,
-                    "default_unit": row.default_unit,
-                    "unit_group": row.unit_group,
-                    "flow_property_uuid": row.flow_property_uuid,
-                    "flow_property_version": row.flow_property_version,
-                    "unit_group_uuid": row.unit_group_uuid,
-                    "unit_group_version": row.unit_group_version,
-                    "content_hash": row.content_hash,
-                },
+                status="unsupported" if missing else "resolved",
+                value=value,
+                code="FLOW_VERSION_IDENTITY_INCOMPLETE" if missing else None,
+                message=(
+                    "The exact Flow version row exists but lacks fields required for a complete reusable identity."
+                    if missing
+                    else None
+                ),
             )
         )
     for ref in request.flow_properties:
+        standard = resolve_standard_flow_property(ref)
+        if standard is not None:
+            items.append(
+                ProviderCatalogResolution(
+                    kind="flow_property",
+                    key=ref.model_dump(mode="python"),
+                    status="resolved",
+                    value=standard,
+                )
+            )
+            continue
         items.append(
             ProviderCatalogResolution(
                 kind="flow_property",
@@ -550,6 +711,10 @@ def resolve_catalog(db: Session, request: ProviderCatalogResolveRequest) -> list
         )
     for ref in request.unit_groups:
         key = ref.model_dump(mode="python")
+        standard = resolve_standard_unit_group(ref)
+        if standard is not None:
+            items.append(ProviderCatalogResolution(kind="unit_group", key=key, status="resolved", value=standard))
+            continue
         rows = (
             db.query(UnitGroup)
             .filter(UnitGroup.source_uuid == ref.unit_group_uuid, UnitGroup.source_version == ref.version)
@@ -577,6 +742,10 @@ def resolve_catalog(db: Session, request: ProviderCatalogResolveRequest) -> list
             )
     for ref in request.units:
         key = ref.model_dump(mode="python")
+        standard = resolve_standard_unit(ref)
+        if standard is not None:
+            items.append(ProviderCatalogResolution(kind="unit", key=key, status="resolved", value=standard))
+            continue
         groups = (
             db.query(UnitGroup)
             .filter(UnitGroup.source_uuid == ref.unit_group_uuid, UnitGroup.source_version == ref.version)
@@ -611,3 +780,66 @@ def resolve_catalog(db: Session, request: ProviderCatalogResolveRequest) -> list
             )
         )
     return items
+
+
+def resolve_flow_candidates(db: Session, request: ProviderCatalogResolveRequest) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for query in request.flow_candidates:
+        token = query.query.strip()
+        statement = db.query(FlowVersionRecord).filter(
+            or_(
+                FlowVersionRecord.flow_name.ilike(f"%{token}%"),
+                FlowVersionRecord.flow_name_en.ilike(f"%{token}%"),
+            )
+        )
+        if query.flow_type:
+            statement = statement.filter(FlowVersionRecord.flow_type == query.flow_type)
+        if query.unit:
+            statement = statement.filter(FlowVersionRecord.default_unit == query.unit)
+        rows = statement.order_by(
+            FlowVersionRecord.flow_name_en.asc(),
+            FlowVersionRecord.flow_uuid.asc(),
+            FlowVersionRecord.source_version.asc(),
+        ).limit(query.limit).all()
+        candidates = []
+        for row in rows:
+            missing = [
+                field
+                for field in (
+                    "flow_property_uuid",
+                    "flow_property_version",
+                    "unit_group_uuid",
+                    "unit_group_version",
+                    "content_hash",
+                )
+                if not str(getattr(row, field) or "").strip()
+            ]
+            candidates.append(
+                {
+                    "source_namespace": row.source_namespace,
+                    "flow_uuid": row.flow_uuid,
+                    "version": row.source_version,
+                    "name": row.flow_name,
+                    "name_en": row.flow_name_en,
+                    "flow_type": row.flow_type,
+                    "default_unit": row.default_unit,
+                    "unit_group": row.unit_group,
+                    "flow_property_uuid": row.flow_property_uuid,
+                    "flow_property_version": row.flow_property_version,
+                    "unit_group_uuid": row.unit_group_uuid,
+                    "unit_group_version": row.unit_group_version,
+                    "content_hash": row.content_hash,
+                    "exact_identity_complete": not missing,
+                    "missing_exact_fields": missing,
+                }
+            )
+        result.append(
+            {
+                "correlation_id": query.correlation_id,
+                "query": query.query,
+                "flow_type": query.flow_type,
+                "unit": query.unit,
+                "candidates": candidates,
+            }
+        )
+    return result
