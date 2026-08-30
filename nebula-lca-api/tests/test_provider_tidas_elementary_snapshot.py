@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 import app.database as db_module
 import app.services.provider_ef31 as provider_ef31
+import app.services.provider_v1 as provider_v1
 import app.services.provider_tidas_reference_snapshot as reference_snapshot_service
 import app.services.provider_tidas_snapshot as flow_snapshot_service
 from app.database import Base
@@ -414,6 +415,63 @@ def test_exact_elementary_version_is_used_by_lcia_receipt(client, monkeypatch):
     assert receipt["version"] == NOX_VERSION
     assert receipt["snapshot_hash"] == "c7d94df703c41ee19197e3b4d86500a6a698cc49266df86d38ebf4e1816ee6c6"
     assert receipt["factor_count"] > 0
+
+
+def test_exact_elementary_receipt_is_available_without_lcia_from_one_flow_snapshot(
+    client,
+    monkeypatch,
+):
+    _configure(monkeypatch)
+    configured_snapshot = provider_v1._configured_tidas_snapshot
+    calls = 0
+
+    def counted_snapshot():
+        nonlocal calls
+        calls += 1
+        return configured_snapshot()
+
+    monkeypatch.setattr(provider_v1, "_configured_tidas_snapshot", counted_snapshot)
+    graph = _single_process_graph()
+    response = client.post(
+        "/api/provider/v1/solve",
+        json={
+            "inline_snapshot": _inline_snapshot(graph),
+            "demand": [{"process_uuid": "p1", "amount": 1.0, "unit": "kg"}],
+            "elementary_flows": [
+                {
+                    "exchange_id": "node-p1::out-nox",
+                    "source_namespace": "tiangong_open_data",
+                    "flow_uuid": NOX_UUID,
+                    "version": NOX_VERSION,
+                    "flow_property_uuid": MASS_PROPERTY_UUID,
+                    "flow_property_version": "03.00.003",
+                    "unit_group_uuid": MASS_UNIT_GROUP_UUID,
+                    "unit_group_version": "03.00.003",
+                    "unit": "kg",
+                    "direction": "output",
+                    "compartment": "Emissions to air, unspecified",
+                }
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["lcia"] is None
+    assert calls == 1
+    assert len(body["elementary_flow_receipts"]) == 1
+    receipt = body["elementary_flow_receipts"][0]
+    scaled = next(
+        item for item in body["scaled_exchanges"]
+        if item["exchange_id"] == receipt["exchange_id"]
+    )
+    assert scaled["process_uuid"] == "p1"
+    assert scaled["flow_uuid"] == receipt["flow_uuid"]
+    assert receipt["flow_property_content_hash"]
+    assert receipt["unit_group_content_hash"]
+    assert receipt["unit_content_hash"]
+    assert body["provenance"]["flow_snapshot_hash"] == receipt["snapshot_hash"]
+    assert len(body["provenance"]["reference_dependency_snapshot_hash"]) == 64
+    assert receipt["reference_dependency_snapshot_hash"] is None
 
 
 def test_existing_0300004_elementary_catalog_remains_compatible(client, monkeypatch):
