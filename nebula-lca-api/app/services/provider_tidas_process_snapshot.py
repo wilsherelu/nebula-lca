@@ -193,6 +193,7 @@ class TidasProcessSnapshotRecord:
     name: str
     quantitative_reference: dict[str, Any]
     exchanges: tuple[dict[str, Any], ...]
+    included_process_refs: tuple[dict[str, str], ...]
     content_hash: str
     source_modified_at: str | None
 
@@ -220,6 +221,7 @@ class TidasProcessSnapshot:
             "source_modified_at": record.source_modified_at,
             "quantitative_reference": record.quantitative_reference,
             "exchanges": list(record.exchanges),
+            "included_process_refs": list(record.included_process_refs),
             "input_dependencies": [
                 row for row in record.exchanges if row["direction"] == "input"
             ],
@@ -362,6 +364,27 @@ def _parse_process_record(raw_record: dict[str, Any], *, index: int) -> TidasPro
     qref["quantitative_reference_type"] = str(
         quantitative.get("@type") if isinstance(quantitative, dict) else ""
     ).strip() or None
+    technology = information.get("technology") if isinstance(information, dict) else None
+    included_raw = (
+        technology.get("referenceToIncludedProcesses")
+        if isinstance(technology, dict)
+        else None
+    )
+    included_process_refs = tuple(
+        {
+            "source_namespace": SOURCE_NAMESPACE,
+            "process_uuid": _exact_uuid(
+                row.get("@refObjectId") or row.get("refObjectId"),
+                field="technology.referenceToIncludedProcesses.@refObjectId",
+            ),
+            "version": _exact_version(
+                row.get("@version") or row.get("version"),
+                field="technology.referenceToIncludedProcesses.@version",
+            ),
+        }
+        for row in _as_list(included_raw)
+        if isinstance(row, dict)
+    )
     return TidasProcessSnapshotRecord(
         process_uuid=process_uuid,
         version=version,
@@ -369,6 +392,7 @@ def _parse_process_record(raw_record: dict[str, Any], *, index: int) -> TidasPro
         name=name,
         quantitative_reference=qref,
         exchanges=parsed_exchanges,
+        included_process_refs=included_process_refs,
         content_hash=content_hash,
         source_modified_at=str(raw_record.get("source_modified_at") or "").strip() or None,
     )

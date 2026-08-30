@@ -89,6 +89,32 @@ class ProviderElementaryFlowRef(BaseModel):
     compartment: str
 
 
+class ProviderBackgroundProcessPin(BaseModel):
+    schema_version: Literal["provider.background-process-pin.v1"] = (
+        "provider.background-process-pin.v1"
+    )
+    consumer_exchange_id: str = Field(min_length=1)
+    source_namespace: str
+    process_uuid: str
+    version: str
+    expected_process_content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_process_snapshot_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    quantitative_reference_exchange_internal_id: str = Field(min_length=1)
+    claim_role: Literal["partial_background_leaf"] = "partial_background_leaf"
+
+    @model_validator(mode="after")
+    def validate_exact_process_identity(self) -> "ProviderBackgroundProcessPin":
+        try:
+            normalized_uuid = str(uuid.UUID(self.process_uuid))
+        except ValueError as exc:
+            raise ValueError("process_uuid must be a canonical UUID") from exc
+        if self.process_uuid != normalized_uuid:
+            raise ValueError("process_uuid must be a canonical lowercase UUID")
+        if not re.fullmatch(r"\d{2}\.\d{2}\.\d{3}", self.version):
+            raise ValueError("version must be an exact TIDAS version such as 01.01.000")
+        return self
+
+
 class ProviderSolveRequest(BaseModel):
     schema_version: str = "provider.solve.request.v1"
     snapshot_ref: ProviderSnapshotRef | None = None
@@ -98,6 +124,7 @@ class ProviderSolveRequest(BaseModel):
     operation_hash: str | None = None
     lcia_methods: list[str] | None = None
     elementary_flows: list[ProviderElementaryFlowRef] = Field(default_factory=list)
+    background_process_pins: list[ProviderBackgroundProcessPin] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def require_one_snapshot_source(self) -> "ProviderSolveRequest":
@@ -194,6 +221,49 @@ class ProviderTechnosphereFlowReceipt(BaseModel):
     reference_dependency_snapshot_hash: str | None = None
 
 
+class ProviderBackgroundExchangeReceipt(BaseModel):
+    exchange_internal_id: str
+    expanded_exchange_id: str
+    role: Literal["quantitative_reference", "elementary"]
+    source_namespace: str
+    flow_uuid: str
+    version: str
+    flow_content_hash: str
+    flow_snapshot_hash: str | None = None
+    flow_property_uuid: str
+    flow_property_version: str
+    unit_group_uuid: str
+    unit_group_version: str
+    unit: str
+    direction: Literal["input", "output"]
+    raw_amount: float
+    scaled_amount: float
+
+
+class ProviderBackgroundProcessReceipt(BaseModel):
+    schema_version: Literal["provider.background-process-receipt.v1"] = (
+        "provider.background-process-receipt.v1"
+    )
+    claim_role: Literal["partial_background_leaf"] = "partial_background_leaf"
+    claim_limit: Literal["partial_background_leaf_only_not_complete_cradle_to_gate"] = (
+        "partial_background_leaf_only_not_complete_cradle_to_gate"
+    )
+    consumer_exchange_id: str
+    source_namespace: str
+    process_uuid: str
+    version: str
+    process_type: str
+    process_content_hash: str
+    process_snapshot_hash: str
+    quantitative_reference_exchange_internal_id: str
+    quantitative_reference_flow_uuid: str
+    quantitative_reference_flow_version: str
+    quantitative_reference_amount: float
+    activity_amount: float
+    process_scale: float
+    exchanges: list[ProviderBackgroundExchangeReceipt]
+
+
 class ProviderSolveProvenance(BaseModel):
     engine: ProviderEngineIdentity
     snapshot_ref: ProviderSnapshotRef | None = None
@@ -207,6 +277,8 @@ class ProviderSolveProvenance(BaseModel):
     system_revision_hash: str
     consumer_graph_hash: str
     provider_graph_hash: str
+    background_process_pins_hash: str | None = None
+    background_claim_scope: str | None = None
     activity_vector_semantics: str = "x in A*x=f"
     inventory_scope: str = "boundary elementary exchanges"
 
@@ -222,6 +294,7 @@ class ProviderSolveResponse(BaseModel):
     inventory_totals: list[ProviderInventoryTotal]
     technosphere_flow_receipts: list[ProviderTechnosphereFlowReceipt] = Field(default_factory=list)
     elementary_flow_receipts: list[ProviderElementaryFlowReceipt] = Field(default_factory=list)
+    background_process_receipts: list[ProviderBackgroundProcessReceipt] = Field(default_factory=list)
     lcia: dict[str, Any] | None = None
     process_residuals: list[dict[str, Any]] = Field(default_factory=list)
     contribution_graph: dict[str, Any] = Field(default_factory=dict)
