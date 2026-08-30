@@ -1,0 +1,198 @@
+{
+  "schema_version": "provider.solve.request.v1",
+  "inline_snapshot": {
+    "schema_version": "provider.snapshot.v1",
+    "base_snapshot_ref": null,
+    "graph_hash": "runner-computes-canonical-sha256",
+    "functional_unit": {
+      "display_text": "1 kg low-sulfur diesel",
+      "amount": 1.0,
+      "flow_uuid": "custom-low-sulfur-diesel",
+      "flow_source_namespace": "nebula-one.casepack.petroleum",
+      "flow_version": "casepack-1",
+      "unit": "kg",
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+      "unit_group_version": "03.00.003"
+    },
+    "graph": {
+      "functionalUnit": "1 kg low-sulfur diesel",
+      "nodes": [
+        {
+          "id": "node-cracking",
+          "node_kind": "unit_process",
+          "mode": "normalized",
+          "process_uuid": "process-cracking",
+          "name": "Cracking",
+          "location": "CN",
+          "reference_product": "Cracked diesel",
+          "inputs": [],
+          "outputs": [
+            {
+              "id": "out-cracked",
+              "flowUuid": "custom-cracked-diesel",
+              "flowSourceNamespace": "nebula-one.casepack.petroleum",
+              "flowVersion": "casepack-1",
+              "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+              "flowPropertyVersion": "03.00.003",
+              "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+              "unitGroupVersion": "03.00.003",
+              "name": "Cracked diesel",
+              "unit": "kg",
+              "unitGroup": "Units of mass",
+              "amount": 1.0,
+              "type": "technosphere",
+              "direction": "output",
+              "isProduct": true
+            },
+            {
+              "id": "out-co2-cracking",
+              "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+              "flowSourceNamespace": "tiangong_open_data",
+              "flowVersion": "03.00.004",
+              "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+              "flowPropertyVersion": "03.00.003",
+              "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+              "unitGroupVersion": "03.00.003",
+              "name": "carbon dioxide (fossil)",
+              "unit": "kg",
+              "unitGroup": "Units of mass",
+              "amount": 0.5,
+              "type": "biosphere",
+              "direction": "output"
+            }
+          ]
+        },
+        {
+          "id": "node-desulfurization",
+          "node_kind": "unit_process",
+          "mode": "normalized",
+          "process_uuid": "process-desulfurization",
+          "name": "Desulfurization",
+          "location": "CN",
+          "reference_product": "Low-sulfur diesel",
+          "inputs": [
+            {
+              "id": "in-cracked",
+              "flowUuid": "custom-cracked-diesel",
+              "flowSourceNamespace": "nebula-one.casepack.petroleum",
+              "flowVersion": "casepack-1",
+              "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+              "flowPropertyVersion": "03.00.003",
+              "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+              "unitGroupVersion": "03.00.003",
+              "name": "Cracked diesel",
+              "unit": "kg",
+              "unitGroup": "Units of mass",
+              "amount": 1.2,
+              "type": "technosphere",
+              "direction": "input"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "out-final",
+              "flowUuid": "custom-low-sulfur-diesel",
+              "flowSourceNamespace": "nebula-one.casepack.petroleum",
+              "flowVersion": "casepack-1",
+              "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+              "flowPropertyVersion": "03.00.003",
+              "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+              "unitGroupVersion": "03.00.003",
+              "name": "Low-sulfur diesel",
+              "unit": "kg",
+              "unitGroup": "Units of mass",
+              "amount": 1.0,
+              "type": "technosphere",
+              "direction": "output",
+              "isProduct": true
+            },
+            {
+              "id": "out-co2-desulfurization",
+              "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+              "flowSourceNamespace": "tiangong_open_data",
+              "flowVersion": "03.00.004",
+              "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+              "flowPropertyVersion": "03.00.003",
+              "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+              "unitGroupVersion": "03.00.003",
+              "name": "carbon dioxide (fossil)",
+              "unit": "kg",
+              "unitGroup": "Units of mass",
+              "amount": 0.1,
+              "type": "biosphere",
+              "direction": "output"
+            }
+          ]
+        }
+      ],
+      "exchanges": [
+        {
+          "id": "edge-cracked-diesel",
+          "fromNode": "node-cracking",
+          "toNode": "node-desulfurization",
+          "sourceHandle": "out:out-cracked",
+          "targetHandle": "in:in-cracked",
+          "flowUuid": "custom-cracked-diesel",
+          "flowName": "Cracked diesel",
+          "quantityMode": "single",
+          "amount": 1.2,
+          "unit": "kg",
+          "type": "technosphere"
+        }
+      ],
+      "metadata": {
+        "database_release": "EF3.1",
+        "functional_unit": {
+          "display_text": "1 kg low-sulfur diesel",
+          "amount": 1.0,
+          "flow_uuid": "custom-low-sulfur-diesel",
+          "flow_source_namespace": "nebula-one.casepack.petroleum",
+          "flow_version": "casepack-1",
+          "unit": "kg",
+          "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+          "unit_group_version": "03.00.003"
+        }
+      }
+    },
+    "source_policy": "open_mixed",
+    "allowed_lcia_scope": "ef31_only"
+  },
+  "demand": [
+    {
+      "process_uuid": "process-desulfurization",
+      "amount": 1.0,
+      "unit": "kg"
+    }
+  ],
+  "scenario_id": "petroleum-baseline",
+  "operation_hash": "petroleum-casepack-operation-v1",
+  "lcia_methods": ["EF v3.1"],
+  "elementary_flows": [
+    {
+      "exchange_id": "node-cracking::out-co2-cracking",
+      "source_namespace": "tiangong_open_data",
+      "flow_uuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+      "version": "03.00.004",
+      "flow_property_uuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+      "flow_property_version": "03.00.003",
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+      "unit_group_version": "03.00.003",
+      "unit": "kg",
+      "direction": "output",
+      "compartment": "Emissions to air, unspecified"
+    },
+    {
+      "exchange_id": "node-desulfurization::out-co2-desulfurization",
+      "source_namespace": "tiangong_open_data",
+      "flow_uuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+      "version": "03.00.004",
+      "flow_property_uuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+      "flow_property_version": "03.00.003",
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+      "unit_group_version": "03.00.003",
+      "unit": "kg",
+      "direction": "output",
+      "compartment": "Emissions to air, unspecified"
+    }
+  ]
+}

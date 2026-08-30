@@ -73,6 +73,20 @@ class ProviderDemand(BaseModel):
         return self
 
 
+class ProviderElementaryFlowRef(BaseModel):
+    exchange_id: str
+    source_namespace: str
+    flow_uuid: str
+    version: str
+    flow_property_uuid: str
+    flow_property_version: str
+    unit_group_uuid: str
+    unit_group_version: str
+    unit: str
+    direction: Literal["input", "output"]
+    compartment: str
+
+
 class ProviderSolveRequest(BaseModel):
     schema_version: str = "provider.solve.request.v1"
     snapshot_ref: ProviderSnapshotRef | None = None
@@ -81,6 +95,7 @@ class ProviderSolveRequest(BaseModel):
     scenario_id: str | None = None
     operation_hash: str | None = None
     lcia_methods: list[str] | None = None
+    elementary_flows: list[ProviderElementaryFlowRef] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def require_one_snapshot_source(self) -> "ProviderSolveRequest":
@@ -131,6 +146,25 @@ class ProviderInventoryTotal(BaseModel):
     amount: float
 
 
+class ProviderElementaryFlowReceipt(BaseModel):
+    exchange_id: str
+    source_namespace: str
+    flow_uuid: str
+    version: str
+    flow_property_uuid: str
+    flow_property_version: str
+    unit_group_uuid: str
+    unit_group_version: str
+    unit: str
+    direction: Literal["input", "output"]
+    compartment: str
+    content_hash: str
+    runtime_flow_index: int
+    method: str
+    factor_count: int
+    factor_hash: str
+
+
 class ProviderSolveProvenance(BaseModel):
     engine: ProviderEngineIdentity
     snapshot_ref: ProviderSnapshotRef | None = None
@@ -157,6 +191,7 @@ class ProviderSolveResponse(BaseModel):
     activity_vector: list[ProviderActivity]
     scaled_exchanges: list[ProviderScaledExchange]
     inventory_totals: list[ProviderInventoryTotal]
+    elementary_flow_receipts: list[ProviderElementaryFlowReceipt] = Field(default_factory=list)
     lcia: dict[str, Any] | None = None
     process_residuals: list[dict[str, Any]] = Field(default_factory=list)
     contribution_graph: dict[str, Any] = Field(default_factory=dict)
@@ -187,12 +222,21 @@ class ExactUnitRef(ExactUnitGroupRef):
     unit: str
 
 
+class ProviderFlowCandidateQuery(BaseModel):
+    query: str = Field(min_length=2)
+    flow_type: str | None = None
+    unit: str | None = None
+    limit: int = Field(default=20, ge=1, le=100)
+    correlation_id: str | None = None
+
+
 class ProviderCatalogResolveRequest(BaseModel):
     schema_version: str = "provider.catalog.resolve.request.v1"
     flows: list[ExactFlowRef] = Field(default_factory=list)
     flow_properties: list[ExactFlowPropertyRef] = Field(default_factory=list)
     unit_groups: list[ExactUnitGroupRef] = Field(default_factory=list)
     units: list[ExactUnitRef] = Field(default_factory=list)
+    flow_candidates: list[ProviderFlowCandidateQuery] = Field(default_factory=list)
 
 
 class ProviderCatalogResolution(BaseModel):
@@ -207,4 +251,5 @@ class ProviderCatalogResolution(BaseModel):
 class ProviderCatalogResolveResponse(BaseModel):
     schema_version: str = "provider.catalog.resolve.response.v1"
     items: list[ProviderCatalogResolution]
+    candidate_sets: list[dict[str, Any]] = Field(default_factory=list)
     issues: list[ProviderIssue] = Field(default_factory=list)
