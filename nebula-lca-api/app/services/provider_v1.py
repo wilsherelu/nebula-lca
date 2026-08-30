@@ -47,6 +47,12 @@ from .provider_ef31 import (
     resolve_standard_unit,
     resolve_standard_unit_group,
 )
+from .provider_background_leaf import (
+    CLAIM_LIMIT as BACKGROUND_CLAIM_LIMIT,
+    ProviderBackgroundLeafError,
+    build_background_process_receipts,
+    expand_background_process_pins,
+)
 from .provider_tidas_snapshot import (
     SOURCE_NAMESPACE as TIDAS_SOURCE_NAMESPACE,
     ProviderTidasSnapshotError,
@@ -660,6 +666,38 @@ def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveR
     if request.inline_snapshot is not None:
         _validate_inline_foreground(graph)
         technosphere_receipts = _technosphere_flow_receipts(db, graph, issues)
+    try:
+        background_expansion = expand_background_process_pins(
+            graph=graph,
+            pins=request.background_process_pins,
+            process_snapshot=(
+                _configured_tidas_process_snapshot()
+                if request.background_process_pins
+                else None
+            ),
+            flow_snapshot=(
+                _configured_tidas_snapshot()
+                if request.background_process_pins
+                else None
+            ),
+        )
+    except ProviderBackgroundLeafError as exc:
+        raise ProviderContractError(422, exc.code, exc.message, **exc.details) from exc
+    graph = background_expansion.graph
+    provider_graph_hash = compute_graph_hash_from_graph(graph)
+    if background_expansion.receipt_drafts:
+        issues.append(
+            ProviderIssue(
+                code="PARTIAL_BACKGROUND_LEAF_CLAIM",
+                message=(
+                    "Pinned background Processes are closed leaves for this solve only and do not establish "
+                    "a complete cradle-to-gate background system."
+                ),
+                severity="info",
+                path="background_process_receipts",
+                details={"claim_limit": BACKGROUND_CLAIM_LIMIT},
+            )
+        )
     raw_database_release = (graph.metadata or {}).get("database_release")
     database_release = raw_database_release.strip() if isinstance(raw_database_release, str) else ""
     if not database_release:
@@ -848,6 +886,11 @@ def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveR
         scaled_exchanges=scaled,
         inventory_totals=inventory,
         technosphere_flow_receipts=technosphere_receipts,
+        background_process_receipts=build_background_process_receipts(
+            drafts=background_expansion.receipt_drafts,
+            activity_by_process=activity_by_process,
+            scaled_exchanges=scaled,
+        ),
         process_residuals=[],
         contribution_graph={},
         issues=issues,
@@ -862,6 +905,10 @@ def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveR
             system_revision_hash=consumer_graph_hash,
             consumer_graph_hash=consumer_graph_hash,
             provider_graph_hash=provider_graph_hash,
+            background_process_pins_hash=background_expansion.pins_hash,
+            background_claim_scope=(
+                BACKGROUND_CLAIM_LIMIT if background_expansion.receipt_drafts else None
+            ),
         ),
     )
     if request.lcia_methods:
@@ -896,9 +943,19 @@ def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveR
             return value
 
         try:
+            elementary_refs = list(request.elementary_flows) + list(
+                background_expansion.elementary_refs
+            )
+            elementary_exchange_ids = [item.exchange_id for item in elementary_refs]
+            if len(elementary_exchange_ids) != len(set(elementary_exchange_ids)):
+                raise ProviderContractError(
+                    422,
+                    "ELEMENTARY_FLOW_REFERENCE_DUPLICATE",
+                    "An elementary exchange may have only one exact reference.",
+                )
             lcia, receipts = characterize_scaled_inventory(
                 methods=request.lcia_methods,
-                elementary_refs=request.elementary_flows,
+                elementary_refs=elementary_refs,
                 scaled_exchanges=response.scaled_exchanges,
                 inventory_totals=response.inventory_totals,
                 exact_flow_resolver=exact_elementary_flow,
