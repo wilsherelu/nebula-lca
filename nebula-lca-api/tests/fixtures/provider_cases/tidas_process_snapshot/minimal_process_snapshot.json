@@ -1,0 +1,87 @@
+{
+  "schema_version": "tiangong-open-dataset-snapshot.v1",
+  "source_namespace": "tiangong_open_data",
+  "dataset_kind": "process",
+  "state_scope": "open",
+  "filters": {
+    "exact_refs": [
+      "f784e009-504d-4422-9e7d-915394e5cdbd@01.01.000"
+    ]
+  },
+  "declared_total": 1,
+  "records": [
+    {
+      "dataset_kind": "process",
+      "source_namespace": "tiangong_open_data",
+      "source_object_id": "f784e009-504d-4422-9e7d-915394e5cdbd",
+      "source_version": "01.01.000",
+      "type_of_data_set": "Unit process, single operation",
+      "source_modified_at": "2026-08-08T09:45:30.615928+00:00",
+      "content_hash": "f74371b38d8ac86ecb67b2c98046bde0e4427494cc941003a0c78cfc938b4a04",
+      "payload": {
+        "processDataSet": {
+          "processInformation": {
+            "dataSetInformation": {
+              "common:UUID": "f784e009-504d-4422-9e7d-915394e5cdbd",
+              "name": {
+                "baseName": {
+                  "#text": "Crude petroleum delivery to plant gate",
+                  "@xml:lang": "en"
+                }
+              }
+            },
+            "quantitativeReference": {
+              "@type": "Reference flow(s)",
+              "functionalUnitOrOther": {
+                "#text": "1 kg of crude petroleum delivery",
+                "@xml:lang": "en"
+              },
+              "referenceToReferenceFlow": "4"
+            }
+          },
+          "modellingAndValidation": {
+            "LCIMethodAndAllocation": {
+              "typeOfDataSet": "Unit process, single operation"
+            }
+          },
+          "exchanges": {
+            "exchange": [
+              {
+                "@dataSetInternalID": "1",
+                "exchangeDirection": "Input",
+                "meanAmount": "1.0",
+                "resultingAmount": "1.0",
+                "referenceToFlowDataSet": {
+                  "@refObjectId": "e8186909-07ca-41ef-9f5f-0ba05982720a",
+                  "@version": "01.01.001",
+                  "common:shortDescription": {
+                    "#text": "Crude oil input",
+                    "@xml:lang": "en"
+                  }
+                }
+              },
+              {
+                "@dataSetInternalID": "4",
+                "exchangeDirection": "Output",
+                "meanAmount": "1",
+                "resultingAmount": "1",
+                "referenceToFlowDataSet": {
+                  "@refObjectId": "b7ce9d42-8843-4752-b408-040a32e6aa4e",
+                  "@version": "01.01.000",
+                  "common:shortDescription": {
+                    "#text": "Petroleum oils, crude, at plant",
+                    "@xml:lang": "en"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "snapshot_hash": "02db4261119b36bfec3f94e1de47d8593a9bf5f10b2767a7621ce4978199d18b",
+  "counts": {
+    "process": 1
+  }
+}

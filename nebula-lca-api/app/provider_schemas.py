@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import uuid
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -227,6 +229,25 @@ class ExactFlowRef(BaseModel):
     correlation_id: str | None = None
 
 
+class ExactProcessRef(BaseModel):
+    source_namespace: str
+    process_uuid: str
+    version: str
+    correlation_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_exact_identity(self):
+        try:
+            normalized_uuid = str(uuid.UUID(self.process_uuid))
+        except ValueError as exc:
+            raise ValueError("process_uuid must be a canonical UUID") from exc
+        if self.process_uuid != normalized_uuid:
+            raise ValueError("process_uuid must be a canonical lowercase UUID")
+        if not re.fullmatch(r"\d{2}\.\d{2}\.\d{3}", self.version):
+            raise ValueError("version must be an exact TIDAS version such as 01.01.000")
+        return self
+
+
 class ExactFlowPropertyRef(BaseModel):
     flow_property_uuid: str
     version: str
@@ -253,6 +274,7 @@ class ProviderFlowCandidateQuery(BaseModel):
 
 class ProviderCatalogResolveRequest(BaseModel):
     schema_version: str = "provider.catalog.resolve.request.v1"
+    processes: list[ExactProcessRef] = Field(default_factory=list)
     flows: list[ExactFlowRef] = Field(default_factory=list)
     flow_properties: list[ExactFlowPropertyRef] = Field(default_factory=list)
     unit_groups: list[ExactUnitGroupRef] = Field(default_factory=list)
@@ -261,7 +283,7 @@ class ProviderCatalogResolveRequest(BaseModel):
 
 
 class ProviderCatalogResolution(BaseModel):
-    kind: Literal["flow", "flow_property", "unit_group", "unit"]
+    kind: Literal["process", "flow", "flow_property", "unit_group", "unit"]
     key: dict[str, Any]
     status: Literal["resolved", "not_found", "unsupported"]
     value: dict[str, Any] | None = None
