@@ -38,6 +38,7 @@ from .graph_storage import (
     compute_graph_hash_from_slim_graph,
     hydrate_graph_for_api,
 )
+from .provider_contract import ProviderContractError
 from .provider_ef31 import (
     EF31_DATABASE_RELEASE,
     ProviderEf31Error,
@@ -53,6 +54,7 @@ from .provider_background_leaf import (
     build_background_process_receipts,
     expand_background_process_pins,
 )
+from .provider_process_identity import build_process_identity_receipts
 from .provider_tidas_snapshot import (
     SOURCE_NAMESPACE as TIDAS_SOURCE_NAMESPACE,
     ProviderTidasSnapshotError,
@@ -70,15 +72,6 @@ from .provider_tidas_reference_snapshot import (
     TidasReferenceDependencySnapshot,
     configured_tidas_reference_dependency_snapshot,
 )
-
-
-class ProviderContractError(RuntimeError):
-    def __init__(self, status_code: int, code: str, message: str, **details: Any) -> None:
-        super().__init__(message)
-        self.status_code = status_code
-        self.code = code
-        self.message = message
-        self.details = details
 
 
 @lru_cache(maxsize=1)
@@ -153,8 +146,12 @@ def _functional_unit(graph: HybridGraph, display_fallback: str | None = None) ->
     return value, issues
 
 
-def _graph_identity_issues(graph: HybridGraph) -> list[ProviderIssue]:
+def _graph_identity_issues(
+    graph: HybridGraph,
+    identified_processes: set[str] | None = None,
+) -> list[ProviderIssue]:
     issues: list[ProviderIssue] = []
+    identified_processes = identified_processes or set()
     required = {
         "flow_source_namespace": "flowSourceNamespace",
         "flow_version": "flowVersion",
@@ -164,14 +161,15 @@ def _graph_identity_issues(graph: HybridGraph) -> list[ProviderIssue]:
         "unit_group_version": "unitGroupVersion",
     }
     for node_index, node in enumerate(graph.nodes):
-        issues.append(
-            ProviderIssue(
-                code="PROCESS_EXACT_VERSION_UNAVAILABLE",
-                message="HybridGraph identifies the process UUID but has no exact process-version field.",
-                path=f"graph.nodes[{node_index}]",
-                details={"process_uuid": node.process_uuid},
+        if node.process_uuid not in identified_processes:
+            issues.append(
+                ProviderIssue(
+                    code="PROCESS_EXACT_VERSION_UNAVAILABLE",
+                    message="HybridGraph identifies the process UUID but has no exact process-version field.",
+                    path=f"graph.nodes[{node_index}]",
+                    details={"process_uuid": node.process_uuid},
+                )
             )
-        )
         for bucket in ("inputs", "outputs"):
             for port_index, port in enumerate(getattr(node, bucket)):
                 missing = [alias for field, alias in required.items() if not str(getattr(port, field) or "").strip()]
@@ -236,6 +234,7 @@ def _resolve_solve_snapshot(
     db: Session,
     request: ProviderSolveRequest,
 ) -> tuple[HybridGraph, str, str, ProviderSnapshotRef | None, list[ProviderIssue]]:
+    identified_processes = {item.process_uuid for item in request.process_identities}
     if request.snapshot_ref is not None:
         snapshot = get_model_snapshot(db, request.snapshot_ref.project_id, request.snapshot_ref.version)
         if request.snapshot_ref.graph_hash and request.snapshot_ref.graph_hash != snapshot.graph_hash:
@@ -246,12 +245,23 @@ def _resolve_solve_snapshot(
                 expected=request.snapshot_ref.graph_hash,
                 actual=snapshot.graph_hash,
             )
-        return snapshot.graph, snapshot.graph_hash, snapshot.graph_hash, snapshot.base_snapshot_ref, list(snapshot.issues)
+        issues = [
+            issue
+            for issue in snapshot.issues
+            if not (
+                issue.code == "PROCESS_EXACT_VERSION_UNAVAILABLE"
+                and str(issue.details.get("process_uuid") or "") in identified_processes
+            )
+        ]
+        return snapshot.graph, snapshot.graph_hash, snapshot.graph_hash, snapshot.base_snapshot_ref, issues
 
     assert request.inline_snapshot is not None
     inline = request.inline_snapshot
     provider_graph_hash = compute_graph_hash_from_graph(inline.graph)
-    issues = list(inline.issues) + _graph_identity_issues(inline.graph)
+    issues = list(inline.issues) + _graph_identity_issues(
+        inline.graph,
+        identified_processes=identified_processes,
+    )
     if inline.graph_hash != provider_graph_hash:
         issues.append(
             ProviderIssue(
@@ -662,6 +672,22 @@ def _resolve_demand_process(demand: Any, base: dict[str, Any]) -> tuple[str, dic
 
 def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveResponse:
     graph, consumer_graph_hash, provider_graph_hash, snapshot_ref, issues = _resolve_solve_snapshot(db, request)
+    process_identity_receipts, process_identities_hash = build_process_identity_receipts(
+        db,
+        graph,
+        request.process_identities,
+        issues,
+        process_snapshot=(
+            _configured_tidas_process_snapshot()
+            if any(
+                item.source_namespace == TIDAS_SOURCE_NAMESPACE
+                for item in request.process_identities
+            )
+            else None
+        ),
+        database_content_hash=_pinned_process_database_content_hash,
+        database_conflicts=_process_snapshot_database_conflicts,
+    )
     technosphere_receipts: list[ProviderTechnosphereFlowReceipt] = []
     if request.inline_snapshot is not None:
         _validate_inline_foreground(graph)
@@ -891,6 +917,7 @@ def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveR
             activity_by_process=activity_by_process,
             scaled_exchanges=scaled,
         ),
+        process_identity_receipts=process_identity_receipts,
         process_residuals=[],
         contribution_graph={},
         issues=issues,
@@ -909,6 +936,7 @@ def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveR
             background_claim_scope=(
                 BACKGROUND_CLAIM_LIMIT if background_expansion.receipt_drafts else None
             ),
+            process_identities_hash=process_identities_hash,
         ),
     )
     if request.lcia_methods:
