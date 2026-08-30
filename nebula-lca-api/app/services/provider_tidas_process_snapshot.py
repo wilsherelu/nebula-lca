@@ -190,7 +190,7 @@ class TidasProcessSnapshotRecord:
     process_uuid: str
     version: str
     process_type: str
-    name: str
+    name: str | None
     quantitative_reference: dict[str, Any]
     exchanges: tuple[dict[str, Any], ...]
     included_process_refs: tuple[dict[str, str], ...]
@@ -300,13 +300,6 @@ def _parse_process_record(raw_record: dict[str, Any], *, index: int) -> TidasPro
         )
     name_block = data_information.get("name") if isinstance(data_information, dict) else None
     name = _localized_text(name_block.get("baseName") if isinstance(name_block, dict) else None)
-    if not name:
-        raise ProviderTidasProcessSnapshotError(
-            "TIDAS_PROCESS_NAME_MISSING",
-            "A TIDAS Process snapshot record has no verifiable name.",
-            process_uuid=process_uuid,
-            version=version,
-        )
     exchanges_block = root.get("exchanges")
     raw_exchanges = exchanges_block.get("exchange") if isinstance(exchanges_block, dict) else None
     exchanges = [row for row in _as_list(raw_exchanges) if isinstance(row, dict)]

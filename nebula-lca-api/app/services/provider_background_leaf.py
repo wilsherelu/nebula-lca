@@ -328,6 +328,10 @@ def expand_background_process_pins(
             port_id = f"exchange-{exchange['exchange_internal_id']}"
             expanded_exchange_id = f"{node_id}::{port_id}"
             flow_unit = str(flow_value.get("unit") or flow_value.get("default_unit") or "")
+            display_flow_name = (
+                flow_snapshot.display_name(flow_ref["flow_uuid"], flow_ref["version"])
+                or flow_ref.get("name")
+            )
             port = FlowPort(
                 id=port_id,
                 flowUuid=flow_value["flow_uuid"],
@@ -354,6 +358,7 @@ def expand_background_process_pins(
                 "source_namespace": flow_value["source_namespace"],
                 "flow_uuid": flow_value["flow_uuid"],
                 "version": flow_value["version"],
+                "flow_name": display_flow_name,
                 "flow_content_hash": flow_value["content_hash"],
                 "flow_snapshot_hash": flow_value.get("snapshot_hash"),
                 "flow_property_uuid": flow_value["flow_property_uuid"],
@@ -390,7 +395,7 @@ def expand_background_process_pins(
                 node_kind="lci_dataset",
                 mode="normalized",
                 process_uuid=pin.process_uuid,
-                name=process["name"],
+                name=process.get("name") or pin.process_uuid,
                 location="unspecified",
                 source_system=SOURCE_NAMESPACE,
                 reference_product=qref_port.name,
@@ -464,6 +469,7 @@ def build_background_process_receipts(
                 source_namespace=draft.pin.source_namespace,
                 process_uuid=draft.pin.process_uuid,
                 version=draft.pin.version,
+                process_name=process.get("name"),
                 process_type=process["process_type"],
                 process_content_hash=process["content_hash"],
                 process_snapshot_hash=process["snapshot_hash"],

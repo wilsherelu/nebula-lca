@@ -228,6 +228,7 @@ class ProviderBackgroundExchangeReceipt(BaseModel):
     source_namespace: str
     flow_uuid: str
     version: str
+    flow_name: str | None = None
     flow_content_hash: str
     flow_snapshot_hash: str | None = None
     flow_property_uuid: str
@@ -252,6 +253,7 @@ class ProviderBackgroundProcessReceipt(BaseModel):
     source_namespace: str
     process_uuid: str
     version: str
+    process_name: str | None = None
     process_type: str
     process_content_hash: str
     process_snapshot_hash: str
