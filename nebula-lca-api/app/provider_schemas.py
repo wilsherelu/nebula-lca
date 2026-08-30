@@ -115,6 +115,14 @@ class ProviderBackgroundProcessPin(BaseModel):
         return self
 
 
+class ProviderProcessIdentityRef(BaseModel):
+    process_uuid: str = Field(min_length=1)
+    source_namespace: str = Field(min_length=1)
+    version: str = Field(min_length=1)
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    snapshot_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
 class ProviderSolveRequest(BaseModel):
     schema_version: str = "provider.solve.request.v1"
     snapshot_ref: ProviderSnapshotRef | None = None
@@ -125,6 +133,7 @@ class ProviderSolveRequest(BaseModel):
     lcia_methods: list[str] | None = None
     elementary_flows: list[ProviderElementaryFlowRef] = Field(default_factory=list)
     background_process_pins: list[ProviderBackgroundProcessPin] = Field(default_factory=list)
+    process_identities: list[ProviderProcessIdentityRef] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def require_one_snapshot_source(self) -> "ProviderSolveRequest":
@@ -266,6 +275,18 @@ class ProviderBackgroundProcessReceipt(BaseModel):
     exchanges: list[ProviderBackgroundExchangeReceipt]
 
 
+class ProviderProcessIdentityReceipt(BaseModel):
+    process_uuid: str
+    source_namespace: str
+    version: str
+    content_hash: str
+    snapshot_hash: str | None = None
+    resolution: Literal["tidas_exact_snapshot", "inline_custom"]
+    verification_scope: Literal["provider_exact_snapshot", "consumer_asserted_hash"]
+    process_name: str | None = None
+    process_type: str | None = None
+
+
 class ProviderSolveProvenance(BaseModel):
     engine: ProviderEngineIdentity
     snapshot_ref: ProviderSnapshotRef | None = None
@@ -281,6 +302,7 @@ class ProviderSolveProvenance(BaseModel):
     provider_graph_hash: str
     background_process_pins_hash: str | None = None
     background_claim_scope: str | None = None
+    process_identities_hash: str | None = None
     activity_vector_semantics: str = "x in A*x=f"
     inventory_scope: str = "boundary elementary exchanges"
 
@@ -297,6 +319,7 @@ class ProviderSolveResponse(BaseModel):
     technosphere_flow_receipts: list[ProviderTechnosphereFlowReceipt] = Field(default_factory=list)
     elementary_flow_receipts: list[ProviderElementaryFlowReceipt] = Field(default_factory=list)
     background_process_receipts: list[ProviderBackgroundProcessReceipt] = Field(default_factory=list)
+    process_identity_receipts: list[ProviderProcessIdentityReceipt] = Field(default_factory=list)
     lcia: dict[str, Any] | None = None
     process_residuals: list[dict[str, Any]] = Field(default_factory=list)
     contribution_graph: dict[str, Any] = Field(default_factory=dict)
