@@ -516,8 +516,8 @@ def _technosphere_flow_receipts(
     db: Session,
     graph: HybridGraph,
     issues: list[ProviderIssue],
+    snapshot: TidasFlowSnapshot | None,
 ) -> list[ProviderTechnosphereFlowReceipt]:
-    snapshot = _configured_tidas_snapshot()
     receipts: list[ProviderTechnosphereFlowReceipt] = []
     for node in graph.nodes:
         for port in node.inputs + node.outputs:
@@ -672,6 +672,16 @@ def _resolve_demand_process(demand: Any, base: dict[str, Any]) -> tuple[str, dic
 
 def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveResponse:
     graph, consumer_graph_hash, provider_graph_hash, snapshot_ref, issues = _resolve_solve_snapshot(db, request)
+    tidas_flow_snapshot = (
+        _configured_tidas_snapshot()
+        if (
+            request.inline_snapshot is not None
+            or request.background_process_pins
+            or request.elementary_flows
+            or request.lcia_methods
+        )
+        else None
+    )
     process_identity_receipts, process_identities_hash = build_process_identity_receipts(
         db,
         graph,
@@ -691,7 +701,12 @@ def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveR
     technosphere_receipts: list[ProviderTechnosphereFlowReceipt] = []
     if request.inline_snapshot is not None:
         _validate_inline_foreground(graph)
-        technosphere_receipts = _technosphere_flow_receipts(db, graph, issues)
+        technosphere_receipts = _technosphere_flow_receipts(
+            db,
+            graph,
+            issues,
+            tidas_flow_snapshot,
+        )
     try:
         background_expansion = expand_background_process_pins(
             graph=graph,
@@ -702,7 +717,7 @@ def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveR
                 else None
             ),
             flow_snapshot=(
-                _configured_tidas_snapshot()
+                tidas_flow_snapshot
                 if request.background_process_pins
                 else None
             ),
@@ -937,16 +952,28 @@ def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveR
                 BACKGROUND_CLAIM_LIMIT if background_expansion.receipt_drafts else None
             ),
             process_identities_hash=process_identities_hash,
+            flow_snapshot_hash=(
+                tidas_flow_snapshot.snapshot_hash
+                if tidas_flow_snapshot is not None
+                else None
+            ),
+            reference_dependency_snapshot_hash=(
+                tidas_flow_snapshot.reference_dependencies.snapshot_hash
+                if tidas_flow_snapshot is not None
+                and tidas_flow_snapshot.reference_dependencies is not None
+                else None
+            ),
         ),
     )
-    if request.lcia_methods:
-        elementary_snapshot = _configured_tidas_snapshot()
-
+    elementary_refs = list(request.elementary_flows) + list(
+        background_expansion.elementary_refs
+    )
+    if request.lcia_methods or elementary_refs:
         def exact_elementary_flow(ref):
-            if elementary_snapshot is None or ref.source_namespace != TIDAS_SOURCE_NAMESPACE:
+            if tidas_flow_snapshot is None or ref.source_namespace != TIDAS_SOURCE_NAMESPACE:
                 return None
             value = _resolve_tidas_snapshot_value(
-                elementary_snapshot,
+                tidas_flow_snapshot,
                 flow_uuid=ref.flow_uuid,
                 version=ref.version,
             )
@@ -959,21 +986,18 @@ def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveR
                     version=ref.version,
                     flow_type=value.get("flow_type"),
                 )
-            if value is None and elementary_snapshot.contains_uuid(ref.flow_uuid):
+            if value is None and tidas_flow_snapshot.contains_uuid(ref.flow_uuid):
                 raise ProviderContractError(
                     422,
                     "ELEMENTARY_FLOW_EXACT_VERSION_NOT_IN_SNAPSHOT",
                     "The configured snapshot contains this elementary Flow UUID, but not the requested version.",
                     flow_uuid=ref.flow_uuid,
                     version=ref.version,
-                    snapshot_hash=elementary_snapshot.snapshot_hash,
+                    snapshot_hash=tidas_flow_snapshot.snapshot_hash,
                 )
             return value
 
         try:
-            elementary_refs = list(request.elementary_flows) + list(
-                background_expansion.elementary_refs
-            )
             elementary_exchange_ids = [item.exchange_id for item in elementary_refs]
             if len(elementary_exchange_ids) != len(set(elementary_exchange_ids)):
                 raise ProviderContractError(
@@ -982,7 +1006,7 @@ def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveR
                     "An elementary exchange may have only one exact reference.",
                 )
             lcia, receipts = characterize_scaled_inventory(
-                methods=request.lcia_methods,
+                methods=request.lcia_methods or ["EF v3.1"],
                 elementary_refs=elementary_refs,
                 scaled_exchanges=response.scaled_exchanges,
                 inventory_totals=response.inventory_totals,
@@ -990,7 +1014,8 @@ def solve_provider(db: Session, request: ProviderSolveRequest) -> ProviderSolveR
             )
         except ProviderEf31Error as exc:
             raise ProviderContractError(422, exc.code, exc.message, **exc.details) from exc
-        response.lcia = lcia
+        if request.lcia_methods:
+            response.lcia = lcia
         response.elementary_flow_receipts = receipts
         response.provenance.database_release = EF31_DATABASE_RELEASE
     return response

@@ -303,6 +303,8 @@ class ProviderSolveProvenance(BaseModel):
     background_process_pins_hash: str | None = None
     background_claim_scope: str | None = None
     process_identities_hash: str | None = None
+    flow_snapshot_hash: str | None = None
+    reference_dependency_snapshot_hash: str | None = None
     activity_vector_semantics: str = "x in A*x=f"
     inventory_scope: str = "boundary elementary exchanges"
 
