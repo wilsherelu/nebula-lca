@@ -1,0 +1,210 @@
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field, model_validator
+
+from .schemas import HybridGraph
+
+
+class ProviderIssue(BaseModel):
+    code: str
+    message: str
+    severity: Literal["info", "warning", "error"] = "warning"
+    path: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProviderEngineIdentity(BaseModel):
+    version: str
+    commit: str | None = None
+
+
+class ProviderFunctionalUnit(BaseModel):
+    display_text: str
+    amount: float | None = None
+    flow_uuid: str | None = None
+    flow_source_namespace: str | None = None
+    flow_version: str | None = None
+    unit: str | None = None
+    unit_group_uuid: str | None = None
+    unit_group_version: str | None = None
+
+
+class ProviderSnapshotRef(BaseModel):
+    project_id: str
+    version: int
+    graph_hash: str | None = None
+
+
+class ProviderInlineSnapshot(BaseModel):
+    schema_version: str = "provider.snapshot.v1"
+    base_snapshot_ref: ProviderSnapshotRef | None = None
+    graph_hash: str
+    functional_unit: ProviderFunctionalUnit
+    graph: HybridGraph
+    source_policy: str | None = None
+    allowed_lcia_scope: str | None = None
+    issues: list[ProviderIssue] = Field(default_factory=list)
+
+
+class ProviderModelSnapshot(ProviderInlineSnapshot):
+    engine: ProviderEngineIdentity
+    project_id: str
+    version: int
+
+
+class ProviderDemand(BaseModel):
+    process_uuid: str | None = None
+    reference_exchange_id: str | None = None
+    reference_flow_uuid: str | None = None
+    amount: float = Field(gt=0)
+    unit: str
+    unit_group_uuid: str | None = None
+    unit_group_version: str | None = None
+
+    @model_validator(mode="after")
+    def require_one_selector(self) -> "ProviderDemand":
+        selectors = [self.process_uuid, self.reference_exchange_id, self.reference_flow_uuid]
+        if sum(bool(str(value or "").strip()) for value in selectors) != 1:
+            raise ValueError(
+                "exactly one of process_uuid, reference_exchange_id, or reference_flow_uuid is required"
+            )
+        return self
+
+
+class ProviderSolveRequest(BaseModel):
+    schema_version: str = "provider.solve.request.v1"
+    snapshot_ref: ProviderSnapshotRef | None = None
+    inline_snapshot: ProviderInlineSnapshot | None = None
+    demand: list[ProviderDemand] = Field(min_length=1)
+    scenario_id: str | None = None
+    operation_hash: str | None = None
+    lcia_methods: list[str] | None = None
+
+    @model_validator(mode="after")
+    def require_one_snapshot_source(self) -> "ProviderSolveRequest":
+        if (self.snapshot_ref is None) == (self.inline_snapshot is None):
+            raise ValueError("exactly one of snapshot_ref or inline_snapshot is required")
+        return self
+
+
+class ProviderActivity(BaseModel):
+    process_uuid: str
+    activity_amount: float
+    reference_exchange_id: str
+    reference_flow_uuid: str
+    unit: str
+
+
+class ProviderScaledExchange(BaseModel):
+    exchange_id: str
+    process_uuid: str
+    flow_uuid: str
+    flow_source_namespace: str | None = None
+    flow_version: str | None = None
+    flow_property_uuid: str | None = None
+    flow_property_version: str | None = None
+    unit_group_uuid: str | None = None
+    unit_group_version: str | None = None
+    unit: str
+    direction: Literal["input", "output"]
+    exchange_type: Literal["technosphere", "elementary"]
+    boundary_role: Literal["internal", "boundary"]
+    raw_amount: float
+    allocation_total: float
+    coefficient: float
+    activity_amount: float
+    scaled_amount: float
+
+
+class ProviderInventoryTotal(BaseModel):
+    flow_uuid: str
+    flow_source_namespace: str | None = None
+    flow_version: str | None = None
+    flow_property_uuid: str | None = None
+    flow_property_version: str | None = None
+    unit_group_uuid: str | None = None
+    unit_group_version: str | None = None
+    unit: str
+    direction: Literal["input", "output"]
+    amount: float
+
+
+class ProviderSolveProvenance(BaseModel):
+    engine: ProviderEngineIdentity
+    snapshot_ref: ProviderSnapshotRef | None = None
+    inline_graph_hash: str | None = None
+    scenario_id: str | None = None
+    operation_hash: str | None = None
+    solver: str = "nebula_hybrid_matrix_v1"
+    solver_version: str = "nebula_hybrid_matrix_v1"
+    solver_build: str | None = None
+    database_release: str
+    system_revision_hash: str
+    consumer_graph_hash: str
+    provider_graph_hash: str
+    activity_vector_semantics: str = "x in A*x=f"
+    inventory_scope: str = "boundary elementary exchanges"
+
+
+class ProviderSolveResponse(BaseModel):
+    schema_version: str = "provider.solve.response.v1"
+    run_id: str
+    status: Literal["completed"] = "completed"
+    snapshot_ref: ProviderSnapshotRef | None = None
+    demand: list[ProviderDemand]
+    activity_vector: list[ProviderActivity]
+    scaled_exchanges: list[ProviderScaledExchange]
+    inventory_totals: list[ProviderInventoryTotal]
+    lcia: dict[str, Any] | None = None
+    process_residuals: list[dict[str, Any]] = Field(default_factory=list)
+    contribution_graph: dict[str, Any] = Field(default_factory=dict)
+    issues: list[ProviderIssue] = Field(default_factory=list)
+    provenance: ProviderSolveProvenance
+
+
+class ExactFlowRef(BaseModel):
+    source_namespace: str
+    flow_uuid: str
+    version: str
+    correlation_id: str | None = None
+
+
+class ExactFlowPropertyRef(BaseModel):
+    flow_property_uuid: str
+    version: str
+    correlation_id: str | None = None
+
+
+class ExactUnitGroupRef(BaseModel):
+    unit_group_uuid: str
+    version: str
+    correlation_id: str | None = None
+
+
+class ExactUnitRef(ExactUnitGroupRef):
+    unit: str
+
+
+class ProviderCatalogResolveRequest(BaseModel):
+    schema_version: str = "provider.catalog.resolve.request.v1"
+    flows: list[ExactFlowRef] = Field(default_factory=list)
+    flow_properties: list[ExactFlowPropertyRef] = Field(default_factory=list)
+    unit_groups: list[ExactUnitGroupRef] = Field(default_factory=list)
+    units: list[ExactUnitRef] = Field(default_factory=list)
+
+
+class ProviderCatalogResolution(BaseModel):
+    kind: Literal["flow", "flow_property", "unit_group", "unit"]
+    key: dict[str, Any]
+    status: Literal["resolved", "not_found", "unsupported"]
+    value: dict[str, Any] | None = None
+    code: str | None = None
+    message: str | None = None
+
+
+class ProviderCatalogResolveResponse(BaseModel):
+    schema_version: str = "provider.catalog.resolve.response.v1"
+    items: list[ProviderCatalogResolution]
+    issues: list[ProviderIssue] = Field(default_factory=list)

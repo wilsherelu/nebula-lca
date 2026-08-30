@@ -4734,6 +4734,8 @@ def run_model(payload: RunRequest, db: Session = Depends(get_db)) -> RunResponse
 # dynamic catalog paths.
 from .api.flows import api_router as _flows_router
 from .api.processes import api_router as _processes_router
+from .api.provider_v1 import router as _provider_v1_router
 
 app.include_router(_flows_router)
 app.include_router(_processes_router)
+app.include_router(_provider_v1_router)
