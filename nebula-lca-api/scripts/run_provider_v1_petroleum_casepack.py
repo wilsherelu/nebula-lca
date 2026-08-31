@@ -250,6 +250,10 @@ def _audit(
         for row in result["lcia"]["indicator_results"]
     }
     indicator_metadata = result["lcia"].get("indicator_metadata") or {}
+    contribution_receipts = result["lcia"].get("indicator_contribution_receipts") or []
+    contribution_by_indicator = {
+        row["canonical_indicator_key"]: row for row in contribution_receipts
+    }
     tidas_receipts = [
         row
         for row in result.get("technosphere_flow_receipts") or []
@@ -277,6 +281,22 @@ def _audit(
             and indicator_metadata.get("indicator_count") == len(indicators)
         ),
         "elementary_receipts_present": len(result["elementary_flow_receipts"]) == 2,
+        "lcia_contributions_cover_every_indicator": set(contribution_by_indicator) == set(indicators),
+        "lcia_contributions_reconcile": all(
+            abs(row["contribution_total"] - row["indicator_value"]) < 1e-10
+            and abs(row["reconciliation_delta"]) < 1e-10
+            for row in contribution_receipts
+        ),
+        "lcia_terms_trace_to_scaled_exchanges": all(
+            term["exchange_id"] in exchange_ids
+            and term.get("process_uuid")
+            and term.get("flow_uuid")
+            and term.get("flow_version")
+            and term.get("cf_hash")
+            and term.get("solve_hash") == result["lcia"].get("solve_hash")
+            for row in contribution_receipts
+            for term in row["terms"]
+        ),
         "sankey_links_trace_to_scaled_exchanges": traced_ids <= exchange_ids and bool(traced_ids),
     }
     if require_tidas_snapshot_receipt:
@@ -363,6 +383,10 @@ def main() -> int:
     _write_json(output_dir / "catalog_result.json", catalog)
     _write_json(output_dir / "raw_result.json", result)
     _write_json(output_dir / "provenance.json", result["provenance"])
+    _write_json(
+        output_dir / "lcia_contribution_receipts.json",
+        result["lcia"]["indicator_contribution_receipts"],
+    )
     _write_json(output_dir / "chart_data.json", chart)
     _write_json(output_dir / "audit_report.json", audit)
     (output_dir / "sankey.svg").write_text(_sankey_svg(chart), encoding="utf-8")

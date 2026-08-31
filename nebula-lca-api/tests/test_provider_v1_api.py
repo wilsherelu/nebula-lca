@@ -928,6 +928,37 @@ def test_inline_custom_technosphere_with_exact_ef31_lcia_does_not_write_catalog_
     assert len(body["elementary_flow_receipts"]) == 2
     assert all(item["factor_count"] == 2 for item in body["elementary_flow_receipts"])
     assert all(item["factor_hash"] for item in body["elementary_flow_receipts"])
+    contribution_receipts = {
+        item["canonical_indicator_key"]: item
+        for item in body["lcia"]["indicator_contribution_receipts"]
+    }
+    assert set(contribution_receipts) == {
+        item["canonical_indicator_key"] for item in body["lcia"]["indicator_results"]
+    }
+    for receipt in contribution_receipts.values():
+        assert len(receipt["terms"]) == 2
+        assert receipt["contribution_total"] == pytest.approx(receipt["indicator_value"])
+        assert receipt["reconciliation_delta"] == pytest.approx(0.0, abs=1e-12)
+        assert receipt["solve_hash"] == body["lcia"]["solve_hash"]
+        assert receipt["provider_commit"] == body["provenance"]["engine"]["commit"]
+        assert receipt["content_hash"]
+    climate_terms = contribution_receipts["climate change"]["terms"]
+    assert {item["exchange_id"]: item["contribution_value"] for item in climate_terms} == pytest.approx(
+        {
+            "node-cracking::out-co2-cracking": 0.6,
+            "node-desulfurization::out-co2-desulfurization": 0.1,
+        }
+    )
+    assert all(item["process_uuid"] for item in climate_terms)
+    assert all(item["flow_uuid"] == CO2_UUID for item in climate_terms)
+    assert all(item["flow_version"] == "03.00.004" for item in climate_terms)
+    assert all(item["amount_unit"] == "kg" for item in climate_terms)
+    assert all(item["cf_value"] == pytest.approx(1.0) for item in climate_terms)
+    assert all(item["cf_presence"] == "explicit_nonzero" for item in climate_terms)
+    assert all(item["cf_hash"] and item["cf_runtime_id"] for item in climate_terms)
+    assert all(item["snapshot_hash"] == body["provenance"]["consumer_graph_hash"] for item in climate_terms)
+    assert body["lcia"]["contribution_receipts_hash"]
+    assert body["lcia"]["runtime_assets_hash"]
     db = db_module.SessionLocal()
     try:
         after = {
@@ -985,6 +1016,70 @@ def test_inline_ef31_lcia_fails_closed_when_indicator_unit_is_unresolved(client,
     )
     assert response.status_code == 422, response.text
     assert response.json()["detail"]["code"] == "EF31_INDICATOR_UNIT_NOT_FOUND"
+
+
+def test_inline_ef31_lcia_fails_closed_when_runtime_factor_sources_disagree(client, monkeypatch):
+    runtime_cache = provider_ef31.importlib.import_module("app.core.ef31_runtime_cache")
+    original = runtime_cache.GLOBAL_EF31_RUNTIME_CACHE.build_c_matrix_from_sources
+
+    def conflicting_sources(*args, **kwargs):
+        pack = original(*args, **kwargs)
+        factor_sources = pack["factor_sources"]
+        key = next(iter(factor_sources))
+        factor_sources[key] = [
+            *factor_sources[key],
+            {
+                "source_index": factor_sources[key][0]["source_index"],
+                "coefficient": float(factor_sources[key][0]["coefficient"]) + 1.0,
+            },
+        ]
+        return pack
+
+    monkeypatch.setattr(
+        runtime_cache.GLOBAL_EF31_RUNTIME_CACHE,
+        "build_c_matrix_from_sources",
+        conflicting_sources,
+    )
+    graph = _petrochemical_graph()
+    response = client.post(
+        "/api/provider/v1/solve",
+        json={
+            "inline_snapshot": _inline_snapshot(graph),
+            "demand": [{"process_uuid": "process-desulfurization", "amount": 1.0, "unit": "kg"}],
+            "lcia_methods": ["EF v3.1"],
+            "elementary_flows": _co2_refs(graph),
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "EF31_CF_SOURCE_AMBIGUOUS"
+
+
+def test_inline_ef31_lcia_fails_closed_when_factor_provenance_is_missing(client, monkeypatch):
+    runtime_cache = provider_ef31.importlib.import_module("app.core.ef31_runtime_cache")
+    original = runtime_cache.GLOBAL_EF31_RUNTIME_CACHE.build_c_matrix_from_sources
+
+    def missing_sources(*args, **kwargs):
+        pack = original(*args, **kwargs)
+        pack["factor_sources"] = {}
+        return pack
+
+    monkeypatch.setattr(
+        runtime_cache.GLOBAL_EF31_RUNTIME_CACHE,
+        "build_c_matrix_from_sources",
+        missing_sources,
+    )
+    graph = _petrochemical_graph()
+    response = client.post(
+        "/api/provider/v1/solve",
+        json={
+            "inline_snapshot": _inline_snapshot(graph),
+            "demand": [{"process_uuid": "process-desulfurization", "amount": 1.0, "unit": "kg"}],
+            "lcia_methods": ["EF v3.1"],
+            "elementary_flows": _co2_refs(graph),
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "EF31_CF_PROVENANCE_NOT_FOUND"
 
 
 @pytest.mark.parametrize(

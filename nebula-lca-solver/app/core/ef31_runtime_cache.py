@@ -97,11 +97,12 @@ class Ef31RuntimeCache:
         canonical_order: List[str] = []
         canonical_lookup: Dict[str, dict] = {}
         canonical_entries: Dict[Tuple[str, str], float] = {}
+        factor_sources: Dict[Tuple[str, str], List[dict]] = {}
         matched_flow_uuids: set[str] = set()
         runtime_flow_uuids: set[str] = set()
         cache_hits: List[bool] = []
 
-        for ef_dir in existing_dirs:
+        for source_index, ef_dir in enumerate(existing_dirs):
             source, cache_hit = self._get_source(ef_dir)
             cache_hits.append(cache_hit)
             pack = _build_source_c_matrix(
@@ -133,10 +134,13 @@ class Ef31RuntimeCache:
                 if not canonical_key or not flow_uuid:
                     continue
                 key = (canonical_key, flow_uuid)
-                if key in canonical_entries:
-                    continue
                 value = _to_float(entry.get("value"))
                 if value is None or value == 0:
+                    continue
+                factor_sources.setdefault(key, []).append(
+                    {"source_index": source_index, "coefficient": value}
+                )
+                if key in canonical_entries:
                     continue
                 canonical_entries[key] = value
 
@@ -168,6 +172,7 @@ class Ef31RuntimeCache:
             "indicator_lookup": indicator_lookup,
             "matched_flow_uuids": matched_flow_uuids,
             "runtime_flow_uuids": runtime_flow_uuids,
+            "factor_sources": factor_sources,
             "cache_hit": bool(cache_hits) and all(cache_hits),
             "runtime_source_count": len(existing_dirs),
         }

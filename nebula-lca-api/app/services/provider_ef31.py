@@ -4,6 +4,7 @@ import csv
 import hashlib
 import importlib
 import json
+import math
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
@@ -659,6 +660,9 @@ def characterize_scaled_inventory(
     scaled_exchanges: list[ProviderScaledExchange],
     inventory_totals: list[ProviderInventoryTotal],
     exact_flow_resolver: Callable[[ExactFlowRef], dict[str, Any] | None] | None = None,
+    consumer_graph_hash: str | None = None,
+    provider_graph_hash: str | None = None,
+    provider_commit: str | None = None,
 ) -> tuple[dict[str, Any], list[ProviderElementaryFlowReceipt]]:
     if not methods or any(method != EF31_METHOD for method in methods):
         raise ProviderEf31Error(
@@ -758,6 +762,22 @@ def characterize_scaled_inventory(
         lcia_methods=methods,
         issues=issues,
     )
+    runtime_assets = []
+    for runtime_dir in runtime_dirs:
+        runtime_assets.append(
+            {
+                "runtime_id": _canonical_hash(
+                    {
+                        name: _file_sha256(str((runtime_dir / name).resolve()))
+                        for name in ("flow_index.csv", "indicator_index.csv", "lcia_factors.csv")
+                    }
+                ),
+                "flow_index_sha256": _file_sha256(str((runtime_dir / "flow_index.csv").resolve())),
+                "indicator_index_sha256": _file_sha256(str((runtime_dir / "indicator_index.csv").resolve())),
+                "lcia_factors_sha256": _file_sha256(str((runtime_dir / "lcia_factors.csv").resolve())),
+            }
+        )
+    runtime_assets_hash = _canonical_hash(runtime_assets)
     runtime_flow_uuids = set(c_pack.get("runtime_flow_uuids") or set())
     missing = sorted(set(flow_uuids).difference(runtime_flow_uuids))
     if missing:
@@ -775,6 +795,8 @@ def characterize_scaled_inventory(
         inventory_by_flow[item.flow_uuid] = inventory_by_flow.get(item.flow_uuid, 0.0) + float(item.amount)
     values = [0.0 for _ in c_matrix["rows"]]
     factors_by_flow: dict[str, list[dict[str, Any]]] = {}
+    factor_evidence: dict[tuple[str, str], dict[str, Any]] = {}
+    factor_sources = c_pack.get("factor_sources") or {}
     indicator_lookup = c_pack.get("indicator_lookup") or {}
     for entry in c_matrix.get("data") or []:
         row_pos = int(entry["row_index"])
@@ -782,9 +804,46 @@ def characterize_scaled_inventory(
         coefficient = float(entry["value"])
         values[row_pos] += inventory_by_flow.get(flow_uuid, 0.0) * coefficient
         info = indicator_lookup.get(entry["row"], {})
+        canonical_indicator_key = str(info.get("canonical_indicator_key") or "")
+        source_rows = factor_sources.get((canonical_indicator_key, flow_uuid)) or []
+        if not source_rows:
+            raise ProviderEf31Error(
+                "EF31_CF_PROVENANCE_NOT_FOUND",
+                "A non-zero EF3.1 factor has no exact runtime source evidence.",
+                canonical_indicator_key=canonical_indicator_key,
+                flow_uuid=flow_uuid,
+            )
+        source_runtime_ids: list[str] = []
+        for source_row in source_rows:
+            source_index = int(source_row["source_index"])
+            if source_index < 0 or source_index >= len(runtime_assets):
+                raise ProviderEf31Error(
+                    "EF31_CF_PROVENANCE_NOT_FOUND",
+                    "An EF3.1 factor references an unavailable runtime source.",
+                    canonical_indicator_key=canonical_indicator_key,
+                    flow_uuid=flow_uuid,
+                    source_index=source_index,
+                )
+            source_coefficient = float(source_row["coefficient"])
+            if not math.isclose(source_coefficient, coefficient, rel_tol=1e-12, abs_tol=1e-15):
+                raise ProviderEf31Error(
+                    "EF31_CF_SOURCE_AMBIGUOUS",
+                    "Configured EF3.1 runtime sources disagree on an exact characterization factor.",
+                    canonical_indicator_key=canonical_indicator_key,
+                    flow_uuid=flow_uuid,
+                    effective_coefficient=coefficient,
+                    conflicting_coefficient=source_coefficient,
+                    source_index=source_index,
+                )
+            source_runtime_ids.append(runtime_assets[source_index]["runtime_id"])
+        factor_evidence[(canonical_indicator_key, flow_uuid)] = {
+            "coefficient": coefficient,
+            "runtime_id": source_runtime_ids[0],
+            "source_runtime_ids": source_runtime_ids,
+        }
         factors_by_flow.setdefault(flow_uuid, []).append(
             {
-                "canonical_indicator_key": str(info.get("canonical_indicator_key") or ""),
+                "canonical_indicator_key": canonical_indicator_key,
                 "coefficient": coefficient,
             }
         )
@@ -859,21 +918,95 @@ def characterize_scaled_inventory(
                 "value": values[row_pos],
             }
         )
-    runtime_assets = []
-    for runtime_dir in runtime_dirs:
-        runtime_assets.append(
-            {
-                "runtime_id": _canonical_hash(
-                    {
-                        name: _file_sha256(str((runtime_dir / name).resolve()))
-                        for name in ("flow_index.csv", "indicator_index.csv", "lcia_factors.csv")
-                    }
-                ),
-                "flow_index_sha256": _file_sha256(str((runtime_dir / "flow_index.csv").resolve())),
-                "indicator_index_sha256": _file_sha256(str((runtime_dir / "indicator_index.csv").resolve())),
-                "lcia_factors_sha256": _file_sha256(str((runtime_dir / "lcia_factors.csv").resolve())),
+    solve_hash = _canonical_hash(
+        {
+            "schema_version": "provider.lcia.solve-hash.v1",
+            "consumer_graph_hash": consumer_graph_hash,
+            "provider_graph_hash": provider_graph_hash,
+            "scaled_exchanges": [item.model_dump(mode="json") for item in scaled_exchanges],
+            "inventory_totals": [item.model_dump(mode="json") for item in inventory_totals],
+            "method": EF31_METHOD,
+            "database_release": EF31_DATABASE_RELEASE,
+            "indicator_results": indicators,
+            "runtime_assets_hash": runtime_assets_hash,
+        }
+    )
+    contribution_receipts = []
+    for indicator in indicators:
+        canonical_key = str(indicator.get("canonical_indicator_key") or "")
+        terms = []
+        for exchange in scaled_elementary:
+            standard = standard_by_exchange[exchange.exchange_id]
+            evidence = factor_evidence.get((canonical_key, exchange.flow_uuid))
+            coefficient = float(evidence["coefficient"]) if evidence is not None else 0.0
+            factor_identity = {
+                "method": EF31_METHOD,
+                "database_release": EF31_DATABASE_RELEASE,
+                "canonical_indicator_key": canonical_key,
+                "flow_uuid": exchange.flow_uuid,
+                "cf_version": EF31_DATABASE_RELEASE,
+                "coefficient": coefficient,
+                "presence": "explicit_nonzero" if evidence is not None else "implicit_zero",
+                "runtime_id": evidence["runtime_id"] if evidence is not None else None,
+                "source_runtime_ids": evidence["source_runtime_ids"] if evidence is not None else [],
+                "runtime_assets_hash": runtime_assets_hash,
             }
-        )
+            contribution = float(exchange.scaled_amount) * coefficient
+            terms.append(
+                {
+                    "schema_version": "provider.lcia.contribution-term.v1",
+                    "process_uuid": exchange.process_uuid,
+                    "exchange_id": exchange.exchange_id,
+                    "source_namespace": standard["source_namespace"],
+                    "flow_uuid": standard["flow_uuid"],
+                    "flow_version": standard["version"],
+                    "flow_property_uuid": standard["flow_property_uuid"],
+                    "flow_property_version": standard["flow_property_version"],
+                    "unit_group_uuid": standard["unit_group_uuid"],
+                    "unit_group_version": standard["unit_group_version"],
+                    "amount": float(exchange.scaled_amount),
+                    "amount_unit": exchange.unit,
+                    "direction": exchange.direction,
+                    "compartment": standard["compartment"],
+                    "cf_method": EF31_METHOD,
+                    "cf_database_release": EF31_DATABASE_RELEASE,
+                    "cf_indicator_key": canonical_key,
+                    "cf_version": EF31_DATABASE_RELEASE,
+                    "cf_presence": factor_identity["presence"],
+                    "cf_value": coefficient,
+                    "cf_runtime_id": factor_identity["runtime_id"],
+                    "cf_source_runtime_ids": factor_identity["source_runtime_ids"],
+                    "cf_runtime_assets_hash": runtime_assets_hash,
+                    "cf_hash": _canonical_hash(factor_identity),
+                    "contribution_value": contribution,
+                    "contribution_unit": indicator["unit"],
+                    "flow_snapshot_hash": standard.get("snapshot_hash"),
+                    "snapshot_hash": consumer_graph_hash,
+                    "provider_graph_hash": provider_graph_hash,
+                    "solve_hash": solve_hash,
+                    "provider_commit": provider_commit,
+                }
+            )
+        contribution_total = sum(float(item["contribution_value"]) for item in terms)
+        receipt = {
+            "schema_version": "provider.lcia.indicator-contribution-receipt.v1",
+            "method": EF31_METHOD,
+            "database_release": EF31_DATABASE_RELEASE,
+            "canonical_indicator_key": canonical_key,
+            "indicator_index": indicator.get("indicator_index"),
+            "indicator_unit": indicator["unit"],
+            "indicator_value": float(indicator["value"]),
+            "contribution_total": contribution_total,
+            "reconciliation_delta": contribution_total - float(indicator["value"]),
+            "terms": terms,
+            "snapshot_hash": consumer_graph_hash,
+            "provider_graph_hash": provider_graph_hash,
+            "solve_hash": solve_hash,
+            "provider_commit": provider_commit,
+            "runtime_assets_hash": runtime_assets_hash,
+        }
+        receipt["content_hash"] = _canonical_hash(receipt)
+        contribution_receipts.append(receipt)
     lcia = {
         "schema_version": "provider.lcia.response.v1",
         "method": EF31_METHOD,
@@ -882,6 +1015,12 @@ def characterize_scaled_inventory(
         "indicator_results": indicators,
         "indicator_metadata": indicator_metadata,
         "runtime_assets": runtime_assets,
+        "runtime_assets_hash": runtime_assets_hash,
         "runtime_source_count": len(runtime_dirs),
+        "solve_hash": solve_hash,
+        "solve_hash_scope": "scaled exchanges, inventory, EF3.1 results, and runtime assets",
+        "provider_commit": provider_commit,
+        "indicator_contribution_receipts": contribution_receipts,
+        "contribution_receipts_hash": _canonical_hash(contribution_receipts),
     }
     return lcia, receipts

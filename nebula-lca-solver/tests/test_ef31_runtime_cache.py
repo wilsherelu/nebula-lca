@@ -136,6 +136,11 @@ def test_ef31_runtime_cache_reuses_loaded_sources(tmp_path):
     assert first["C"] == second["C"]
     assert first["C"]["rows"] == [0, 1]
     assert [item["value"] for item in first["C"]["data"]] == [1.0, 27.0, 2.0]
+    assert first["factor_sources"] == {
+        ("climate change", "flow-co2"): [{"source_index": 0, "coefficient": 1.0}],
+        ("acidification", "flow-co2"): [{"source_index": 0, "coefficient": 2.0}],
+        ("climate change", "flow-ch4"): [{"source_index": 1, "coefficient": 27.0}],
+    }
 
 
 def test_active_manifest_runtime_root_resolves_to_artifact_dir(tmp_path):

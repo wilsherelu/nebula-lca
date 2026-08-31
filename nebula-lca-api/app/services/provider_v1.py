@@ -1031,6 +1031,9 @@ def solve_provider(
                 scaled_exchanges=response.scaled_exchanges,
                 inventory_totals=response.inventory_totals,
                 exact_flow_resolver=exact_elementary_flow,
+                consumer_graph_hash=consumer_graph_hash,
+                provider_graph_hash=provider_graph_hash,
+                provider_commit=engine_identity().commit,
             )
         except ProviderEf31Error as exc:
             raise ProviderContractError(422, exc.code, exc.message, **exc.details) from exc
