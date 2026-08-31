@@ -218,6 +218,107 @@ describe("normalizeGraphPayload", () => {
     expect(useLcaGraphStore.getState().exportGraph().exchanges).toHaveLength(1);
   });
 
+  it("preserves a market output Flow version identity after loading and moving a node", () => {
+    const graph = {
+      functionalUnit: "1 MJ electricity",
+      nodes: [
+        {
+          id: "market",
+          node_kind: "market_process",
+          mode: "normalized",
+          process_uuid: "market-process",
+          name: "electricity supply",
+          location: "CN",
+          reference_product: "electricity",
+          inputs: [],
+          outputs: [{
+            id: "market-output",
+            name: "electricity",
+            flowUuid: "electricity-flow",
+            flow_source_namespace: "benchmark.namespace",
+            flow_version: "benchmark-1",
+            flow_property_uuid: "energy-property",
+            flow_property_version: "property-1",
+            unit_group_uuid: "energy-units",
+            unit_group_version: "units-1",
+            direction: "output",
+            type: "technosphere",
+            amount: 1,
+            unit: "MJ",
+            unitGroup: "Units of energy",
+            showOnNode: true,
+            isProduct: true,
+          }],
+        },
+        {
+          id: "consumer",
+          node_kind: "unit_process",
+          mode: "balanced",
+          process_uuid: "consumer-process",
+          name: "consumer",
+          location: "CN",
+          reference_product: "product",
+          inputs: [{
+            id: "consumer-input",
+            name: "electricity",
+            flowUuid: "electricity-flow",
+            flow_source_namespace: "benchmark.namespace",
+            flow_version: "benchmark-1",
+            flow_property_uuid: "energy-property",
+            flow_property_version: "property-1",
+            unit_group_uuid: "energy-units",
+            unit_group_version: "units-1",
+            direction: "input",
+            type: "technosphere",
+            amount: 1,
+            unit: "MJ",
+            unitGroup: "Units of energy",
+            showOnNode: true,
+          }],
+          outputs: [],
+        },
+      ],
+      exchanges: [{
+        id: "electricity-edge",
+        fromNode: "market",
+        toNode: "consumer",
+        source_port_id: "market-output",
+        target_port_id: "consumer-input",
+        flowUuid: "electricity-flow",
+        flowName: "electricity",
+        quantityMode: "single",
+        amount: 1,
+        unit: "MJ",
+        type: "technosphere",
+        allocation: "none",
+      }],
+      metadata: {},
+    } as unknown as LcaGraphPayload;
+
+    useLcaGraphStore.getState().importGraph(normalizeGraphPayload(graph));
+    useLcaGraphStore.getState().onNodesChange([{
+      id: "market",
+      type: "position",
+      position: { x: 320, y: 180 },
+    }]);
+
+    const exported = useLcaGraphStore.getState().exportGraph();
+    const marketOutput = exported.nodes.find((node) => node.id === "market")?.outputs[0];
+    const consumerInput = exported.nodes.find((node) => node.id === "consumer")?.inputs[0];
+    expect(marketOutput).toMatchObject({
+      flowSourceNamespace: "benchmark.namespace",
+      flowVersion: "benchmark-1",
+      flowPropertyUuid: "energy-property",
+      flowPropertyVersion: "property-1",
+      unitGroupUuid: "energy-units",
+      unitGroupVersion: "units-1",
+    });
+    expect(consumerInput).toMatchObject({
+      flowSourceNamespace: "benchmark.namespace",
+      flowVersion: "benchmark-1",
+    });
+  });
+
   it("preserves authoritative unit groups when preparing a converted graph for calculation", () => {
     const graph = {
       functionalUnit: "1 kg product",

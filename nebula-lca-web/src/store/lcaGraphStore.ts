@@ -1442,10 +1442,17 @@ const sanitizeMarketNode = (node: Node<LcaNodeData>): Node<LcaNodeData> => {
     undefined;
   const seedUnit = preferredOutput?.unit || firstInput?.unit || "kg";
   const seedUnitGroup = resolveCanonicalUnitGroup();
+  const versionIdentitySource = preferredOutput ?? firstOutput ?? firstInput;
 
   const canonicalOutput: FlowPort = {
     id: preferredOutput?.id || firstOutput?.id || `out_${uid().slice(0, 8)}`,
     flowUuid: seedFlowUuid,
+    flowSourceNamespace: versionIdentitySource?.flowSourceNamespace,
+    flowVersion: versionIdentitySource?.flowVersion,
+    flowPropertyUuid: versionIdentitySource?.flowPropertyUuid,
+    flowPropertyVersion: versionIdentitySource?.flowPropertyVersion,
+    unitGroupUuid: versionIdentitySource?.unitGroupUuid,
+    unitGroupVersion: versionIdentitySource?.unitGroupVersion,
     name: seedName,
     flowNameEn: seedFlowNameEn,
     unit: seedUnit,
