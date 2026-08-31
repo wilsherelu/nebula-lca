@@ -21,6 +21,11 @@ MASS_PROPERTY_VERSION = "03.00.003"
 MASS_GROUP_UUID = "93a60a57-a4c8-11da-a746-0800200c9a66"
 MASS_GROUP_VERSION = "03.00.003"
 MASS_GROUP_NAME = "Units of mass"
+ENERGY_PROPERTY_UUID = "b269a229-13ff-5919-b9ae-42167a693e16"
+ENERGY_PROPERTY_VERSION = "benchmark-1"
+ENERGY_GROUP_UUID = "25c4989f-fc43-526b-b8d3-4c7091d01e9b"
+ENERGY_GROUP_VERSION = "benchmark-1"
+ENERGY_GROUP_NAME = "Units of energy"
 CO2_UUID = "08a91e70-3ddc-11dd-923d-0050c2490048"
 CO2_VERSION = "03.00.004"
 CUSTOM_NAMESPACE = "nebula.refinery-paper-benchmark"
@@ -38,6 +43,8 @@ FLOW_SPECS = {
     "byproduct_h2": "Reformer by-product hydrogen",
     "blendstock": "External gasoline blendstock",
     "gasoline": "Finished gasoline",
+    "electricity": "Refinery electricity supply",
+    "recycle_naphtha": "Recycle naphtha",
 }
 
 
@@ -96,19 +103,25 @@ def _custom_port(
     direction: str,
     is_product: bool = False,
     allocation_factor: float | None = None,
+    unit: str = "kg",
+    unit_group: str = MASS_GROUP_NAME,
+    flow_property_uuid: str = MASS_PROPERTY_UUID,
+    flow_property_version: str = MASS_PROPERTY_VERSION,
+    unit_group_uuid: str = MASS_GROUP_UUID,
+    unit_group_version: str = MASS_GROUP_VERSION,
 ) -> dict[str, Any]:
     port = {
         "id": port_id,
         "flowUuid": flow_uuid,
         "flowSourceNamespace": CUSTOM_NAMESPACE,
         "flowVersion": CUSTOM_VERSION,
-        "flowPropertyUuid": MASS_PROPERTY_UUID,
-        "flowPropertyVersion": MASS_PROPERTY_VERSION,
-        "unitGroupUuid": MASS_GROUP_UUID,
-        "unitGroupVersion": MASS_GROUP_VERSION,
+        "flowPropertyUuid": flow_property_uuid,
+        "flowPropertyVersion": flow_property_version,
+        "unitGroupUuid": unit_group_uuid,
+        "unitGroupVersion": unit_group_version,
         "name": name,
-        "unit": "kg",
-        "unitGroup": MASS_GROUP_NAME,
+        "unit": unit,
+        "unitGroup": unit_group,
         "amount": amount,
         "type": "technosphere",
         "direction": direction,
@@ -149,6 +162,9 @@ def _edge(
     flow_uuid: str,
     flow_name: str,
     amount: float,
+    *,
+    quantity_mode: str = "single",
+    unit: str = "kg",
 ) -> dict[str, Any]:
     return {
         "id": edge_id,
@@ -158,21 +174,48 @@ def _edge(
         "targetHandle": f"in:{target_port}",
         "flowUuid": flow_uuid,
         "flowName": flow_name,
-        "quantityMode": "dual",
+        "quantityMode": quantity_mode,
         "amount": amount,
         "providerAmount": amount,
         "consumerAmount": amount,
-        "unit": "kg",
+        "unit": unit,
         "type": "technosphere",
         "allocation": "none",
     }
 
 
-def build_processes(flows: dict[str, str]) -> dict[str, dict[str, Any]]:
+def build_processes(
+    flows: dict[str, str],
+    *,
+    include_electricity: bool = False,
+    include_recycle: bool = False,
+) -> dict[str, dict[str, Any]]:
+    electricity_supply = {
+        "id": "node-electricity-supply",
+        "node_kind": "market_process",
+        "mode": "normalized",
+        "process_uuid": "market_refinery_electricity_supply",
+        "name": "Refinery electricity supply chain",
+        "location": "CN",
+        "reference_product": FLOW_SPECS["electricity"],
+        "inputs": [],
+        "outputs": [
+            _custom_port(
+                flows["electricity"], FLOW_SPECS["electricity"], 1.0,
+                port_id="out-electricity", direction="output", is_product=True,
+                unit="MJ", unit_group=ENERGY_GROUP_NAME,
+                flow_property_uuid=ENERGY_PROPERTY_UUID,
+                flow_property_version=ENERGY_PROPERTY_VERSION,
+                unit_group_uuid=ENERGY_GROUP_UUID,
+                unit_group_version=ENERGY_GROUP_VERSION,
+            )
+        ],
+        "emissions": [_co2_port("electricity-supply", 0.004)],
+    }
     distillation = {
         "id": "node-distillation",
         "node_kind": "unit_process",
-        "mode": "normalized",
+        "mode": "balanced",
         "process_uuid": "paper-refinery-distillation",
         "name": "Atmospheric distillation",
         "location": "CN",
@@ -180,23 +223,23 @@ def build_processes(flows: dict[str, str]) -> dict[str, dict[str, Any]]:
         "allocation_method": "unit_group_physical_v1",
         "inputs": [
             _custom_port(
-                flows["crude"], FLOW_SPECS["crude"], 1.0,
+                flows["crude"], FLOW_SPECS["crude"], 4.2,
                 port_id="in-crude", direction="input",
             )
         ],
         "outputs": [
             _custom_port(
-                flows["naphtha"], FLOW_SPECS["naphtha"], 0.25,
+                flows["naphtha"], FLOW_SPECS["naphtha"], 1.05,
                 port_id="out-naphtha", direction="output", is_product=True,
                 allocation_factor=0.25,
             ),
             _custom_port(
-                flows["diesel_cut"], FLOW_SPECS["diesel_cut"], 0.45,
+                flows["diesel_cut"], FLOW_SPECS["diesel_cut"], 1.89,
                 port_id="out-diesel-cut", direction="output", is_product=True,
                 allocation_factor=0.45,
             ),
             _custom_port(
-                flows["residue"], FLOW_SPECS["residue"], 0.30,
+                flows["residue"], FLOW_SPECS["residue"], 1.26,
                 port_id="out-residue", direction="output", is_product=True,
                 allocation_factor=0.30,
             ),
@@ -206,7 +249,7 @@ def build_processes(flows: dict[str, str]) -> dict[str, dict[str, Any]]:
     hydrotreating = {
         "id": "node-hydrotreating",
         "node_kind": "unit_process",
-        "mode": "normalized",
+        "mode": "balanced",
         "process_uuid": "paper-refinery-hydrotreating",
         "name": "Naphtha hydrotreating",
         "location": "CN",
@@ -232,12 +275,11 @@ def build_processes(flows: dict[str, str]) -> dict[str, dict[str, Any]]:
     reforming = {
         "id": "node-reforming",
         "node_kind": "unit_process",
-        "mode": "normalized",
+        "mode": "balanced",
         "process_uuid": "paper-refinery-reforming",
         "name": "Catalytic reforming",
         "location": "CN",
         "reference_product": FLOW_SPECS["reformate"],
-        "allocation_method": "unit_group_physical_v1",
         "inputs": [
             _custom_port(
                 flows["hydrotreated_naphtha"], FLOW_SPECS["hydrotreated_naphtha"], 1.0,
@@ -248,20 +290,19 @@ def build_processes(flows: dict[str, str]) -> dict[str, dict[str, Any]]:
             _custom_port(
                 flows["reformate"], FLOW_SPECS["reformate"], 1.0,
                 port_id="out-reformate", direction="output", is_product=True,
-                allocation_factor=1.0 / 1.03,
             ),
             _custom_port(
                 flows["byproduct_h2"], FLOW_SPECS["byproduct_h2"], 0.03,
-                port_id="out-byproduct-h2", direction="output", is_product=True,
-                allocation_factor=0.03 / 1.03,
+                port_id="out-byproduct-h2", direction="output",
             ),
         ],
         "emissions": [_co2_port("reforming", 0.05)],
     }
+    reforming["outputs"][0]["externalSaleAmount"] = 0.20
     blending = {
         "id": "node-blending",
         "node_kind": "unit_process",
-        "mode": "normalized",
+        "mode": "balanced",
         "process_uuid": "paper-refinery-blending",
         "name": "Gasoline blending",
         "location": "CN",
@@ -284,12 +325,64 @@ def build_processes(flows: dict[str, str]) -> dict[str, dict[str, Any]]:
         ],
         "emissions": [_co2_port("blending", 0.01)],
     }
-    return {
+    if include_electricity:
+        electricity_amounts = {
+            "distillation": 8.0,
+            "hydrotreating": 3.0,
+            "reforming": 2.0,
+            "blending": 0.5,
+        }
+        for key, node in {
+            "distillation": distillation,
+            "hydrotreating": hydrotreating,
+            "reforming": reforming,
+            "blending": blending,
+        }.items():
+            node["inputs"].append(
+                _custom_port(
+                    flows["electricity"], FLOW_SPECS["electricity"], electricity_amounts[key],
+                    port_id="in-electricity", direction="input",
+                    unit="MJ", unit_group=ENERGY_GROUP_NAME,
+                    flow_property_uuid=ENERGY_PROPERTY_UUID,
+                    flow_property_version=ENERGY_PROPERTY_VERSION,
+                    unit_group_uuid=ENERGY_GROUP_UUID,
+                    unit_group_version=ENERGY_GROUP_VERSION,
+                )
+            )
+
+    if include_recycle:
+        naphtha_input = next(port for port in hydrotreating["inputs"] if port["id"] == "in-naphtha")
+        naphtha_input["amount"] = 0.80
+        hydrotreating["inputs"].append(
+            _custom_port(
+                flows["recycle_naphtha"], FLOW_SPECS["recycle_naphtha"], 0.20,
+                port_id="in-recycle-naphtha", direction="input",
+            )
+        )
+        distillation["outputs"][0]["externalSaleAmount"] = 0.25
+        reforming["allocation_method"] = "unit_group_physical_v1"
+        reformate_output = next(port for port in reforming["outputs"] if port["id"] == "out-reformate")
+        reformate_output["amount"] = 0.80
+        reformate_output["allocationFactor"] = 0.80
+        reformate_output["allocationBasis"] = {"method": "quantity"}
+        reformate_output.pop("externalSaleAmount", None)
+        reforming["outputs"].append(
+            _custom_port(
+                flows["recycle_naphtha"], FLOW_SPECS["recycle_naphtha"], 0.20,
+                port_id="out-recycle-naphtha", direction="output", is_product=True,
+                allocation_factor=0.20,
+            )
+        )
+
+    processes = {
         "distillation": distillation,
         "hydrotreating": hydrotreating,
         "reforming": reforming,
         "blending": blending,
     }
+    if include_electricity:
+        return {"electricity_supply": electricity_supply, **processes}
+    return processes
 
 
 def _metadata(target_key: str, flows: dict[str, str], stage: str) -> dict[str, Any]:
@@ -312,53 +405,86 @@ def _metadata(target_key: str, flows: dict[str, str], stage: str) -> dict[str, A
 
 
 def build_progressive_graphs(flows: dict[str, str]) -> dict[str, dict[str, Any]]:
-    processes = build_processes(flows)
-    edge_distillation_to_hydrotreating = _edge(
-        "edge-naphtha",
-        "node-distillation", "out-naphtha",
-        "node-hydrotreating", "in-naphtha",
-        flows["naphtha"], FLOW_SPECS["naphtha"], 1.05,
-    )
-    edge_hydrotreating_to_reforming = _edge(
-        "edge-hydrotreated",
-        "node-hydrotreating", "out-hydrotreated",
-        "node-reforming", "in-hydrotreated",
-        flows["hydrotreated_naphtha"], FLOW_SPECS["hydrotreated_naphtha"], 1.0,
-    )
-    edge_reforming_to_blending = _edge(
-        "edge-reformate",
-        "node-reforming", "out-reformate",
-        "node-blending", "in-reformate",
-        flows["reformate"], FLOW_SPECS["reformate"], 0.80,
-    )
+    base = build_processes(flows)
+    mixed = build_processes(flows, include_electricity=True)
+    recycle = build_processes(flows, include_electricity=True, include_recycle=True)
+
+    def foreground_edges(processes: dict[str, dict[str, Any]], *, recycle_enabled: bool) -> list[dict[str, Any]]:
+        naphtha_amount = 0.80 if recycle_enabled else 1.05
+        edges = [
+            _edge(
+                "edge-naphtha",
+                "node-distillation", "out-naphtha",
+                "node-hydrotreating", "in-naphtha",
+                flows["naphtha"], FLOW_SPECS["naphtha"], naphtha_amount,
+            ),
+            _edge(
+                "edge-hydrotreated",
+                "node-hydrotreating", "out-hydrotreated",
+                "node-reforming", "in-hydrotreated",
+                flows["hydrotreated_naphtha"], FLOW_SPECS["hydrotreated_naphtha"], 1.0,
+            ),
+            _edge(
+                "edge-reformate",
+                "node-reforming", "out-reformate",
+                "node-blending", "in-reformate",
+                flows["reformate"], FLOW_SPECS["reformate"], 0.80,
+            ),
+        ]
+        if "electricity_supply" in processes:
+            for key in ("distillation", "hydrotreating", "reforming", "blending"):
+                target = processes[key]
+                port = next(row for row in target["inputs"] if row["id"] == "in-electricity")
+                edges.append(
+                    _edge(
+                        f"edge-electricity-{key}",
+                        "node-electricity-supply", "out-electricity",
+                        target["id"], "in-electricity",
+                        flows["electricity"], FLOW_SPECS["electricity"], float(port["amount"]),
+                        quantity_mode="dual", unit="MJ",
+                    )
+                )
+        if recycle_enabled:
+            edges.append(
+                _edge(
+                    "edge-recycle-naphtha",
+                    "node-reforming", "out-recycle-naphtha",
+                    "node-hydrotreating", "in-recycle-naphtha",
+                    flows["recycle_naphtha"], FLOW_SPECS["recycle_naphtha"], 0.20,
+                )
+            )
+        return edges
+
     return {
         "case_01_unit_process": {
             "functionalUnit": f"1 kg {FLOW_SPECS['naphtha']}",
-            "nodes": [processes["distillation"]],
+            "nodes": [base["distillation"]],
             "exchanges": [],
             "metadata": _metadata("naphtha", flows, "case_01_unit_process"),
         },
-        "case_02_two_process": {
-            "functionalUnit": f"1 kg {FLOW_SPECS['hydrotreated_naphtha']}",
-            "nodes": [processes["distillation"], processes["hydrotreating"]],
-            "exchanges": [edge_distillation_to_hydrotreating],
-            "metadata": _metadata("hydrotreated_naphtha", flows, "case_02_two_process"),
-        },
-        "case_03_four_process": {
+        "case_02_balanced_chain": {
             "functionalUnit": f"1 kg {FLOW_SPECS['gasoline']}",
-            "nodes": list(processes.values()),
-            "exchanges": [
-                edge_distillation_to_hydrotreating,
-                edge_hydrotreating_to_reforming,
-                edge_reforming_to_blending,
-            ],
-            "metadata": _metadata("gasoline", flows, "case_03_four_process"),
+            "nodes": list(base.values()),
+            "exchanges": foreground_edges(base, recycle_enabled=False),
+            "metadata": _metadata("gasoline", flows, "case_02_balanced_chain"),
+        },
+        "case_03_mixed_normalized_supply": {
+            "functionalUnit": f"1 kg {FLOW_SPECS['gasoline']}",
+            "nodes": list(mixed.values()),
+            "exchanges": foreground_edges(mixed, recycle_enabled=False),
+            "metadata": _metadata("gasoline", flows, "case_03_mixed_normalized_supply"),
+        },
+        "case_04_recycle_loop": {
+            "functionalUnit": f"1 kg {FLOW_SPECS['gasoline']}",
+            "nodes": list(recycle.values()),
+            "exchanges": foreground_edges(recycle, recycle_enabled=True),
+            "metadata": _metadata("gasoline", flows, "case_04_recycle_loop"),
         },
     }
 
 
 def build_pts_compile_graph(flows: dict[str, str]) -> dict[str, Any]:
-    processes = build_processes(flows)
+    processes = build_processes(flows, include_electricity=True, include_recycle=True)
     pts_uuid = "paper-refinery-upgrading-pts"
     shell = {
         "id": "node-upgrading-pts",
@@ -371,17 +497,26 @@ def build_pts_compile_graph(flows: dict[str, str]) -> dict[str, Any]:
         "reference_product": FLOW_SPECS["reformate"],
         "inputs": [
             _custom_port(
-                flows["naphtha"], FLOW_SPECS["naphtha"], 1.05,
+                flows["naphtha"], FLOW_SPECS["naphtha"], 0.80,
                 port_id="in-naphtha", direction="input",
             ),
             _custom_port(
                 flows["makeup_h2"], FLOW_SPECS["makeup_h2"], 0.02,
                 port_id="in-makeup-h2", direction="input",
             ),
+            _custom_port(
+                flows["electricity"], FLOW_SPECS["electricity"], 5.0,
+                port_id="in-electricity", direction="input",
+                unit="MJ", unit_group=ENERGY_GROUP_NAME,
+                flow_property_uuid=ENERGY_PROPERTY_UUID,
+                flow_property_version=ENERGY_PROPERTY_VERSION,
+                unit_group_uuid=ENERGY_GROUP_UUID,
+                unit_group_version=ENERGY_GROUP_VERSION,
+            ),
         ],
         "outputs": [
             _custom_port(
-                flows["reformate"], FLOW_SPECS["reformate"], 1.0,
+                flows["reformate"], FLOW_SPECS["reformate"], 0.80,
                 port_id="out-reformate", direction="output", is_product=True,
             ),
             _custom_port(
@@ -397,6 +532,12 @@ def build_pts_compile_graph(flows: dict[str, str]) -> dict[str, Any]:
         "node-reforming", "in-hydrotreated",
         flows["hydrotreated_naphtha"], FLOW_SPECS["hydrotreated_naphtha"], 1.0,
     )
+    recycle_edge = _edge(
+        "edge-recycle-naphtha",
+        "node-reforming", "out-recycle-naphtha",
+        "node-hydrotreating", "in-recycle-naphtha",
+        flows["recycle_naphtha"], FLOW_SPECS["recycle_naphtha"], 0.20,
+    )
     graph = {
         "functionalUnit": "Naphtha upgrading PTS",
         "nodes": [shell],
@@ -410,7 +551,7 @@ def build_pts_compile_graph(flows: dict[str, str]) -> dict[str, Any]:
                     "parentPtsNodeId": shell["id"],
                     "name": "Naphtha upgrading internal graph",
                     "nodes": [processes["hydrotreating"], processes["reforming"]],
-                    "edges": [internal_edge],
+                    "edges": [internal_edge, recycle_edge],
                 }
             ],
         },
@@ -430,13 +571,13 @@ def build_pts_main_graph(
     shell_node: dict[str, Any],
     pts_compile_graph: dict[str, Any],
 ) -> dict[str, Any]:
-    processes = build_processes(flows)
+    processes = build_processes(flows, include_electricity=True, include_recycle=True)
     shell = json.loads(json.dumps(shell_node))
     shell["id"] = "node-upgrading-pts"
     shell["pts_uuid"] = "paper-refinery-upgrading-pts"
     shell["process_uuid"] = "paper-refinery-upgrading-pts"
 
-    outer_nodes = [processes["distillation"], shell, processes["blending"]]
+    outer_nodes = [processes["electricity_supply"], processes["distillation"], shell, processes["blending"]]
     for node in outer_nodes:
         for port in [*node.get("inputs", []), *node.get("outputs", []), *node.get("emissions", [])]:
             if port.get("flowUuid") != CO2_UUID:
@@ -451,21 +592,48 @@ def build_pts_main_graph(
         port for port in shell.get("outputs", [])
         if port.get("flowUuid") == flows["reformate"]
     )
+    electricity_input = next(
+        port for port in shell.get("inputs", [])
+        if port.get("flowUuid") == flows["electricity"]
+    )
     edges = [
+        _edge(
+            "edge-electricity-distillation",
+            "node-electricity-supply", "out-electricity",
+            "node-distillation", "in-electricity",
+            flows["electricity"], FLOW_SPECS["electricity"], 8.0,
+            quantity_mode="dual", unit="MJ",
+        ),
+        _edge(
+            "edge-electricity-pts",
+            "node-electricity-supply", "out-electricity",
+            shell["id"], str(electricity_input["id"]),
+            flows["electricity"], FLOW_SPECS["electricity"], 5.0,
+            quantity_mode="dual", unit="MJ",
+        ),
+        _edge(
+            "edge-electricity-blending",
+            "node-electricity-supply", "out-electricity",
+            "node-blending", "in-electricity",
+            flows["electricity"], FLOW_SPECS["electricity"], 0.5,
+            quantity_mode="dual", unit="MJ",
+        ),
         _edge(
             "edge-naphtha-to-pts",
             "node-distillation", "out-naphtha",
             shell["id"], str(naphtha_input["id"]),
-            flows["naphtha"], FLOW_SPECS["naphtha"], 1.05,
+            flows["naphtha"], FLOW_SPECS["naphtha"], 0.80,
+            quantity_mode="dual",
         ),
         _edge(
             "edge-pts-to-blending",
             shell["id"], str(reformate_output["id"]),
             "node-blending", "in-reformate",
             flows["reformate"], FLOW_SPECS["reformate"], 0.80,
+            quantity_mode="dual",
         ),
     ]
-    metadata = _metadata("gasoline", flows, "case_04_pts_compiled")
+    metadata = _metadata("gasoline", flows, "case_05_pts_compiled")
     metadata["canvases"] = pts_compile_graph["metadata"]["canvases"]
     return {
         "functionalUnit": f"1 kg {FLOW_SPECS['gasoline']}",
@@ -552,36 +720,51 @@ def _connection_residuals(
     }
     node_by_id = {node["id"]: node for node in graph.get("nodes", [])}
     rows: list[dict[str, Any]] = []
+    expected_by_provider: dict[str, float] = {}
     for edge in graph.get("exchanges", []):
         source_port = str(edge["sourceHandle"]).split(":", 1)[-1]
         target_port = str(edge["targetHandle"]).split(":", 1)[-1]
         source_id = f"{edge['fromNode']}::{source_port}"
         target_id = f"{edge['toNode']}::{target_port}"
         source_node = node_by_id[edge["fromNode"]]
-        product_ports = [port for port in source_node.get("outputs", []) if port.get("isProduct")]
-        selected_port = next(port for port in product_ports if port["id"] == source_port)
-        total_product_amount = sum(max(float(port.get("amount") or 0.0), 0.0) for port in product_ports)
-        baseline_fraction = float(selected_port.get("amount") or 0.0) / total_product_amount
-        allocation_fraction = float(selected_port.get("allocationFactor") or baseline_fraction)
-        allocation_scale = allocation_fraction / baseline_fraction
         source_process_uuid = source_node["process_uuid"]
-        source_amount = abs(activities[source_process_uuid] * allocation_scale)
         target_amount = abs(float(scaled[target_id]["scaled_amount"]))
+        product_ports = [port for port in source_node.get("outputs", []) if port.get("isProduct")]
+        selected_port = next((port for port in product_ports if port["id"] == source_port), None)
+        allocation_scale = 1.0
+        if selected_port is not None and product_ports:
+            total_product_amount = sum(max(float(port.get("amount") or 0.0), 0.0) for port in product_ports)
+            if total_product_amount > 0:
+                baseline_fraction = float(selected_port.get("amount") or 0.0) / total_product_amount
+                allocation_fraction = float(selected_port.get("allocationFactor") or baseline_fraction)
+                if baseline_fraction > 0:
+                    allocation_scale = allocation_fraction / baseline_fraction
+        provider_requirement = target_amount * allocation_scale
+        expected_by_provider[source_process_uuid] = (
+            expected_by_provider.get(source_process_uuid, 0.0) + provider_requirement
+        )
         rows.append(
             {
                 "edge_id": edge["id"],
                 "flow_uuid": edge["flowUuid"],
                 "source_exchange_id": source_id,
                 "target_exchange_id": target_id,
+                "source_process_uuid": source_process_uuid,
                 "source_activity_amount": activities[source_process_uuid],
                 "provider_allocation_scale": allocation_scale,
-                "source_normalized_supply_amount": source_amount,
+                "provider_requirement_contribution": provider_requirement,
                 "source_raw_exchange_scaled_amount": abs(float(scaled[source_id]["scaled_amount"])),
                 "target_scaled_amount": target_amount,
-                "absolute_residual": abs(source_amount - target_amount),
                 "unit": edge["unit"],
             }
         )
+    for row in rows:
+        process_uuid = row["source_process_uuid"]
+        expected = expected_by_provider[process_uuid]
+        actual = abs(activities[process_uuid])
+        row["provider_aggregate_expected_activity"] = expected
+        row["provider_aggregate_actual_activity"] = actual
+        row["absolute_residual"] = abs(actual - expected)
     return rows
 
 
@@ -637,6 +820,62 @@ def _audit_case(
     }
 
 
+def _compare_recycle_solve(
+    open_loop: dict[str, Any],
+    recycle_loop: dict[str, Any],
+) -> dict[str, Any]:
+    def activities(result: dict[str, Any]) -> dict[str, float]:
+        return {
+            str(row["process_uuid"]): float(row["activity_amount"])
+            for row in result.get("activity_vector", [])
+        }
+
+    def boundary(result: dict[str, Any]) -> dict[str, float]:
+        totals: dict[str, float] = {}
+        for row in result.get("scaled_exchanges", []):
+            if row.get("boundary_role") != "boundary":
+                continue
+            key = f"{row.get('exchange_type')}::{row.get('flow_uuid')}::{row.get('unit')}"
+            totals[key] = totals.get(key, 0.0) + float(row.get("scaled_amount") or 0.0)
+        return totals
+
+    open_activities = activities(open_loop)
+    recycle_activities = activities(recycle_loop)
+    open_boundary = boundary(open_loop)
+    recycle_boundary = boundary(recycle_loop)
+    activity_keys = sorted(set(open_activities) | set(recycle_activities))
+    boundary_keys = sorted(set(open_boundary) | set(recycle_boundary))
+    activity_rows = [
+        {
+            "process_uuid": key,
+            "open_loop": open_activities.get(key, 0.0),
+            "recycle_loop": recycle_activities.get(key, 0.0),
+            "difference": recycle_activities.get(key, 0.0) - open_activities.get(key, 0.0),
+        }
+        for key in activity_keys
+    ]
+    boundary_rows = [
+        {
+            "identity": key,
+            "open_loop": open_boundary.get(key, 0.0),
+            "recycle_loop": recycle_boundary.get(key, 0.0),
+            "difference": recycle_boundary.get(key, 0.0) - open_boundary.get(key, 0.0),
+        }
+        for key in boundary_keys
+    ]
+    tolerance = 1e-12
+    return {
+        "schema_version": "nebula.refinery-paper-case.recycle-comparison.v1",
+        "open_loop_run_id": open_loop.get("run_id"),
+        "recycle_loop_run_id": recycle_loop.get("run_id"),
+        "activity_vector": activity_rows,
+        "boundary_exchanges": boundary_rows,
+        "activity_vector_changed": any(abs(row["difference"]) > tolerance for row in activity_rows),
+        "boundary_exchanges_changed": any(abs(row["difference"]) > tolerance for row in boundary_rows),
+        "tolerance": tolerance,
+    }
+
+
 def _sankey_data(graph: dict[str, Any], solve_result: dict[str, Any]) -> dict[str, Any]:
     scaled = {row["exchange_id"]: row for row in solve_result["scaled_exchanges"]}
     activities = {
@@ -655,16 +894,18 @@ def _sankey_data(graph: dict[str, Any], solve_result: dict[str, Any]) -> dict[st
     process_uuid_by_node = {node["id"]: node["process_uuid"] for node in graph.get("nodes", [])}
     for edge in graph.get("exchanges", []):
         source_port = str(edge["sourceHandle"]).split(":", 1)[-1]
-        exchange_id = f"{edge['fromNode']}::{source_port}"
+        target_port = str(edge["targetHandle"]).split(":", 1)[-1]
+        source_exchange_id = f"{edge['fromNode']}::{source_port}"
+        target_exchange_id = f"{edge['toNode']}::{target_port}"
         links.append(
             {
                 "source": process_uuid_by_node[edge["fromNode"]],
                 "target": process_uuid_by_node[edge["toNode"]],
                 "label": edge["flowName"],
-                "amount": abs(float(scaled[exchange_id]["scaled_amount"])),
+                "amount": abs(float(scaled[target_exchange_id]["scaled_amount"])),
                 "unit": edge["unit"],
-                "scaled_exchange_ids": [exchange_id],
-                "boundary_role": scaled[exchange_id]["boundary_role"],
+                "scaled_exchange_ids": [source_exchange_id, target_exchange_id],
+                "boundary_role": scaled[target_exchange_id]["boundary_role"],
             }
         )
     environment_id = "environment-air"
@@ -776,6 +1017,7 @@ def _create_custom_flows(base_url: str) -> tuple[dict[str, str], list[dict[str, 
     ids: dict[str, str] = {}
     receipts: list[dict[str, Any]] = []
     for key, name in FLOW_SPECS.items():
+        is_energy = key == "electricity"
         response = _request(
             base_url,
             "/api/flows",
@@ -784,8 +1026,8 @@ def _create_custom_flows(base_url: str) -> tuple[dict[str, str], list[dict[str, 
                 "flow_name": name,
                 "flow_name_en": name,
                 "flow_type": "product_flow",
-                "unitGroupUuid": MASS_GROUP_NAME,
-                "default_unit": "kg",
+                "unitGroupUuid": ENERGY_GROUP_NAME if is_energy else MASS_GROUP_NAME,
+                "default_unit": "MJ" if is_energy else "kg",
                 "confirmCreate": True,
                 "sourcePolicy": "open_mixed",
             },
@@ -908,7 +1150,7 @@ def _compare_process_lcia(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Create four progressive refinery paper-case projects through the real Nebula LCA API."
+        description="Create five progressive refinery paper-case projects through the real Nebula LCA API."
     )
     parser.add_argument("--base-url", default="http://127.0.0.1:8001")
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
@@ -940,14 +1182,16 @@ def main() -> int:
 
     case_defs = [
         ("case_01_unit_process", "01 Unit process - distillation", "paper-refinery-distillation", 1),
-        ("case_02_two_process", "02 Two processes - hydrotreating", "paper-refinery-hydrotreating", 2),
-        ("case_03_four_process", "03 Four-process gasoline chain", "paper-refinery-blending", 4),
+        ("case_02_balanced_chain", "02 Balanced refinery chain", "paper-refinery-blending", 4),
+        ("case_03_mixed_normalized_supply", "03 Balanced chain with normalized electricity supply", "paper-refinery-blending", 5),
+        ("case_04_recycle_loop", "04 Recycle-loop comparison", "paper-refinery-blending", 5),
     ]
     records: list[dict[str, Any]] = []
     parent_id: str | None = None
     expanded_case_result: dict[str, Any] | None = None
     expanded_case_graph: dict[str, Any] | None = None
     expanded_model_result: dict[str, Any] | None = None
+    open_loop_result: dict[str, Any] | None = None
     for key, suffix, target_process, process_count in case_defs:
         graph = graphs[key]
         name = f"{args.project_prefix} - {suffix} - {run_token}"
@@ -969,6 +1213,14 @@ def main() -> int:
             scenario_id=key,
         )
         audit = _audit_case(graph, solve_result, expected_process_count=process_count)
+        recycle_comparison = None
+        if key == "case_04_recycle_loop":
+            if open_loop_result is None:
+                raise RuntimeError("Case 4 requires the solved Case 3 open-loop baseline")
+            recycle_comparison = _compare_recycle_solve(open_loop_result, solve_result)
+            audit["checks"]["recycle_activity_vector_changed"] = recycle_comparison["activity_vector_changed"]
+            audit["checks"]["recycle_boundary_exchanges_changed"] = recycle_comparison["boundary_exchanges_changed"]
+            audit["status"] = "passed" if all(audit["checks"].values()) else "failed"
         case_dir = output_dir / key
         _write_case_pack(
             case_dir,
@@ -980,6 +1232,8 @@ def main() -> int:
             solve_result=solve_result,
             audit=audit,
         )
+        if recycle_comparison is not None:
+            _write_json(case_dir / "recycle_comparison.json", recycle_comparison)
         if args.run_model:
             model_result = _request(
                 args.base_url,
@@ -992,7 +1246,7 @@ def main() -> int:
                 },
             )
             _write_json(case_dir / "model_run_result.json", model_result)
-            if key == "case_03_four_process":
+            if key == "case_04_recycle_loop":
                 expanded_model_result = model_result
         records.append(
             {
@@ -1005,13 +1259,15 @@ def main() -> int:
                 "run_id": solve_result.get("run_id"),
             }
         )
-        if key == "case_03_four_process":
+        if key == "case_04_recycle_loop":
             expanded_case_result = solve_result
             expanded_case_graph = graph
+        if key == "case_03_mixed_normalized_supply":
+            open_loop_result = solve_result
         parent_id = project["project_id"]
 
     assert parent_id is not None
-    pts_project_name = f"{args.project_prefix} - 04 PTS compiled upgrading - {run_token}"
+    pts_project_name = f"{args.project_prefix} - 05 PTS compiled recycle upgrading - {run_token}"
     pts_project = _request(
         args.base_url,
         f"/api/projects/{urllib.parse.quote(parent_id)}/duplicate",
@@ -1049,7 +1305,7 @@ def main() -> int:
         payload={
             "reference_product": FLOW_SPECS["gasoline"],
             "functional_unit": pts_graph["functionalUnit"],
-            "description": "PTS form of the four-process refinery paper benchmark; hydrotreating and reforming are compiled.",
+            "description": "PTS form of the mixed-mode refinery benchmark; the cyclic hydrotreating-reforming subsystem is compiled.",
         },
     )
     pts_version = _request(
@@ -1058,7 +1314,7 @@ def main() -> int:
         method="POST",
         payload={"graph": pts_graph},
     )
-    pts_case_dir = output_dir / "case_04_pts_compiled"
+    pts_case_dir = output_dir / "case_05_pts_compiled"
     _write_case_pack(
         pts_case_dir,
         project=pts_project,
@@ -1095,7 +1351,7 @@ def main() -> int:
         "compile_matrix_size_is_two": int(compile_result.get("matrix_size") or 0) == 2,
         "published_version_created": int(publish_result.get("published_version") or 0) >= 1,
         "active_publication_bound": publish_result.get("active_published_version") == publish_result.get("published_version"),
-        "main_graph_has_three_nodes": len(pts_graph["nodes"]) == 3,
+        "main_graph_has_four_nodes": len(pts_graph["nodes"]) == 4,
         "internal_canvas_has_two_nodes": len(pts_compile_graph["metadata"]["canvases"][0]["nodes"]) == 2,
         "model_run_completed": (pts_model_result or {}).get("status") == "completed" if args.run_model else True,
         "model_run_has_lcia": (
@@ -1124,7 +1380,7 @@ def main() -> int:
     _write_json(pts_case_dir / "audit_report.json", pts_audit)
     records.append(
         {
-            "case": "case_04_pts_compiled",
+            "case": "case_05_pts_compiled",
             "project_id": pts_project["project_id"],
             "parent_project_id": parent_id,
             "version": int(pts_version["version"]),
