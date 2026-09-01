@@ -1,0 +1,69 @@
+{
+  "project_id": "6a1837f0-9ec1-4920-ade6-d8519d412451",
+  "name": "Paper Refinery Benchmark - 05 PTS compiled recycle upgrading - 20260831T135829Z",
+  "reference_product": "Finished gasoline",
+  "functional_unit": "1 kg Finished gasoline",
+  "system_boundary": "Refinery-inspired foreground benchmark; upstream feed production excluded",
+  "time_representativeness": "Illustrative steady-state basis",
+  "geography": "CN illustrative",
+  "description": "Hypothetical progressive refinery paper case; cloned from the preceding stage.",
+  "source_policy": "open_mixed",
+  "allowed_lcia_scope": "ef31_only",
+  "status": "active",
+  "process_count": 5,
+  "flow_count": 13,
+  "created_at": "2026-08-31T13:58:49.635168",
+  "updated_at": "2026-08-31T13:58:49.633664",
+  "latest_version": 1,
+  "latest_version_created_at": "2026-08-31T13:58:49.636173",
+  "flow_name_sync_needed": true,
+  "outdated_flow_refs_count": 5,
+  "outdated_flow_ref_examples": [
+    {
+      "node_id": "node-electricity-supply",
+      "node_name": "Refinery electricity supply chain",
+      "port_id": "em-co2-electricity-supply",
+      "bucket": "outputs",
+      "flow_uuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+      "expected_flow_name": "kg / 二氧化碳, 化石来源",
+      "actual_port_name": "carbon dioxide (fossil)"
+    },
+    {
+      "node_id": "node-distillation",
+      "node_name": "Atmospheric distillation",
+      "port_id": "em-co2-distillation",
+      "bucket": "outputs",
+      "flow_uuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+      "expected_flow_name": "kg / 二氧化碳, 化石来源",
+      "actual_port_name": "carbon dioxide (fossil)"
+    },
+    {
+      "node_id": "node-hydrotreating",
+      "node_name": "Naphtha hydrotreating",
+      "port_id": "em-co2-hydrotreating",
+      "bucket": "outputs",
+      "flow_uuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+      "expected_flow_name": "kg / 二氧化碳, 化石来源",
+      "actual_port_name": "carbon dioxide (fossil)"
+    },
+    {
+      "node_id": "node-reforming",
+      "node_name": "Catalytic reforming",
+      "port_id": "em-co2-reforming",
+      "bucket": "outputs",
+      "flow_uuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+      "expected_flow_name": "kg / 二氧化碳, 化石来源",
+      "actual_port_name": "carbon dioxide (fossil)"
+    },
+    {
+      "node_id": "node-blending",
+      "node_name": "Gasoline blending",
+      "port_id": "em-co2-blending",
+      "bucket": "outputs",
+      "flow_uuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+      "expected_flow_name": "kg / 二氧化碳, 化石来源",
+      "actual_port_name": "carbon dioxide (fossil)"
+    }
+  ],
+  "parent_project_id": "99774999-5d17-43d1-b9a6-db1fe9f3b88e"
+}

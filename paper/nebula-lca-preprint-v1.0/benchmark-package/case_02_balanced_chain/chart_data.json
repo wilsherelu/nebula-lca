@@ -1,0 +1,113 @@
+{
+  "schema_version": "nebula.refinery-paper-case.sankey.v1",
+  "source": "ProviderSolveResponse.scaled_exchanges",
+  "nodes": [
+    {
+      "id": "paper-refinery-distillation",
+      "label": "Atmospheric distillation",
+      "activity": 0.8400000000000001
+    },
+    {
+      "id": "paper-refinery-hydrotreating",
+      "label": "Naphtha hydrotreating",
+      "activity": 0.8
+    },
+    {
+      "id": "paper-refinery-reforming",
+      "label": "Catalytic reforming",
+      "activity": 0.8
+    },
+    {
+      "id": "paper-refinery-blending",
+      "label": "Gasoline blending",
+      "activity": 1.0
+    },
+    {
+      "id": "environment-air",
+      "label": "Air",
+      "activity": null
+    }
+  ],
+  "links": [
+    {
+      "source": "paper-refinery-distillation",
+      "target": "paper-refinery-hydrotreating",
+      "label": "Straight-run naphtha",
+      "amount": 0.8400000000000001,
+      "unit": "kg",
+      "scaled_exchange_ids": [
+        "node-distillation::out-naphtha",
+        "node-hydrotreating::in-naphtha"
+      ],
+      "boundary_role": "internal"
+    },
+    {
+      "source": "paper-refinery-hydrotreating",
+      "target": "paper-refinery-reforming",
+      "label": "Hydrotreated naphtha",
+      "amount": 0.8,
+      "unit": "kg",
+      "scaled_exchange_ids": [
+        "node-hydrotreating::out-hydrotreated",
+        "node-reforming::in-hydrotreated"
+      ],
+      "boundary_role": "internal"
+    },
+    {
+      "source": "paper-refinery-reforming",
+      "target": "paper-refinery-blending",
+      "label": "Reformate",
+      "amount": 0.8,
+      "unit": "kg",
+      "scaled_exchange_ids": [
+        "node-reforming::out-reformate",
+        "node-blending::in-reformate"
+      ],
+      "boundary_role": "internal"
+    },
+    {
+      "source": "paper-refinery-distillation",
+      "target": "environment-air",
+      "label": "CO2 fossil",
+      "amount": 0.016,
+      "unit": "kg",
+      "scaled_exchange_ids": [
+        "node-distillation::em-co2-distillation"
+      ],
+      "boundary_role": "boundary"
+    },
+    {
+      "source": "paper-refinery-hydrotreating",
+      "target": "environment-air",
+      "label": "CO2 fossil",
+      "amount": 0.024,
+      "unit": "kg",
+      "scaled_exchange_ids": [
+        "node-hydrotreating::em-co2-hydrotreating"
+      ],
+      "boundary_role": "boundary"
+    },
+    {
+      "source": "paper-refinery-reforming",
+      "target": "environment-air",
+      "label": "CO2 fossil",
+      "amount": 0.04000000000000001,
+      "unit": "kg",
+      "scaled_exchange_ids": [
+        "node-reforming::em-co2-reforming"
+      ],
+      "boundary_role": "boundary"
+    },
+    {
+      "source": "paper-refinery-blending",
+      "target": "environment-air",
+      "label": "CO2 fossil",
+      "amount": 0.01,
+      "unit": "kg",
+      "scaled_exchange_ids": [
+        "node-blending::em-co2-blending"
+      ],
+      "boundary_role": "boundary"
+    }
+  ]
+}

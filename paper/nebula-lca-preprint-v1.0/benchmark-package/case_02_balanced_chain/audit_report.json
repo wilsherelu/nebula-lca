@@ -1,0 +1,72 @@
+{
+  "schema_version": "nebula.refinery-paper-case.audit.v1",
+  "status": "passed",
+  "checks": {
+    "solve_completed": true,
+    "activity_vector_semantics": true,
+    "expected_process_count": true,
+    "finite_numeric_outputs": true,
+    "connection_residuals_within_tolerance": true,
+    "declared_allocation_factors_close": true,
+    "lcia_present": true
+  },
+  "connection_residuals": [
+    {
+      "edge_id": "edge-naphtha",
+      "flow_uuid": "e55dd8e0-5ee4-4cd8-8c29-de616c3a8c81",
+      "source_exchange_id": "node-distillation::out-naphtha",
+      "target_exchange_id": "node-hydrotreating::in-naphtha",
+      "source_process_uuid": "paper-refinery-distillation",
+      "source_activity_amount": 0.8400000000000001,
+      "provider_allocation_scale": 1.0,
+      "provider_requirement_contribution": 0.8400000000000001,
+      "source_raw_exchange_scaled_amount": 0.21000000000000002,
+      "target_scaled_amount": 0.8400000000000001,
+      "unit": "kg",
+      "provider_aggregate_expected_activity": 0.8400000000000001,
+      "provider_aggregate_actual_activity": 0.8400000000000001,
+      "absolute_residual": 0.0
+    },
+    {
+      "edge_id": "edge-hydrotreated",
+      "flow_uuid": "7af5e935-677d-4051-b9a9-64d54816a43a",
+      "source_exchange_id": "node-hydrotreating::out-hydrotreated",
+      "target_exchange_id": "node-reforming::in-hydrotreated",
+      "source_process_uuid": "paper-refinery-hydrotreating",
+      "source_activity_amount": 0.8,
+      "provider_allocation_scale": 1.0,
+      "provider_requirement_contribution": 0.8,
+      "source_raw_exchange_scaled_amount": 0.8,
+      "target_scaled_amount": 0.8,
+      "unit": "kg",
+      "provider_aggregate_expected_activity": 0.8,
+      "provider_aggregate_actual_activity": 0.8,
+      "absolute_residual": 0.0
+    },
+    {
+      "edge_id": "edge-reformate",
+      "flow_uuid": "7a355f98-55a0-418f-982e-360996cdf77a",
+      "source_exchange_id": "node-reforming::out-reformate",
+      "target_exchange_id": "node-blending::in-reformate",
+      "source_process_uuid": "paper-refinery-reforming",
+      "source_activity_amount": 0.8,
+      "provider_allocation_scale": 1.0,
+      "provider_requirement_contribution": 0.8,
+      "source_raw_exchange_scaled_amount": 0.8,
+      "target_scaled_amount": 0.8,
+      "unit": "kg",
+      "provider_aggregate_expected_activity": 0.8,
+      "provider_aggregate_actual_activity": 0.8,
+      "absolute_residual": 0.0
+    }
+  ],
+  "allocation_factor_sums": [
+    {
+      "process_uuid": "paper-refinery-distillation",
+      "sum": 1.0
+    }
+  ],
+  "run_id": "270650b8-56f2-454b-befe-73804966c728",
+  "consumer_graph_hash": "4fe0585dab24b36ae7c0d1ddbff2f813a2ddcf179735ec1f649c6540930314df",
+  "provider_graph_hash": "fa3067c58580460d9bd9fc9f659dd9807131ecadc0180b4cd01f8864cd840ccd"
+}

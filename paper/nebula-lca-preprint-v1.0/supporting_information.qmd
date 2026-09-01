@@ -1,0 +1,190 @@
+---
+title: "Supporting Information"
+subtitle: "Traceable Compilation of Multi-Output Total-Process Inventories into Product-Resolved Boundary Models for Life Cycle Assessment"
+author: "Jiaqi Lu"
+date: "1 September 2026"
+number-sections: false
+format:
+  pdf:
+    pdf-engine: lualatex
+    documentclass: scrartcl
+    papersize: a4
+    fontsize: 10pt
+    geometry:
+      - top=22mm
+      - bottom=22mm
+      - left=22mm
+      - right=22mm
+    colorlinks: true
+    keep-tex: true
+    include-in-header:
+      - header.tex
+---
+
+# S1. Scope of this Supporting Information
+
+This document records the evidence boundaries behind the preprint. It is intended to accompany the main manuscript on Zenodo. It does not enlarge the claims made in the paper. The benchmark quantities are refinery-inspired and hypothetical rather than measured plant data. The reference audit checks that the cited work or official specification exists and that the bibliographic metadata used in the manuscript is supportable; it is not a new systematic literature review.
+
+# S2. Authorship and AI-assisted preparation
+
+Jiaqi Lu is the sole author and corresponding author. OpenAI Codex assisted, under the author's direction, with manuscript restructuring, language editing, reference-metadata checking, code-to-equation traceability review, and PDF layout. The human author reviewed the sources, software evidence, calculations, and final text and accepts responsibility for the work. The AI system is not listed as an author because it cannot approve the final manuscript, hold rights, disclose conflicts, or assume accountability.
+
+This treatment follows current authorship guidance from COPE and ICMJE and the Zenodo creator model, which expects a person or organization in the citable creator field. Historical papers and preprints have placed systems such as ChatGPT in a byline, but these are treated here as precedents to disclose, not as a sufficient basis for assigning authorship responsibility.
+
+# S3. Reference-verification register
+
+The 24 references in the main manuscript were checked against DOI registries or authoritative publisher, standards-body, project, or specification pages. The exact TIDAS commit cited by the manuscript was also checked as a resolvable public revision.
+
+| Ref. | Work | Verification basis | Status |
+|---:|---|---|---|
+| 1 | ISO 14040:2006 | ISO catalogue; edition, confirmation and amendment metadata | Verified |
+| 2 | ISO 14044:2006 | ISO catalogue; edition, confirmation and amendment metadata | Verified |
+| 3 | ILCD General Guide, EUR 24708 EN | European Commission JRC record; DOI 10.2788/38479 | Verified |
+| 4 | ILCD UUID and version guidance, EUR 25198 EN | European Commission JRC record; DOI 10.2788/84321 | Verified |
+| 5 | TIDAS public contracts | Public repository and exact commit b10585ba7695ec66636d5078d970ac54105bdf0e | Verified |
+| 6 | Heijungs and Suh, 2002 | DOI 10.1007/978-94-015-9900-9 | Verified |
+| 7 | Moretti et al., 2020 | DOI 10.3390/en13143579 | Verified |
+| 8 | Pelletier et al., 2015 | DOI 10.1007/s11367-014-0812-4 | Verified |
+| 9 | Ardente and Cellura, 2012 | DOI 10.1111/j.1530-9290.2011.00434.x | Verified |
+| 10 | Mutel, Brightway, 2017 | DOI 10.21105/joss.00236 | Verified |
+| 11 | Brightway inventory documentation | Official Brightway documentation | Verified |
+| 12 | Brightway matrix construction | Official Brightway documentation | Verified |
+| 13 | openLCA allocation manual | Official openLCA 2 manual | Verified |
+| 14 | openLCA aggregation manual | Official openLCA 2 manual | Verified |
+| 15 | Frischknecht et al., 2005 | DOI 10.1065/lca2004.10.181.1 | Verified |
+| 16 | Bourgault et al., 2012 | DOI 10.1007/s11367-012-0418-7 | Verified |
+| 17 | Kuczenski et al., 2018 | DOI 10.1007/s11367-018-1446-8 | Verified |
+| 18 | Kuczenski, 2019 | DOI 10.1111/jiec.12810 | Verified |
+| 19 | Kuczenski et al., 2017 | DOI 10.1007/s10669-016-9620-7 | Verified |
+| 20 | W3C PROV-DM | W3C Recommendation dated 30 April 2013 | Verified |
+| 21 | Kamali et al., 2026 | DOI 10.1007/s11367-026-02708-y | Verified |
+| 22 | Wernet et al., 2016 | DOI 10.1007/s11367-016-1087-8 | Verified |
+| 23 | Higham, 2002 | DOI 10.1137/1.9780898718027 | Verified |
+| 24 | UNEP/SETAC database guidance, 2011 | Official title and ISBN 978-92-807-3174-3 | Verified |
+
+# S4. Equation-to-code traceability
+
+The correspondence below is intentionally module-level rather than tied to brittle line numbers. The evidence path is the provider v1 calculation used for the benchmark, the PTS compiler, and a separate NumPy validation script that reads frozen case artifacts without importing the production solver. Legacy helpers not exercised by the five cases are not treated as evidence for the reported results.
+
+| Equation or claim | Implementation correspondence | Verification level and qualification |
+|---|---|---|
+| Eqs. (1)-(2), allocation factors and product-resolved coefficients | Allocation fields are normalized and applied in `nebula-lca-solver/app/core/matrix_builder.py`, `nebula-lca-solver/app/core/pts_compile.py`, and the provider scaled-exchange path | Direct correspondence for the classified Case 1 exchanges. |
+| Eq. (3), allocation closure | Independently reconstructed from the frozen source exchange vector, product quantities, and product-resolved columns | Executed component-wise in Case 1. The infinity-norm residual was $1.39\times10^{-17}$; a duplicated product-specific exchange was rejected. |
+| Eq. (4), `T x = f` | `nebula-lca-api/app/services/provider_v1.py` builds the signed square matrix (named `A` in code), builds `f`, and calls `numpy.linalg.solve` | Direct correspondence for the reported provider path. The returned activity vector is the solved `x`. |
+| Eq. (5), `z = B x` | Provider v1 multiplies each normalized elementary exchange by its process activity and aggregates the resulting boundary elementary exchanges by identity | Equivalent sparse-ledger implementation; no explicit dense `B` object is required. |
+| Eq. (6), `h = C z` | `nebula-lca-api/app/services/provider_ef31.py` resolves exact elementary-flow identities, applies characterization factors, and sums characterized inventory values | Direct correspondence for EF 3.1. Unknown elementary identities fail closed rather than falling back to name matching. |
+| Eq. (7), full-system residual | Internal connection residuals are derived from activity-scaled exchanges in benchmark audit reports | Partial. Zero connection residuals are evidenced for the connected cases; provider v1 does not expose an authoritative per-process residual vector for every solve. |
+| Eqs. (8)-(12), PTS solve and projection | `nebula-lca-solver/app/core/pts_compile.py` builds `A_pts`, forms `M = I - A_pts`, solves one exposed-output right-hand side at a time, and projects boundary and elementary rows; API orchestration publishes the merged virtual processes | Direct mathematical correspondence by columns. The implementation loops over exposed outputs rather than issuing one multiple-right-hand-side solve and does not export complete `X`, `G-bar`, or `B-bar` operators. |
+| Eqs. (13)-(15), boundary-operator equivalence | Production compilation is compared with an independent reconstruction of $A_{\mathrm{pts}}$, $M$, the tested response column, and declared boundary/elementary rows | Case 5 supplies tested-column evidence: all four nonzero declared components agreed exactly. It is not basis-complete Level C evidence. |
+| Eq. (16), PTS residual and conditioning contract | The independent script solves $M\mathbf{x}=\mathbf{d}$ and evaluates the residual and $1$-norm condition number | Direct for Case 5: $\rho_M=0$ and $\kappa_1(M)=5.0$. |
+| Eq. (17), connection closure | Sankey/chart data and audit reports are generated from activity-scaled exchanges | Direct for every declared internal connection in Cases 2-5; this is transfer closure, not elemental, stoichiometric, or energy conservation. |
+
+The repository also contains a legacy LCIA helper that forms an explicit inverse and a placeholder solver module. Neither is the provider v1 evidence path used for the five reported cases. Consequently, the paper states only that the reported path uses linear solves; it does not claim that every legacy module in the repository avoids explicit inversion.
+
+# S5. Executed benchmark register
+
+All cases use a structured functional demand and were run as separate projects through the real local API. Each case package contains the input graph, project/version records, raw result, audit report, provenance, chart data where applicable, and a SHA-256 manifest. Sankey figures are derived from scaled exchanges.
+
+| Case | Functional demand | Main evidence | Result |
+|---:|---|---|---|
+| 1 | 1 kg straight-run naphtha | Multi-output atmospheric-distillation process; mass allocation and independent source-vector reconstruction | Passed; aggregate fossil CO2 inventory 0.08 kg. The allocation infinity-norm residual was $1.39\times10^{-17}$ and the negative control was rejected. |
+| 2 | 1 kg finished gasoline | Four balanced foreground processes | Passed; activities were 0.84, 0.8, 0.8, and 1.0 in process order; three internal transfer residuals were 0 kg; fossil CO2 was 0.09 kg. |
+| 3 | 1 kg finished gasoline | Case 2 plus one normalized electricity supplier serving four processes | Passed; electricity activity was 6.1 MJ, all seven declared transfer residuals were zero, and fossil CO2 was 0.1144 kg. |
+| 4 | 1 kg finished gasoline | Case 3 plus a reforming-to-hydrotreating recycle connection | Passed; hydrotreating and reforming activities were 1.0, electricity activity was 7.02381 MJ, all eight declared transfer residuals were zero, and fossil CO2 was 0.133333 kg. |
+| 5 | 1 kg finished gasoline | Case 4 with hydrotreating and reforming compiled as a PTS | Passed for the tested column; the independent oracle reconstructed $A_{\mathrm{pts}}$, $M$, the declared boundary and elementary rows, and the reported EF 3.1 vector. |
+
+The manuscript build uses the frozen benchmark package generated on 31 August 2026. The public deposit contains its input snapshots, raw outputs, audits, provenance, plot data, and SHA-256 manifest; no machine-specific path is required to identify the package.
+
+## S5.1. Independent allocation audit
+
+The Case 1 oracle reconstructed every classified source exchange as
+
+$$
+\widehat{\mathbf e}_j
+=
+\sum_{k\in K_j}q_{jk}\widetilde{\mathbf e}_{jk}.
+$$
+
+The maximum component error and vector infinity-norm error were both $1.39\times10^{-17}$. The relative error was $1.73\times10^{-16}$. A negative control that duplicated a product-specific exchange across product columns produced a nonzero residual and was rejected.
+
+## S5.2. Independent PTS oracle
+
+For the tested hydrotreating-reforming subsystem, the frozen coefficients yield
+
+$$
+A_{\mathrm{pts}}
+=
+\begin{bmatrix}
+0 & 1\\
+0.2 & 0
+\end{bmatrix},
+\qquad
+M=I-A_{\mathrm{pts}}
+=
+\begin{bmatrix}
+1 & -1\\
+-0.2 & 1
+\end{bmatrix}.
+$$
+
+For a unit reformate demand, the independent solution is
+
+$$
+\mathbf x_{\mathrm{pts}}
+=
+\begin{bmatrix}
+1.25\\
+1.25
+\end{bmatrix},
+\qquad
+\kappa_1(M)=5.0,
+\qquad
+\rho_M=0.
+$$
+
+Four nonzero declared boundary or elementary-flow components were compared by exact flow identity, direction, and unit. Every absolute and relative difference was zero. The expanded subsystem also produced $0.0375$ kg of a hydrogen by-product that the compiled shell does not expose. It is disclosed as a non-exposed technosphere row and is not silently counted as boundary agreement.
+
+# S6. Claim boundary and remaining work
+
+The following items are not established by version 1.0 and must not be inferred from the passed cases:
+
+- measured refinery representativeness or environmental hotspot conclusions;
+- complete ILCD or TIDAS import-export round-trip preservation;
+- equality of complete compiled boundary operators over a basis of exposed-product demands;
+- an explicit preservation or disposition policy for non-exposed co-products;
+- nested PTS compilation;
+- a formal privacy guarantee, attack model, or quantified leakage bound;
+- a universal mass, elemental, stoichiometric, or energy balance; or
+- performance or scalability advantages over established LCA software.
+
+The corresponding claim register is summarized below.
+
+| Claim area | Supported wording in version 1.0 | Unsupported extension |
+|---|---|---|
+| Source and product representations | Formalizes and demonstrates a traceable separation in the executed benchmark. | Robustness for measured industrial inventories. |
+| Allocation closure | Reconstructs every classified Case 1 source exchange with a near-machine-precision residual. | General closure across unclassified or cross-unit industrial exchanges. |
+| Matrix calculation | Executes the declared small systems and reports activity-scaled transfer residuals. | General speed, scale, or numerical superiority. |
+| PTS compilation | Reconstructs one tested response column and four nonzero declared components independently. | Basis-complete operator equivalence or automatic retention of non-exposed co-products. |
+| Quantity auditing | Closes every declared benchmark connection after activity scaling. | Universal mass, elemental, energy, or stoichiometric conservation. |
+| Interoperability | Preserves exact identities, versions, units, and provenance in the reported evidence path. | Complete ILCD/TIDAS import-export-reimport preservation. |
+| Disclosure | Reduces the visible main graph while retaining the internal PTS record separately. | Privacy protection or resistance to reconstruction attacks. |
+
+# S7. Source and policy links used in the audit
+
+- ISO catalogue: https://www.iso.org/committee/54854/x/catalogue/
+- ILCD General Guide: https://publications.jrc.ec.europa.eu/repository/handle/JRC48157
+- ILCD UUID/version guidance: https://publications.jrc.ec.europa.eu/repository/handle/JRC68404
+- TIDAS repository: https://github.com/tiangong-lca/tidas
+- Brightway inventory documentation: https://docs.brightway.dev/en/latest/content/overview/inventory.html
+- Brightway matrix documentation: https://docs.brightway.dev/en/latest/content/overview/matrix.html
+- openLCA allocation: https://greendelta.github.io/openLCA2-manual/allocation.html
+- openLCA aggregation: https://greendelta.github.io/openLCA2-manual/aggregation.html
+- W3C PROV-DM: https://www.w3.org/TR/prov-dm/
+- COPE position on AI authorship: https://doi.org/10.24318/cCVRZBms
+- ICMJE authorship criteria and AI guidance: https://www.icmje.org/recommendations/browse/roles-and-responsibilities/defining-the-role-of-authors-and-contributors.html
+- Zenodo creator metadata: https://help.zenodo.org/docs/deposit/describe-records/creators/
+- Historical AI-byline discussion: https://www.nature.com/articles/d41586-023-00107-z
+
+# S8. Zenodo record recommendations
+
+Upload the main paper, this Supporting Information, the public five-case package, and the source bundle as one versioned deposit. Use `Jiaqi Lu` as creator and corresponding author. Suggested resource type: publication / preprint. Suggested version: `1.0`. Suggested license: Creative Commons Attribution 4.0 for the manuscript and SI, subject to the author's final choice. The software repository may retain its own software license. The benchmark receipts identify engine commit `4c7cb4b69ae6a0647e3e08d048d6c6724cd93ae3`; the TIDAS contract reference is pinned separately in the reference register. If a DOI is reserved before publication, it can be inserted into a final PDF revision; no DOI is fabricated in the present files.

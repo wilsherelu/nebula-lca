@@ -1,0 +1,189 @@
+{
+  "schema_version": "nebula.refinery-paper-case.sankey.v1",
+  "source": "ProviderSolveResponse.scaled_exchanges",
+  "nodes": [
+    {
+      "id": "market_refinery_electricity_supply",
+      "label": "Refinery electricity supply chain",
+      "activity": 7.023809523809524
+    },
+    {
+      "id": "paper-refinery-distillation",
+      "label": "Atmospheric distillation",
+      "activity": 0.8
+    },
+    {
+      "id": "paper-refinery-hydrotreating",
+      "label": "Naphtha hydrotreating",
+      "activity": 1.0
+    },
+    {
+      "id": "paper-refinery-reforming",
+      "label": "Catalytic reforming",
+      "activity": 1.0
+    },
+    {
+      "id": "paper-refinery-blending",
+      "label": "Gasoline blending",
+      "activity": 1.0
+    },
+    {
+      "id": "environment-air",
+      "label": "Air",
+      "activity": null
+    }
+  ],
+  "links": [
+    {
+      "source": "paper-refinery-distillation",
+      "target": "paper-refinery-hydrotreating",
+      "label": "Straight-run naphtha",
+      "amount": 0.8,
+      "unit": "kg",
+      "scaled_exchange_ids": [
+        "node-distillation::out-naphtha",
+        "node-hydrotreating::in-naphtha"
+      ],
+      "boundary_role": "internal"
+    },
+    {
+      "source": "paper-refinery-hydrotreating",
+      "target": "paper-refinery-reforming",
+      "label": "Hydrotreated naphtha",
+      "amount": 1.0,
+      "unit": "kg",
+      "scaled_exchange_ids": [
+        "node-hydrotreating::out-hydrotreated",
+        "node-reforming::in-hydrotreated"
+      ],
+      "boundary_role": "internal"
+    },
+    {
+      "source": "paper-refinery-reforming",
+      "target": "paper-refinery-blending",
+      "label": "Reformate",
+      "amount": 0.8,
+      "unit": "kg",
+      "scaled_exchange_ids": [
+        "node-reforming::out-reformate",
+        "node-blending::in-reformate"
+      ],
+      "boundary_role": "internal"
+    },
+    {
+      "source": "market_refinery_electricity_supply",
+      "target": "paper-refinery-distillation",
+      "label": "Refinery electricity supply",
+      "amount": 1.5238095238095237,
+      "unit": "MJ",
+      "scaled_exchange_ids": [
+        "node-electricity-supply::out-electricity",
+        "node-distillation::in-electricity"
+      ],
+      "boundary_role": "internal"
+    },
+    {
+      "source": "market_refinery_electricity_supply",
+      "target": "paper-refinery-hydrotreating",
+      "label": "Refinery electricity supply",
+      "amount": 3.0,
+      "unit": "MJ",
+      "scaled_exchange_ids": [
+        "node-electricity-supply::out-electricity",
+        "node-hydrotreating::in-electricity"
+      ],
+      "boundary_role": "internal"
+    },
+    {
+      "source": "market_refinery_electricity_supply",
+      "target": "paper-refinery-reforming",
+      "label": "Refinery electricity supply",
+      "amount": 2.0,
+      "unit": "MJ",
+      "scaled_exchange_ids": [
+        "node-electricity-supply::out-electricity",
+        "node-reforming::in-electricity"
+      ],
+      "boundary_role": "internal"
+    },
+    {
+      "source": "market_refinery_electricity_supply",
+      "target": "paper-refinery-blending",
+      "label": "Refinery electricity supply",
+      "amount": 0.5,
+      "unit": "MJ",
+      "scaled_exchange_ids": [
+        "node-electricity-supply::out-electricity",
+        "node-blending::in-electricity"
+      ],
+      "boundary_role": "internal"
+    },
+    {
+      "source": "paper-refinery-reforming",
+      "target": "paper-refinery-hydrotreating",
+      "label": "Recycle naphtha",
+      "amount": 0.2,
+      "unit": "kg",
+      "scaled_exchange_ids": [
+        "node-reforming::out-recycle-naphtha",
+        "node-hydrotreating::in-recycle-naphtha"
+      ],
+      "boundary_role": "internal"
+    },
+    {
+      "source": "market_refinery_electricity_supply",
+      "target": "environment-air",
+      "label": "CO2 fossil",
+      "amount": 0.028095238095238097,
+      "unit": "kg",
+      "scaled_exchange_ids": [
+        "node-electricity-supply::em-co2-electricity-supply"
+      ],
+      "boundary_role": "boundary"
+    },
+    {
+      "source": "paper-refinery-distillation",
+      "target": "environment-air",
+      "label": "CO2 fossil",
+      "amount": 0.015238095238095238,
+      "unit": "kg",
+      "scaled_exchange_ids": [
+        "node-distillation::em-co2-distillation"
+      ],
+      "boundary_role": "boundary"
+    },
+    {
+      "source": "paper-refinery-hydrotreating",
+      "target": "environment-air",
+      "label": "CO2 fossil",
+      "amount": 0.03,
+      "unit": "kg",
+      "scaled_exchange_ids": [
+        "node-hydrotreating::em-co2-hydrotreating"
+      ],
+      "boundary_role": "boundary"
+    },
+    {
+      "source": "paper-refinery-reforming",
+      "target": "environment-air",
+      "label": "CO2 fossil",
+      "amount": 0.05,
+      "unit": "kg",
+      "scaled_exchange_ids": [
+        "node-reforming::em-co2-reforming"
+      ],
+      "boundary_role": "boundary"
+    },
+    {
+      "source": "paper-refinery-blending",
+      "target": "environment-air",
+      "label": "CO2 fossil",
+      "amount": 0.01,
+      "unit": "kg",
+      "scaled_exchange_ids": [
+        "node-blending::em-co2-blending"
+      ],
+      "boundary_role": "boundary"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "engine": {
+    "version": "0.1.0",
+    "commit": "4c7cb4b69ae6a0647e3e08d048d6c6724cd93ae3"
+  },
+  "snapshot_ref": {
+    "project_id": "d063c9c4-0921-4cba-a67f-836704ccb97b",
+    "version": 2,
+    "graph_hash": "4fe0585dab24b36ae7c0d1ddbff2f813a2ddcf179735ec1f649c6540930314df"
+  },
+  "inline_graph_hash": null,
+  "scenario_id": "case_02_balanced_chain",
+  "operation_hash": "fcaa2f16428ee52635528ce178b9833ef25acde58c1ad78c63654c4035eaeccd",
+  "solver": "nebula_hybrid_matrix_v1",
+  "solver_version": "nebula_hybrid_matrix_v1",
+  "solver_build": "4c7cb4b69ae6a0647e3e08d048d6c6724cd93ae3",
+  "database_release": "EF3.1",
+  "system_revision_hash": "4fe0585dab24b36ae7c0d1ddbff2f813a2ddcf179735ec1f649c6540930314df",
+  "consumer_graph_hash": "4fe0585dab24b36ae7c0d1ddbff2f813a2ddcf179735ec1f649c6540930314df",
+  "provider_graph_hash": "fa3067c58580460d9bd9fc9f659dd9807131ecadc0180b4cd01f8864cd840ccd",
+  "background_process_pins_hash": null,
+  "background_claim_scope": null,
+  "process_identities_hash": null,
+  "flow_snapshot_hash": null,
+  "reference_dependency_snapshot_hash": null,
+  "idempotency_key": null,
+  "request_hash": null,
+  "activity_vector_semantics": "x in A*x=f",
+  "inventory_scope": "boundary elementary exchanges"
+}

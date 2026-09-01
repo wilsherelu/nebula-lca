@@ -1,0 +1,30 @@
+{
+  "engine": {
+    "version": "0.1.0",
+    "commit": "4c7cb4b69ae6a0647e3e08d048d6c6724cd93ae3"
+  },
+  "snapshot_ref": {
+    "project_id": "8dfdb339-6bb0-498a-8819-13cda668be5c",
+    "version": 2,
+    "graph_hash": "9f7a38ecb8859fd9d28e788f0aa39fb2752ebbbe9ce2e969fab9dd8a1a8ee1c5"
+  },
+  "inline_graph_hash": null,
+  "scenario_id": "case_03_mixed_normalized_supply",
+  "operation_hash": "c67c3be20b56ade8ba49c9723589bd788160f03a532a4ce743d8da8f2b679829",
+  "solver": "nebula_hybrid_matrix_v1",
+  "solver_version": "nebula_hybrid_matrix_v1",
+  "solver_build": "4c7cb4b69ae6a0647e3e08d048d6c6724cd93ae3",
+  "database_release": "EF3.1",
+  "system_revision_hash": "9f7a38ecb8859fd9d28e788f0aa39fb2752ebbbe9ce2e969fab9dd8a1a8ee1c5",
+  "consumer_graph_hash": "9f7a38ecb8859fd9d28e788f0aa39fb2752ebbbe9ce2e969fab9dd8a1a8ee1c5",
+  "provider_graph_hash": "91e4cc25197d71f9662ff311d5199fb915ff6698942d87007da1964aad3ed2b4",
+  "background_process_pins_hash": null,
+  "background_claim_scope": null,
+  "process_identities_hash": null,
+  "flow_snapshot_hash": null,
+  "reference_dependency_snapshot_hash": null,
+  "idempotency_key": null,
+  "request_hash": null,
+  "activity_vector_semantics": "x in A*x=f",
+  "inventory_scope": "boundary elementary exchanges"
+}

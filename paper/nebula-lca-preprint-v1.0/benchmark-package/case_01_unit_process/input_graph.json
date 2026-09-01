@@ -1,0 +1,133 @@
+{
+  "functionalUnit": "1 kg Straight-run naphtha",
+  "nodes": [
+    {
+      "id": "node-distillation",
+      "node_kind": "unit_process",
+      "mode": "balanced",
+      "process_uuid": "paper-refinery-distillation",
+      "name": "Atmospheric distillation",
+      "location": "CN",
+      "reference_product": "Straight-run naphtha",
+      "allocation_method": "unit_group_physical_v1",
+      "inputs": [
+        {
+          "id": "in-crude",
+          "flowUuid": "83a46871-ba43-41af-a095-a944e1e2eae2",
+          "flowSourceNamespace": "nebula.refinery-paper-benchmark",
+          "flowVersion": "benchmark-1",
+          "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+          "flowPropertyVersion": "03.00.003",
+          "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+          "unitGroupVersion": "03.00.003",
+          "name": "Crude oil feed",
+          "unit": "kg",
+          "unitGroup": "Units of mass",
+          "amount": 4.2,
+          "type": "technosphere",
+          "direction": "input"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out-naphtha",
+          "flowUuid": "e55dd8e0-5ee4-4cd8-8c29-de616c3a8c81",
+          "flowSourceNamespace": "nebula.refinery-paper-benchmark",
+          "flowVersion": "benchmark-1",
+          "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+          "flowPropertyVersion": "03.00.003",
+          "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+          "unitGroupVersion": "03.00.003",
+          "name": "Straight-run naphtha",
+          "unit": "kg",
+          "unitGroup": "Units of mass",
+          "amount": 1.05,
+          "type": "technosphere",
+          "direction": "output",
+          "isProduct": true,
+          "allocationBasis": {
+            "method": "quantity"
+          },
+          "allocationFactor": 0.25
+        },
+        {
+          "id": "out-diesel-cut",
+          "flowUuid": "0c463c8a-8eb5-456c-a89d-bd31279a77c1",
+          "flowSourceNamespace": "nebula.refinery-paper-benchmark",
+          "flowVersion": "benchmark-1",
+          "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+          "flowPropertyVersion": "03.00.003",
+          "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+          "unitGroupVersion": "03.00.003",
+          "name": "Atmospheric diesel fraction",
+          "unit": "kg",
+          "unitGroup": "Units of mass",
+          "amount": 1.89,
+          "type": "technosphere",
+          "direction": "output",
+          "isProduct": true,
+          "allocationBasis": {
+            "method": "quantity"
+          },
+          "allocationFactor": 0.45
+        },
+        {
+          "id": "out-residue",
+          "flowUuid": "bc6c0ec2-0596-40ac-af57-9e282728dd64",
+          "flowSourceNamespace": "nebula.refinery-paper-benchmark",
+          "flowVersion": "benchmark-1",
+          "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+          "flowPropertyVersion": "03.00.003",
+          "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+          "unitGroupVersion": "03.00.003",
+          "name": "Atmospheric residue",
+          "unit": "kg",
+          "unitGroup": "Units of mass",
+          "amount": 1.26,
+          "type": "technosphere",
+          "direction": "output",
+          "isProduct": true,
+          "allocationBasis": {
+            "method": "quantity"
+          },
+          "allocationFactor": 0.3
+        }
+      ],
+      "emissions": [
+        {
+          "id": "em-co2-distillation",
+          "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+          "flowSourceNamespace": "tiangong_open_data",
+          "flowVersion": "03.00.004",
+          "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+          "flowPropertyVersion": "03.00.003",
+          "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+          "unitGroupVersion": "03.00.003",
+          "name": "carbon dioxide (fossil)",
+          "unit": "kg",
+          "unitGroup": "Units of mass",
+          "amount": 0.08,
+          "type": "biosphere",
+          "direction": "output"
+        }
+      ]
+    }
+  ],
+  "exchanges": [],
+  "metadata": {
+    "database_release": "EF3.1",
+    "case_family": "refinery-inspired-hypothetical-benchmark-v1",
+    "case_stage": "case_01_unit_process",
+    "data_status": "hypothetical quantities informed by refinery process structure",
+    "functional_unit": {
+      "display_text": "1 kg Straight-run naphtha",
+      "amount": 1.0,
+      "flow_uuid": "e55dd8e0-5ee4-4cd8-8c29-de616c3a8c81",
+      "flow_source_namespace": "nebula.refinery-paper-benchmark",
+      "flow_version": "benchmark-1",
+      "unit": "kg",
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+      "unit_group_version": "03.00.003"
+    }
+  }
+}

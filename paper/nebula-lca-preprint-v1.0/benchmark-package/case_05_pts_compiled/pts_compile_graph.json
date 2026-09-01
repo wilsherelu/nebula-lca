@@ -1,0 +1,359 @@
+{
+  "functionalUnit": "Naphtha upgrading PTS",
+  "nodes": [
+    {
+      "id": "node-upgrading-pts",
+      "node_kind": "pts_module",
+      "mode": "normalized",
+      "pts_uuid": "paper-refinery-upgrading-pts",
+      "process_uuid": "paper-refinery-upgrading-pts",
+      "name": "Naphtha upgrading PTS",
+      "location": "CN",
+      "reference_product": "Reformate",
+      "inputs": [
+        {
+          "id": "in-naphtha",
+          "flowUuid": "e55dd8e0-5ee4-4cd8-8c29-de616c3a8c81",
+          "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+          "flowPropertyVersion": "03.00.003",
+          "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+          "unitGroupVersion": "03.00.003",
+          "name": "Straight-run naphtha",
+          "unit": "kg",
+          "unitGroup": "Units of mass",
+          "amount": 0.8,
+          "type": "technosphere",
+          "direction": "input"
+        },
+        {
+          "id": "in-makeup-h2",
+          "flowUuid": "096a6e33-bde6-4bf6-9a05-df1b5002fd93",
+          "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+          "flowPropertyVersion": "03.00.003",
+          "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+          "unitGroupVersion": "03.00.003",
+          "name": "Make-up hydrogen",
+          "unit": "kg",
+          "unitGroup": "Units of mass",
+          "amount": 0.02,
+          "type": "technosphere",
+          "direction": "input"
+        },
+        {
+          "id": "in-electricity",
+          "flowUuid": "2e33aa0f-13c8-40f9-bb59-4dc1ff811aca",
+          "flowPropertyUuid": "b269a229-13ff-5919-b9ae-42167a693e16",
+          "flowPropertyVersion": "benchmark-1",
+          "unitGroupUuid": "25c4989f-fc43-526b-b8d3-4c7091d01e9b",
+          "unitGroupVersion": "benchmark-1",
+          "name": "Refinery electricity supply",
+          "unit": "MJ",
+          "unitGroup": "Units of energy",
+          "amount": 5.0,
+          "type": "technosphere",
+          "direction": "input"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out-reformate",
+          "flowUuid": "7a355f98-55a0-418f-982e-360996cdf77a",
+          "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+          "flowPropertyVersion": "03.00.003",
+          "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+          "unitGroupVersion": "03.00.003",
+          "name": "Reformate",
+          "unit": "kg",
+          "unitGroup": "Units of mass",
+          "amount": 0.8,
+          "type": "technosphere",
+          "direction": "output",
+          "isProduct": true,
+          "allocationBasis": {
+            "method": "quantity"
+          }
+        },
+        {
+          "id": "out-byproduct-h2",
+          "flowUuid": "63c27e01-d476-446c-bbb4-781ca7c6b718",
+          "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+          "flowPropertyVersion": "03.00.003",
+          "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+          "unitGroupVersion": "03.00.003",
+          "name": "Reformer by-product hydrogen",
+          "unit": "kg",
+          "unitGroup": "Units of mass",
+          "amount": 0.03,
+          "type": "technosphere",
+          "direction": "output",
+          "isProduct": true,
+          "allocationBasis": {
+            "method": "quantity"
+          }
+        }
+      ],
+      "emissions": []
+    }
+  ],
+  "exchanges": [],
+  "metadata": {
+    "database_release": "EF3.1",
+    "canvases": [
+      {
+        "id": "canvas-upgrading-pts",
+        "kind": "pts_internal",
+        "parentPtsNodeId": "node-upgrading-pts",
+        "name": "Naphtha upgrading internal graph",
+        "nodes": [
+          {
+            "id": "node-hydrotreating",
+            "node_kind": "unit_process",
+            "mode": "balanced",
+            "process_uuid": "paper-refinery-hydrotreating",
+            "name": "Naphtha hydrotreating",
+            "location": "CN",
+            "reference_product": "Hydrotreated naphtha",
+            "inputs": [
+              {
+                "id": "in-naphtha",
+                "flowUuid": "e55dd8e0-5ee4-4cd8-8c29-de616c3a8c81",
+                "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "flowPropertyVersion": "03.00.003",
+                "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+                "unitGroupVersion": "03.00.003",
+                "name": "Straight-run naphtha",
+                "unit": "kg",
+                "unitGroup": "Units of mass",
+                "amount": 0.8,
+                "type": "technosphere",
+                "direction": "input"
+              },
+              {
+                "id": "in-makeup-h2",
+                "flowUuid": "096a6e33-bde6-4bf6-9a05-df1b5002fd93",
+                "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "flowPropertyVersion": "03.00.003",
+                "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+                "unitGroupVersion": "03.00.003",
+                "name": "Make-up hydrogen",
+                "unit": "kg",
+                "unitGroup": "Units of mass",
+                "amount": 0.02,
+                "type": "technosphere",
+                "direction": "input"
+              },
+              {
+                "id": "in-electricity",
+                "flowUuid": "2e33aa0f-13c8-40f9-bb59-4dc1ff811aca",
+                "flowPropertyUuid": "b269a229-13ff-5919-b9ae-42167a693e16",
+                "flowPropertyVersion": "benchmark-1",
+                "unitGroupUuid": "25c4989f-fc43-526b-b8d3-4c7091d01e9b",
+                "unitGroupVersion": "benchmark-1",
+                "name": "Refinery electricity supply",
+                "unit": "MJ",
+                "unitGroup": "Units of energy",
+                "amount": 3.0,
+                "type": "technosphere",
+                "direction": "input"
+              },
+              {
+                "id": "in-recycle-naphtha",
+                "flowUuid": "62405f82-9dc8-4cd7-bd76-3c8d3037060c",
+                "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "flowPropertyVersion": "03.00.003",
+                "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+                "unitGroupVersion": "03.00.003",
+                "name": "Recycle naphtha",
+                "unit": "kg",
+                "unitGroup": "Units of mass",
+                "amount": 0.2,
+                "type": "technosphere",
+                "direction": "input"
+              }
+            ],
+            "outputs": [
+              {
+                "id": "out-hydrotreated",
+                "flowUuid": "7af5e935-677d-4051-b9a9-64d54816a43a",
+                "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "flowPropertyVersion": "03.00.003",
+                "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+                "unitGroupVersion": "03.00.003",
+                "name": "Hydrotreated naphtha",
+                "unit": "kg",
+                "unitGroup": "Units of mass",
+                "amount": 1.0,
+                "type": "technosphere",
+                "direction": "output",
+                "isProduct": true,
+                "allocationBasis": {
+                  "method": "quantity"
+                }
+              }
+            ],
+            "emissions": [
+              {
+                "id": "em-co2-hydrotreating",
+                "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+                "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "flowPropertyVersion": "03.00.003",
+                "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+                "unitGroupVersion": "03.00.003",
+                "name": "carbon dioxide (fossil)",
+                "unit": "kg",
+                "unitGroup": "Units of mass",
+                "amount": 0.03,
+                "type": "biosphere",
+                "direction": "output"
+              }
+            ]
+          },
+          {
+            "id": "node-reforming",
+            "node_kind": "unit_process",
+            "mode": "balanced",
+            "process_uuid": "paper-refinery-reforming",
+            "name": "Catalytic reforming",
+            "location": "CN",
+            "reference_product": "Reformate",
+            "inputs": [
+              {
+                "id": "in-hydrotreated",
+                "flowUuid": "7af5e935-677d-4051-b9a9-64d54816a43a",
+                "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "flowPropertyVersion": "03.00.003",
+                "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+                "unitGroupVersion": "03.00.003",
+                "name": "Hydrotreated naphtha",
+                "unit": "kg",
+                "unitGroup": "Units of mass",
+                "amount": 1.0,
+                "type": "technosphere",
+                "direction": "input"
+              },
+              {
+                "id": "in-electricity",
+                "flowUuid": "2e33aa0f-13c8-40f9-bb59-4dc1ff811aca",
+                "flowPropertyUuid": "b269a229-13ff-5919-b9ae-42167a693e16",
+                "flowPropertyVersion": "benchmark-1",
+                "unitGroupUuid": "25c4989f-fc43-526b-b8d3-4c7091d01e9b",
+                "unitGroupVersion": "benchmark-1",
+                "name": "Refinery electricity supply",
+                "unit": "MJ",
+                "unitGroup": "Units of energy",
+                "amount": 2.0,
+                "type": "technosphere",
+                "direction": "input"
+              }
+            ],
+            "outputs": [
+              {
+                "id": "out-reformate",
+                "flowUuid": "7a355f98-55a0-418f-982e-360996cdf77a",
+                "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "flowPropertyVersion": "03.00.003",
+                "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+                "unitGroupVersion": "03.00.003",
+                "name": "Reformate",
+                "unit": "kg",
+                "unitGroup": "Units of mass",
+                "amount": 0.8,
+                "type": "technosphere",
+                "direction": "output",
+                "isProduct": true,
+                "allocationBasis": {
+                  "method": "quantity"
+                },
+                "allocationFactor": 0.8
+              },
+              {
+                "id": "out-byproduct-h2",
+                "flowUuid": "63c27e01-d476-446c-bbb4-781ca7c6b718",
+                "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "flowPropertyVersion": "03.00.003",
+                "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+                "unitGroupVersion": "03.00.003",
+                "name": "Reformer by-product hydrogen",
+                "unit": "kg",
+                "unitGroup": "Units of mass",
+                "amount": 0.03,
+                "type": "technosphere",
+                "direction": "output"
+              },
+              {
+                "id": "out-recycle-naphtha",
+                "flowUuid": "62405f82-9dc8-4cd7-bd76-3c8d3037060c",
+                "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "flowPropertyVersion": "03.00.003",
+                "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+                "unitGroupVersion": "03.00.003",
+                "name": "Recycle naphtha",
+                "unit": "kg",
+                "unitGroup": "Units of mass",
+                "amount": 0.2,
+                "type": "technosphere",
+                "direction": "output",
+                "isProduct": true,
+                "allocationBasis": {
+                  "method": "quantity"
+                },
+                "allocationFactor": 0.2
+              }
+            ],
+            "emissions": [
+              {
+                "id": "em-co2-reforming",
+                "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+                "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+                "flowPropertyVersion": "03.00.003",
+                "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+                "unitGroupVersion": "03.00.003",
+                "name": "carbon dioxide (fossil)",
+                "unit": "kg",
+                "unitGroup": "Units of mass",
+                "amount": 0.05,
+                "type": "biosphere",
+                "direction": "output"
+              }
+            ],
+            "allocation_method": "unit_group_physical_v1"
+          }
+        ],
+        "edges": [
+          {
+            "id": "edge-hydrotreated",
+            "fromNode": "node-hydrotreating",
+            "toNode": "node-reforming",
+            "sourceHandle": "out:out-hydrotreated",
+            "targetHandle": "in:in-hydrotreated",
+            "flowUuid": "7af5e935-677d-4051-b9a9-64d54816a43a",
+            "flowName": "Hydrotreated naphtha",
+            "quantityMode": "single",
+            "amount": 1.0,
+            "providerAmount": 1.0,
+            "consumerAmount": 1.0,
+            "unit": "kg",
+            "type": "technosphere",
+            "allocation": "none"
+          },
+          {
+            "id": "edge-recycle-naphtha",
+            "fromNode": "node-reforming",
+            "toNode": "node-hydrotreating",
+            "sourceHandle": "out:out-recycle-naphtha",
+            "targetHandle": "in:in-recycle-naphtha",
+            "flowUuid": "62405f82-9dc8-4cd7-bd76-3c8d3037060c",
+            "flowName": "Recycle naphtha",
+            "quantityMode": "single",
+            "amount": 0.2,
+            "providerAmount": 0.2,
+            "consumerAmount": 0.2,
+            "unit": "kg",
+            "type": "technosphere",
+            "allocation": "none"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "schema_version": "nebula.refinery-paper-case.sankey.v1",
+  "source": "ProviderSolveResponse.scaled_exchanges",
+  "nodes": [
+    {
+      "id": "paper-refinery-distillation",
+      "label": "Atmospheric distillation",
+      "activity": 1.0
+    },
+    {
+      "id": "environment-air",
+      "label": "Air",
+      "activity": null
+    }
+  ],
+  "links": [
+    {
+      "source": "paper-refinery-distillation",
+      "target": "environment-air",
+      "label": "CO2 fossil",
+      "amount": 0.019047619047619046,
+      "unit": "kg",
+      "scaled_exchange_ids": [
+        "node-distillation::em-co2-distillation"
+      ],
+      "boundary_role": "boundary"
+    }
+  ]
+}

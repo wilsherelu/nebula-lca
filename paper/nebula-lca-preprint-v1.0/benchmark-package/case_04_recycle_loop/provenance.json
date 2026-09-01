@@ -1,0 +1,30 @@
+{
+  "engine": {
+    "version": "0.1.0",
+    "commit": "4c7cb4b69ae6a0647e3e08d048d6c6724cd93ae3"
+  },
+  "snapshot_ref": {
+    "project_id": "99774999-5d17-43d1-b9a6-db1fe9f3b88e",
+    "version": 2,
+    "graph_hash": "4c2a39f5092dede3058c6ad650d02cfb853fda790f4d6343590cfefaa80afbef"
+  },
+  "inline_graph_hash": null,
+  "scenario_id": "case_04_recycle_loop",
+  "operation_hash": "a6d44f4b64f73bb4ae9eadb003026373a13deebf47663361c1b77e318c2f7599",
+  "solver": "nebula_hybrid_matrix_v1",
+  "solver_version": "nebula_hybrid_matrix_v1",
+  "solver_build": "4c7cb4b69ae6a0647e3e08d048d6c6724cd93ae3",
+  "database_release": "EF3.1",
+  "system_revision_hash": "4c2a39f5092dede3058c6ad650d02cfb853fda790f4d6343590cfefaa80afbef",
+  "consumer_graph_hash": "4c2a39f5092dede3058c6ad650d02cfb853fda790f4d6343590cfefaa80afbef",
+  "provider_graph_hash": "095492f59c24418b933bf47b5f1e1f83497f5a6eceefa7d909d8780250326939",
+  "background_process_pins_hash": null,
+  "background_claim_scope": null,
+  "process_identities_hash": null,
+  "flow_snapshot_hash": null,
+  "reference_dependency_snapshot_hash": null,
+  "idempotency_key": null,
+  "request_hash": null,
+  "activity_vector_semantics": "x in A*x=f",
+  "inventory_scope": "boundary elementary exchanges"
+}

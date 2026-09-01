@@ -1,0 +1,137 @@
+{
+  "schema_version": "nebula.paper.independent-pts-oracle.v1",
+  "source_graph_sha256": "181f58100633c365f10e7f38d784cb8a6e31aadcb6c15cbfe98ace980409bfa6",
+  "compile_result_sha256": "0f653675035922eee441202a613a624a83f847d1a85a685d0d8bae65a206f634",
+  "node_order": [
+    "node-hydrotreating",
+    "node-reforming"
+  ],
+  "A_pts": [
+    [
+      0.0,
+      1.0
+    ],
+    [
+      0.2,
+      0.0
+    ]
+  ],
+  "M": [
+    [
+      1.0,
+      -1.0
+    ],
+    [
+      -0.2,
+      1.0
+    ]
+  ],
+  "demand_basis": [
+    0.0,
+    1.0
+  ],
+  "activity_vector": [
+    1.25,
+    1.25
+  ],
+  "condition_number_1": 5.0,
+  "condition_number_inf": 5.0,
+  "residual_norm_inf": 0.0,
+  "boundary_rows": [
+    {
+      "flow_uuid": "096a6e33-bde6-4bf6-9a05-df1b5002fd93",
+      "name": "Make-up hydrogen",
+      "unit": "kg",
+      "direction": "input",
+      "signed_amount": -0.025,
+      "absolute_amount": 0.025
+    },
+    {
+      "flow_uuid": "2e33aa0f-13c8-40f9-bb59-4dc1ff811aca",
+      "name": "Refinery electricity supply",
+      "unit": "MJ",
+      "direction": "input",
+      "signed_amount": -6.25,
+      "absolute_amount": 6.25
+    },
+    {
+      "flow_uuid": "e55dd8e0-5ee4-4cd8-8c29-de616c3a8c81",
+      "name": "Straight-run naphtha",
+      "unit": "kg",
+      "direction": "input",
+      "signed_amount": -1.0,
+      "absolute_amount": 1.0
+    }
+  ],
+  "non_exposed_technosphere_rows": [
+    {
+      "flow_uuid": "63c27e01-d476-446c-bbb4-781ca7c6b718",
+      "name": "Reformer by-product hydrogen",
+      "unit": "kg",
+      "direction": "output",
+      "signed_amount": 0.0375,
+      "absolute_amount": 0.0375
+    }
+  ],
+  "elementary_rows": [
+    {
+      "flow_uuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+      "name": "carbon dioxide (fossil)",
+      "unit": "kg",
+      "direction": "output",
+      "signed_amount": 0.1,
+      "absolute_amount": 0.1
+    }
+  ],
+  "component_comparison": [
+    {
+      "row_type": "boundary",
+      "flow_uuid": "096a6e33-bde6-4bf6-9a05-df1b5002fd93",
+      "name": "Make-up hydrogen",
+      "unit": "kg",
+      "direction": "input",
+      "oracle_amount": 0.025,
+      "compiled_amount": 0.025,
+      "absolute_error": 0.0,
+      "relative_error": 0.0
+    },
+    {
+      "row_type": "boundary",
+      "flow_uuid": "2e33aa0f-13c8-40f9-bb59-4dc1ff811aca",
+      "name": "Refinery electricity supply",
+      "unit": "MJ",
+      "direction": "input",
+      "oracle_amount": 6.25,
+      "compiled_amount": 6.25,
+      "absolute_error": 0.0,
+      "relative_error": 0.0
+    },
+    {
+      "row_type": "boundary",
+      "flow_uuid": "e55dd8e0-5ee4-4cd8-8c29-de616c3a8c81",
+      "name": "Straight-run naphtha",
+      "unit": "kg",
+      "direction": "input",
+      "oracle_amount": 1.0,
+      "compiled_amount": 1.0,
+      "absolute_error": 0.0,
+      "relative_error": 0.0
+    },
+    {
+      "row_type": "elementary",
+      "flow_uuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+      "name": "carbon dioxide (fossil)",
+      "unit": "kg",
+      "direction": "output",
+      "oracle_amount": 0.1,
+      "compiled_amount": 0.1,
+      "absolute_error": 0.0,
+      "relative_error": 0.0
+    }
+  ],
+  "max_absolute_error": 0.0,
+  "max_relative_error": 0.0,
+  "nonzero_row_count": 4,
+  "comparison_scope": "The declared reference product, declared shell inputs, and elementary-flow rows are compared. Positive technosphere outputs not exposed by the PTS shell are reported separately and are not treated as compiled boundary rows.",
+  "within_tolerance": true
+}

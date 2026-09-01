@@ -1,0 +1,77 @@
+{
+  "schema_version": "nebula.refinery-paper-case.index.v1",
+  "created_at": "2026-08-31T13:58:55.192454+00:00",
+  "health": {
+    "status": "ok",
+    "desktop": false
+  },
+  "data_status": "refinery-inspired hypothetical benchmark; not measured plant data",
+  "flow_catalog": {
+    "crude": "83a46871-ba43-41af-a095-a944e1e2eae2",
+    "naphtha": "e55dd8e0-5ee4-4cd8-8c29-de616c3a8c81",
+    "diesel_cut": "0c463c8a-8eb5-456c-a89d-bd31279a77c1",
+    "residue": "bc6c0ec2-0596-40ac-af57-9e282728dd64",
+    "makeup_h2": "096a6e33-bde6-4bf6-9a05-df1b5002fd93",
+    "hydrotreated_naphtha": "7af5e935-677d-4051-b9a9-64d54816a43a",
+    "reformate": "7a355f98-55a0-418f-982e-360996cdf77a",
+    "byproduct_h2": "63c27e01-d476-446c-bbb4-781ca7c6b718",
+    "blendstock": "79d77f58-d808-4047-8ea9-69c08ced003e",
+    "gasoline": "b7c743ac-85a1-4a42-bdf2-33f23bf72a8f",
+    "electricity": "2e33aa0f-13c8-40f9-bb59-4dc1ff811aca",
+    "recycle_naphtha": "62405f82-9dc8-4cd7-bd76-3c8d3037060c"
+  },
+  "projects": [
+    {
+      "case": "case_01_unit_process",
+      "project_id": "d0f6ab3d-1d3a-4297-8b58-769db625aba0",
+      "parent_project_id": null,
+      "version": 1,
+      "graph_hash": "513e696aed667a80cb70737a0985161c809bc56c0ed2718203e3b660befd4776",
+      "audit_status": "passed",
+      "run_id": "d6671a38-4bfb-4391-98b3-efd974e64e36"
+    },
+    {
+      "case": "case_02_balanced_chain",
+      "project_id": "d063c9c4-0921-4cba-a67f-836704ccb97b",
+      "parent_project_id": "d0f6ab3d-1d3a-4297-8b58-769db625aba0",
+      "version": 2,
+      "graph_hash": "4fe0585dab24b36ae7c0d1ddbff2f813a2ddcf179735ec1f649c6540930314df",
+      "audit_status": "passed",
+      "run_id": "270650b8-56f2-454b-befe-73804966c728"
+    },
+    {
+      "case": "case_03_mixed_normalized_supply",
+      "project_id": "8dfdb339-6bb0-498a-8819-13cda668be5c",
+      "parent_project_id": "d063c9c4-0921-4cba-a67f-836704ccb97b",
+      "version": 2,
+      "graph_hash": "9f7a38ecb8859fd9d28e788f0aa39fb2752ebbbe9ce2e969fab9dd8a1a8ee1c5",
+      "audit_status": "passed",
+      "run_id": "19d3cafa-583d-4b2d-825b-00d9b1625c88"
+    },
+    {
+      "case": "case_04_recycle_loop",
+      "project_id": "99774999-5d17-43d1-b9a6-db1fe9f3b88e",
+      "parent_project_id": "8dfdb339-6bb0-498a-8819-13cda668be5c",
+      "version": 2,
+      "graph_hash": "4c2a39f5092dede3058c6ad650d02cfb853fda790f4d6343590cfefaa80afbef",
+      "audit_status": "passed",
+      "run_id": "6b56fb18-43e4-4b66-a5a9-c81a6ae490a1"
+    },
+    {
+      "case": "case_05_pts_compiled",
+      "project_id": "6a1837f0-9ec1-4920-ade6-d8519d412451",
+      "parent_project_id": "99774999-5d17-43d1-b9a6-db1fe9f3b88e",
+      "version": 2,
+      "graph_hash": "6d293c7c4b4b817b301f50b5ec22259aafd39bd08c096112b1da60eea2a9af30",
+      "audit_status": "passed",
+      "published_pts_version": 1
+    }
+  ],
+  "all_audits_passed": true,
+  "project_copy_route_used": "/api/projects/{project_id}/duplicate",
+  "limitations": [
+    "Quantities are declared benchmark assumptions, not a representative refinery inventory.",
+    "The PTS comparison covers one exposed-product basis column, not a complete operator basis.",
+    "The non-exposed hydrogen by-product is reported separately and is not represented as a compiled boundary exchange."
+  ]
+}

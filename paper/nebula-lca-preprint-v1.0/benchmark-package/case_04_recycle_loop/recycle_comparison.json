@@ -1,0 +1,90 @@
+{
+  "schema_version": "nebula.refinery-paper-case.recycle-comparison.v1",
+  "open_loop_run_id": "19d3cafa-583d-4b2d-825b-00d9b1625c88",
+  "recycle_loop_run_id": "6b56fb18-43e4-4b66-a5a9-c81a6ae490a1",
+  "activity_vector": [
+    {
+      "process_uuid": "market_refinery_electricity_supply",
+      "open_loop": 6.1,
+      "recycle_loop": 7.023809523809524,
+      "difference": 0.9238095238095241
+    },
+    {
+      "process_uuid": "paper-refinery-blending",
+      "open_loop": 1.0,
+      "recycle_loop": 1.0,
+      "difference": 0.0
+    },
+    {
+      "process_uuid": "paper-refinery-distillation",
+      "open_loop": 0.8400000000000001,
+      "recycle_loop": 0.8,
+      "difference": -0.040000000000000036
+    },
+    {
+      "process_uuid": "paper-refinery-hydrotreating",
+      "open_loop": 0.8,
+      "recycle_loop": 1.0,
+      "difference": 0.19999999999999996
+    },
+    {
+      "process_uuid": "paper-refinery-reforming",
+      "open_loop": 0.8,
+      "recycle_loop": 1.0,
+      "difference": 0.19999999999999996
+    }
+  ],
+  "boundary_exchanges": [
+    {
+      "identity": "elementary::08a91e70-3ddc-11dd-923d-0050c2490048::kg",
+      "open_loop": 0.1144,
+      "recycle_loop": 0.13333333333333333,
+      "difference": 0.01893333333333333
+    },
+    {
+      "identity": "technosphere::096a6e33-bde6-4bf6-9a05-df1b5002fd93::kg",
+      "open_loop": 0.016,
+      "recycle_loop": 0.02,
+      "difference": 0.004
+    },
+    {
+      "identity": "technosphere::0c463c8a-8eb5-456c-a89d-bd31279a77c1::kg",
+      "open_loop": 0.378,
+      "recycle_loop": 0.36,
+      "difference": -0.018000000000000016
+    },
+    {
+      "identity": "technosphere::63c27e01-d476-446c-bbb4-781ca7c6b718::kg",
+      "open_loop": 0.024,
+      "recycle_loop": 0.03,
+      "difference": 0.005999999999999998
+    },
+    {
+      "identity": "technosphere::79d77f58-d808-4047-8ea9-69c08ced003e::kg",
+      "open_loop": 0.2,
+      "recycle_loop": 0.2,
+      "difference": 0.0
+    },
+    {
+      "identity": "technosphere::83a46871-ba43-41af-a095-a944e1e2eae2::kg",
+      "open_loop": 0.8400000000000001,
+      "recycle_loop": 0.8,
+      "difference": -0.040000000000000036
+    },
+    {
+      "identity": "technosphere::b7c743ac-85a1-4a42-bdf2-33f23bf72a8f::kg",
+      "open_loop": 1.0,
+      "recycle_loop": 1.0,
+      "difference": 0.0
+    },
+    {
+      "identity": "technosphere::bc6c0ec2-0596-40ac-af57-9e282728dd64::kg",
+      "open_loop": 0.252,
+      "recycle_loop": 0.24,
+      "difference": -0.01200000000000001
+    }
+  ],
+  "activity_vector_changed": true,
+  "boundary_exchanges_changed": true,
+  "tolerance": 1e-12
+}

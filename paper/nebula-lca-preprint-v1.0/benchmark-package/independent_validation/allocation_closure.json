@@ -1,0 +1,89 @@
+{
+  "schema_version": "nebula.paper.allocation-closure.v1",
+  "source_graph_sha256": "88681e7204d0bf98c2498f914a35c4352500ada0c6184d446867855b51a1160c",
+  "allocation_factor_sum": 1.0,
+  "exchange_rows": [
+    {
+      "exchange_id": "in-crude",
+      "flow_uuid": "83a46871-ba43-41af-a095-a944e1e2eae2",
+      "name": "Crude oil feed",
+      "unit": "kg",
+      "signed_source_amount": -4.2,
+      "product_terms": [
+        {
+          "product_flow_uuid": "e55dd8e0-5ee4-4cd8-8c29-de616c3a8c81",
+          "product_name": "Straight-run naphtha",
+          "product_quantity": 1.05,
+          "allocation_factor": 0.25,
+          "resolved_amount_per_product_unit": -1.0,
+          "reconstructed_source_amount": -1.05
+        },
+        {
+          "product_flow_uuid": "0c463c8a-8eb5-456c-a89d-bd31279a77c1",
+          "product_name": "Atmospheric diesel fraction",
+          "product_quantity": 1.89,
+          "allocation_factor": 0.45,
+          "resolved_amount_per_product_unit": -1.0000000000000002,
+          "reconstructed_source_amount": -1.8900000000000003
+        },
+        {
+          "product_flow_uuid": "bc6c0ec2-0596-40ac-af57-9e282728dd64",
+          "product_name": "Atmospheric residue",
+          "product_quantity": 1.26,
+          "allocation_factor": 0.3,
+          "resolved_amount_per_product_unit": -1.0,
+          "reconstructed_source_amount": -1.26
+        }
+      ],
+      "reconstructed_amount": -4.2,
+      "absolute_residual": 0.0,
+      "relative_residual": 0.0
+    },
+    {
+      "exchange_id": "em-co2-distillation",
+      "flow_uuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+      "name": "carbon dioxide (fossil)",
+      "unit": "kg",
+      "signed_source_amount": 0.08,
+      "product_terms": [
+        {
+          "product_flow_uuid": "e55dd8e0-5ee4-4cd8-8c29-de616c3a8c81",
+          "product_name": "Straight-run naphtha",
+          "product_quantity": 1.05,
+          "allocation_factor": 0.25,
+          "resolved_amount_per_product_unit": 0.019047619047619046,
+          "reconstructed_source_amount": 0.02
+        },
+        {
+          "product_flow_uuid": "0c463c8a-8eb5-456c-a89d-bd31279a77c1",
+          "product_name": "Atmospheric diesel fraction",
+          "product_quantity": 1.89,
+          "allocation_factor": 0.45,
+          "resolved_amount_per_product_unit": 0.01904761904761905,
+          "reconstructed_source_amount": 0.036000000000000004
+        },
+        {
+          "product_flow_uuid": "bc6c0ec2-0596-40ac-af57-9e282728dd64",
+          "product_name": "Atmospheric residue",
+          "product_quantity": 1.26,
+          "allocation_factor": 0.3,
+          "resolved_amount_per_product_unit": 0.01904761904761905,
+          "reconstructed_source_amount": 0.024000000000000004
+        }
+      ],
+      "reconstructed_amount": 0.08000000000000002,
+      "absolute_residual": 1.3877787807814457e-17,
+      "relative_residual": 1.734723475976807e-16
+    }
+  ],
+  "vector_norm_inf": 1.3877787807814457e-17,
+  "vector_norm_2": 1.3877787807814457e-17,
+  "within_tolerance": true,
+  "negative_control": {
+    "description": "A product-specific exchange is deliberately assigned to two product columns.",
+    "source_amount": 0.4,
+    "reconstructed_amount": 0.8,
+    "absolute_residual": 0.4,
+    "rejected": true
+  }
+}

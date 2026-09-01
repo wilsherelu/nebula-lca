@@ -1,0 +1,1603 @@
+{
+  "run_id": "b2e65f30-5120-4efe-9333-fe3699218c44",
+  "status": "completed",
+  "summary": {
+    "process_count": 5,
+    "elementary_flow_count": 1,
+    "indicator_count": 25,
+    "issue_count": 3,
+    "missing_ef31_flow_count": 0,
+    "timing_build_ab_seconds": 0.00014540005940943956,
+    "timing_build_c_seconds": 0.0004966999404132366,
+    "timing_solve_seconds": 0.00012900005094707012,
+    "timing_mmr_seconds": 0.001976100029423833,
+    "timing_total_seconds": 0.004866900038905442,
+    "ef31_runtime_cache_hit": true,
+    "ef31_runtime_source_count": 1,
+    "unlinked_technosphere_input_count": 3
+  },
+  "tiangong_like_input": {
+    "model": {
+      "schema_version": "hybrid-0.2",
+      "functional_unit": "1 kg Finished gasoline"
+    },
+    "processes": [
+      {
+        "process_uuid": "market_refinery_electricity_supply",
+        "process_name": "Refinery electricity supply chain",
+        "reference_product_flow_uuid": "node-electricity-supply::out-electricity",
+        "node_kind": "market_process",
+        "mode": "normalized",
+        "lci_role": null
+      },
+      {
+        "process_uuid": "paper-refinery-distillation",
+        "process_name": "Atmospheric distillation",
+        "reference_product_flow_uuid": "node-distillation::out-naphtha",
+        "node_kind": "unit_process",
+        "mode": "balanced",
+        "lci_role": null
+      },
+      {
+        "process_uuid": "paper-refinery-hydrotreating",
+        "process_name": "Naphtha hydrotreating",
+        "reference_product_flow_uuid": "node-hydrotreating::out-hydrotreated",
+        "node_kind": "unit_process",
+        "mode": "balanced",
+        "lci_role": null
+      },
+      {
+        "process_uuid": "paper-refinery-reforming",
+        "process_name": "Catalytic reforming",
+        "reference_product_flow_uuid": "node-reforming::out-reformate",
+        "node_kind": "unit_process",
+        "mode": "balanced",
+        "lci_role": null
+      },
+      {
+        "process_uuid": "paper-refinery-blending",
+        "process_name": "Gasoline blending",
+        "reference_product_flow_uuid": "node-blending::out-gasoline",
+        "node_kind": "unit_process",
+        "mode": "balanced",
+        "lci_role": null
+      }
+    ],
+    "flows": [
+      {
+        "flow_uuid": "2e33aa0f-13c8-40f9-bb59-4dc1ff811aca",
+        "flow_name": "Refinery electricity supply",
+        "flow_type": "Product flow",
+        "default_unit_uuid": "MJ",
+        "unit_group_uuid": "unit_group::Units of energy",
+        "source_system": "user_custom"
+      },
+      {
+        "flow_uuid": "349b29d1-3e58-4c66-98b9-9d1a076efd2e",
+        "flow_name": "carbon dioxide (fossil)",
+        "flow_type": "Elementary flow",
+        "default_unit_uuid": "kg",
+        "unit_group_uuid": "unit_group::Units of mass",
+        "source_system": "ecoinvent_3.11"
+      },
+      {
+        "flow_uuid": "83a46871-ba43-41af-a095-a944e1e2eae2",
+        "flow_name": "Crude oil feed",
+        "flow_type": "Product flow",
+        "default_unit_uuid": "kg",
+        "unit_group_uuid": "unit_group::Units of mass",
+        "source_system": "user_custom"
+      },
+      {
+        "flow_uuid": "e55dd8e0-5ee4-4cd8-8c29-de616c3a8c81",
+        "flow_name": "Straight-run naphtha",
+        "flow_type": "Product flow",
+        "default_unit_uuid": "kg",
+        "unit_group_uuid": "unit_group::Units of mass",
+        "source_system": "user_custom"
+      },
+      {
+        "flow_uuid": "0c463c8a-8eb5-456c-a89d-bd31279a77c1",
+        "flow_name": "Atmospheric diesel fraction",
+        "flow_type": "Product flow",
+        "default_unit_uuid": "kg",
+        "unit_group_uuid": "unit_group::Units of mass",
+        "source_system": "user_custom"
+      },
+      {
+        "flow_uuid": "bc6c0ec2-0596-40ac-af57-9e282728dd64",
+        "flow_name": "Atmospheric residue",
+        "flow_type": "Product flow",
+        "default_unit_uuid": "kg",
+        "unit_group_uuid": "unit_group::Units of mass",
+        "source_system": "user_custom"
+      },
+      {
+        "flow_uuid": "096a6e33-bde6-4bf6-9a05-df1b5002fd93",
+        "flow_name": "Make-up hydrogen",
+        "flow_type": "Product flow",
+        "default_unit_uuid": "kg",
+        "unit_group_uuid": "unit_group::Units of mass",
+        "source_system": "user_custom"
+      },
+      {
+        "flow_uuid": "7af5e935-677d-4051-b9a9-64d54816a43a",
+        "flow_name": "Hydrotreated naphtha",
+        "flow_type": "Product flow",
+        "default_unit_uuid": "kg",
+        "unit_group_uuid": "unit_group::Units of mass",
+        "source_system": "user_custom"
+      },
+      {
+        "flow_uuid": "7a355f98-55a0-418f-982e-360996cdf77a",
+        "flow_name": "Reformate",
+        "flow_type": "Product flow",
+        "default_unit_uuid": "kg",
+        "unit_group_uuid": "unit_group::Units of mass",
+        "source_system": "user_custom"
+      },
+      {
+        "flow_uuid": "63c27e01-d476-446c-bbb4-781ca7c6b718",
+        "flow_name": "Reformer by-product hydrogen",
+        "flow_type": "Product flow",
+        "default_unit_uuid": "kg",
+        "unit_group_uuid": "unit_group::Units of mass",
+        "source_system": "user_custom"
+      },
+      {
+        "flow_uuid": "79d77f58-d808-4047-8ea9-69c08ced003e",
+        "flow_name": "External gasoline blendstock",
+        "flow_type": "Product flow",
+        "default_unit_uuid": "kg",
+        "unit_group_uuid": "unit_group::Units of mass",
+        "source_system": "user_custom"
+      },
+      {
+        "flow_uuid": "b7c743ac-85a1-4a42-bdf2-33f23bf72a8f",
+        "flow_name": "Finished gasoline",
+        "flow_type": "Product flow",
+        "default_unit_uuid": "kg",
+        "unit_group_uuid": "unit_group::Units of mass",
+        "source_system": "user_custom"
+      }
+    ],
+    "exchanges": [
+      {
+        "exchange_id": "node-electricity-supply::out-electricity",
+        "process_uuid": "market_refinery_electricity_supply",
+        "flow_uuid": "2e33aa0f-13c8-40f9-bb59-4dc1ff811aca",
+        "direction": "output",
+        "amount": 1.0,
+        "is_reference_product": true,
+        "allocation_fraction": 1.0,
+        "allocation_weight": null,
+        "allocation_weight_unit_group": null,
+        "product_output_amount": 1.0,
+        "baseline_quantity_fraction": 1.0,
+        "product_conversion_factor": 1.0,
+        "allocation_scale": 1.0
+      },
+      {
+        "exchange_id": "node-electricity-supply::em-co2-electricity-supply",
+        "process_uuid": "market_refinery_electricity_supply",
+        "flow_uuid": "349b29d1-3e58-4c66-98b9-9d1a076efd2e",
+        "direction": "output",
+        "amount": 0.004,
+        "is_reference_product": false,
+        "allocation_fraction": null,
+        "allocation_weight": null,
+        "allocation_weight_unit_group": null,
+        "product_output_amount": null,
+        "baseline_quantity_fraction": null,
+        "product_conversion_factor": null,
+        "allocation_scale": null
+      },
+      {
+        "exchange_id": "node-distillation::in-crude",
+        "process_uuid": "paper-refinery-distillation",
+        "flow_uuid": "83a46871-ba43-41af-a095-a944e1e2eae2",
+        "direction": "input",
+        "amount": 4.2,
+        "is_reference_product": false,
+        "allocation_fraction": null,
+        "allocation_weight": null,
+        "allocation_weight_unit_group": null,
+        "product_output_amount": null,
+        "baseline_quantity_fraction": null,
+        "product_conversion_factor": null,
+        "allocation_scale": null
+      },
+      {
+        "exchange_id": "node-distillation::in-electricity",
+        "process_uuid": "paper-refinery-distillation",
+        "flow_uuid": "2e33aa0f-13c8-40f9-bb59-4dc1ff811aca",
+        "direction": "input",
+        "amount": 8.0,
+        "is_reference_product": false,
+        "allocation_fraction": null,
+        "allocation_weight": null,
+        "allocation_weight_unit_group": null,
+        "product_output_amount": null,
+        "baseline_quantity_fraction": null,
+        "product_conversion_factor": null,
+        "allocation_scale": null
+      },
+      {
+        "exchange_id": "node-distillation::out-naphtha",
+        "process_uuid": "paper-refinery-distillation",
+        "flow_uuid": "e55dd8e0-5ee4-4cd8-8c29-de616c3a8c81",
+        "direction": "output",
+        "amount": 1.05,
+        "is_reference_product": true,
+        "allocation_fraction": 0.25,
+        "allocation_weight": 1.05,
+        "allocation_weight_unit_group": "Units of mass",
+        "product_output_amount": 1.05,
+        "baseline_quantity_fraction": 0.25,
+        "product_conversion_factor": 1.0,
+        "allocation_scale": 1.0
+      },
+      {
+        "exchange_id": "node-distillation::out-diesel-cut",
+        "process_uuid": "paper-refinery-distillation",
+        "flow_uuid": "0c463c8a-8eb5-456c-a89d-bd31279a77c1",
+        "direction": "output",
+        "amount": 1.89,
+        "is_reference_product": false,
+        "allocation_fraction": 0.44999999999999996,
+        "allocation_weight": 1.89,
+        "allocation_weight_unit_group": "Units of mass",
+        "product_output_amount": 1.89,
+        "baseline_quantity_fraction": 0.44999999999999996,
+        "product_conversion_factor": 1.0,
+        "allocation_scale": 1.0
+      },
+      {
+        "exchange_id": "node-distillation::out-residue",
+        "process_uuid": "paper-refinery-distillation",
+        "flow_uuid": "bc6c0ec2-0596-40ac-af57-9e282728dd64",
+        "direction": "output",
+        "amount": 1.26,
+        "is_reference_product": false,
+        "allocation_fraction": 0.3,
+        "allocation_weight": 1.26,
+        "allocation_weight_unit_group": "Units of mass",
+        "product_output_amount": 1.26,
+        "baseline_quantity_fraction": 0.3,
+        "product_conversion_factor": 1.0,
+        "allocation_scale": 1.0
+      },
+      {
+        "exchange_id": "node-distillation::em-co2-distillation",
+        "process_uuid": "paper-refinery-distillation",
+        "flow_uuid": "349b29d1-3e58-4c66-98b9-9d1a076efd2e",
+        "direction": "output",
+        "amount": 0.08,
+        "is_reference_product": false,
+        "allocation_fraction": null,
+        "allocation_weight": null,
+        "allocation_weight_unit_group": null,
+        "product_output_amount": null,
+        "baseline_quantity_fraction": null,
+        "product_conversion_factor": null,
+        "allocation_scale": null
+      },
+      {
+        "exchange_id": "node-hydrotreating::in-naphtha",
+        "process_uuid": "paper-refinery-hydrotreating",
+        "flow_uuid": "e55dd8e0-5ee4-4cd8-8c29-de616c3a8c81",
+        "direction": "input",
+        "amount": 1.05,
+        "is_reference_product": false,
+        "allocation_fraction": null,
+        "allocation_weight": null,
+        "allocation_weight_unit_group": null,
+        "product_output_amount": null,
+        "baseline_quantity_fraction": null,
+        "product_conversion_factor": null,
+        "allocation_scale": null
+      },
+      {
+        "exchange_id": "node-hydrotreating::in-makeup-h2",
+        "process_uuid": "paper-refinery-hydrotreating",
+        "flow_uuid": "096a6e33-bde6-4bf6-9a05-df1b5002fd93",
+        "direction": "input",
+        "amount": 0.02,
+        "is_reference_product": false,
+        "allocation_fraction": null,
+        "allocation_weight": null,
+        "allocation_weight_unit_group": null,
+        "product_output_amount": null,
+        "baseline_quantity_fraction": null,
+        "product_conversion_factor": null,
+        "allocation_scale": null
+      },
+      {
+        "exchange_id": "node-hydrotreating::in-electricity",
+        "process_uuid": "paper-refinery-hydrotreating",
+        "flow_uuid": "2e33aa0f-13c8-40f9-bb59-4dc1ff811aca",
+        "direction": "input",
+        "amount": 3.0,
+        "is_reference_product": false,
+        "allocation_fraction": null,
+        "allocation_weight": null,
+        "allocation_weight_unit_group": null,
+        "product_output_amount": null,
+        "baseline_quantity_fraction": null,
+        "product_conversion_factor": null,
+        "allocation_scale": null
+      },
+      {
+        "exchange_id": "node-hydrotreating::out-hydrotreated",
+        "process_uuid": "paper-refinery-hydrotreating",
+        "flow_uuid": "7af5e935-677d-4051-b9a9-64d54816a43a",
+        "direction": "output",
+        "amount": 1.0,
+        "is_reference_product": true,
+        "allocation_fraction": 1.0,
+        "allocation_weight": null,
+        "allocation_weight_unit_group": null,
+        "product_output_amount": 1.0,
+        "baseline_quantity_fraction": 1.0,
+        "product_conversion_factor": 1.0,
+        "allocation_scale": 1.0
+      },
+      {
+        "exchange_id": "node-hydrotreating::em-co2-hydrotreating",
+        "process_uuid": "paper-refinery-hydrotreating",
+        "flow_uuid": "349b29d1-3e58-4c66-98b9-9d1a076efd2e",
+        "direction": "output",
+        "amount": 0.03,
+        "is_reference_product": false,
+        "allocation_fraction": null,
+        "allocation_weight": null,
+        "allocation_weight_unit_group": null,
+        "product_output_amount": null,
+        "baseline_quantity_fraction": null,
+        "product_conversion_factor": null,
+        "allocation_scale": null
+      },
+      {
+        "exchange_id": "node-reforming::in-hydrotreated",
+        "process_uuid": "paper-refinery-reforming",
+        "flow_uuid": "7af5e935-677d-4051-b9a9-64d54816a43a",
+        "direction": "input",
+        "amount": 1.0,
+        "is_reference_product": false,
+        "allocation_fraction": null,
+        "allocation_weight": null,
+        "allocation_weight_unit_group": null,
+        "product_output_amount": null,
+        "baseline_quantity_fraction": null,
+        "product_conversion_factor": null,
+        "allocation_scale": null
+      },
+      {
+        "exchange_id": "node-reforming::in-electricity",
+        "process_uuid": "paper-refinery-reforming",
+        "flow_uuid": "2e33aa0f-13c8-40f9-bb59-4dc1ff811aca",
+        "direction": "input",
+        "amount": 2.0,
+        "is_reference_product": false,
+        "allocation_fraction": null,
+        "allocation_weight": null,
+        "allocation_weight_unit_group": null,
+        "product_output_amount": null,
+        "baseline_quantity_fraction": null,
+        "product_conversion_factor": null,
+        "allocation_scale": null
+      },
+      {
+        "exchange_id": "node-reforming::out-reformate",
+        "process_uuid": "paper-refinery-reforming",
+        "flow_uuid": "7a355f98-55a0-418f-982e-360996cdf77a",
+        "direction": "output",
+        "amount": 1.0,
+        "is_reference_product": true,
+        "allocation_fraction": 1.0,
+        "allocation_weight": null,
+        "allocation_weight_unit_group": null,
+        "product_output_amount": 1.0,
+        "baseline_quantity_fraction": 1.0,
+        "product_conversion_factor": 1.0,
+        "allocation_scale": 1.0
+      },
+      {
+        "exchange_id": "node-reforming::out-byproduct-h2",
+        "process_uuid": "paper-refinery-reforming",
+        "flow_uuid": "63c27e01-d476-446c-bbb4-781ca7c6b718",
+        "direction": "output",
+        "amount": 0.03,
+        "is_reference_product": false,
+        "allocation_fraction": null,
+        "allocation_weight": null,
+        "allocation_weight_unit_group": null,
+        "product_output_amount": null,
+        "baseline_quantity_fraction": null,
+        "product_conversion_factor": null,
+        "allocation_scale": null
+      },
+      {
+        "exchange_id": "node-reforming::em-co2-reforming",
+        "process_uuid": "paper-refinery-reforming",
+        "flow_uuid": "349b29d1-3e58-4c66-98b9-9d1a076efd2e",
+        "direction": "output",
+        "amount": 0.05,
+        "is_reference_product": false,
+        "allocation_fraction": null,
+        "allocation_weight": null,
+        "allocation_weight_unit_group": null,
+        "product_output_amount": null,
+        "baseline_quantity_fraction": null,
+        "product_conversion_factor": null,
+        "allocation_scale": null
+      },
+      {
+        "exchange_id": "node-blending::in-reformate",
+        "process_uuid": "paper-refinery-blending",
+        "flow_uuid": "7a355f98-55a0-418f-982e-360996cdf77a",
+        "direction": "input",
+        "amount": 0.8,
+        "is_reference_product": false,
+        "allocation_fraction": null,
+        "allocation_weight": null,
+        "allocation_weight_unit_group": null,
+        "product_output_amount": null,
+        "baseline_quantity_fraction": null,
+        "product_conversion_factor": null,
+        "allocation_scale": null
+      },
+      {
+        "exchange_id": "node-blending::in-blendstock",
+        "process_uuid": "paper-refinery-blending",
+        "flow_uuid": "79d77f58-d808-4047-8ea9-69c08ced003e",
+        "direction": "input",
+        "amount": 0.2,
+        "is_reference_product": false,
+        "allocation_fraction": null,
+        "allocation_weight": null,
+        "allocation_weight_unit_group": null,
+        "product_output_amount": null,
+        "baseline_quantity_fraction": null,
+        "product_conversion_factor": null,
+        "allocation_scale": null
+      },
+      {
+        "exchange_id": "node-blending::in-electricity",
+        "process_uuid": "paper-refinery-blending",
+        "flow_uuid": "2e33aa0f-13c8-40f9-bb59-4dc1ff811aca",
+        "direction": "input",
+        "amount": 0.5,
+        "is_reference_product": false,
+        "allocation_fraction": null,
+        "allocation_weight": null,
+        "allocation_weight_unit_group": null,
+        "product_output_amount": null,
+        "baseline_quantity_fraction": null,
+        "product_conversion_factor": null,
+        "allocation_scale": null
+      },
+      {
+        "exchange_id": "node-blending::out-gasoline",
+        "process_uuid": "paper-refinery-blending",
+        "flow_uuid": "b7c743ac-85a1-4a42-bdf2-33f23bf72a8f",
+        "direction": "output",
+        "amount": 1.0,
+        "is_reference_product": true,
+        "allocation_fraction": 1.0,
+        "allocation_weight": null,
+        "allocation_weight_unit_group": null,
+        "product_output_amount": 1.0,
+        "baseline_quantity_fraction": 1.0,
+        "product_conversion_factor": 1.0,
+        "allocation_scale": 1.0
+      },
+      {
+        "exchange_id": "node-blending::em-co2-blending",
+        "process_uuid": "paper-refinery-blending",
+        "flow_uuid": "349b29d1-3e58-4c66-98b9-9d1a076efd2e",
+        "direction": "output",
+        "amount": 0.01,
+        "is_reference_product": false,
+        "allocation_fraction": null,
+        "allocation_weight": null,
+        "allocation_weight_unit_group": null,
+        "product_output_amount": null,
+        "baseline_quantity_fraction": null,
+        "product_conversion_factor": null,
+        "allocation_scale": null
+      }
+    ],
+    "links": [
+      {
+        "consumer_process_uuid": "paper-refinery-hydrotreating",
+        "provider_process_uuid": "paper-refinery-distillation",
+        "provider_product_port_id": "out-naphtha",
+        "provider_product_exchange_id": "node-distillation::out-naphtha",
+        "provider_allocation_fraction": 0.25,
+        "provider_baseline_quantity_fraction": 0.25,
+        "provider_product_conversion_factor": 1.0,
+        "provider_allocation_scale": 1.0,
+        "provider_product_output_amount": 1.05,
+        "flow_uuid": "e55dd8e0-5ee4-4cd8-8c29-de616c3a8c81",
+        "flow_type": "Product flow",
+        "is_waste_flow": false,
+        "quantity_mode": "single",
+        "provider_amount": 1.05,
+        "consumer_amount": 1.05,
+        "amount": 1.05
+      },
+      {
+        "consumer_process_uuid": "paper-refinery-reforming",
+        "provider_process_uuid": "paper-refinery-hydrotreating",
+        "provider_product_port_id": "out-hydrotreated",
+        "provider_product_exchange_id": "node-hydrotreating::out-hydrotreated",
+        "provider_allocation_fraction": 1.0,
+        "provider_baseline_quantity_fraction": 1.0,
+        "provider_product_conversion_factor": 1.0,
+        "provider_allocation_scale": 1.0,
+        "provider_product_output_amount": 1.0,
+        "flow_uuid": "7af5e935-677d-4051-b9a9-64d54816a43a",
+        "flow_type": "Product flow",
+        "is_waste_flow": false,
+        "quantity_mode": "single",
+        "provider_amount": 1.0,
+        "consumer_amount": 1.0,
+        "amount": 1.0
+      },
+      {
+        "consumer_process_uuid": "paper-refinery-blending",
+        "provider_process_uuid": "paper-refinery-reforming",
+        "provider_product_port_id": "out-reformate",
+        "provider_product_exchange_id": "node-reforming::out-reformate",
+        "provider_allocation_fraction": 1.0,
+        "provider_baseline_quantity_fraction": 1.0,
+        "provider_product_conversion_factor": 1.0,
+        "provider_allocation_scale": 1.0,
+        "provider_product_output_amount": 1.0,
+        "flow_uuid": "7a355f98-55a0-418f-982e-360996cdf77a",
+        "flow_type": "Product flow",
+        "is_waste_flow": false,
+        "quantity_mode": "single",
+        "provider_amount": 0.8,
+        "consumer_amount": 0.8,
+        "amount": 0.8
+      },
+      {
+        "consumer_process_uuid": "paper-refinery-distillation",
+        "provider_process_uuid": "market_refinery_electricity_supply",
+        "provider_product_port_id": "out-electricity",
+        "provider_product_exchange_id": "node-electricity-supply::out-electricity",
+        "provider_allocation_fraction": 1.0,
+        "provider_baseline_quantity_fraction": 1.0,
+        "provider_product_conversion_factor": 1.0,
+        "provider_allocation_scale": 1.0,
+        "provider_product_output_amount": 1.0,
+        "flow_uuid": "2e33aa0f-13c8-40f9-bb59-4dc1ff811aca",
+        "flow_type": "Product flow",
+        "is_waste_flow": false,
+        "quantity_mode": "dual",
+        "provider_amount": 8.0,
+        "consumer_amount": 8.0,
+        "amount": 8.0
+      },
+      {
+        "consumer_process_uuid": "paper-refinery-hydrotreating",
+        "provider_process_uuid": "market_refinery_electricity_supply",
+        "provider_product_port_id": "out-electricity",
+        "provider_product_exchange_id": "node-electricity-supply::out-electricity",
+        "provider_allocation_fraction": 1.0,
+        "provider_baseline_quantity_fraction": 1.0,
+        "provider_product_conversion_factor": 1.0,
+        "provider_allocation_scale": 1.0,
+        "provider_product_output_amount": 1.0,
+        "flow_uuid": "2e33aa0f-13c8-40f9-bb59-4dc1ff811aca",
+        "flow_type": "Product flow",
+        "is_waste_flow": false,
+        "quantity_mode": "dual",
+        "provider_amount": 3.0,
+        "consumer_amount": 3.0,
+        "amount": 3.0
+      },
+      {
+        "consumer_process_uuid": "paper-refinery-reforming",
+        "provider_process_uuid": "market_refinery_electricity_supply",
+        "provider_product_port_id": "out-electricity",
+        "provider_product_exchange_id": "node-electricity-supply::out-electricity",
+        "provider_allocation_fraction": 1.0,
+        "provider_baseline_quantity_fraction": 1.0,
+        "provider_product_conversion_factor": 1.0,
+        "provider_allocation_scale": 1.0,
+        "provider_product_output_amount": 1.0,
+        "flow_uuid": "2e33aa0f-13c8-40f9-bb59-4dc1ff811aca",
+        "flow_type": "Product flow",
+        "is_waste_flow": false,
+        "quantity_mode": "dual",
+        "provider_amount": 2.0,
+        "consumer_amount": 2.0,
+        "amount": 2.0
+      },
+      {
+        "consumer_process_uuid": "paper-refinery-blending",
+        "provider_process_uuid": "market_refinery_electricity_supply",
+        "provider_product_port_id": "out-electricity",
+        "provider_product_exchange_id": "node-electricity-supply::out-electricity",
+        "provider_allocation_fraction": 1.0,
+        "provider_baseline_quantity_fraction": 1.0,
+        "provider_product_conversion_factor": 1.0,
+        "provider_allocation_scale": 1.0,
+        "provider_product_output_amount": 1.0,
+        "flow_uuid": "2e33aa0f-13c8-40f9-bb59-4dc1ff811aca",
+        "flow_type": "Product flow",
+        "is_waste_flow": false,
+        "quantity_mode": "dual",
+        "provider_amount": 0.5,
+        "consumer_amount": 0.5,
+        "amount": 0.5
+      }
+    ]
+  },
+  "lci_result": {
+    "issues": [
+      {
+        "code": "UNLINKED_POSITIVE_TECHNOSPHERE_INPUT",
+        "message": "Positive technosphere input has no foreground or background provider and was omitted from upstream inventory.",
+        "node_id": "node-distillation",
+        "node_name": "Atmospheric distillation",
+        "port_id": "in-crude",
+        "flow_uuid": "83a46871-ba43-41af-a095-a944e1e2eae2",
+        "flow_name": "Crude oil feed",
+        "amount": 4.2,
+        "unit": "kg"
+      },
+      {
+        "code": "UNLINKED_POSITIVE_TECHNOSPHERE_INPUT",
+        "message": "Positive technosphere input has no foreground or background provider and was omitted from upstream inventory.",
+        "node_id": "node-hydrotreating",
+        "node_name": "Naphtha hydrotreating",
+        "port_id": "in-makeup-h2",
+        "flow_uuid": "096a6e33-bde6-4bf6-9a05-df1b5002fd93",
+        "flow_name": "Make-up hydrogen",
+        "amount": 0.02,
+        "unit": "kg"
+      },
+      {
+        "code": "UNLINKED_POSITIVE_TECHNOSPHERE_INPUT",
+        "message": "Positive technosphere input has no foreground or background provider and was omitted from upstream inventory.",
+        "node_id": "node-blending",
+        "node_name": "Gasoline blending",
+        "port_id": "in-blendstock",
+        "flow_uuid": "79d77f58-d808-4047-8ea9-69c08ced003e",
+        "flow_name": "External gasoline blendstock",
+        "amount": 0.2,
+        "unit": "kg"
+      }
+    ],
+    "lci_vector_runtime": {
+      "expanded_process_count": 0,
+      "expanded_port_count": 0,
+      "missing_vectors": [],
+      "provenance": []
+    },
+    "missing_ef31_flow_uuids": [],
+    "missing_ef31_flows": [],
+    "elementary_flow_mappings": [
+      {
+        "source_flow_uuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+        "target_flow_uuid": "349b29d1-3e58-4c66-98b9-9d1a076efd2e",
+        "amount_factor": 1.0,
+        "mapping_level": "L1",
+        "package_id": "nebula-flow-mapping",
+        "package_version": "1.0.0"
+      }
+    ],
+    "indicator_index": [
+      {
+        "indicator_index": 0,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "climate change",
+        "indicator_zh": "climate change",
+        "canonical_indicator_key": "climate change",
+        "indicator_unit": "mol H+-Eq",
+        "unit": "mol H+-Eq"
+      },
+      {
+        "indicator_index": 1,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "acidification",
+        "indicator_zh": "acidification",
+        "canonical_indicator_key": "acidification",
+        "indicator_unit": "kg CO2-Eq",
+        "unit": "kg CO2-Eq"
+      },
+      {
+        "indicator_index": 2,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "climate change: biogenic",
+        "indicator_zh": "climate change: biogenic",
+        "canonical_indicator_key": "climate change: biogenic",
+        "indicator_unit": "kg CO2-Eq",
+        "unit": "kg CO2-Eq"
+      },
+      {
+        "indicator_index": 3,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "climate change: fossil",
+        "indicator_zh": "climate change: fossil",
+        "canonical_indicator_key": "climate change: fossil",
+        "indicator_unit": "kg CO2-Eq",
+        "unit": "kg CO2-Eq"
+      },
+      {
+        "indicator_index": 4,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "climate change: land use and land use change",
+        "indicator_zh": "climate change: land use and land use change",
+        "canonical_indicator_key": "climate change: land use and land use change",
+        "indicator_unit": "kg CO2-Eq",
+        "unit": "kg CO2-Eq"
+      },
+      {
+        "indicator_index": 5,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "ecotoxicity: freshwater",
+        "indicator_zh": "ecotoxicity: freshwater",
+        "canonical_indicator_key": "ecotoxicity: freshwater",
+        "indicator_unit": "CTUe",
+        "unit": "CTUe"
+      },
+      {
+        "indicator_index": 6,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "ecotoxicity: freshwater, inorganics",
+        "indicator_zh": "ecotoxicity: freshwater, inorganics",
+        "canonical_indicator_key": "ecotoxicity: freshwater, inorganics",
+        "indicator_unit": "CTUe",
+        "unit": "CTUe"
+      },
+      {
+        "indicator_index": 7,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "ecotoxicity: freshwater, organics",
+        "indicator_zh": "ecotoxicity: freshwater, organics",
+        "canonical_indicator_key": "ecotoxicity: freshwater, organics",
+        "indicator_unit": "CTUe",
+        "unit": "CTUe"
+      },
+      {
+        "indicator_index": 8,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "energy resources: non-renewable",
+        "indicator_zh": "energy resources: non-renewable",
+        "canonical_indicator_key": "energy resources: non-renewable",
+        "indicator_unit": "MJ, net calorific value",
+        "unit": "MJ, net calorific value"
+      },
+      {
+        "indicator_index": 9,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "eutrophication: freshwater",
+        "indicator_zh": "eutrophication: freshwater",
+        "canonical_indicator_key": "eutrophication: freshwater",
+        "indicator_unit": "kg P-Eq",
+        "unit": "kg P-Eq"
+      },
+      {
+        "indicator_index": 10,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "eutrophication: marine",
+        "indicator_zh": "eutrophication: marine",
+        "canonical_indicator_key": "eutrophication: marine",
+        "indicator_unit": "kg N-Eq",
+        "unit": "kg N-Eq"
+      },
+      {
+        "indicator_index": 11,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "eutrophication: terrestrial",
+        "indicator_zh": "eutrophication: terrestrial",
+        "canonical_indicator_key": "eutrophication: terrestrial",
+        "indicator_unit": "mol N-Eq",
+        "unit": "mol N-Eq"
+      },
+      {
+        "indicator_index": 12,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "human toxicity: carcinogenic",
+        "indicator_zh": "human toxicity: carcinogenic",
+        "canonical_indicator_key": "human toxicity: carcinogenic",
+        "indicator_unit": "CTUh",
+        "unit": "CTUh"
+      },
+      {
+        "indicator_index": 13,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "human toxicity: carcinogenic, inorganics",
+        "indicator_zh": "human toxicity: carcinogenic, inorganics",
+        "canonical_indicator_key": "human toxicity: carcinogenic, inorganics",
+        "indicator_unit": "CTUh",
+        "unit": "CTUh"
+      },
+      {
+        "indicator_index": 14,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "human toxicity: carcinogenic, organics",
+        "indicator_zh": "human toxicity: carcinogenic, organics",
+        "canonical_indicator_key": "human toxicity: carcinogenic, organics",
+        "indicator_unit": "CTUh",
+        "unit": "CTUh"
+      },
+      {
+        "indicator_index": 15,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "human toxicity: non-carcinogenic",
+        "indicator_zh": "human toxicity: non-carcinogenic",
+        "canonical_indicator_key": "human toxicity: non-carcinogenic",
+        "indicator_unit": "CTUh",
+        "unit": "CTUh"
+      },
+      {
+        "indicator_index": 16,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "human toxicity: non-carcinogenic, inorganics",
+        "indicator_zh": "human toxicity: non-carcinogenic, inorganics",
+        "canonical_indicator_key": "human toxicity: non-carcinogenic, inorganics",
+        "indicator_unit": "CTUh",
+        "unit": "CTUh"
+      },
+      {
+        "indicator_index": 17,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "human toxicity: non-carcinogenic, organics",
+        "indicator_zh": "human toxicity: non-carcinogenic, organics",
+        "canonical_indicator_key": "human toxicity: non-carcinogenic, organics",
+        "indicator_unit": "CTUh",
+        "unit": "CTUh"
+      },
+      {
+        "indicator_index": 18,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "ionising radiation: human health",
+        "indicator_zh": "ionising radiation: human health",
+        "canonical_indicator_key": "ionising radiation: human health",
+        "indicator_unit": "kBq U235-Eq",
+        "unit": "kBq U235-Eq"
+      },
+      {
+        "indicator_index": 19,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "land use",
+        "indicator_zh": "land use",
+        "canonical_indicator_key": "land use",
+        "indicator_unit": "dimensionless",
+        "unit": "dimensionless"
+      },
+      {
+        "indicator_index": 20,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "material resources: metals/minerals",
+        "indicator_zh": "material resources: metals/minerals",
+        "canonical_indicator_key": "material resources: metals/minerals",
+        "indicator_unit": "kg Sb-Eq",
+        "unit": "kg Sb-Eq"
+      },
+      {
+        "indicator_index": 21,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "ozone depletion",
+        "indicator_zh": "ozone depletion",
+        "canonical_indicator_key": "ozone depletion",
+        "indicator_unit": "kg CFC-11-Eq",
+        "unit": "kg CFC-11-Eq"
+      },
+      {
+        "indicator_index": 22,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "particulate matter formation",
+        "indicator_zh": "particulate matter formation",
+        "canonical_indicator_key": "particulate matter formation",
+        "indicator_unit": "disease incidence",
+        "unit": "disease incidence"
+      },
+      {
+        "indicator_index": 23,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "photochemical oxidant formation: human health",
+        "indicator_zh": "photochemical oxidant formation: human health",
+        "canonical_indicator_key": "photochemical oxidant formation: human health",
+        "indicator_unit": "kg NMVOC-Eq",
+        "unit": "kg NMVOC-Eq"
+      },
+      {
+        "indicator_index": 24,
+        "method_en": "EF v3.1",
+        "method_zh": "EF v3.1",
+        "indicator_en": "water use",
+        "indicator_zh": "water use",
+        "canonical_indicator_key": "water use",
+        "indicator_unit": "m3 world Eq deprived",
+        "unit": "m3 world Eq deprived"
+      }
+    ],
+    "process_index": [
+      "market_refinery_electricity_supply",
+      "paper-refinery-blending",
+      "paper-refinery-distillation",
+      "paper-refinery-hydrotreating",
+      "paper-refinery-reforming"
+    ],
+    "values": [
+      [
+        0.004,
+        0.1144,
+        0.026666666666666665,
+        0.07,
+        0.128
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    ],
+    "process_unit_map": {
+      "market_refinery_electricity_supply": {
+        "reference_flow_uuid": "2e33aa0f-13c8-40f9-bb59-4dc1ff811aca",
+        "reference_unit": "MJ",
+        "reference_unit_group": "Units of energy",
+        "solver_reference_unit": "MJ",
+        "solver_reference_unit_group": "Units of energy"
+      },
+      "paper-refinery-distillation": {
+        "reference_flow_uuid": "e55dd8e0-5ee4-4cd8-8c29-de616c3a8c81",
+        "reference_unit": "kg",
+        "reference_unit_group": "Units of mass",
+        "solver_reference_unit": "kg",
+        "solver_reference_unit_group": "Units of mass"
+      },
+      "paper-refinery-hydrotreating": {
+        "reference_flow_uuid": "7af5e935-677d-4051-b9a9-64d54816a43a",
+        "reference_unit": "kg",
+        "reference_unit_group": "Units of mass",
+        "solver_reference_unit": "kg",
+        "solver_reference_unit_group": "Units of mass"
+      },
+      "paper-refinery-reforming": {
+        "reference_flow_uuid": "7a355f98-55a0-418f-982e-360996cdf77a",
+        "reference_unit": "kg",
+        "reference_unit_group": "Units of mass",
+        "solver_reference_unit": "kg",
+        "solver_reference_unit_group": "Units of mass"
+      },
+      "paper-refinery-blending": {
+        "reference_flow_uuid": "b7c743ac-85a1-4a42-bdf2-33f23bf72a8f",
+        "reference_unit": "kg",
+        "reference_unit_group": "Units of mass",
+        "solver_reference_unit": "kg",
+        "solver_reference_unit_group": "Units of mass"
+      }
+    },
+    "product_result_index": [
+      {
+        "product_key": "market_refinery_electricity_supply::out-electricity",
+        "process_uuid": "market_refinery_electricity_supply",
+        "process_name": "Refinery electricity supply chain",
+        "process_location": "CN",
+        "product_port_id": "out-electricity",
+        "product_flow_uuid": "2e33aa0f-13c8-40f9-bb59-4dc1ff811aca",
+        "product_name": "Refinery electricity supply",
+        "product_name_zh": "Refinery electricity supply",
+        "product_name_en": "",
+        "is_reference_product": true,
+        "product_conversion_factor": 1.0,
+        "allocation_scale": 1.0
+      },
+      {
+        "product_key": "paper-refinery-blending::out-gasoline",
+        "process_uuid": "paper-refinery-blending",
+        "process_name": "Gasoline blending",
+        "process_location": "CN",
+        "product_port_id": "out-gasoline",
+        "product_flow_uuid": "b7c743ac-85a1-4a42-bdf2-33f23bf72a8f",
+        "product_name": "Finished gasoline",
+        "product_name_zh": "Finished gasoline",
+        "product_name_en": "",
+        "is_reference_product": true,
+        "product_conversion_factor": 1.0,
+        "allocation_scale": 1.0
+      },
+      {
+        "product_key": "paper-refinery-distillation::out-naphtha",
+        "process_uuid": "paper-refinery-distillation",
+        "process_name": "Atmospheric distillation",
+        "process_location": "CN",
+        "product_port_id": "out-naphtha",
+        "product_flow_uuid": "e55dd8e0-5ee4-4cd8-8c29-de616c3a8c81",
+        "product_name": "Straight-run naphtha",
+        "product_name_zh": "Straight-run naphtha",
+        "product_name_en": "",
+        "is_reference_product": true,
+        "product_conversion_factor": 1.0,
+        "allocation_scale": 1.0
+      },
+      {
+        "product_key": "paper-refinery-distillation::out-diesel-cut",
+        "process_uuid": "paper-refinery-distillation",
+        "process_name": "Atmospheric distillation",
+        "process_location": "CN",
+        "product_port_id": "out-diesel-cut",
+        "product_flow_uuid": "0c463c8a-8eb5-456c-a89d-bd31279a77c1",
+        "product_name": "Atmospheric diesel fraction",
+        "product_name_zh": "Atmospheric diesel fraction",
+        "product_name_en": "",
+        "is_reference_product": false,
+        "product_conversion_factor": 1.0,
+        "allocation_scale": 1.0
+      },
+      {
+        "product_key": "paper-refinery-distillation::out-residue",
+        "process_uuid": "paper-refinery-distillation",
+        "process_name": "Atmospheric distillation",
+        "process_location": "CN",
+        "product_port_id": "out-residue",
+        "product_flow_uuid": "bc6c0ec2-0596-40ac-af57-9e282728dd64",
+        "product_name": "Atmospheric residue",
+        "product_name_zh": "Atmospheric residue",
+        "product_name_en": "",
+        "is_reference_product": false,
+        "product_conversion_factor": 1.0,
+        "allocation_scale": 1.0
+      },
+      {
+        "product_key": "paper-refinery-hydrotreating::out-hydrotreated",
+        "process_uuid": "paper-refinery-hydrotreating",
+        "process_name": "Naphtha hydrotreating",
+        "process_location": "CN",
+        "product_port_id": "out-hydrotreated",
+        "product_flow_uuid": "7af5e935-677d-4051-b9a9-64d54816a43a",
+        "product_name": "Hydrotreated naphtha",
+        "product_name_zh": "Hydrotreated naphtha",
+        "product_name_en": "",
+        "is_reference_product": true,
+        "product_conversion_factor": 1.0,
+        "allocation_scale": 1.0
+      },
+      {
+        "product_key": "paper-refinery-reforming::out-reformate",
+        "process_uuid": "paper-refinery-reforming",
+        "process_name": "Catalytic reforming",
+        "process_location": "CN",
+        "product_port_id": "out-reformate",
+        "product_flow_uuid": "7a355f98-55a0-418f-982e-360996cdf77a",
+        "product_name": "Reformate",
+        "product_name_zh": "Reformate",
+        "product_name_en": "",
+        "is_reference_product": true,
+        "product_conversion_factor": 1.0,
+        "allocation_scale": 1.0
+      }
+    ],
+    "product_values": [
+      [
+        0.004,
+        0.1144,
+        0.026666666666666665,
+        0.026666666666666665,
+        0.026666666666666665,
+        0.07,
+        0.128
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    ],
+    "product_unit_map": {
+      "market_refinery_electricity_supply::out-electricity": {
+        "unit": "MJ",
+        "unit_group": "Units of energy",
+        "current_unit": "MJ",
+        "current_unit_group": "Units of energy",
+        "current_amount": 1.0,
+        "flow_default_unit": "MJ",
+        "flow_default_unit_group": "Units of energy",
+        "result_factor_to_flow_default_unit": null,
+        "amount_in_flow_default_unit": null,
+        "unit_semantics_ok": false,
+        "unit_semantics_reason": "missing_flow_version_snapshot",
+        "unit_group_switch": {},
+        "flow_uuid": "2e33aa0f-13c8-40f9-bb59-4dc1ff811aca"
+      },
+      "paper-refinery-blending::out-gasoline": {
+        "unit": "kg",
+        "unit_group": "Units of mass",
+        "current_unit": "kg",
+        "current_unit_group": "Units of mass",
+        "current_amount": 1.0,
+        "flow_default_unit": "kg",
+        "flow_default_unit_group": "Units of mass",
+        "result_factor_to_flow_default_unit": null,
+        "amount_in_flow_default_unit": null,
+        "unit_semantics_ok": false,
+        "unit_semantics_reason": "missing_flow_version_snapshot",
+        "unit_group_switch": {},
+        "flow_uuid": "b7c743ac-85a1-4a42-bdf2-33f23bf72a8f"
+      },
+      "paper-refinery-distillation::out-naphtha": {
+        "unit": "kg",
+        "unit_group": "Units of mass",
+        "current_unit": "kg",
+        "current_unit_group": "Units of mass",
+        "current_amount": 1.05,
+        "flow_default_unit": "kg",
+        "flow_default_unit_group": "Units of mass",
+        "result_factor_to_flow_default_unit": null,
+        "amount_in_flow_default_unit": null,
+        "unit_semantics_ok": false,
+        "unit_semantics_reason": "missing_flow_version_snapshot",
+        "unit_group_switch": {},
+        "flow_uuid": "e55dd8e0-5ee4-4cd8-8c29-de616c3a8c81"
+      },
+      "paper-refinery-distillation::out-diesel-cut": {
+        "unit": "kg",
+        "unit_group": "Units of mass",
+        "current_unit": "kg",
+        "current_unit_group": "Units of mass",
+        "current_amount": 1.89,
+        "flow_default_unit": "kg",
+        "flow_default_unit_group": "Units of mass",
+        "result_factor_to_flow_default_unit": null,
+        "amount_in_flow_default_unit": null,
+        "unit_semantics_ok": false,
+        "unit_semantics_reason": "missing_flow_version_snapshot",
+        "unit_group_switch": {},
+        "flow_uuid": "0c463c8a-8eb5-456c-a89d-bd31279a77c1"
+      },
+      "paper-refinery-distillation::out-residue": {
+        "unit": "kg",
+        "unit_group": "Units of mass",
+        "current_unit": "kg",
+        "current_unit_group": "Units of mass",
+        "current_amount": 1.26,
+        "flow_default_unit": "kg",
+        "flow_default_unit_group": "Units of mass",
+        "result_factor_to_flow_default_unit": null,
+        "amount_in_flow_default_unit": null,
+        "unit_semantics_ok": false,
+        "unit_semantics_reason": "missing_flow_version_snapshot",
+        "unit_group_switch": {},
+        "flow_uuid": "bc6c0ec2-0596-40ac-af57-9e282728dd64"
+      },
+      "paper-refinery-hydrotreating::out-hydrotreated": {
+        "unit": "kg",
+        "unit_group": "Units of mass",
+        "current_unit": "kg",
+        "current_unit_group": "Units of mass",
+        "current_amount": 1.0,
+        "flow_default_unit": "kg",
+        "flow_default_unit_group": "Units of mass",
+        "result_factor_to_flow_default_unit": null,
+        "amount_in_flow_default_unit": null,
+        "unit_semantics_ok": false,
+        "unit_semantics_reason": "missing_flow_version_snapshot",
+        "unit_group_switch": {},
+        "flow_uuid": "7af5e935-677d-4051-b9a9-64d54816a43a"
+      },
+      "paper-refinery-reforming::out-reformate": {
+        "unit": "kg",
+        "unit_group": "Units of mass",
+        "current_unit": "kg",
+        "current_unit_group": "Units of mass",
+        "current_amount": 1.0,
+        "flow_default_unit": "kg",
+        "flow_default_unit_group": "Units of mass",
+        "result_factor_to_flow_default_unit": null,
+        "amount_in_flow_default_unit": null,
+        "unit_semantics_ok": false,
+        "unit_semantics_reason": "missing_flow_version_snapshot",
+        "unit_group_switch": {},
+        "flow_uuid": "7a355f98-55a0-418f-982e-360996cdf77a"
+      }
+    },
+    "intermediate_flow_links": []
+  }
+}

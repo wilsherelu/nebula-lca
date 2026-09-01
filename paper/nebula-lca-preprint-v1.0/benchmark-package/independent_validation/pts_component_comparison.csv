@@ -1,0 +1,5 @@
+row_type,flow_uuid,name,unit,direction,oracle_amount,compiled_amount,absolute_error,relative_error
+boundary,096a6e33-bde6-4bf6-9a05-df1b5002fd93,Make-up hydrogen,kg,input,0.025,0.025,0.0,0.0
+boundary,2e33aa0f-13c8-40f9-bb59-4dc1ff811aca,Refinery electricity supply,MJ,input,6.25,6.25,0.0,0.0
+boundary,e55dd8e0-5ee4-4cd8-8c29-de616c3a8c81,Straight-run naphtha,kg,input,1.0,1.0,0.0,0.0
+elementary,08a91e70-3ddc-11dd-923d-0050c2490048,carbon dioxide (fossil),kg,output,0.1,0.1,0.0,0.0

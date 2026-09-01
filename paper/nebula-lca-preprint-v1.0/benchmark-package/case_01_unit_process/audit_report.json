@@ -1,0 +1,23 @@
+{
+  "schema_version": "nebula.refinery-paper-case.audit.v1",
+  "status": "passed",
+  "checks": {
+    "solve_completed": true,
+    "activity_vector_semantics": true,
+    "expected_process_count": true,
+    "finite_numeric_outputs": true,
+    "connection_residuals_within_tolerance": true,
+    "declared_allocation_factors_close": true,
+    "lcia_present": true
+  },
+  "connection_residuals": [],
+  "allocation_factor_sums": [
+    {
+      "process_uuid": "paper-refinery-distillation",
+      "sum": 1.0
+    }
+  ],
+  "run_id": "d6671a38-4bfb-4391-98b3-efd974e64e36",
+  "consumer_graph_hash": "513e696aed667a80cb70737a0985161c809bc56c0ed2718203e3b660befd4776",
+  "provider_graph_hash": "75a9c1adf44c1fdb2bc21af20cd30bf9348cdcde457aaca48ad1de44b1c23f93"
+}
