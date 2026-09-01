@@ -208,7 +208,7 @@ class ProviderElementaryFlowReceipt(BaseModel):
     unit_group_content_hash: str | None = None
     unit_content_hash: str | None = None
     reference_dependency_snapshot_hash: str | None = None
-    runtime_flow_index: int
+    runtime_flow_index: int | None = None
     method: str
     factor_count: int
     factor_hash: str

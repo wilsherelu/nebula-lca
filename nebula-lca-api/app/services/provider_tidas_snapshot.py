@@ -249,7 +249,13 @@ class TidasFlowSnapshot:
         record = self.records.get((flow_uuid, version))
         return record.name if record is not None else None
 
-    def resolve(self, flow_uuid: str, version: str) -> dict[str, Any] | None:
+    def resolve(
+        self,
+        flow_uuid: str,
+        version: str,
+        *,
+        require_elementary_factor_coverage: bool = True,
+    ) -> dict[str, Any] | None:
         record = self.records.get((flow_uuid, version))
         if record is None:
             return None
@@ -292,6 +298,7 @@ class TidasFlowSnapshot:
                     snapshot_hash=self.snapshot_hash,
                     source_modified_at=record.source_modified_at,
                     flow_property_binding=binding,
+                    require_factor_coverage=require_elementary_factor_coverage,
                 )
             except ProviderEf31Error as exc:
                 raise ProviderTidasSnapshotError(exc.code, exc.message, **exc.details) from exc

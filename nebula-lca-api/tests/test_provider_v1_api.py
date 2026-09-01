@@ -151,6 +151,7 @@ def _inline_snapshot(graph: HybridGraph, base_ref: dict | None = None) -> dict:
 
 
 CO2_UUID = "08a91e70-3ddc-11dd-923d-0050c2490048"
+WATER_VAPOUR_UUID = "fe0acd60-3ddc-11dd-ac04-0050c2490048"
 MASS_PROPERTY_UUID = "93a60a56-a3c8-11da-a746-0800200b9a66"
 MASS_UNIT_GROUP_UUID = "93a60a57-a4c8-11da-a746-0800200c9a66"
 CRUDE_OIL_UUID = "95151b26-d16b-4669-b433-fc0bd633f564"
@@ -202,6 +203,139 @@ def _configure_tidas_snapshot(monkeypatch, path: Path = TIDAS_SNAPSHOT_FIXTURE) 
         provider_tidas_snapshot.settings,
         "provider_tidas_flow_snapshot_path",
         str(path),
+    )
+
+
+def _water_vapour_snapshot(path: Path) -> Path:
+    document = {
+        "schema_version": "tiangong-open-dataset-snapshot.v1",
+        "source_namespace": "tiangong_open_data",
+        "dataset_kind": "flow",
+        "state_scope": "open",
+        "filters": {"exact_refs": [f"{WATER_VAPOUR_UUID}@03.00.004"]},
+        "declared_total": 1,
+        "records": [
+            {
+                "dataset_kind": "flow",
+                "source_namespace": "tiangong_open_data",
+                "source_object_id": WATER_VAPOUR_UUID,
+                "source_version": "03.00.004",
+                "source_modified_at": "2012-01-12T14:51:49Z",
+                "type_of_data_set": "Elementary flow",
+                "payload": {
+                    "flowDataSet": {
+                        "flowProperties": {
+                            "flowProperty": {
+                                "meanValue": "1.0",
+                                "@dataSetInternalID": "0",
+                                "referenceToFlowPropertyDataSet": {
+                                    "@version": "03.00.003",
+                                    "@refObjectId": MASS_PROPERTY_UUID,
+                                },
+                            }
+                        },
+                        "flowInformation": {
+                            "dataSetInformation": {
+                                "name": {"baseName": {"#text": "water vapour", "@xml:lang": "en"}},
+                                "common:UUID": WATER_VAPOUR_UUID,
+                                "classificationInformation": {
+                                    "common:elementaryFlowCategorization": {
+                                        "common:category": [
+                                            {"#text": "Emissions", "@level": "0"},
+                                            {"#text": "Emissions to air", "@level": "1"},
+                                            {"#text": "Emissions to air, unspecified", "@level": "2"},
+                                        ]
+                                    }
+                                },
+                            },
+                            "quantitativeReference": {"referenceToReferenceFlowProperty": "0"},
+                        },
+                        "modellingAndValidation": {"LCIMethod": {"typeOfDataSet": "Elementary flow"}},
+                        "administrativeInformation": {
+                            "publicationAndOwnership": {"common:dataSetVersion": "03.00.004"}
+                        },
+                    }
+                },
+            }
+        ],
+    }
+    _recompute_snapshot_hashes(document)
+    return _write_snapshot(path, document)
+
+
+def _water_vapour_graph() -> HybridGraph:
+    product = _port(
+        "water-service-out",
+        "flow-final",
+        "Water-use service",
+        1.0,
+        "output",
+        "technosphere",
+        product=True,
+    )
+    vapour = _port(
+        "water-vapour-out",
+        WATER_VAPOUR_UUID,
+        "water vapour",
+        0.9,
+        "output",
+        "biosphere",
+    )
+    vapour.update(
+        {
+            "flowSourceNamespace": "tiangong_open_data",
+            "flowVersion": "03.00.004",
+            "flowPropertyUuid": MASS_PROPERTY_UUID,
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": MASS_UNIT_GROUP_UUID,
+            "unitGroupVersion": "03.00.003",
+        }
+    )
+    return HybridGraph.model_validate(
+        {
+            "functionalUnit": "1 kg water-use service",
+            "nodes": [
+                {
+                    "id": "reclaimed-water-utilization",
+                    "node_kind": "unit_process",
+                    "mode": "normalized",
+                    "process_uuid": "water-process",
+                    "name": "Reclaimed water utilization",
+                    "location": "CN",
+                    "reference_product": "Water-use service",
+                    "inputs": [],
+                    "outputs": [product, vapour],
+                }
+            ],
+            "exchanges": [],
+            "metadata": {
+                "functional_unit": {
+                    "display_text": "1 kg water-use service",
+                    "amount": 1.0,
+                    "flow_uuid": "flow-final",
+                    "flow_source_namespace": "test-catalog",
+                    "flow_version": "1.0",
+                    "unit": "kg",
+                    "unit_group_uuid": "ug-mass",
+                    "unit_group_version": "1.0",
+                },
+                "elementary_flow_refs": [
+                    {
+                        "exchange_id": "reclaimed-water-utilization::water-vapour-out",
+                        "source_namespace": "tiangong_open_data",
+                        "flow_uuid": WATER_VAPOUR_UUID,
+                        "version": "03.00.004",
+                        "flow_property_uuid": MASS_PROPERTY_UUID,
+                        "flow_property_version": "03.00.003",
+                        "unit_group_uuid": MASS_UNIT_GROUP_UUID,
+                        "unit_group_version": "03.00.003",
+                        "unit": "kg",
+                        "direction": "output",
+                        "compartment": "Emissions to air, unspecified",
+                    }
+                ],
+            },
+        }
     )
 
 
@@ -863,6 +997,8 @@ def test_tidas_snapshot_database_conflict_fails_closed(client, monkeypatch):
 
 def test_inline_custom_technosphere_with_exact_ef31_lcia_does_not_write_catalog_or_projects(client):
     graph = _petrochemical_graph()
+    co2_refs = _co2_refs(graph)
+    graph.metadata["elementary_flow_refs"] = co2_refs
     db = db_module.SessionLocal()
     try:
         before = {
@@ -878,7 +1014,7 @@ def test_inline_custom_technosphere_with_exact_ef31_lcia_does_not_write_catalog_
             "inline_snapshot": _inline_snapshot(graph),
             "demand": [{"process_uuid": "process-desulfurization", "amount": 1.0, "unit": "kg"}],
             "lcia_methods": ["EF v3.1"],
-            "elementary_flows": _co2_refs(graph),
+            "elementary_flows": co2_refs,
             "scenario_id": "petroleum-baseline",
             "operation_hash": "petroleum-operation-hash",
         },
@@ -986,6 +1122,55 @@ def test_inline_custom_technosphere_mfa_without_lcia_remains_available(client):
     assert body["elementary_flow_receipts"] == []
     assert body["activity_vector"]
     assert body["scaled_exchanges"]
+
+
+def test_inline_metadata_elementary_ref_returns_exact_receipt_without_lcia_or_background_pins(
+    client,
+    monkeypatch,
+    tmp_path,
+):
+    snapshot_path = _water_vapour_snapshot(tmp_path / "water-vapour-flow-snapshot.json")
+    _configure_tidas_snapshot(monkeypatch, snapshot_path)
+    graph = _water_vapour_graph()
+
+    response = client.post(
+        "/api/provider/v1/solve",
+        json={
+            "inline_snapshot": _inline_snapshot(graph),
+            "demand": [{"process_uuid": "water-process", "amount": 1.0, "unit": "kg"}],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["lcia"] is None
+    assert body["background_process_receipts"] == []
+    scaled = {
+        item["exchange_id"]: item
+        for item in body["scaled_exchanges"]
+        if item["exchange_type"] == "elementary"
+    }
+    assert scaled["reclaimed-water-utilization::water-vapour-out"]["scaled_amount"] == pytest.approx(0.9)
+    assert len(body["elementary_flow_receipts"]) == 1
+    receipt = body["elementary_flow_receipts"][0]
+    assert receipt == {
+        **receipt,
+        "exchange_id": "reclaimed-water-utilization::water-vapour-out",
+        "source_namespace": "tiangong_open_data",
+        "flow_uuid": WATER_VAPOUR_UUID,
+        "version": "03.00.004",
+        "flow_property_uuid": MASS_PROPERTY_UUID,
+        "flow_property_version": "03.00.003",
+        "unit_group_uuid": MASS_UNIT_GROUP_UUID,
+        "unit_group_version": "03.00.003",
+        "unit": "kg",
+        "direction": "output",
+        "compartment": "Emissions to air, unspecified",
+        "factor_count": 0,
+        "runtime_flow_index": None,
+    }
+    assert receipt["content_hash"]
+    assert receipt["snapshot_hash"]
 
 
 def test_inline_custom_technosphere_requires_complete_identity(client):
