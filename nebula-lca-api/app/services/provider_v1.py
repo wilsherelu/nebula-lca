@@ -9,6 +9,7 @@ from functools import lru_cache
 from typing import Any
 
 import numpy as np
+from pydantic import ValidationError
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -19,6 +20,7 @@ from ..provider_schemas import (
     ProviderCatalogResolution,
     ProviderCatalogResolveRequest,
     ProviderEngineIdentity,
+    ProviderElementaryFlowRef,
     ProviderFunctionalUnit,
     ProviderInventoryTotal,
     ProviderIssue,
@@ -520,9 +522,14 @@ def _resolve_tidas_snapshot_value(
     *,
     flow_uuid: str,
     version: str,
+    require_elementary_factor_coverage: bool = True,
 ) -> dict[str, Any] | None:
     try:
-        return snapshot.resolve(flow_uuid, version)
+        return snapshot.resolve(
+            flow_uuid,
+            version,
+            require_elementary_factor_coverage=require_elementary_factor_coverage,
+        )
     except ProviderTidasSnapshotError as exc:
         raise ProviderContractError(422, exc.code, exc.message, **exc.details) from exc
 
@@ -985,10 +992,64 @@ def solve_provider(
             ),
         ),
     )
-    elementary_refs = list(request.elementary_flows) + list(
-        background_expansion.elementary_refs
-    )
+    metadata_elementary_refs: list[ProviderElementaryFlowRef] = []
+    if request.inline_snapshot is not None:
+        raw_metadata_refs = (graph.metadata or {}).get("elementary_flow_refs")
+        if raw_metadata_refs is not None:
+            if not isinstance(raw_metadata_refs, list):
+                raise ProviderContractError(
+                    422,
+                    "ELEMENTARY_FLOW_METADATA_INVALID",
+                    "graph.metadata.elementary_flow_refs must be a list of exact references.",
+                )
+            for index, raw_ref in enumerate(raw_metadata_refs):
+                try:
+                    metadata_elementary_refs.append(
+                        ProviderElementaryFlowRef.model_validate(raw_ref)
+                    )
+                except ValidationError as exc:
+                    raise ProviderContractError(
+                        422,
+                        "ELEMENTARY_FLOW_METADATA_INVALID",
+                        "An inline elementary Flow metadata reference is invalid.",
+                        index=index,
+                        errors=exc.errors(include_url=False),
+                    ) from exc
+
+    elementary_refs_by_exchange: dict[str, ProviderElementaryFlowRef] = {}
+    for ref in [*request.elementary_flows, *background_expansion.elementary_refs]:
+        if ref.exchange_id in elementary_refs_by_exchange:
+            raise ProviderContractError(
+                422,
+                "ELEMENTARY_FLOW_REFERENCE_DUPLICATE",
+                "An elementary exchange may have only one exact request reference.",
+                exchange_id=ref.exchange_id,
+            )
+        elementary_refs_by_exchange[ref.exchange_id] = ref
+    seen_metadata_exchange_ids: set[str] = set()
+    for ref in metadata_elementary_refs:
+        if ref.exchange_id in seen_metadata_exchange_ids:
+            raise ProviderContractError(
+                422,
+                "ELEMENTARY_FLOW_REFERENCE_DUPLICATE",
+                "An elementary exchange may have only one exact metadata reference.",
+                exchange_id=ref.exchange_id,
+            )
+        seen_metadata_exchange_ids.add(ref.exchange_id)
+        existing = elementary_refs_by_exchange.get(ref.exchange_id)
+        if existing is not None and existing != ref:
+            raise ProviderContractError(
+                422,
+                "ELEMENTARY_FLOW_REFERENCE_CONFLICT",
+                "Multiple exact elementary Flow references disagree for one exchange.",
+                exchange_id=ref.exchange_id,
+            )
+        if existing is None:
+            elementary_refs_by_exchange[ref.exchange_id] = ref
+    elementary_refs = list(elementary_refs_by_exchange.values())
     if request.lcia_methods or elementary_refs:
+        require_characterization = bool(request.lcia_methods)
+
         def exact_elementary_flow(ref):
             if tidas_flow_snapshot is None or ref.source_namespace != TIDAS_SOURCE_NAMESPACE:
                 return None
@@ -996,6 +1057,7 @@ def solve_provider(
                 tidas_flow_snapshot,
                 flow_uuid=ref.flow_uuid,
                 version=ref.version,
+                require_elementary_factor_coverage=require_characterization,
             )
             if value is not None and value.get("flow_type") != "Elementary flow":
                 raise ProviderContractError(
@@ -1018,13 +1080,6 @@ def solve_provider(
             return value
 
         try:
-            elementary_exchange_ids = [item.exchange_id for item in elementary_refs]
-            if len(elementary_exchange_ids) != len(set(elementary_exchange_ids)):
-                raise ProviderContractError(
-                    422,
-                    "ELEMENTARY_FLOW_REFERENCE_DUPLICATE",
-                    "An elementary exchange may have only one exact reference.",
-                )
             lcia, receipts = characterize_scaled_inventory(
                 methods=request.lcia_methods or ["EF v3.1"],
                 elementary_refs=elementary_refs,
@@ -1034,6 +1089,7 @@ def solve_provider(
                 consumer_graph_hash=consumer_graph_hash,
                 provider_graph_hash=provider_graph_hash,
                 provider_commit=engine_identity().commit,
+                require_characterization=require_characterization,
             )
         except ProviderEf31Error as exc:
             raise ProviderContractError(422, exc.code, exc.message, **exc.details) from exc

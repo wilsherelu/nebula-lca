@@ -418,6 +418,7 @@ def resolve_snapshot_elementary_flow(
     snapshot_hash: str,
     source_modified_at: str | None,
     flow_property_binding: dict[str, Any] | None = None,
+    require_factor_coverage: bool = True,
 ) -> dict[str, Any]:
     local = _elementary_catalog().get(flow_uuid)
     if local is None:
@@ -494,14 +495,14 @@ def resolve_snapshot_elementary_flow(
         if coverage is not None:
             runtime_match = (flow_index, coverage)
             break
-    if runtime_match is None:
+    if runtime_match is None and require_factor_coverage:
         raise ProviderEf31Error(
             "ELEMENTARY_FLOW_CF_NOT_FOUND",
             "The exact elementary Flow has no non-zero EF3.1 characterization factor coverage.",
             flow_uuid=flow_uuid,
             version=version,
         )
-    flow_index, coverage = runtime_match
+    flow_index, coverage = runtime_match if runtime_match is not None else (None, None)
     return {
         **local,
         "resolution_source": "tidas_exact_elementary_snapshot",
@@ -530,8 +531,8 @@ def resolve_snapshot_elementary_flow(
         ),
         "reference_dependency_snapshot_hash": binding.get("snapshot_hash"),
         "source_modified_at": source_modified_at,
-        "factor_count": coverage["factor_count"],
-        "factor_hash": coverage["factor_hash"],
+        "factor_count": coverage["factor_count"] if coverage is not None else 0,
+        "factor_hash": coverage["factor_hash"] if coverage is not None else _canonical_hash([]),
     }
 
 
@@ -663,6 +664,7 @@ def characterize_scaled_inventory(
     consumer_graph_hash: str | None = None,
     provider_graph_hash: str | None = None,
     provider_commit: str | None = None,
+    require_characterization: bool = True,
 ) -> tuple[dict[str, Any], list[ProviderElementaryFlowReceipt]]:
     if not methods or any(method != EF31_METHOD for method in methods):
         raise ProviderEf31Error(
@@ -744,6 +746,41 @@ def characterize_scaled_inventory(
         if ref.compartment != standard["compartment"]:
             _raise_mismatch("compartment", exchange.exchange_id, standard["compartment"], ref.compartment)
         standard_by_exchange[exchange.exchange_id] = standard
+
+    if not require_characterization:
+        receipts = [
+            ProviderElementaryFlowReceipt(
+                exchange_id=exchange.exchange_id,
+                source_namespace=standard_by_exchange[exchange.exchange_id]["source_namespace"],
+                flow_uuid=standard_by_exchange[exchange.exchange_id]["flow_uuid"],
+                version=standard_by_exchange[exchange.exchange_id]["version"],
+                flow_property_uuid=standard_by_exchange[exchange.exchange_id]["flow_property_uuid"],
+                flow_property_version=standard_by_exchange[exchange.exchange_id]["flow_property_version"],
+                unit_group_uuid=standard_by_exchange[exchange.exchange_id]["unit_group_uuid"],
+                unit_group_version=standard_by_exchange[exchange.exchange_id]["unit_group_version"],
+                unit=standard_by_exchange[exchange.exchange_id]["unit"],
+                direction=standard_by_exchange[exchange.exchange_id]["direction"],
+                compartment=standard_by_exchange[exchange.exchange_id]["compartment"],
+                content_hash=standard_by_exchange[exchange.exchange_id]["content_hash"],
+                snapshot_hash=standard_by_exchange[exchange.exchange_id].get("snapshot_hash"),
+                flow_property_content_hash=standard_by_exchange[exchange.exchange_id].get(
+                    "flow_property_content_hash"
+                ),
+                unit_group_content_hash=standard_by_exchange[exchange.exchange_id].get(
+                    "unit_group_content_hash"
+                ),
+                unit_content_hash=standard_by_exchange[exchange.exchange_id].get("unit_content_hash"),
+                reference_dependency_snapshot_hash=standard_by_exchange[exchange.exchange_id].get(
+                    "reference_dependency_snapshot_hash"
+                ),
+                runtime_flow_index=standard_by_exchange[exchange.exchange_id].get("runtime_flow_index"),
+                method=EF31_METHOD,
+                factor_count=0,
+                factor_hash=_canonical_hash([]),
+            )
+            for exchange in scaled_elementary
+        ]
+        return {}, receipts
 
     flow_uuids = sorted({item.flow_uuid for item in inventory_totals})
     if not flow_uuids:
