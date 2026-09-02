@@ -66,7 +66,7 @@ The 26 references in the main manuscript were checked against DOI registries or 
 
 # S4. Equation-to-code traceability
 
-The correspondence below is intentionally module-level rather than tied to brittle line numbers. The evidence path is the provider v1 calculation used for the benchmark, the PTS compiler, and a separate NumPy validation script that reads frozen case artifacts without importing the production solver. Legacy helpers not exercised by the five cases are not treated as evidence for the reported results.
+The correspondence below is intentionally module-level rather than tied to brittle line numbers. Here, PTS means *partially terminated system*: an aggregated representation that retains selected intermediate technosphere exchanges for further modeling. The evidence path is the provider v1 calculation used for the benchmark, the PTS compiler, and a separate NumPy validation script that reads frozen case artifacts without importing the production solver. Legacy helpers not exercised by the five cases are not treated as evidence for the reported results.
 
 | Equation or claim | Implementation correspondence | Verification level and qualification |
 |---|---|---|
@@ -182,7 +182,9 @@ The corresponding claim register is summarized below.
 - ISO catalogue: https://www.iso.org/committee/54854/x/catalogue/
 - ILCD General Guide: https://publications.jrc.ec.europa.eu/repository/handle/JRC48157
 - ILCD UUID/version guidance: https://publications.jrc.ec.europa.eu/repository/handle/JRC68404
+- ILCD Format 1.1 process-dataset definition of a partly terminated system: https://eplca.jrc.ec.europa.eu/LCDN/downloads/ILCD_Format_1.1_Documentation/ILCD_ProcessDataSet.html
 - TIDAS repository: https://github.com/tiangong-lca/tidas
+- TianGong partially terminated system modeling: https://docs.tiangong.earth/en/data-collection/case-introduction/model-building
 - Brightway inventory documentation: https://docs.brightway.dev/en/latest/content/overview/inventory.html
 - Brightway matrix documentation: https://docs.brightway.dev/en/latest/content/overview/matrix.html
 - openLCA allocation: https://greendelta.github.io/openLCA2-manual/allocation.html

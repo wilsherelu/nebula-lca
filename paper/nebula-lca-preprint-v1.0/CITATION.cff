@@ -11,5 +11,5 @@ repository-code: "https://github.com/wilsherelu/nebula-lca"
 abstract: >-
   A traceable compilation framework preserves unallocated total-process records
   while deriving product-resolved computational representations for life cycle
-  assessment, including product technology system compilation and progressive
+  assessment, including partially terminated system compilation and progressive
   benchmark validation.

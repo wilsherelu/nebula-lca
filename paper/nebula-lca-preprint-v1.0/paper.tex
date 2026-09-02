@@ -178,7 +178,7 @@
   pdftitle={Traceable Compilation of Multi-Output Total-Process Inventories into Product-Resolved Boundary Models for Life Cycle Assessment},
   pdfauthor={Jiaqi Lu},
   pdfkeywords={\xmpquote{life cycle assessment; multifunctionality;
-allocation; total-process inventory; matrix LCA; product technology
+allocation; total-process inventory; matrix LCA; partially terminated
 system; model compilation; provenance; TIDAS; ILCD}},
   colorlinks=true,
   linkcolor={blue},
@@ -213,23 +213,24 @@ explicit exchange classification, allocation evidence, and unit-aware
 transformations. The derived process columns are assembled into a signed
 technology system, solved for the activities required to meet a
 functional demand, and propagated to inventory and impact results. An
-internal product technology system (PTS) can then be compiled into a
-declared boundary representation without exposing every internal process
-in the main model. The implementation is evaluated through five
-progressively composed, refinery-inspired benchmark projects covering a
-multi-output unit process, a balanced foreground chain, a normalized
-electricity supplier, an internal recycle loop, and PTS compilation. All
-five API-executed audits passed. An independent NumPy calculation
-reconstructed the classified source inventory to floating-point
-precision and rejected a deliberately duplicated product-specific
-exchange. For the two-process PTS, the independent calculation
-reproduced the internal activity solution and all four declared nonzero
-boundary and elementary-flow components exactly; the expanded and
-compiled models also returned identical reported EF 3.1 results for the
-tested demand. The benchmarks use hypothetical quantities rather than
-measured refinery data. Complete ILCD/TIDAS round-trip retention,
-equivalence over every possible PTS demand, and privacy protection
-remain outside the demonstrated scope.
+internal subsystem can then be compiled as a partially terminated system
+(PTS) that exposes a declared reference product and selected
+intermediate exchanges for further modeling without disclosing every
+internal process in the main model. The implementation is evaluated
+through five progressively composed, refinery-inspired benchmark
+projects covering a multi-output unit process, a balanced foreground
+chain, a normalized electricity supplier, an internal recycle loop, and
+PTS compilation. All five API-executed audits passed. An independent
+NumPy calculation reconstructed the classified source inventory to
+floating-point precision and rejected a deliberately duplicated
+product-specific exchange. For the two-process PTS, the independent
+calculation reproduced the internal activity solution and all four
+declared nonzero boundary and elementary-flow components exactly; the
+expanded and compiled models also returned identical reported EF 3.1
+results for the tested demand. The benchmarks use hypothetical
+quantities rather than measured refinery data. Complete ILCD/TIDAS
+round-trip retention, equivalence over every possible PTS demand, and
+privacy protection remain outside the demonstrated scope.
 \end{abstract}
 
 
@@ -312,13 +313,14 @@ The narrower gap addressed here is the transformation contract
 connecting these established elements. For a multi-output industrial
 system, can total-process facts be recorded once; can product-resolved
 process columns be generated deterministically from explicit attribution
-evidence; and can an internal product technology system be compiled into
-a reusable boundary representation whose quantities, elementary flows,
-and impacts are demonstrably the same as those of the expanded
-subsystem? Can these transformations retain continuous provenance
-without assigning source identifiers to semantically new objects?
-Finally, can claims be limited by predefined numerical and semantic
-oracles rather than by the fact that a software artifact runs?
+evidence; and can an internal subsystem be compiled as a partially
+terminated system whose declared open exchanges remain linkable while
+its boundary quantities, elementary flows, and impacts are demonstrably
+the same as those of the expanded subsystem? Can these transformations
+retain continuous provenance without assigning source identifiers to
+semantically new objects? Finally, can claims be limited by predefined
+numerical and semantic oracles rather than by the fact that a software
+artifact runs?
 
 This paper answers those questions through a formal method and an
 executed progressive benchmark. Its central contribution is a traceable
@@ -434,10 +436,14 @@ disclosure}\label{aggregation-modularity-and-disclosure}
 Process aggregation is established in LCA databases and software. The
 original ecoinvent framework described unit-process and aggregated
 inventory structures {[}17{]}, and later database development separated
-raw data from modeling choices and system models {[}24{]}. openLCA
-distinguishes fully terminated system processes, which expose elementary
-flows, from partially terminated processes that retain selected
-intermediate flows for later provider linking {[}16{]}. Systematic
+raw data from modeling choices and system models {[}24{]}. ILCD uses the
+term \emph{partly terminated system} for an aggregated dataset that
+retains at least one non-reference product flow requiring further
+modeling {[}3{]}. openLCA uses the equivalent wording \emph{partially
+terminated process} for an almost completely aggregated dataset that
+retains selected intermediate exchanges for later provider linking
+{[}16{]}. The PTS in this paper belongs to this established dataset
+class; it is not a synonym for a generic product system. Systematic
 disaggregation has also been proposed to recover interpretability from
 aggregated calculations {[}18{]}.
 
@@ -835,12 +841,25 @@ final demand must reproduce the corresponding row of
 diagram used as evidence must therefore be generated from the scaled
 exchange ledger, not from raw normalized coefficients.
 
-\subsection{4.3. Product technology
-system}\label{product-technology-system}
+\subsection{4.3. Partially terminated
+system}\label{partially-terminated-system}
 
-A PTS is a declared internal subsystem with \(p\) normalized process
-activities and \(r\) exposed product interfaces. Its dependency equation
-is
+Following the established ILCD concept of a \emph{partly terminated
+system} and the equivalent \emph{partially terminated} terminology used
+by openLCA, a partially terminated system (PTS) is an aggregated
+process-system representation that deliberately retains one or more
+intermediate technosphere exchanges for further modeling {[}3,16{]}. It
+differs from a fully terminated system process, whose internal
+intermediate exchanges have all been resolved and whose calculated
+boundary contains only elementary flows apart from its quantitative
+reference.
+
+In the present formalization, a PTS is compiled from a declared internal
+subsystem with \(p\) normalized process activities and \(r\) exposed
+product interfaces. Its reference product, selected unresolved
+technosphere inputs or outputs, wastes, and elementary flows form the
+declared external interface; internal technosphere exchanges are solved
+and eliminated. Its dependency equation is
 
 \[
 \mathbf{x}_{\mathrm{pts}}

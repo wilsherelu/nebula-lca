@@ -7,7 +7,7 @@ It combines:
 - visual LCA modeling and editing
 - process, flow, and model import
 - balancing, normalization, and conservation support
-- PTS packaging for modular modeling and controlled publishing
+- Partially terminated system (PTS) packaging for modular modeling and controlled publishing
 - LCI and LCIA calculation workflows
 
 ## Repository Structure
@@ -23,7 +23,7 @@ It combines:
 - Visual modeling for processes, flows, products, and markets
 - Model import from Tiangong assets
 - Rule-guided modeling with normalization and conservation support
-- PTS packaging for reusable and privacy-aware modular release
+- Partially terminated system (PTS) packaging for reusable and privacy-aware modular release
 - Calculation and impact assessment result presentation
 
 ## Windows Desktop

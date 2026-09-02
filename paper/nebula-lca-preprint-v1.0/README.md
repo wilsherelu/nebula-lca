@@ -1,6 +1,6 @@
 # Nebula LCA preprint v1.0
 
-This directory contains the Quarto manuscript, Supporting Information, independent validation scripts, publication figures, and the public refinery-inspired benchmark package used by the paper. The benchmark quantities are hypothetical and do not represent measured refinery performance.
+This directory contains the Quarto manuscript, Supporting Information, independent validation scripts, publication figures, and the public refinery-inspired benchmark package used by the paper. In this package, PTS means *partially terminated system*: an aggregated representation that retains selected intermediate technosphere exchanges for further modeling. The benchmark quantities are hypothetical and do not represent measured refinery performance.
 
 ## Rebuild
 
