@@ -293,6 +293,56 @@ def write_comparison_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
+def ef31_indicator_comparison(case_root: Path, repository_root: Path) -> list[dict[str, Any]]:
+    audit = read_json(case_root / "case_05_pts_compiled" / "audit_report.json")
+    comparisons = audit["lcia_comparison"]["indicators"]
+
+    with (repository_root / "nebula-lca-solver" / "data" / "EF3.1" / "indicator_index.csv").open(
+        "r", encoding="utf-8-sig", newline=""
+    ) as stream:
+        identities = {
+            row["ecoinvent_category"].strip().casefold(): row
+            for row in csv.DictReader(stream, delimiter=";")
+        }
+    with (repository_root / "nebula-lca-api" / "data" / "EF3.1" / "indicator_index.csv").open(
+        "r", encoding="utf-8-sig", newline=""
+    ) as stream:
+        method_metadata = {
+            int(row["indicator_index"]): row
+            for row in csv.DictReader(stream)
+        }
+
+    rows: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    for record_index, comparison in enumerate(comparisons):
+        canonical_key = comparison["indicator"]["canonical_indicator_key"].strip().casefold()
+        identity = identities.get(canonical_key)
+        if identity is None or canonical_key in seen_keys:
+            raise ValueError(f"EF 3.1 indicator identity not found: {canonical_key}")
+        seen_keys.add(canonical_key)
+        indicator_index = int(identity["indicator_index"])
+        metadata = method_metadata.get(indicator_index)
+        if metadata is None or any(
+            identity[field] != metadata[field] for field in ("method_en", "indicator_en")
+        ):
+            raise ValueError(f"EF 3.1 method metadata mismatch: {canonical_key}")
+        rows.append(
+            {
+                "record_index": record_index,
+                "canonical_indicator_key": canonical_key,
+                "method_label": identity["method_en"],
+                "unit": metadata["LCIA_unit"],
+                "expanded": comparison["expanded"],
+                "compiled": comparison["compiled"],
+                "absolute_difference": comparison["absolute_error"],
+                "nonzero": str(bool(comparison["expanded"] or comparison["compiled"])).lower(),
+            }
+        )
+    if seen_keys != set(identities):
+        raise ValueError("EF 3.1 comparison does not cover the pinned canonical indicator set")
+    return rows
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--case-root", type=Path, required=True)
@@ -300,10 +350,13 @@ def main() -> None:
     args = parser.parse_args()
     allocation = allocation_closure(args.case_root)
     pts = pts_oracle(args.case_root)
+    repository_root = Path(__file__).resolve().parents[3]
+    ef31 = ef31_indicator_comparison(args.case_root, repository_root)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     write_json(args.output_dir / "allocation_closure.json", allocation)
     write_json(args.output_dir / "pts_independent_oracle.json", pts)
     write_comparison_csv(args.output_dir / "pts_component_comparison.csv", pts["component_comparison"])
+    write_comparison_csv(args.output_dir / "ef31_indicator_comparison.csv", ef31)
     manifest = {
         path.name: sha256(path)
         for path in sorted(args.output_dir.iterdir())

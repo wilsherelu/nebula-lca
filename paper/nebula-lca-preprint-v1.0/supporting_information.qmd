@@ -27,13 +27,13 @@ This document records the evidence boundaries behind the preprint. It is intende
 
 # S2. Authorship and AI-assisted preparation
 
-Jiaqi Lu is the sole author and corresponding author. OpenAI Codex assisted, under the author's direction, with manuscript restructuring, language editing, reference-metadata checking, code-to-equation traceability review, and PDF layout. The human author reviewed the sources, software evidence, calculations, and final text and accepts responsibility for the work. The AI system is not listed as an author because it cannot approve the final manuscript, hold rights, disclose conflicts, or assume accountability.
+Jiaqi Lu is the sole author and corresponding author. OpenAI language models, including ChatGPT and Codex, assisted, under the author's direction, with manuscript restructuring, language editing, reference-metadata checking, code-to-equation traceability review, and PDF layout. The human author reviewed the sources, software evidence, calculations, and final text and accepts responsibility for the work. The AI systems are not listed as authors because they cannot approve the final manuscript, hold rights, disclose conflicts, or assume accountability.
 
 This treatment follows current authorship guidance from COPE and ICMJE and the Zenodo creator model, which expects a person or organization in the citable creator field. Historical papers and preprints have placed systems such as ChatGPT in a byline, but these are treated here as precedents to disclose, not as a sufficient basis for assigning authorship responsibility.
 
 # S3. Reference-verification register
 
-The 24 references in the main manuscript were checked against DOI registries or authoritative publisher, standards-body, project, or specification pages. The exact TIDAS commit cited by the manuscript was also checked as a resolvable public revision.
+The 26 references in the main manuscript were checked against DOI registries or authoritative publisher, standards-body, project, or specification pages. The exact TIDAS commit cited by the manuscript was also checked as a resolvable public revision.
 
 | Ref. | Work | Verification basis | Status |
 |---:|---|---|---|
@@ -41,26 +41,28 @@ The 24 references in the main manuscript were checked against DOI registries or 
 | 2 | ISO 14044:2006 | ISO catalogue; edition, confirmation and amendment metadata | Verified |
 | 3 | ILCD General Guide, EUR 24708 EN | European Commission JRC record; DOI 10.2788/38479 | Verified |
 | 4 | ILCD UUID and version guidance, EUR 25198 EN | European Commission JRC record; DOI 10.2788/84321 | Verified |
-| 5 | TIDAS public contracts | Public repository and exact commit b10585ba7695ec66636d5078d970ac54105bdf0e | Verified |
-| 6 | Heijungs and Suh, 2002 | DOI 10.1007/978-94-015-9900-9 | Verified |
-| 7 | Moretti et al., 2020 | DOI 10.3390/en13143579 | Verified |
-| 8 | Pelletier et al., 2015 | DOI 10.1007/s11367-014-0812-4 | Verified |
-| 9 | Ardente and Cellura, 2012 | DOI 10.1111/j.1530-9290.2011.00434.x | Verified |
-| 10 | Mutel, Brightway, 2017 | DOI 10.21105/joss.00236 | Verified |
-| 11 | Brightway inventory documentation | Official Brightway documentation | Verified |
-| 12 | Brightway matrix construction | Official Brightway documentation | Verified |
-| 13 | openLCA allocation manual | Official openLCA 2 manual | Verified |
-| 14 | openLCA aggregation manual | Official openLCA 2 manual | Verified |
-| 15 | Frischknecht et al., 2005 | DOI 10.1065/lca2004.10.181.1 | Verified |
-| 16 | Bourgault et al., 2012 | DOI 10.1007/s11367-012-0418-7 | Verified |
-| 17 | Kuczenski et al., 2018 | DOI 10.1007/s11367-018-1446-8 | Verified |
-| 18 | Kuczenski, 2019 | DOI 10.1111/jiec.12810 | Verified |
-| 19 | Kuczenski et al., 2017 | DOI 10.1007/s10669-016-9620-7 | Verified |
-| 20 | W3C PROV-DM | W3C Recommendation dated 30 April 2013 | Verified |
-| 21 | Kamali et al., 2026 | DOI 10.1007/s11367-026-02708-y | Verified |
-| 22 | Wernet et al., 2016 | DOI 10.1007/s11367-016-1087-8 | Verified |
-| 23 | Higham, 2002 | DOI 10.1137/1.9780898718027 | Verified |
-| 24 | UNEP/SETAC database guidance, 2011 | Official title and ISBN 978-92-807-3174-3 | Verified |
+| 5 | UNEP/SETAC database guidance, 2011 | Official title and ISBN 978-92-807-3174-3 | Verified |
+| 6 | TianGong database, 2026 | DOI 10.1007/s44498-026-00136-7 | Verified |
+| 7 | TIDAS public contracts | Public repository and exact commit b10585ba7695ec66636d5078d970ac54105bdf0e | Verified |
+| 8 | Heijungs and Suh, 2002 | DOI 10.1007/978-94-015-9900-9 | Verified |
+| 9 | Moretti et al., 2020 | DOI 10.3390/en13143579 | Verified |
+| 10 | Pelletier et al., 2015 | DOI 10.1007/s11367-014-0812-4 | Verified |
+| 11 | Ardente and Cellura, 2012 | DOI 10.1111/j.1530-9290.2011.00434.x | Verified |
+| 12 | Mutel, Brightway, 2017 | DOI 10.21105/joss.00236 | Verified |
+| 13 | Brightway inventory documentation | Official Brightway documentation | Verified |
+| 14 | Brightway matrix construction | Official Brightway documentation | Verified |
+| 15 | openLCA allocation manual | Official openLCA 2 manual | Verified |
+| 16 | openLCA aggregation manual | Official openLCA 2 manual | Verified |
+| 17 | Frischknecht et al., 2005 | DOI 10.1065/lca2004.10.181.1 | Verified |
+| 18 | Bourgault et al., 2012 | DOI 10.1007/s11367-012-0418-7 | Verified |
+| 19 | Kuczenski et al., 2018 | DOI 10.1007/s11367-018-1446-8 | Verified |
+| 20 | Kuczenski, 2019 | DOI 10.1111/jiec.12810 | Verified |
+| 21 | Kuczenski et al., 2017 | DOI 10.1007/s10669-016-9620-7 | Verified |
+| 22 | W3C PROV-DM | W3C Recommendation dated 30 April 2013 | Verified |
+| 23 | Kamali et al., 2026 | DOI 10.1007/s11367-026-02708-y | Verified |
+| 24 | Wernet et al., 2016 | DOI 10.1007/s11367-016-1087-8 | Verified |
+| 25 | Higham, 2002 | DOI 10.1137/1.9780898718027 | Verified |
+| 26 | EF 3.1 reference-package addendum, 2022 | European Commission JRC official publication | Verified |
 
 # S4. Equation-to-code traceability
 
@@ -144,6 +146,12 @@ $$
 
 Four nonzero declared boundary or elementary-flow components were compared by exact flow identity, direction, and unit. Every absolute and relative difference was zero. The expanded subsystem also produced $0.0375$ kg of a hydrogen by-product that the compiled shell does not expose. It is disclosed as a non-exposed technosphere row and is not silently counted as boundary agreement.
 
+## S5.3. Identity-indexed EF 3.1 comparison
+
+The pinned implementation returned 25 ordered indicator records for both the independently expanded and PTS-integrated calculations. These records are the outputs of one method set and should not be interpreted as 25 statistically independent validation dimensions. Only the climate-change indicator was nonzero for the sparse benchmark inventory: both calculations returned $0.1333333333$ kg CO2-Eq, while the other 24 indicator values were zero.
+
+The frozen legacy response attached display metadata by runtime position, whereas the climate-change and acidification rows were ordered differently from the static method metadata table. The public `data/ef31_indicator_comparison.csv` therefore resolves names and units by canonical indicator identity against `nebula-lca-api/data/EF3.1/indicator_index.csv`; it leaves every numeric result unchanged. The raw API response remains in the benchmark package for auditability. The comparison supports propagation and expanded-compiled equivalence for the tested demand, not independent validation of EF characterization factors or a complete environmental profile.
+
 # S6. Claim boundary and remaining work
 
 The following items are not established by version 1.0 and must not be inferred from the passed cases:
@@ -180,6 +188,7 @@ The corresponding claim register is summarized below.
 - openLCA allocation: https://greendelta.github.io/openLCA2-manual/allocation.html
 - openLCA aggregation: https://greendelta.github.io/openLCA2-manual/aggregation.html
 - W3C PROV-DM: https://www.w3.org/TR/prov-dm/
+- European Commission JRC EF 3.1 addendum: https://eplca.jrc.ec.europa.eu/permalink/EF_Data_Guide_EF3.1_addendum.pdf
 - COPE position on AI authorship: https://doi.org/10.24318/cCVRZBms
 - ICMJE authorship criteria and AI guidance: https://www.icmje.org/recommendations/browse/roles-and-responsibilities/defining-the-role-of-authors-and-contributors.html
 - Zenodo creator metadata: https://help.zenodo.org/docs/deposit/describe-records/creators/

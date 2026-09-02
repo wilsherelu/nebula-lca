@@ -1,0 +1,26 @@
+record_index,canonical_indicator_key,method_label,unit,expanded,compiled,absolute_difference,nonzero
+0,climate change,Climate change,kg CO2-Eq,0.13333333333333336,0.13333333333333336,0.0,true
+1,acidification,Acidification,mol H+-Eq,0.0,0.0,0.0,false
+2,climate change: biogenic,Climate change-Biogenic,kg CO2-Eq,0.0,0.0,0.0,false
+3,climate change: fossil,Climate change-Fossil,kg CO2-Eq,0.0,0.0,0.0,false
+4,climate change: land use and land use change,Climate change-Land use and land use change,kg CO2-Eq,0.0,0.0,0.0,false
+5,ecotoxicity: freshwater,"Ecotoxicity, freshwater",CTUe,0.0,0.0,0.0,false
+6,"ecotoxicity: freshwater, inorganics","Ecotoxicity, freshwater-inorganics",CTUe,0.0,0.0,0.0,false
+7,"ecotoxicity: freshwater, organics","Ecotoxicity, freshwater-organics",CTUe,0.0,0.0,0.0,false
+8,energy resources: non-renewable,"Resource use, fossils","MJ, net calorific value",0.0,0.0,0.0,false
+9,eutrophication: freshwater,"Eutrophication, freshwater",kg P-Eq,0.0,0.0,0.0,false
+10,eutrophication: marine,Eutrophication marine,kg N-Eq,0.0,0.0,0.0,false
+11,eutrophication: terrestrial,"Eutrophication, terrestrial",mol N-Eq,0.0,0.0,0.0,false
+12,human toxicity: carcinogenic,"Human toxicity, cancer",CTUh,0.0,0.0,0.0,false
+13,"human toxicity: carcinogenic, inorganics","Human toxicity, cancer-inorganics",CTUh,0.0,0.0,0.0,false
+14,"human toxicity: carcinogenic, organics","Human toxicity, cancer-organics",CTUh,0.0,0.0,0.0,false
+15,human toxicity: non-carcinogenic,"Human toxicity, non-cancer",CTUh,0.0,0.0,0.0,false
+16,"human toxicity: non-carcinogenic, inorganics","Human toxicity, non-cancer_inorganics",CTUh,0.0,0.0,0.0,false
+17,"human toxicity: non-carcinogenic, organics","Human toxicity, non-cancer_organics",CTUh,0.0,0.0,0.0,false
+18,ionising radiation: human health,"Ionising radiation, human health",kBq U235-Eq,0.0,0.0,0.0,false
+19,land use,Land use,dimensionless,0.0,0.0,0.0,false
+20,material resources: metals/minerals,"Resource use, minerals and metals",kg Sb-Eq,0.0,0.0,0.0,false
+21,ozone depletion,Ozone depletion,kg CFC-11-Eq,0.0,0.0,0.0,false
+22,particulate matter formation,EF-particulate Matter,disease incidence,0.0,0.0,0.0,false
+23,photochemical oxidant formation: human health,Photochemical ozone formation - human health,kg NMVOC-Eq,0.0,0.0,0.0,false
+24,water use,Water use,m3 world Eq deprived,0.0,0.0,0.0,false

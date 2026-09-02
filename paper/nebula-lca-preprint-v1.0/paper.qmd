@@ -46,9 +46,9 @@ format:
 
 Industrial data collection and product LCA answer different questions. Plant records, production logs, engineering balances, and environmental reports commonly describe what occurred within a physical or organizational boundary during a batch or reporting period. They contain total inputs, direct emissions, waste transfers, and several products or by-products. Product LCA selects one reference product and functional demand, attributes shared exchanges to that product or applies another multifunctionality treatment, and connects the resulting inventory to upstream and downstream providers. The scientific problem is therefore not merely whether a software package can store multiple outputs. It is how observed production facts, product-attribution choices, calculated process columns, and reusable subsystem representations can remain distinct, reproducible, and mutually traceable.
 
-ISO 14040 and ISO 14044 define the general LCA framework and requirements, including the treatment of multifunctional processes [1,2]. The ILCD Handbook provides detailed technical guidance and a structured data model, while the ILCD Data Network document defines rules for UUIDs and dataset versions [3,4]. Global guidance for LCA databases likewise emphasizes consistent documentation and dataset management [24]. The TianGong database has recently been documented as an open-source, ILCD entry-level life-cycle unit-process database for China [25], while TIDAS exposes structured contracts for processes, flows, flow properties, unit groups, models, and their dependencies [5]. These specifications are necessary for data exchange and identity management, but a syntactically valid package does not determine a multifunctionality choice, guarantee a stable numerical interpretation after transformation, or prove equivalence between an expanded network and an aggregated artifact.
+ISO 14040 and ISO 14044 define the general LCA framework and requirements, including the treatment of multifunctional processes [1,2]. The ILCD Handbook provides detailed technical guidance and a structured data model, while the ILCD Data Network document defines rules for UUIDs and dataset versions [3,4]. Global guidance for LCA databases likewise emphasizes consistent documentation and dataset management [5]. The TianGong database has recently been documented as an open-source, ILCD entry-level life-cycle unit-process database for China [6], while TIDAS exposes structured contracts for processes, flows, flow properties, unit groups, models, and their dependencies [7]. These specifications are necessary for data exchange and identity management, but a syntactically valid package does not determine a multifunctionality choice, guarantee a stable numerical interpretation after transformation, or prove equivalence between an expanded network and an aggregated artifact.
 
-The underlying mathematical machinery is also established. Matrix formulations of process-based LCA express a functional demand through a technology matrix and propagate the solved activities to elementary flows and impact indicators [6]. Multifunctionality has been examined through physical, economic, causal, substitution, and system-expansion approaches, and reviews show substantial variation in practical implementation [7-9]. Existing LCA software supports allocation, product systems, and system-process aggregation. Brightway implements graph-to-matrix representations with explicit process and product nodes [10-12], while openLCA supports several allocation methods and fully or partially terminated system processes [13,14]. Database and software communities have likewise examined data transparency, model revision, disclosure, and privacy-preserving aggregation [15-21]. The present work therefore does not claim to invent allocation, matrix LCA, aggregation, process-product graphs, modular modeling, or confidentiality-preserving computation.
+The underlying mathematical machinery is also established. Matrix formulations of process-based LCA express a functional demand through a technology matrix and propagate the solved activities to elementary flows and impact indicators [8]. Multifunctionality has been examined through physical, economic, causal, substitution, and system-expansion approaches, and reviews show substantial variation in practical implementation [9-11]. Existing LCA software supports allocation, product systems, and system-process aggregation. Brightway implements graph-to-matrix representations with explicit process and product nodes [12-14], while openLCA supports several allocation methods and fully or partially terminated system processes [15,16]. Database and software communities have likewise examined data transparency, model revision, disclosure, and privacy-preserving aggregation [17-23]. The present work therefore does not claim to invent allocation, matrix LCA, aggregation, process-product graphs, modular modeling, or confidentiality-preserving computation.
 
 The narrower gap addressed here is the transformation contract connecting these established elements. For a multi-output industrial system, can total-process facts be recorded once; can product-resolved process columns be generated deterministically from explicit attribution evidence; and can an internal product technology system be compiled into a reusable boundary representation whose quantities, elementary flows, and impacts are demonstrably the same as those of the expanded subsystem? Can these transformations retain continuous provenance without assigning source identifiers to semantically new objects? Finally, can claims be limited by predefined numerical and semantic oracles rather than by the fact that a software artifact runs?
 
@@ -67,25 +67,25 @@ The remainder of the paper first positions the proposed contribution against est
 
 ## 2.1. Multifunctionality and allocation
 
-ISO 14044 requires multifunctionality to be addressed systematically and distinguishes avoidance of allocation, physical relationships, and other relationships where physical partitioning cannot be established [2]. In practice, the hierarchy is interpreted and implemented in different ways. Reviews of multifunctionality practice document variation in system subdivision, substitution, physical allocation, economic allocation, and the framing of the decision problem [7,8]. Economic allocation in particular depends not only on a numerical price ratio but also on geography, market stage, time basis, currency, taxes, treatment of negative-value outputs, and price variability [9].
+ISO 14044 requires multifunctionality to be addressed systematically and distinguishes avoidance of allocation, physical relationships, and other relationships where physical partitioning cannot be established [2]. In practice, the hierarchy is interpreted and implemented in different ways. Reviews of multifunctionality practice document variation in system subdivision, substitution, physical allocation, economic allocation, and the framing of the decision problem [9,10]. Economic allocation in particular depends not only on a numerical price ratio but also on geography, market stage, time basis, currency, taxes, treatment of negative-value outputs, and price variability [11].
 
 The framework developed here does not prescribe one universally preferred multifunctionality rule. It requires the selected rule to be represented as a versioned transformation with explicit evidence. A mass, energy, quantity, economic, causal, manual, substitution, or system-expansion treatment may be used when it is appropriate to the goal and scope, but each has different semantics. The simple allocation equations in Section 4 apply only to exchanges declared subject to partitioning. Substitution, recycling, waste responsibility, and avoided-product exchanges require separate rules and are not silently folded into one scalar factor.
 
 ## 2.2. Data identity and exchange formats
 
-The ILCD framework represents processes, flows, flow properties, unit groups, sources, contacts, and LCIA methods as referenced datasets [3]. Its UUID and version guidance explicitly addresses identity and version management for these object types [4]. TIDAS provides public documentation and machine-readable contracts for analogous LCA objects and dependencies [5]. These systems support interoperability, but interoperability must be decomposed into field-level questions: whether source identifiers and versions are retained, whether quantities and units are normalized, whether allocation metadata is representable, and whether a derived process receives a new identity with a link to its source.
+The ILCD framework represents processes, flows, flow properties, unit groups, sources, contacts, and LCIA methods as referenced datasets [3]. Its UUID and version guidance explicitly addresses identity and version management for these object types [4]. TIDAS provides public documentation and machine-readable contracts for analogous LCA objects and dependencies [7]. These systems support interoperability, but interoperability must be decomposed into field-level questions: whether source identifiers and versions are retained, whether quantities and units are normalized, whether allocation metadata is representable, and whether a derived process receives a new identity with a link to its source.
 
 The present method consequently uses the term *lineage-aware compilation*, not *identity-preserving compilation*. Imported source objects retain supported source identifiers. Product-resolved processes and PTS artifacts are new semantic objects and receive new identifiers. Continuity is provided by provenance records linking sources, transformation activities, parameters, unit conversions, boundary mappings, and outputs.
 
 ## 2.3. Matrix LCA and product-system representations
 
-Matrix LCA represents a product system as a set of process activities connected by technical exchanges [6]. Brightway documents several graph representations, including separate process and product nodes and combined process-reference-product nodes, and constructs a signed technosphere matrix with production and consumption coefficients [10-12]. These representations already support flexible product systems and efficient sparse linear algebra. The present method uses the same general computational foundation. Its contribution lies in the controlled transformation from an industrial total-process record to the normalized columns used in the matrix, and from a selected internal subgraph to a product-specific boundary operator.
+Matrix LCA represents a product system as a set of process activities connected by technical exchanges [8]. Brightway documents several graph representations, including separate process and product nodes and combined process-reference-product nodes, and constructs a signed technosphere matrix with production and consumption coefficients [12-14]. These representations already support flexible product systems and efficient sparse linear algebra. The present method uses the same general computational foundation. Its contribution lies in the controlled transformation from an industrial total-process record to the normalized columns used in the matrix, and from a selected internal subgraph to a product-specific boundary operator.
 
 ## 2.4. Aggregation, modularity, and disclosure
 
-Process aggregation is established in LCA databases and software. The original ecoinvent framework described unit-process and aggregated inventory structures [15], and later database development separated raw data from modeling choices and system models [22]. openLCA distinguishes fully terminated system processes, which expose elementary flows, from partially terminated processes that retain selected intermediate flows for later provider linking [14]. Systematic disaggregation has also been proposed to recover interpretability from aggregated calculations [16].
+Process aggregation is established in LCA databases and software. The original ecoinvent framework described unit-process and aggregated inventory structures [17], and later database development separated raw data from modeling choices and system models [24]. openLCA distinguishes fully terminated system processes, which expose elementary flows, from partially terminated processes that retain selected intermediate flows for later provider linking [16]. Systematic disaggregation has also been proposed to recover interpretability from aggregated calculations [18].
 
-Aggregation can reduce direct disclosure, but aggregation alone is not a privacy guarantee. Product-system disclosure frameworks have shown how foreground models can be partitioned into public and private components while preserving reproducibility under specified access assumptions [18]. Privacy-preserving aggregation has been studied under explicit cryptographic and adversarial models [19]. The PTS artifact introduced here may reduce visible topology and parameters, but this paper describes that property only as *limited disclosure*. A privacy claim would require a threat model, attack tasks, and leakage metrics that are outside the core method.
+Aggregation can reduce direct disclosure, but aggregation alone is not a privacy guarantee. Product-system disclosure frameworks have shown how foreground models can be partitioned into public and private components while preserving reproducibility under specified access assumptions [20]. Privacy-preserving aggregation has been studied under explicit cryptographic and adversarial models [21]. The PTS artifact introduced here may reduce visible topology and parameters, but this paper describes that property only as *limited disclosure*. A privacy claim would require a threat model, attack tasks, and leakage metrics that are outside the core method.
 
 ## 2.5. What is and is not claimed
 
@@ -95,12 +95,12 @@ Table 1 separates the contribution of this paper from established capabilities.
 
 | Area | Established basis | Contribution and explicit nonclaim |
 |---|---|---|
-| Multifunctionality | Allocation, substitution, subdivision, and system expansion are established [1,2,7-9,13] | Defines a source-to-product transformation with exchange classification, unit evidence, closure, and receipt; it does not prescribe a universally preferred rule. |
-| Matrix calculation | Technology-matrix LCA and graph-to-matrix construction are established [6,10-12] | Provides consistent notation and a semantic bridge from source facts to process columns; it is not a new LCA solution paradigm. |
-| Aggregation and modules | System processes, partial termination, and aggregation are established [14-16] | Defines product-specific PTS boundary operators linked to source and attribution lineage; it does not claim the first modular or aggregated LCA. |
-| Interoperability | ILCD and TIDAS define structured objects and references [3-5] | Defines a field-level round-trip contract and distinct derived identities; it does not assume lossless support for every field. |
-| Disclosure | Public/private partitions and privacy-preserving aggregation have been studied [18,19] | Defines a declared boundary release with utility and disclosure metrics; it makes no cryptographic privacy claim. |
-| Reproducibility | Model-description, revision, and reporting frameworks exist [17,20,21] | Binds snapshots, matrices, receipts, residuals, failures, and figures in case manifests; reproducibility remains gated by publication of those artifacts. |
+| Multifunctionality | Allocation, substitution, subdivision, and system expansion are established [1,2,9-11,15] | Defines a source-to-product transformation with exchange classification, unit evidence, closure, and receipt; it does not prescribe a universally preferred rule. |
+| Matrix calculation | Technology-matrix LCA and graph-to-matrix construction are established [8,12-14] | Provides consistent notation and a semantic bridge from source facts to process columns; it is not a new LCA solution paradigm. |
+| Aggregation and modules | System processes, partial termination, and aggregation are established [16-18] | Defines product-specific PTS boundary operators linked to source and attribution lineage; it does not claim the first modular or aggregated LCA. |
+| Interoperability | ILCD and TIDAS define structured objects and references [3,4,7] | Defines a field-level round-trip contract and distinct derived identities; it does not assume lossless support for every field. |
+| Disclosure | Public/private partitions and privacy-preserving aggregation have been studied [20,21] | Defines a declared boundary release with utility and disclosure metrics; it makes no cryptographic privacy claim. |
+| Reproducibility | Model-description, revision, and reporting frameworks exist [19,22,23] | Binds snapshots, matrices, receipts, residuals, failures, and figures in case manifests; reproducibility remains gated by publication of those artifacts. |
 
 # 3. Semantic object model
 
@@ -146,7 +146,7 @@ The classification itself is part of the receipt. An exchange with missing class
 
 ## 3.4. Two different quantity semantics
 
-The framework distinguishes source-state quantity auditing from computational closure (Figure 2).
+Figure 1 summarizes the complete source-to-boundary transformation chain. The framework then distinguishes source-state quantity auditing from computational closure (Figure 2).
 
 A *source-state transfer audit* applies when two records describe the same realized transfer within a common batch or reporting period. If the supplier records $Q^{(e)}_{s}$ in unit $u_s$ and the consumer records $Q^{(e)}_{d}$ in unit $u_d$, and $c_s$ and $c_d$ convert both to the reference quantity of the same flow, the residual is
 
@@ -166,7 +166,7 @@ A *normalized computational graph* has different semantics. A provider may produ
 
 ## 3.5. Lineage model
 
-The lineage model can be expressed using the generic entity-activity-agent pattern of W3C PROV [20]. Source processes, flows, unit groups, and evidence documents are entities. Attribution and compilation are activities with declared parameters and software versions. Product-resolved processes, compiled boundary artifacts, comparison reports, and figures are derived entities. This mapping is optional for file format, but the semantic distinctions are mandatory.
+The lineage model can be expressed using the generic entity-activity-agent pattern of W3C PROV [22]. Source processes, flows, unit groups, and evidence documents are entities. Attribution and compilation are activities with declared parameters and software versions. Product-resolved processes, compiled boundary artifacts, comparison reports, and figures are derived entities. This mapping is optional for file format, but the semantic distinctions are mandatory.
 
 The minimum lineage chain is: (i) source revision to product-resolved revision, documented by an attribution receipt; (ii) product-resolved revision to scaled exchanges and LCI/LCIA, documented by an immutable model snapshot and solve receipt; and (iii) scaled results to a PTS boundary artifact, documented by a compilation receipt.
 
@@ -409,11 +409,11 @@ $$
 \tag{16}
 $$
 
-Conditioning is interpreted relative to machine precision $u$ and the required result accuracy. A case manifest defines a numerical error budget $\tau_{\mathrm{num}}$ and rejects compilation when the estimated amplification $\kappa(M)u$ is inconsistent with that budget. This is preferable to one universal condition-number threshold. The implementation solves $MX=D$ using a documented linear solver and must not use a numerically unnecessary explicit inverse [23].
+Conditioning is interpreted relative to machine precision $u$ and the required result accuracy. A case manifest defines a numerical error budget $\tau_{\mathrm{num}}$ and rejects compilation when the estimated amplification $\kappa(M)u$ is inconsistent with that budget. This is preferable to one universal condition-number threshold. The implementation solves $MX=D$ using a documented linear solver and must not use a numerically unnecessary explicit inverse [25].
 
 ## 4.6. Fail-closed conditions
 
-Compilation or product resolution is rejected when any of the following applies:
+The method contract requires compilation or product resolution to fail closed when any of the following applies:
 
 - missing or zero product reference quantity;
 - incomplete, nonfinite, or nonnormalizable attribution weights;
@@ -428,7 +428,7 @@ Compilation or product resolution is rejected when any of the following applies:
 - unsupported nested PTS structure; or
 - an exchange class whose required treatment is not defined.
 
-A rejected negative case is a successful validation outcome when rejection is the predeclared oracle. Silent fallback to names, “latest” versions, default ratios, or provider ordering is not permitted.
+In version 1.0, the duplicated product-specific exchange negative control was executed independently. The remaining fail-closed conditions define the implementation contract and are not all represented as executed benchmark results. A rejected negative case is a successful validation outcome when rejection is the predeclared oracle. Silent fallback to names, “latest” versions, default ratios, or provider ordering is not permitted.
 
 # 5. Interoperability and provenance contract
 
@@ -446,7 +446,7 @@ The interoperability claim is intentionally field-level. A package can be syntac
 | PTS boundary artifact | Create a new identity; use as a reusable compiled column set; bind source, boundary, matrix, and solver receipts. | Expanded-compiled operator oracle, condition and residual report, and stale-artifact rejection. |
 | Multilingual names and classifications | Preserve as descriptive fields where supported; do not substitute them for identity. | Field-level round trip and deliberate duplicate-name case. |
 
-ILCD UUID/version guidance supports the source-identity part of this contract [4]. TIDAS provides the versioned schema surface to be pinned for the test package [5]. Neither standard is presumed to encode every compiler-specific receipt field. When the target profile lacks a native field, provenance can be carried in a declared extension or companion receipt; it must not be silently discarded.
+ILCD UUID/version guidance supports the source-identity part of this contract [4]. TIDAS provides the versioned schema surface to be pinned for the test package [7]. Neither standard is presumed to encode every compiler-specific receipt field. When the target profile lacks a native field, provenance can be carried in a declared extension or companion receipt; it must not be silently discarded.
 
 # 6. Progressive benchmark design
 
@@ -454,7 +454,7 @@ ILCD UUID/version guidance supports the source-identity part of this contract [4
 
 The implementation was evaluated through five projects that form one progressively composed refinery-inspired benchmark family. Each project was created through the public application programming interface, and each project after the first was duplicated from its predecessor before adding the next modeling feature. This preserves a visible derivation chain while keeping each stage independently executable. All material and emission quantities are declared benchmark assumptions. They are intended to expose allocation, connection, normalized-supply, recycle-loop, system-solution, and PTS-compilation behavior; they are not measured refinery data and are not intended to represent average or best-available refinery performance.
 
-The functional demands progress from 1 kg straight-run naphtha in Case 1 to 1 kg finished gasoline in Cases 2-5. Case 2 establishes a balanced four-process foreground. Case 3 adds one normalized electricity-supply process serving multiple units. Case 4 adds a recycle connection between reforming and hydrotreating. Case 5 compiles the cyclic upgrading subsystem as a PTS. The same exact elementary-flow identity for fossil carbon dioxide is used across the cases, and the reported impact vector is calculated with the implementation's EF 3.1 method set. Because the benchmark contains only a narrow elementary-flow inventory, the LCIA vector is used as a propagation and equivalence check, not as a comparative environmental assessment of refinery technologies.
+The functional demands progress from 1 kg straight-run naphtha in Case 1 to 1 kg finished gasoline in Cases 2-5. Case 2 establishes a balanced four-process foreground. Case 3 adds one normalized electricity-supply process serving multiple units. Case 4 adds a recycle connection between reforming and hydrotreating. Case 5 compiles the cyclic upgrading subsystem as a PTS. The same exact elementary-flow identity for fossil carbon dioxide is used across the cases. The reported impact vector is calculated with the European Commission Environmental Footprint 3.1 reference package released in July 2022, as implemented in the pinned Nebula LCA method package [26]. The implementation returned 25 ordered indicator records, of which one was nonzero for this deliberately sparse inventory. These records are regression outputs from one pinned method set and are not 25 statistically independent validation dimensions. The LCIA vector is therefore used only as a propagation and expanded-versus-compiled equivalence check, not as a comparative environmental assessment of refinery technologies.
 
 ![System boundary of the public refinery-inspired benchmark. Four balanced foreground processes, a normalized electricity supplier, and the reforming-to-hydrotreating recycle connection are shown. Direct elementary flows cross the foreground boundary, whereas licensed background inventories are not redistributed.](figures/figure4_system_boundary_pptx.png){width=6.5in}
 
@@ -484,6 +484,8 @@ $$
 $$
 
 Near-zero quantities are interpreted primarily through absolute error. For nonzero quantities, absolute and relative errors are both reported. The PTS comparison used an absolute tolerance of $10^{-10}$ fixed by the benchmark audit. No tolerance was selected after seeing the result.
+
+\newpage
 
 ## 6.2. Five progressive cases
 
@@ -525,7 +527,7 @@ M=I-A_{\mathrm{pts}}=
 \begin{bmatrix}1&-1\\-0.2&1\end{bmatrix}.
 $$
 
-For one kilogram of exposed reformate, the internal activity vector was $(1.25,1.25)^\mathsf{T}$, $\kappa_1(M)=\kappa_\infty(M)=5.0$, and the infinity-norm solve residual was zero. The independent projection and compiled artifact agreed exactly for the three declared nonzero boundary inputs (1.0 kg naphtha, 0.025 kg make-up hydrogen, and 6.25 MJ electricity) and the 0.1 kg fossil-carbon-dioxide elementary flow. A 0.0375 kg reformer hydrogen by-product was identified by the oracle but is not an exposed PTS shell output; it is therefore reported as a non-exposed row rather than silently treated as a compiled boundary exchange. The expanded and PTS-integrated models also returned identical reported EF 3.1 vectors for the tested demand.
+For one kilogram of exposed reformate, the internal activity vector was $(1.25,1.25)^\mathsf{T}$, $\kappa_1(M)=\kappa_\infty(M)=5.0$, and the infinity-norm solve residual was zero. The independent projection and compiled artifact agreed exactly for the three declared nonzero boundary inputs (1.0 kg naphtha, 0.025 kg make-up hydrogen, and 6.25 MJ electricity) and the 0.1 kg fossil-carbon-dioxide elementary flow. The 0.0375 kg hydrogen co-product was excluded by the declared PTS interface projection. The independently expanded oracle applied the same restricted projection; therefore, the equivalence claim applies only to this declared interface and does not assert equivalence for a boundary in which the hydrogen co-product is exposed. The excluded row is reported separately rather than silently treated as a compiled boundary exchange. The expanded and PTS-integrated models also returned identical reported EF 3.1 vectors for the tested demand.
 
 **Table 5. Independent comparison of the tested PTS reformate column.**
 
@@ -536,7 +538,7 @@ For one kilogram of exposed reformate, the internal activity vector was $(1.25,1
 | Refinery electricity supply | Boundary input | MJ, input | 6.250 | 6.250 | 0.000 |
 | Carbon dioxide, fossil | Elementary output | kg, output | 0.100 | 0.100 | 0.000 |
 
-The independent calculation additionally identified 0.0375 kg of reformer by-product hydrogen. Because this co-product is not exposed by the PTS shell, it is reported separately rather than counted as an agreement row.
+The independent calculation additionally identified 0.0375 kg of reformer by-product hydrogen. The declared interface projection marks this row as non-exposed; the same restricted projection is used for both the expanded oracle and compiled artifact, so the co-product is reported separately rather than counted as an agreement row.
 
 ## 6.3. Cross-case validation matrix
 
@@ -552,7 +554,7 @@ The five projects are cases in a compositional sequence, whereas the scientific 
 | PTS compilation | Case 5 compiles and publishes an invertible two-process PTS; the independent oracle reports $\kappa_1(M)=5.0$ and $\rho_M=0$. | Add stale-artifact, singular-matrix, and multi-output-basis negative cases. |
 | Expanded-compiled comparison | Four nonzero declared boundary/elementary components and all reported EF 3.1 outputs agree for the tested reformate/gasoline path. | Compare every exposed-product basis column and define policy for non-exposed co-products. |
 | Interoperability | Exact flow identities, versions, graph snapshots, and separate consumer/provider graph hashes are retained in the case evidence. | Execute complete ILCD/TIDAS import-export-reimport field audits. |
-| Limited disclosure | The main graph exposes three nodes instead of four while the PTS retains two internal nodes in its own canvas. | Define disclosed fields, a threat model, target secrets, and a reconstruction baseline before making any privacy claim. |
+| Limited disclosure | The compiled foreground production chain exposes three process nodes instead of four, while the external normalized electricity supplier remains unchanged and is not counted in this foreground-node comparison; the PTS retains two internal nodes in its own canvas. | Define disclosed fields, a threat model, target secrets, and a reconstruction baseline before making any privacy claim. |
 
 The benchmark calculation follows the causal chain
 
@@ -614,7 +616,7 @@ The design also makes invalidation explicit. A new source revision invalidates a
 
 ## 8.2. Relationship to existing LCA systems
 
-The method is compatible with established matrix LCA and product-system software. Brightway's process-product graphs and signed matrix construction already provide a flexible computational substrate [10-12]. openLCA already provides allocation choices and system-process aggregation [13,14]. ecoinvent has long distinguished unit-process detail from aggregated or system-model representations [15,22]. The contribution here is therefore the explicit semantic and evidentiary chain across source facts, attribution, matrix columns, subsystem elimination, and provenance.
+The method is compatible with established matrix LCA and product-system software. Brightway's process-product graphs and signed matrix construction already provide a flexible computational substrate [12-14]. openLCA already provides allocation choices and system-process aggregation [15,16]. ecoinvent has long distinguished unit-process detail from aggregated or system-model representations [17,24]. The contribution here is therefore the explicit semantic and evidentiary chain across source facts, attribution, matrix columns, subsystem elimination, and provenance.
 
 This distinction is important for novelty discipline. “Supports multiple outputs,” “uses matrices,” “aggregates processes,” or “exports a virtual process” are software capability statements and do not establish a method contribution. The contribution becomes scientific only when the transformation is specified, its assumptions are visible, its boundary operator is derivable, invalid inputs are rejected, and expanded-compiled results are compared component by component.
 
@@ -632,13 +634,13 @@ Elemental conservation would require composition vectors, reaction and transform
 
 ## 8.5. Limited disclosure and residual risk
 
-A compiled artifact can expose only the products, selected boundary intermediate flows, wastes, and elementary flows needed by a higher-level model. This can reduce direct disclosure of internal topology and process parameters and resembles the practical trade-off between full aggregation and partial termination [14]. However, boundary vectors may still reveal internal information through sparsity, magnitudes, repeated queries, auxiliary knowledge, or comparison across versions. The release policy should therefore state exactly what is visible and what is withheld.
+A compiled artifact can expose only the products, selected boundary intermediate flows, wastes, and elementary flows needed by a higher-level model. This can reduce direct disclosure of internal topology and process parameters and resembles the practical trade-off between full aggregation and partial termination [16]. However, boundary vectors may still reveal internal information through sparsity, magnitudes, repeated queries, auxiliary knowledge, or comparison across versions. The release policy should therefore state exactly what is visible and what is withheld.
 
-A future privacy extension should define sensitive objects, attacker knowledge, query access, target inference tasks, and acceptable leakage. It should compare alternative boundary policies and, where appropriate, cryptographic or secure-aggregation approaches [18,19]. Until then, “limited disclosure with preserved tested utility” is the defensible description.
+A future privacy extension should define sensitive objects, attacker knowledge, query access, target inference tasks, and acceptable leakage. It should compare alternative boundary policies and, where appropriate, cryptographic or secure-aggregation approaches [20,21]. Until then, “limited disclosure with preserved tested utility” is the defensible description.
 
 ## 8.6. Reproducibility and reporting
 
-Recent work has highlighted reproducibility as a distinct scientific criterion in LCA and emphasized reporting of methods, inventories, datasets, and component-level results [21]. The case-package design in Section 6 follows that direction. A repository link alone is not sufficient. The snapshot, ordered indices, units, matrices, receipts, residuals, environment, and figures must be bound in a manifest so that a reader can reconstruct the calculation and identify which artifact produced each statement.
+Recent work has highlighted reproducibility as a distinct scientific criterion in LCA and emphasized reporting of methods, inventories, datasets, and component-level results [23]. The case-package design in Section 6 follows that direction. A repository link alone is not sufficient. The snapshot, ordered indices, units, matrices, receipts, residuals, environment, and figures must be bound in a manifest so that a reader can reconstruct the calculation and identify which artifact produced each statement.
 
 The same principle applies to licensed or confidential data. A public paper can publish the method, benchmark cases, matrix dimensions, aggregated results, and acquisition instructions without redistributing restricted background inventories. Claims based on confidential industrial data should be limited to what an independent reviewer can audit under the stated access conditions.
 
@@ -660,7 +662,7 @@ The results also establish strict claim boundaries. Source-state transfer agreem
 
 # Data and code availability
 
-The manuscript source, Supporting Information, five-case benchmark package, independent validation scripts, identity-indexed comparison table, result figures, and SHA-256 manifests are distributed with version 1.0 of this preprint. The executed API receipts identify Nebula LCA engine commit `4c7cb4b69ae6a0647e3e08d048d6c6724cd93ae3`, EF 3.1 as the declared method/database release, and the exact elementary-flow identities used by the benchmark. TIDAS interoperability is referenced to public contract commit `b10585ba7695ec66636d5078d970ac54105bdf0e`. The benchmark quantities are hypothetical and may be redistributed. Licensed background inventories are not included; users must obtain such data from the respective provider under an appropriate license. The final Zenodo DOI will be inserted after a record is reserved; no DOI is fabricated in this version.
+The manuscript source, Supporting Information, five-case benchmark package, independent validation scripts, identity-indexed comparison tables, result figures, and SHA-256 manifests are distributed with version 1.0 of this preprint. The executed API receipts identify Nebula LCA engine commit `4c7cb4b69ae6a0647e3e08d048d6c6724cd93ae3`, the European Commission Environmental Footprint 3.1 reference package released in July 2022 as implemented in the pinned Nebula LCA method package, and the exact elementary-flow identities used by the benchmark. TIDAS interoperability is referenced to public contract commit `b10585ba7695ec66636d5078d970ac54105bdf0e`. The benchmark quantities are hypothetical and may be redistributed. Licensed background inventories are not included; users must obtain such data from the respective provider under an appropriate license. The final Zenodo DOI will be inserted after a record is reserved; no DOI is fabricated in this pre-reservation version.
 
 # Author contributions
 
@@ -672,7 +674,7 @@ The author declares no competing interests.
 
 # Acknowledgements
 
-OpenAI Codex was used under the author's direction for manuscript restructuring, language editing, reference-metadata checking, code-to-equation traceability review, and preparation of the PDF layout. The author reviewed the cited sources, code evidence, calculations, and final text and accepts full responsibility for the work. The AI system is not listed as an author because it cannot approve the final manuscript or assume responsibility for its content. No specific funding was declared for this preprint.
+OpenAI language models, including ChatGPT and Codex, were used under the author's direction for manuscript restructuring, language editing, reference-metadata checking, code-to-equation traceability review, and preparation of the PDF layout. The author reviewed the cited sources, code evidence, calculations, and final text and accepts full responsibility for the work. The AI systems are not listed as authors because they cannot approve the final manuscript or assume responsibility for its content. No specific funding was declared for this preprint.
 
 # Appendix A. Symbol table
 
@@ -791,24 +793,25 @@ A future Level C package should additionally provide independently constructed, 
 2. International Organization for Standardization. **ISO 14044:2006. Environmental management - Life cycle assessment - Requirements and guidelines.** 1st ed. Geneva: ISO; 2006. Confirmed 2022; Amendments 1:2017 and 2:2020. Available at: https://www.iso.org/standard/38498.html.
 3. Wolf M-A, Chomkhamsri K, Brandão M, Pant R, Ardente F, Pennington D, Manfredi S, De Camillis C, Goralczyk M. **International Reference Life Cycle Data System (ILCD) Handbook - General guide for Life Cycle Assessment - Detailed guidance.** EUR 24708 EN. Luxembourg: Publications Office of the European Union; 2011. doi:10.2788/38479.
 4. Wolf M-A, Chomkhamsri K. **International Reference Life Cycle Data System (ILCD) Data Network - Management of UUID and version number of data sets.** EUR 25198 EN. Luxembourg: Publications Office of the European Union; 2012. doi:10.2788/84321.
-5. TianGong LCA. **TIDAS: TianGong LCA Data System - public documentation and data contracts.** Commit b10585ba7695ec66636d5078d970ac54105bdf0e. https://github.com/tiangong-lca/tidas. Accessed 2 September 2026.
-6. Heijungs R, Suh S. **The Computational Structure of Life Cycle Assessment.** Eco-Efficiency in Industry and Science, vol. 11. Dordrecht: Kluwer Academic Publishers; 2002. doi:10.1007/978-94-015-9900-9.
-7. Moretti C, Corona B, Edwards R, Junginger M, Moro A, Rocco M, Shen L. Reviewing ISO compliant multifunctionality practices in environmental life cycle modeling. **Energies.** 2020;13(14):3579. doi:10.3390/en13143579.
-8. Pelletier N, Ardente F, Brandão M, De Camillis C, Pennington D. Rationales for and limitations of preferred solutions for multi-functionality problems in LCA: is increased consistency possible? **International Journal of Life Cycle Assessment.** 2015;20:74-86. doi:10.1007/s11367-014-0812-4.
-9. Ardente F, Cellura M. Economic allocation in life cycle assessment: the state of the art and discussion of examples. **Journal of Industrial Ecology.** 2012;16(3):387-398. doi:10.1111/j.1530-9290.2011.00434.x.
-10. Mutel C. Brightway: an open source framework for life cycle assessment. **Journal of Open Source Software.** 2017;2(12):236. doi:10.21105/joss.00236.
-11. Brightway Developers. **Inventory data.** Brightway documentation. https://docs.brightway.dev/en/latest/content/overview/inventory.html. Accessed 2 September 2026.
-12. Brightway Developers. **Matrix construction.** Brightway documentation. https://docs.brightway.dev/en/latest/content/overview/matrix.html. Accessed 2 September 2026.
-13. GreenDelta. **Allocation.** openLCA 2 Manual. https://greendelta.github.io/openLCA2-manual/allocation.html. Accessed 2 September 2026.
-14. GreenDelta. **Data aggregation in openLCA.** openLCA 2 Manual. https://greendelta.github.io/openLCA2-manual/aggregation.html. Accessed 2 September 2026.
-15. Frischknecht R, Jungbluth N, Althaus H-J, Doka G, Dones R, Heck T, Hellweg S, Hischier R, Nemecek T, Rebitzer G, Spielmann M. The ecoinvent database: overview and methodological framework. **International Journal of Life Cycle Assessment.** 2005;10(1):3-9. doi:10.1065/lca2004.10.181.1.
-16. Bourgault G, Lesage P, Samson R. Systematic disaggregation: a hybrid LCI computation algorithm enhancing interpretation phase in LCA. **International Journal of Life Cycle Assessment.** 2012;17(6):774-786. doi:10.1007/s11367-012-0418-7.
-17. Kuczenski B, Marvuglia A, Astudillo MF, Ingwersen WW, Satterfield MB, Evers DP, Koffler C, Navarrete T, Amor B, Laurin L. LCA capability roadmap - product system model description and revision. **International Journal of Life Cycle Assessment.** 2018;23(8):1685-1692. doi:10.1007/s11367-018-1446-8.
-18. Kuczenski B. Disclosure of product system models in life cycle assessment: achieving transparency and privacy. **Journal of Industrial Ecology.** 2019;23(3):574-586. doi:10.1111/jiec.12810.
-19. Kuczenski B, Sahin C, El Abbadi A. Privacy-preserving aggregation in life cycle assessment. **Environment Systems and Decisions.** 2017;37(1):13-21. doi:10.1007/s10669-016-9620-7.
-20. Moreau L, Missier P, editors. **PROV-DM: The PROV Data Model.** W3C Recommendation. World Wide Web Consortium; 30 April 2013. https://www.w3.org/TR/prov-dm/.
-21. Kamal Kamali A, Koyamparambath A, Laratte B, Sonnemann G. Reproducibility as a missing scientific criterion in life cycle assessment: a reporting framework. **International Journal of Life Cycle Assessment.** 2026;31(7):Article 135. doi:10.1007/s11367-026-02708-y.
-22. Wernet G, Bauer C, Steubing B, Reinhard J, Moreno-Ruiz E, Weidema B. The ecoinvent database version 3 (part I): overview and methodology. **International Journal of Life Cycle Assessment.** 2016;21(9):1218-1230. doi:10.1007/s11367-016-1087-8.
-23. Higham NJ. **Accuracy and Stability of Numerical Algorithms.** 2nd ed. Philadelphia: Society for Industrial and Applied Mathematics; 2002. doi:10.1137/1.9780898718027.
-24. Sonnemann G, Vigon B, editors. **Global Guidance Principles for Life Cycle Assessment Databases: A Basis for Greener Processes and Products.** Paris: UNEP/SETAC Life Cycle Initiative; 2011. ISBN 978-92-807-3174-3. Available at: https://www.lifecycleinitiative.org/wp-content/uploads/2012/12/2011%20-%20Global%20Guidance%20Principles.pdf.
-25. Xu M, Chen W, Wang Y, et al. TianGong database—an open-source, ILCD entry-level life cycle unit process database of China. **Journal of Industrial Ecology.** 2026;30(4):2001-2016. doi:10.1007/s44498-026-00136-7.
+5. Sonnemann G, Vigon B, editors. **Global Guidance Principles for Life Cycle Assessment Databases: A Basis for Greener Processes and Products.** Paris: UNEP/SETAC Life Cycle Initiative; 2011. ISBN 978-92-807-3174-3. Available at: https://www.lifecycleinitiative.org/wp-content/uploads/2012/12/2011%20-%20Global%20Guidance%20Principles.pdf.
+6. Xu M, Chen W, Wang Y, et al. TianGong database—an open-source, ILCD entry-level life cycle unit process database of China. **Journal of Industrial Ecology.** 2026;30(4):2001-2016. doi:10.1007/s44498-026-00136-7.
+7. TianGong LCA. **TIDAS: TianGong LCA Data System - public documentation and data contracts.** Commit b10585ba7695ec66636d5078d970ac54105bdf0e. https://github.com/tiangong-lca/tidas. Accessed 2 September 2026.
+8. Heijungs R, Suh S. **The Computational Structure of Life Cycle Assessment.** Eco-Efficiency in Industry and Science, vol. 11. Dordrecht: Kluwer Academic Publishers; 2002. doi:10.1007/978-94-015-9900-9.
+9. Moretti C, Corona B, Edwards R, Junginger M, Moro A, Rocco M, Shen L. Reviewing ISO compliant multifunctionality practices in environmental life cycle modeling. **Energies.** 2020;13(14):3579. doi:10.3390/en13143579.
+10. Pelletier N, Ardente F, Brandão M, De Camillis C, Pennington D. Rationales for and limitations of preferred solutions for multi-functionality problems in LCA: is increased consistency possible? **International Journal of Life Cycle Assessment.** 2015;20:74-86. doi:10.1007/s11367-014-0812-4.
+11. Ardente F, Cellura M. Economic allocation in life cycle assessment: the state of the art and discussion of examples. **Journal of Industrial Ecology.** 2012;16(3):387-398. doi:10.1111/j.1530-9290.2011.00434.x.
+12. Mutel C. Brightway: an open source framework for life cycle assessment. **Journal of Open Source Software.** 2017;2(12):236. doi:10.21105/joss.00236.
+13. Brightway Developers. **Inventory data.** Brightway documentation. https://docs.brightway.dev/en/latest/content/overview/inventory.html. Accessed 2 September 2026.
+14. Brightway Developers. **Matrix construction.** Brightway documentation. https://docs.brightway.dev/en/latest/content/overview/matrix.html. Accessed 2 September 2026.
+15. GreenDelta. **Allocation.** openLCA 2 Manual. https://greendelta.github.io/openLCA2-manual/allocation.html. Accessed 2 September 2026.
+16. GreenDelta. **Data aggregation in openLCA.** openLCA 2 Manual. https://greendelta.github.io/openLCA2-manual/aggregation.html. Accessed 2 September 2026.
+17. Frischknecht R, Jungbluth N, Althaus H-J, Doka G, Dones R, Heck T, Hellweg S, Hischier R, Nemecek T, Rebitzer G, Spielmann M. The ecoinvent database: overview and methodological framework. **International Journal of Life Cycle Assessment.** 2005;10(1):3-9. doi:10.1065/lca2004.10.181.1.
+18. Bourgault G, Lesage P, Samson R. Systematic disaggregation: a hybrid LCI computation algorithm enhancing interpretation phase in LCA. **International Journal of Life Cycle Assessment.** 2012;17(6):774-786. doi:10.1007/s11367-012-0418-7.
+19. Kuczenski B, Marvuglia A, Astudillo MF, Ingwersen WW, Satterfield MB, Evers DP, Koffler C, Navarrete T, Amor B, Laurin L. LCA capability roadmap - product system model description and revision. **International Journal of Life Cycle Assessment.** 2018;23(8):1685-1692. doi:10.1007/s11367-018-1446-8.
+20. Kuczenski B. Disclosure of product system models in life cycle assessment: achieving transparency and privacy. **Journal of Industrial Ecology.** 2019;23(3):574-586. doi:10.1111/jiec.12810.
+21. Kuczenski B, Sahin C, El Abbadi A. Privacy-preserving aggregation in life cycle assessment. **Environment Systems and Decisions.** 2017;37(1):13-21. doi:10.1007/s10669-016-9620-7.
+22. Moreau L, Missier P, editors. **PROV-DM: The PROV Data Model.** W3C Recommendation. World Wide Web Consortium; 30 April 2013. https://www.w3.org/TR/prov-dm/.
+23. Kamal Kamali A, Koyamparambath A, Laratte B, et al. Reproducibility as a missing scientific criterion in life cycle assessment: a reporting framework. **International Journal of Life Cycle Assessment.** 2026;31:135. doi:10.1007/s11367-026-02708-y.
+24. Wernet G, Bauer C, Steubing B, Reinhard J, Moreno-Ruiz E, Weidema B. The ecoinvent database version 3 (part I): overview and methodology. **International Journal of Life Cycle Assessment.** 2016;21(9):1218-1230. doi:10.1007/s11367-016-1087-8.
+25. Higham NJ. **Accuracy and Stability of Numerical Algorithms.** 2nd ed. Philadelphia: Society for Industrial and Applied Mathematics; 2002. doi:10.1137/1.9780898718027.
+26. Valente A, Kusche O, Ardente F. **Updates on “Guide for EF compliant data sets (Version 2.0)” to reflect the changes in the Environmental Footprint 3.1 reference package.** European Commission, Joint Research Centre; 2022. https://eplca.jrc.ec.europa.eu/permalink/EF_Data_Guide_EF3.1_addendum.pdf.
