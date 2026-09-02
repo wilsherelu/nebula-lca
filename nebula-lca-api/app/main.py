@@ -169,6 +169,7 @@ from .api.ef31_import import _base_router as _ef31_import_base_router, _api_rout
 from .api.tidas_import import _base_router as _tidas_import_base_router, _api_router as _tidas_import_api_router
 from .api.reference_catalog import _base_router as _ref_catalog_base_router, _api_router as _ref_catalog_api_router
 from .api.intermediate_flow_links import api_router as _intermediate_flow_links_router
+from .api.native_project_bundles import router as _native_project_bundles_router
 
 # Re-export graph contract functions (authoritative implementations live in
 # ``app.services.graph_contract``; keep aliases so the rest of main.py and
@@ -318,6 +319,7 @@ app.include_router(_pts_base_router)
 app.include_router(_pts_api_router)
 app.include_router(_data_platforms_router)
 app.include_router(_intermediate_flow_links_router)
+app.include_router(_native_project_bundles_router)
 
 
 @app.get("/health")
