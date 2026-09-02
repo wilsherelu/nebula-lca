@@ -279,13 +279,17 @@ ISO 14040 and ISO 14044 define the general LCA framework and
 requirements, including the treatment of multifunctional processes
 {[}1,2{]}. The ILCD Handbook provides detailed technical guidance and a
 structured data model, while the ILCD Data Network document defines
-rules for UUIDs and dataset versions {[}3,4{]}. TIDAS similarly exposes
-structured contracts for processes, flows, flow properties, unit groups,
-models, and their dependencies {[}5{]}. These specifications are
-necessary for data exchange and identity management, but a syntactically
-valid package does not determine a multifunctionality choice, guarantee
-a stable numerical interpretation after transformation, or prove
-equivalence between an expanded network and an aggregated artifact.
+rules for UUIDs and dataset versions {[}3,4{]}. Global guidance for LCA
+databases likewise emphasizes consistent documentation and dataset
+management {[}24{]}. The TianGong database has recently been documented
+as an open-source, ILCD entry-level life-cycle unit-process database for
+China {[}25{]}, while TIDAS exposes structured contracts for processes,
+flows, flow properties, unit groups, models, and their dependencies
+{[}5{]}. These specifications are necessary for data exchange and
+identity management, but a syntactically valid package does not
+determine a multifunctionality choice, guarantee a stable numerical
+interpretation after transformation, or prove equivalence between an
+expanded network and an aggregated artifact.
 
 The underlying mathematical machinery is also established. Matrix
 formulations of process-based LCA express a functional demand through a
@@ -2007,12 +2011,14 @@ without its index maps is not a complete reproducibility artifact.
   International Organization for Standardization. \textbf{ISO
   14040:2006. Environmental management - Life cycle assessment -
   Principles and framework.} 2nd ed.~Geneva: ISO; 2006. Confirmed 2022;
-  Amendment 1:2020.
+  Amendment 1:2020. Available at:
+  https://www.iso.org/standard/37456.html.
 \item
   International Organization for Standardization. \textbf{ISO
   14044:2006. Environmental management - Life cycle assessment -
   Requirements and guidelines.} 1st ed.~Geneva: ISO; 2006. Confirmed
-  2022; Amendments 1:2017 and 2:2020.
+  2022; Amendments 1:2017 and 2:2020. Available at:
+  https://www.iso.org/standard/38498.html.
 \item
   Wolf M-A, Chomkhamsri K, Brandão M, Pant R, Ardente F, Pennington D,
   Manfredi S, De Camillis C, Goralczyk M. \textbf{International
@@ -2027,7 +2033,8 @@ without its index maps is not a complete reproducibility artifact.
 \item
   TianGong LCA. \textbf{TIDAS: TianGong LCA Data System - public
   documentation and data contracts.} Commit
-  b10585ba7695ec66636d5078d970ac54105bdf0e. Accessed 31 August 2026.
+  b10585ba7695ec66636d5078d970ac54105bdf0e.
+  https://github.com/tiangong-lca/tidas. Accessed 2 September 2026.
 \item
   Heijungs R, Suh S. \textbf{The Computational Structure of Life Cycle
   Assessment.} Eco-Efficiency in Industry and Science, vol.~11.
@@ -2055,16 +2062,22 @@ without its index maps is not a complete reproducibility artifact.
   doi:10.21105/joss.00236.
 \item
   Brightway Developers. \textbf{Inventory data.} Brightway
-  documentation. Accessed 31 August 2026.
+  documentation.
+  https://docs.brightway.dev/en/latest/content/overview/inventory.html.
+  Accessed 2 September 2026.
 \item
   Brightway Developers. \textbf{Matrix construction.} Brightway
-  documentation. Accessed 31 August 2026.
+  documentation.
+  https://docs.brightway.dev/en/latest/content/overview/matrix.html.
+  Accessed 2 September 2026.
 \item
-  GreenDelta. \textbf{Allocation.} openLCA 2 Manual. Accessed 31 August
-  2026.
+  GreenDelta. \textbf{Allocation.} openLCA 2 Manual.
+  https://greendelta.github.io/openLCA2-manual/allocation.html. Accessed
+  2 September 2026.
 \item
   GreenDelta. \textbf{Data aggregation in openLCA.} openLCA 2 Manual.
-  Accessed 31 August 2026.
+  https://greendelta.github.io/openLCA2-manual/aggregation.html.
+  Accessed 2 September 2026.
 \item
   Frischknecht R, Jungbluth N, Althaus H-J, Doka G, Dones R, Heck T,
   Hellweg S, Hischier R, Nemecek T, Rebitzer G, Spielmann M. The
@@ -2093,11 +2106,13 @@ without its index maps is not a complete reproducibility artifact.
 \item
   Moreau L, Missier P, editors. \textbf{PROV-DM: The PROV Data Model.}
   W3C Recommendation. World Wide Web Consortium; 30 April 2013.
+  https://www.w3.org/TR/prov-dm/.
 \item
-  Kamali AK, Koyamparambath A, Laratte B, Sonnemann G. Reproducibility
-  as a missing scientific criterion in life cycle assessment: a
-  reporting framework. \textbf{International Journal of Life Cycle
-  Assessment.} 2026;31:Article 135. doi:10.1007/s11367-026-02708-y.
+  Kamal Kamali A, Koyamparambath A, Laratte B, Sonnemann G.
+  Reproducibility as a missing scientific criterion in life cycle
+  assessment: a reporting framework. \textbf{International Journal of
+  Life Cycle Assessment.} 2026;31(7):Article 135.
+  doi:10.1007/s11367-026-02708-y.
 \item
   Wernet G, Bauer C, Steubing B, Reinhard J, Moreno-Ruiz E, Weidema B.
   The ecoinvent database version 3 (part I): overview and methodology.
@@ -2111,7 +2126,13 @@ without its index maps is not a complete reproducibility artifact.
   Sonnemann G, Vigon B, editors. \textbf{Global Guidance Principles for
   Life Cycle Assessment Databases: A Basis for Greener Processes and
   Products.} Paris: UNEP/SETAC Life Cycle Initiative; 2011. ISBN
-  978-92-807-3174-3.
+  978-92-807-3174-3. Available at:
+  https://www.lifecycleinitiative.org/wp-content/uploads/2012/12/2011\%20-\%20Global\%20Guidance\%20Principles.pdf.
+\item
+  Xu M, Chen W, Wang Y, et al.~TianGong database---an open-source, ILCD
+  entry-level life cycle unit process database of China. \textbf{Journal
+  of Industrial Ecology.} 2026;30(4):2001-2016.
+  doi:10.1007/s44498-026-00136-7.
 \end{enumerate}
 
 
