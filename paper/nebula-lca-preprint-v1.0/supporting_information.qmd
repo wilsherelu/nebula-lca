@@ -3,6 +3,7 @@ title: "Supporting Information"
 subtitle: "Traceable Compilation of Multi-Output Total-Process Inventories into Product-Resolved Boundary Models for Life Cycle Assessment"
 author: "Jiaqi Lu"
 date: "2 September 2026"
+doi: "10.5281/zenodo.22244134"
 number-sections: false
 format:
   pdf:
@@ -20,6 +21,8 @@ format:
     include-in-header:
       - header.tex
 ---
+
+**Associated preprint DOI.** [10.5281/zenodo.22244134](https://doi.org/10.5281/zenodo.22244134)
 
 # S1. Scope of this Supporting Information
 
@@ -198,4 +201,4 @@ The corresponding claim register is summarized below.
 
 # S8. Zenodo record recommendations
 
-Upload the main paper, this Supporting Information, the public five-case package, and the source bundle as one versioned deposit. Use `Jiaqi Lu` as creator and corresponding author. Suggested resource type: publication / preprint. Suggested version: `1.0`. Suggested license: Creative Commons Attribution 4.0 for the manuscript and SI, subject to the author's final choice. The software repository may retain its own software license. The benchmark receipts identify engine commit `4c7cb4b69ae6a0647e3e08d048d6c6724cd93ae3`; the TIDAS contract reference is pinned separately in the reference register. If a DOI is reserved before publication, it can be inserted into a final PDF revision; no DOI is fabricated in the present files.
+Upload the main paper, this Supporting Information, the public five-case package, and the source bundle as one versioned deposit under the reserved DOI `10.5281/zenodo.22244134`. Use `Jiaqi Lu` as creator and corresponding author. Suggested resource type: publication / preprint. Suggested version: `1.0`. The manuscript, Supporting Information, figures, and redistributable benchmark materials use Creative Commons Attribution 4.0; the software repository retains Apache License 2.0. The benchmark receipts identify engine commit `4c7cb4b69ae6a0647e3e08d048d6c6724cd93ae3`; the TIDAS contract reference is pinned separately in the reference register.

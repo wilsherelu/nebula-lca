@@ -4,6 +4,9 @@ type: article
 title: "Traceable Compilation of Multi-Output Total-Process Inventories into Product-Resolved Boundary Models for Life Cycle Assessment"
 version: "1.0"
 date-released: 2026-09-02
+doi: 10.5281/zenodo.22244134
+url: "https://doi.org/10.5281/zenodo.22244134"
+license: CC-BY-4.0
 authors:
   - family-names: Lu
     given-names: Jiaqi

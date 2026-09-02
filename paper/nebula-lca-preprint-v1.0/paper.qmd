@@ -7,6 +7,7 @@ author:
     affiliation: "Independent Researcher, China"
 date: "2 September 2026"
 date-format: "D MMMM YYYY"
+doi: "10.5281/zenodo.22244134"
 abstract: |
   Industrial inventory records commonly describe a batch, facility, unit operation, or reporting period and therefore combine total inputs, multiple products, wastes, and direct emissions. Product life cycle assessment (LCA), by contrast, requires an inventory referenced to a selected product and functional demand. This paper presents a traceable compilation framework that preserves an unallocated total-process record while deriving product-resolved computational representations through explicit exchange classification, allocation evidence, and unit-aware transformations. The derived process columns are assembled into a signed technology system, solved for the activities required to meet a functional demand, and propagated to inventory and impact results. An internal subsystem can then be compiled as a partially terminated system (PTS) that exposes a declared reference product and selected intermediate exchanges for further modeling without disclosing every internal process in the main model. The implementation is evaluated through five progressively composed, refinery-inspired benchmark projects covering a multi-output unit process, a balanced foreground chain, a normalized electricity supplier, an internal recycle loop, and PTS compilation. All five API-executed audits passed. An independent NumPy calculation reconstructed the classified source inventory to floating-point precision and rejected a deliberately duplicated product-specific exchange. For the two-process PTS, the independent calculation reproduced the internal activity solution and all four declared nonzero boundary and elementary-flow components exactly; the expanded and compiled models also returned identical reported EF 3.1 results for the tested demand. The benchmarks use hypothetical quantities rather than measured refinery data. Complete ILCD/TIDAS round-trip retention, equivalence over every possible PTS demand, and privacy protection remain outside the demonstrated scope.
 keywords: "life cycle assessment; multifunctionality; allocation; total-process inventory; matrix LCA; partially terminated system; model compilation; provenance; TIDAS; ILCD"
@@ -33,6 +34,8 @@ format:
 **Affiliation.** Independent Researcher, China
 
 **Corresponding author.** Jiaqi Lu, wilsherelu@foxmail.com
+
+**Preprint version.** 1.0, 2 September 2026. DOI: [10.5281/zenodo.22244134](https://doi.org/10.5281/zenodo.22244134)
 
 ## Highlights
 
@@ -664,7 +667,7 @@ The results also establish strict claim boundaries. Source-state transfer agreem
 
 # Data and code availability
 
-The manuscript source, Supporting Information, five-case benchmark package, independent validation scripts, identity-indexed comparison tables, result figures, and SHA-256 manifests are distributed with version 1.0 of this preprint. The executed API receipts identify Nebula LCA engine commit `4c7cb4b69ae6a0647e3e08d048d6c6724cd93ae3`, the European Commission Environmental Footprint 3.1 reference package released in July 2022 as implemented in the pinned Nebula LCA method package, and the exact elementary-flow identities used by the benchmark. TIDAS interoperability is referenced to public contract commit `b10585ba7695ec66636d5078d970ac54105bdf0e`. The benchmark quantities are hypothetical and may be redistributed. Licensed background inventories are not included; users must obtain such data from the respective provider under an appropriate license. The final Zenodo DOI will be inserted after a record is reserved; no DOI is fabricated in this pre-reservation version.
+The version 1.0 manuscript and associated reproducibility artifacts are archived on Zenodo under DOI [10.5281/zenodo.22244134](https://doi.org/10.5281/zenodo.22244134). The archive contains the manuscript source, Supporting Information, five-case benchmark package, independent validation scripts, identity-indexed comparison tables, result figures, and SHA-256 manifests. The executed API receipts identify Nebula LCA engine commit `4c7cb4b69ae6a0647e3e08d048d6c6724cd93ae3`, the European Commission Environmental Footprint 3.1 reference package released in July 2022 as implemented in the pinned Nebula LCA method package, and the exact elementary-flow identities used by the benchmark. TIDAS interoperability is referenced to public contract commit `b10585ba7695ec66636d5078d970ac54105bdf0e`. The benchmark quantities are hypothetical and may be redistributed. Licensed background inventories are not included; users must obtain such data from the respective provider under an appropriate license.
 
 # Author contributions
 
