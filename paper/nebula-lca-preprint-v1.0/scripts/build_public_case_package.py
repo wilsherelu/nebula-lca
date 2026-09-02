@@ -49,8 +49,6 @@ def main() -> None:
         "allocation_closure.json",
         "pts_independent_oracle.json",
         "pts_component_comparison.csv",
-        "figure5_pts_equivalence.svg",
-        "figure5_pts_equivalence.png",
     ):
         shutil.copy2(args.validation_dir.resolve() / name, validation_target / name)
 

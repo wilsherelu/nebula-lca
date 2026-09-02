@@ -5,10 +5,10 @@ author:
   - name: "Jiaqi Lu"
     email: "wilsherelu@foxmail.com"
     affiliation: "Independent Researcher, China"
-date: "1 September 2026"
+date: "2 September 2026"
 date-format: "D MMMM YYYY"
 abstract: |
-  Industrial inventory records commonly describe a batch, facility, unit operation, or reporting period and therefore combine total inputs, multiple products, wastes, and direct emissions. Product life cycle assessment (LCA), by contrast, requires an inventory referenced to a selected product and functional demand. This paper presents a traceable compilation framework that separates an unallocated total-process source representation from product-resolved computational representations. Product attribution is expressed through explicit, unit-aware weights and exchange-classification rules. The resulting columns enter a signed technology-system model, $T\mathbf{x}=\mathbf{f}$, with inventory $\mathbf{z}=B\mathbf{x}$ and impact results $\mathbf{h}=C\mathbf{z}$. A product technology system (PTS) is formalized as an internal linear subsystem whose solved activities are projected onto a declared boundary. The implementation is evaluated through five progressively composed, refinery-inspired benchmark projects covering a multi-output unit process, a balanced foreground chain, a normalized electricity supplier, an internal recycle loop, and PTS compilation. All five API-executed audits passed. An independent NumPy oracle reconstructed the classified Case 1 source vector with an infinity-norm residual of $1.39\times10^{-17}$ and rejected a deliberately duplicated product-specific exchange. For the two-process PTS, the oracle reconstructed $A_{\mathrm{pts}}$, $M=I-A_{\mathrm{pts}}$, and the declared boundary and elementary-flow rows; the PTS residual was zero, $\kappa_1(M)=5.0$, and all four nonzero declared components agreed exactly with the compiled artifact. The expanded and PTS-integrated models also returned identical reported EF 3.1 vectors for the tested demand. The benchmarks use hypothetical quantities rather than measured refinery data. Complete ILCD/TIDAS round-trip retention, basis-complete PTS validation, and privacy protection remain outside the demonstrated scope.
+  Industrial inventory records commonly describe a batch, facility, unit operation, or reporting period and therefore combine total inputs, multiple products, wastes, and direct emissions. Product life cycle assessment (LCA), by contrast, requires an inventory referenced to a selected product and functional demand. This paper presents a traceable compilation framework that preserves an unallocated total-process record while deriving product-resolved computational representations through explicit exchange classification, allocation evidence, and unit-aware transformations. The derived process columns are assembled into a signed technology system, solved for the activities required to meet a functional demand, and propagated to inventory and impact results. An internal product technology system (PTS) can then be compiled into a declared boundary representation without exposing every internal process in the main model. The implementation is evaluated through five progressively composed, refinery-inspired benchmark projects covering a multi-output unit process, a balanced foreground chain, a normalized electricity supplier, an internal recycle loop, and PTS compilation. All five API-executed audits passed. An independent NumPy calculation reconstructed the classified source inventory to floating-point precision and rejected a deliberately duplicated product-specific exchange. For the two-process PTS, the independent calculation reproduced the internal activity solution and all four declared nonzero boundary and elementary-flow components exactly; the expanded and compiled models also returned identical reported EF 3.1 results for the tested demand. The benchmarks use hypothetical quantities rather than measured refinery data. Complete ILCD/TIDAS round-trip retention, equivalence over every possible PTS demand, and privacy protection remain outside the demonstrated scope.
 keywords: "life cycle assessment; multifunctionality; allocation; total-process inventory; matrix LCA; product technology system; model compilation; provenance; TIDAS; ILCD"
 number-sections: false
 format:
@@ -29,8 +29,6 @@ format:
       - header.tex
     toc: false
 ---
-
-**Preprint status.** This version reports the formal method and results from five executed, progressively composed benchmark projects plus an independent matrix oracle. The refinery-inspired quantities are hypothetical and are not evidence of representative industrial performance. Complete ILCD/TIDAS round-trip preservation, basis-complete operator equivalence, performance improvement, and privacy protection are not claimed.
 
 **Affiliation.** Independent Researcher, China
 
@@ -160,11 +158,11 @@ A small residual is evidence that the two records agree on the declared transfer
 
 A *normalized computational graph* has different semantics. A provider may produce one kilogram of a flow per unit activity while a consumer requires two kilograms per unit activity. Those coefficients should not be forced to equality. Flow identity, flow property, unit group, and conversion compatibility are structural requirements. The solver determines the process activity vector, and quantity closure is assessed on the scaled system through $Tx=f$ and the resulting exchange ledger. Conflating these two states would reject valid LCA models or falsely label normalized coefficients as realized transfers.
 
-![The traceable transformation chain separates total-process facts, attribution evidence, product-resolved columns, full-system calculation, and PTS compilation. Solid arrows denote computation; the lower lane denotes provenance continuity.](figures/figure1_method_chain.png){width=6.5in}
+![The traceable transformation chain separates the total-process source record, attribution evidence, product-resolved computation, and system solution or PTS compilation. The lower line denotes continuous provenance across the transformations.](figures/figure1_method_chain.png){width=6.5in}
 
 \newpage
 
-![Source-state transfer equality and normalized computational closure are different properties. Raw normalized provider and consumer coefficients need not be equal; the activity solution and scaled exchanges provide closure.](figures/figure2_quantity_semantics.png){width=6.5in}
+![Source-state transfer equality and normalized computational closure are different properties. The left panel compares realized quantities on a common source basis. The right panel shows how unequal raw coefficients close after multiplication by their solved activities.](figures/figure2_quantity_semantics.png){width=6.5in}
 
 ## 3.5. Lineage model
 
@@ -343,7 +341,7 @@ Each column corresponds to one exposed-product basis demand. The compilation rec
 
 \newpage
 
-![PTS compilation solves the internal dependency system for the exposed-product basis and constructs boundary technosphere and elementary-flow operators.](figures/figure3_pts_operator.png){width=6.5in}
+![Case 5 PTS compilation. The expanded hydrotreating-reforming subsystem is solved for one kilogram of reformate and projected onto the declared interface. The four exposed nonzero components are preserved exactly; the non-exposed hydrogen co-product is reported separately.](figures/figure3_pts_operator.png){width=6.5in}
 
 ## 4.4. Boundary-operator equivalence
 
@@ -458,7 +456,7 @@ The implementation was evaluated through five projects that form one progressive
 
 The functional demands progress from 1 kg straight-run naphtha in Case 1 to 1 kg finished gasoline in Cases 2-5. Case 2 establishes a balanced four-process foreground. Case 3 adds one normalized electricity-supply process serving multiple units. Case 4 adds a recycle connection between reforming and hydrotreating. Case 5 compiles the cyclic upgrading subsystem as a PTS. The same exact elementary-flow identity for fossil carbon dioxide is used across the cases, and the reported impact vector is calculated with the implementation's EF 3.1 method set. Because the benchmark contains only a narrow elementary-flow inventory, the LCIA vector is used as a propagation and equivalence check, not as a comparative environmental assessment of refinery technologies.
 
-![System boundary of the public refinery-inspired benchmark. Four balanced foreground processes are combined with a normalized electricity supplier; direct elementary flows cross the foreground boundary, whereas licensed background inventories are not redistributed.](figures/figure4_system_boundary.pdf){width=6.5in}
+![System boundary of the public refinery-inspired benchmark. Four balanced foreground processes, a normalized electricity supplier, and the reforming-to-hydrotreating recycle connection are shown. Direct elementary flows cross the foreground boundary, whereas licensed background inventories are not redistributed.](figures/figure4_system_boundary.pdf){width=6.5in}
 
 Each executed package contains:
 
@@ -529,13 +527,22 @@ $$
 
 For one kilogram of exposed reformate, the internal activity vector was $(1.25,1.25)^\mathsf{T}$, $\kappa_1(M)=\kappa_\infty(M)=5.0$, and the infinity-norm solve residual was zero. The independent projection and compiled artifact agreed exactly for the three declared nonzero boundary inputs (1.0 kg naphtha, 0.025 kg make-up hydrogen, and 6.25 MJ electricity) and the 0.1 kg fossil-carbon-dioxide elementary flow. A 0.0375 kg reformer hydrogen by-product was identified by the oracle but is not an exposed PTS shell output; it is therefore reported as a non-exposed row rather than silently treated as a compiled boundary exchange. The expanded and PTS-integrated models also returned identical reported EF 3.1 vectors for the tested demand.
 
-![Independent-oracle comparison for the tested PTS reformate column. Panels (a) and (b) compare the declared boundary and elementary-flow components by identity; panel (c) reports component-wise absolute differences. The non-exposed hydrogen by-product is disclosed separately in the evidence table and is outside the shell comparison.](data/figure5_pts_equivalence.pdf){width=6.5in}
+**Table 5. Independent comparison of the tested PTS reformate column.**
+
+| Exchange | Role | Unit and direction | Independent calculation | Compiled PTS | Absolute difference |
+|---|---|---|---:|---:|---:|
+| Straight-run naphtha | Boundary input | kg, input | 1.000 | 1.000 | 0.000 |
+| Make-up hydrogen | Boundary input | kg, input | 0.025 | 0.025 | 0.000 |
+| Refinery electricity supply | Boundary input | MJ, input | 6.250 | 6.250 | 0.000 |
+| Carbon dioxide, fossil | Elementary output | kg, output | 0.100 | 0.100 | 0.000 |
+
+The independent calculation additionally identified 0.0375 kg of reformer by-product hydrogen. Because this co-product is not exposed by the PTS shell, it is reported separately rather than counted as an agreement row.
 
 ## 6.3. Cross-case validation matrix
 
-The five projects are cases in a compositional sequence, whereas the scientific checks cut across that sequence. Table 5 prevents the number of projects from being confused with the number of validation dimensions.
+The five projects are cases in a compositional sequence, whereas the scientific checks cut across that sequence. Table 6 prevents the number of projects from being confused with the number of validation dimensions.
 
-**Table 5. Cross-case validation status.**
+**Table 6. Cross-case validation status.**
 
 | Validation dimension | Evidence in this version | Remaining work |
 |---|---|---|

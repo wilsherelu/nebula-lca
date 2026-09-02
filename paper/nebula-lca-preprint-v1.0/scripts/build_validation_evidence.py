@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import matplotlib.pyplot as plt
 import numpy as np
 
 
@@ -294,38 +293,6 @@ def write_comparison_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
-def plot_equivalence(path_base: Path, rows: list[dict[str, Any]]) -> None:
-    plt.rcParams.update({"font.family": "Arial", "font.size": 8, "axes.titlesize": 9})
-    fig, axes = plt.subplots(1, 3, figsize=(7.1, 2.45), gridspec_kw={"width_ratios": [1.1, 1.1, 0.9]})
-    boundary = [row for row in rows if row["row_type"] == "boundary"]
-    elementary = [row for row in rows if row["row_type"] == "elementary"]
-    for ax, subset, title, color in (
-        (axes[0], boundary, "Boundary exchanges", "#3B6FB6"),
-        (axes[1], elementary, "Elementary exchanges", "#2A8C82"),
-    ):
-        x = np.array([row["oracle_amount"] for row in subset], dtype=float)
-        y = np.array([row["compiled_amount"] for row in subset], dtype=float)
-        upper = max(float(np.max(x)) if len(x) else 1.0, float(np.max(y)) if len(y) else 1.0)
-        ax.plot([0, upper], [0, upper], color="#6B7280", lw=0.8, ls="--")
-        ax.scatter(x, y, s=28, color=color, edgecolor="white", linewidth=0.5, zorder=3)
-        ax.set_xlabel("Independent oracle")
-        ax.set_ylabel("Compiled artifact")
-        ax.set_title(title)
-        ax.grid(axis="both", color="#D9D9D9", lw=0.45, alpha=0.7)
-    errors = [row["absolute_error"] for row in rows]
-    labels = [f"{row['row_type'][0].upper()}{index + 1}" for index, row in enumerate(rows)]
-    axes[2].barh(labels, errors, color="#D97706", height=0.62)
-    axes[2].set_xlabel("Absolute error")
-    axes[2].set_title("Component differences")
-    axes[2].grid(axis="x", color="#D9D9D9", lw=0.45, alpha=0.7)
-    for label, ax in zip(("(a)", "(b)", "(c)"), axes, strict=True):
-        ax.text(-0.18, 1.06, label, transform=ax.transAxes, fontweight="bold", va="top")
-    fig.tight_layout(pad=0.7, w_pad=1.1)
-    for suffix, options in ((".pdf", {}), (".svg", {}), (".png", {"dpi": 600})):
-        fig.savefig(path_base.with_suffix(suffix), bbox_inches="tight", **options)
-    plt.close(fig)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--case-root", type=Path, required=True)
@@ -337,7 +304,6 @@ def main() -> None:
     write_json(args.output_dir / "allocation_closure.json", allocation)
     write_json(args.output_dir / "pts_independent_oracle.json", pts)
     write_comparison_csv(args.output_dir / "pts_component_comparison.csv", pts["component_comparison"])
-    plot_equivalence(args.output_dir / "figure5_pts_equivalence", pts["component_comparison"])
     manifest = {
         path.name: sha256(path)
         for path in sorted(args.output_dir.iterdir())

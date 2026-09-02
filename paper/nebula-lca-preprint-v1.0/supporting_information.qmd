@@ -2,7 +2,7 @@
 title: "Supporting Information"
 subtitle: "Traceable Compilation of Multi-Output Total-Process Inventories into Product-Resolved Boundary Models for Life Cycle Assessment"
 author: "Jiaqi Lu"
-date: "1 September 2026"
+date: "2 September 2026"
 number-sections: false
 format:
   pdf:
