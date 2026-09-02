@@ -158,11 +158,11 @@ A small residual is evidence that the two records agree on the declared transfer
 
 A *normalized computational graph* has different semantics. A provider may produce one kilogram of a flow per unit activity while a consumer requires two kilograms per unit activity. Those coefficients should not be forced to equality. Flow identity, flow property, unit group, and conversion compatibility are structural requirements. The solver determines the process activity vector, and quantity closure is assessed on the scaled system through $Tx=f$ and the resulting exchange ledger. Conflating these two states would reject valid LCA models or falsely label normalized coefficients as realized transfers.
 
-![The traceable transformation chain separates the total-process source record, attribution evidence, product-resolved computation, and system solution or PTS compilation. The lower line denotes continuous provenance across the transformations.](figures/figure1_method_chain.png){width=6.5in}
+![The traceable transformation chain separates the total-process source record, attribution evidence, product-resolved computation, and system solution or PTS compilation. The lower line denotes continuous provenance across the transformations.](figures/figure1_method_chain_pptx.png){width=6.5in}
 
 \newpage
 
-![Source-state transfer equality and normalized computational closure are different properties. The left panel compares realized quantities on a common source basis. The right panel shows how unequal raw coefficients close after multiplication by their solved activities.](figures/figure2_quantity_semantics.png){width=6.5in}
+![Source-state transfer equality and normalized computational closure are different properties. The left panel compares realized quantities on a common source basis. The right panel shows how unequal raw coefficients close after multiplication by their solved activities.](figures/figure2_quantity_semantics_pptx.png){width=6.5in}
 
 ## 3.5. Lineage model
 
@@ -341,7 +341,7 @@ Each column corresponds to one exposed-product basis demand. The compilation rec
 
 \newpage
 
-![Case 5 PTS compilation. The expanded hydrotreating-reforming subsystem is solved for one kilogram of reformate and projected onto the declared interface. The four exposed nonzero components are preserved exactly; the non-exposed hydrogen co-product is reported separately.](figures/figure3_pts_operator.png){width=6.5in}
+![Case 5 PTS compilation. The expanded hydrotreating-reforming subsystem is solved for one kilogram of reformate and projected onto the declared interface. The four exposed nonzero components are preserved exactly; the non-exposed hydrogen co-product is reported separately.](figures/figure3_pts_operator_pptx.png){width=6.5in}
 
 ## 4.4. Boundary-operator equivalence
 
@@ -456,7 +456,7 @@ The implementation was evaluated through five projects that form one progressive
 
 The functional demands progress from 1 kg straight-run naphtha in Case 1 to 1 kg finished gasoline in Cases 2-5. Case 2 establishes a balanced four-process foreground. Case 3 adds one normalized electricity-supply process serving multiple units. Case 4 adds a recycle connection between reforming and hydrotreating. Case 5 compiles the cyclic upgrading subsystem as a PTS. The same exact elementary-flow identity for fossil carbon dioxide is used across the cases, and the reported impact vector is calculated with the implementation's EF 3.1 method set. Because the benchmark contains only a narrow elementary-flow inventory, the LCIA vector is used as a propagation and equivalence check, not as a comparative environmental assessment of refinery technologies.
 
-![System boundary of the public refinery-inspired benchmark. Four balanced foreground processes, a normalized electricity supplier, and the reforming-to-hydrotreating recycle connection are shown. Direct elementary flows cross the foreground boundary, whereas licensed background inventories are not redistributed.](figures/figure4_system_boundary.pdf){width=6.5in}
+![System boundary of the public refinery-inspired benchmark. Four balanced foreground processes, a normalized electricity supplier, and the reforming-to-hydrotreating recycle connection are shown. Direct elementary flows cross the foreground boundary, whereas licensed background inventories are not redistributed.](figures/figure4_system_boundary_pptx.png){width=6.5in}
 
 Each executed package contains:
 
