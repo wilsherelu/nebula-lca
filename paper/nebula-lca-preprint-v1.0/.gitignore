@@ -1,3 +1,5 @@
 /.quarto/
 **/*.quarto_ipynb
 /output/
+*.aux
+*.log
