@@ -36,3 +36,36 @@ describe("addImportedUnitProcesses", () => {
     ]);
   });
 });
+
+describe("normalized market graph round-trip", () => {
+  it("preserves elementary exchanges when a project is loaded and saved", () => {
+    useLcaGraphStore.getState().importGraph({
+      functionalUnit: "1 kg product",
+      nodes: [{
+        id: "electricity",
+        node_kind: "market_process",
+        mode: "normalized",
+        market_allow_mixed_flows: false,
+        process_uuid: "electricity-supplier",
+        name: "Electricity supplier",
+        location: "GLO",
+        reference_product: "electricity",
+        reference_product_flow_uuid: "electricity-flow",
+        inputs: [],
+        outputs: [
+          { id: "electricity-out", flowUuid: "electricity-flow", name: "electricity", amount: 1, unit: "MJ", unitGroup: "Energy", type: "technosphere", direction: "output", isProduct: true, showOnNode: true },
+          { id: "co2-out", flowUuid: "co2-fossil", name: "carbon dioxide, fossil", amount: 0.004, unit: "kg", unitGroup: "Mass", type: "biosphere", direction: "output", showOnNode: true },
+        ],
+      }],
+      exchanges: [],
+      metadata: {},
+    });
+
+    const exported = useLcaGraphStore.getState().exportGraph();
+    const outputs = exported.nodes[0]?.outputs ?? [];
+    expect(outputs.filter((port) => port.type === "biosphere")).toEqual([
+      expect.objectContaining({ flowUuid: "co2-fossil", amount: 0.004, unit: "kg" }),
+    ]);
+    expect(outputs.filter((port) => port.type === "technosphere")).toHaveLength(1);
+  });
+});

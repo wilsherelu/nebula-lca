@@ -1370,8 +1370,12 @@ const sanitizeMarketNode = (node: Node<LcaNodeData>): Node<LcaNodeData> => {
   };
 
   if (!enforceSingleFlow) {
-    const firstOutput = node.data.outputs[0];
-    const fallback = node.data.inputs[0];
+    const biosphereInputs = node.data.inputs.filter((port) => port.type === "biosphere");
+    const biosphereOutputs = node.data.outputs.filter((port) => port.type === "biosphere");
+    const intermediateInputs = node.data.inputs.filter((port) => port.type !== "biosphere");
+    const intermediateOutputs = node.data.outputs.filter((port) => port.type !== "biosphere");
+    const firstOutput = intermediateOutputs[0];
+    const fallback = intermediateInputs[0];
     const preferredOutput = isMarketPlaceholder(firstOutput) && fallback ? undefined : firstOutput;
     const canonicalUnitGroup = resolveCanonicalUnitGroup();
     const output: FlowPort | undefined =
@@ -1398,14 +1402,17 @@ const sanitizeMarketNode = (node: Node<LcaNodeData>): Node<LcaNodeData> => {
         nodeKind: "market_process",
         mode: "normalized",
         marketAllowMixedFlows: true,
-        inputs: node.data.inputs.map((port) => ({
-          ...port,
-          unit: output?.unit ?? port.unit,
-          unitGroup: output?.unitGroup ?? port.unitGroup,
-          type: "technosphere",
-          direction: "input",
-        })),
-        outputs: output ? [output] : [],
+        inputs: [
+          ...intermediateInputs.map((port): FlowPort => ({
+            ...port,
+            unit: output?.unit ?? port.unit,
+            unitGroup: output?.unitGroup ?? port.unitGroup,
+            type: "technosphere",
+            direction: "input",
+          })),
+          ...biosphereInputs,
+        ],
+        outputs: output ? [output, ...biosphereOutputs] : biosphereOutputs,
         referenceProduct: output?.name ?? node.data.referenceProduct,
         referenceProductFlowUuid: output?.flowUuid,
         referenceProductDirection: output ? "output" : node.data.referenceProductDirection,
@@ -1425,8 +1432,12 @@ const sanitizeMarketNode = (node: Node<LcaNodeData>): Node<LcaNodeData> => {
     };
   }
 
-  const firstOutput = node.data.outputs[0];
-  const firstInput = node.data.inputs[0];
+  const biosphereInputs = node.data.inputs.filter((port) => port.type === "biosphere");
+  const biosphereOutputs = node.data.outputs.filter((port) => port.type === "biosphere");
+  const intermediateInputs = node.data.inputs.filter((port) => port.type !== "biosphere");
+  const intermediateOutputs = node.data.outputs.filter((port) => port.type !== "biosphere");
+  const firstOutput = intermediateOutputs[0];
+  const firstInput = intermediateInputs[0];
   const preferredOutput = isMarketPlaceholder(firstOutput) && firstInput ? undefined : firstOutput;
   const seedFlowUuid =
     preferredOutput?.flowUuid ||
@@ -1465,15 +1476,18 @@ const sanitizeMarketNode = (node: Node<LcaNodeData>): Node<LcaNodeData> => {
     showOnNode: preferredOutput?.showOnNode ?? firstOutput?.showOnNode ?? true,
   };
 
-  const inputs = node.data.inputs.map((port) => ({
-    ...port,
-    flowUuid: seedFlowUuid,
-    name: (port.name ?? "").trim() || seedName,
-    unit: seedUnit,
-    unitGroup: seedUnitGroup ?? port.unitGroup,
-    type: "technosphere" as const,
-    direction: "input" as const,
-  }));
+  const inputs: FlowPort[] = [
+    ...intermediateInputs.map((port): FlowPort => ({
+      ...port,
+      flowUuid: seedFlowUuid,
+      name: (port.name ?? "").trim() || seedName,
+      unit: seedUnit,
+      unitGroup: seedUnitGroup ?? port.unitGroup,
+      type: "technosphere",
+      direction: "input",
+    })),
+    ...biosphereInputs,
+  ];
 
   return {
     ...node,
@@ -1486,7 +1500,7 @@ const sanitizeMarketNode = (node: Node<LcaNodeData>): Node<LcaNodeData> => {
       referenceProductFlowUuid: canonicalOutput.flowUuid,
       referenceProductDirection: "output",
       inputs,
-      outputs: [canonicalOutput],
+      outputs: [canonicalOutput, ...biosphereOutputs],
     },
   };
 };

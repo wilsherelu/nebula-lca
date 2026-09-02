@@ -6,6 +6,7 @@ import { ExternalPlatformAccounts } from "../ExternalPlatformAccounts";
 import { FlowAllocationPropertiesModal, type FlowAllocationProperty } from "../FlowAllocationPropertiesModal";
 import { TidasLocationCascade, normalizeTidasLocationValue } from "../TidasLocationCascade";
 import { useTianGongFlowRefresh } from "../../services/tiangongFlowRefresh";
+import { downloadNativeProjectBundle, restoreNativeProjectBundle } from "../../services/nativeProjectBundle";
 
 export type ProjectListItem = {
   project_id: string;
@@ -1587,6 +1588,7 @@ export function ProjectManagement(props: Props) {
   const [tidasCompatibilityFlow, setTidasCompatibilityFlow] = useState<FlowRow | null>(null);
   const [allocationPropertiesFlow, setAllocationPropertiesFlow] = useState<FlowRow | null>(null);
   const [ef31ImportOpen, setEf31ImportOpen] = useState(false);
+  const nativeBundleInputRef = useRef<HTMLInputElement>(null);
   const projectPageSize = 20;
   const processPageSize = 20;
   const flowPageSize = 20;
@@ -1600,6 +1602,35 @@ export function ProjectManagement(props: Props) {
   const openTidasImport = (kind: TidasImportKind) => {
     setTidasImportKind(kind);
     setTidasImportOpen(true);
+  };
+  const downloadNativeBundle = async (row: ProjectRow) => {
+    try {
+      await downloadNativeProjectBundle(row.projectId, row.projectName);
+      onStatus?.(zh ? "原生项目备份已下载" : "Native project backup downloaded");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      onStatus?.(zh ? `原生项目备份失败: ${message}` : `Native project backup failed: ${message}`);
+    }
+  };
+  const restoreNativeBundle = async (file: File) => {
+    try {
+      const receipt = await restoreNativeProjectBundle(file);
+      clearPmCacheByPrefix("pm:projects:");
+      clearPmCacheByPrefix("pm:stats");
+      setForceProjectRefresh(true);
+      setForceStatsRefresh(true);
+      setImportRefreshTick((prev) => prev + 1);
+      onStatus?.(
+        zh
+          ? `项目已恢复${receipt.issues.length ? `，有 ${receipt.issues.length} 项外部依赖提示` : ""}`
+          : `Project restored${receipt.issues.length ? ` with ${receipt.issues.length} dependency notices` : ""}`,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      onStatus?.(zh ? `原生项目恢复失败: ${message}` : `Native project restore failed: ${message}`);
+    } finally {
+      if (nativeBundleInputRef.current) nativeBundleInputRef.current.value = "";
+    }
   };
   const handleTidasImported = async (kind: TidasImportKind, result: TidasImportResult) => {
     if (kind === "processes") {
@@ -2400,13 +2431,31 @@ export function ProjectManagement(props: Props) {
                   <p>{zh ? "管理和维护你的生命周期评价模型项目" : "Manage and maintain your LCA modeling projects."}</p>
                 </div>
                 <div className="pm-head-actions">
+                  <input
+                    ref={nativeBundleInputRef}
+                    type="file"
+                    accept=".zip,.nebula.zip,application/zip"
+                    hidden
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) void restoreNativeBundle(file);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="pm-ghost-btn"
+                    title={zh ? "完整恢复 Nebula 原生项目备份" : "Restore a complete native Nebula project backup"}
+                    onClick={() => nativeBundleInputRef.current?.click()}
+                  >
+                    {zh ? "恢复备份" : "Restore Backup"}
+                  </button>
                   <button
                     type="button"
                     className="pm-ghost-btn"
                     title={zh ? "导入天工模型格式" : "Import TIDAS model format"}
                     onClick={() => openTidasImport("models")}
                   >
-                    {zh ? "导入" : "Import"}
+                    {zh ? "导入 TIDAS" : "Import TIDAS"}
                   </button>
                   <button
                     type="button"
@@ -2464,7 +2513,10 @@ export function ProjectManagement(props: Props) {
                             {zh ? "打开" : "Open"}
                           </button>
                           <button type="button" className="pm-link-btn" onClick={() => void openTidasExport(row.projectId, row.projectName, row.latestVersion)} disabled={!row.latestVersion}>
-                            {zh ? "导出" : "Export"}
+                            {zh ? "TIDAS" : "TIDAS"}
+                          </button>
+                          <button type="button" className="pm-link-btn" onClick={() => void downloadNativeBundle(row)}>
+                            {zh ? "备份" : "Backup"}
                           </button>
                           <button type="button" className="pm-link-btn danger" onClick={() => onDeleteProject(row.projectId)}>
                             {zh ? "删除" : "Delete"}
@@ -2522,7 +2574,10 @@ export function ProjectManagement(props: Props) {
                                   {zh ? "打开" : "Open"}
                                 </button>
                                 <button type="button" className="pm-link-btn" onClick={() => void openTidasExport(row.projectId, row.projectName, row.latestVersion)} disabled={!row.latestVersion}>
-                                  {zh ? "导出" : "Export"}
+                                  {zh ? "TIDAS" : "TIDAS"}
+                                </button>
+                                <button type="button" className="pm-link-btn" onClick={() => void downloadNativeBundle(row)}>
+                                  {zh ? "备份" : "Backup"}
                                 </button>
                                 <button type="button" className="pm-link-btn" onClick={() => openProjectEdit(row)}>{zh ? "修改信息" : "Edit Info"}</button>
                                 <button type="button" className="pm-link-btn">{zh ? "复制" : "Duplicate"}</button>

@@ -26,6 +26,24 @@ It combines:
 - Partially terminated system (PTS) packaging for reusable and privacy-aware modular release
 - Calculation and impact assessment result presentation
 
+## Project Backup and Reproduction
+
+Nebula's native project bundle (`*.nebula.zip`) is the lossless backup format for
+restoring a project in another installation. It includes project metadata, every
+saved graph version and layout, referenced redistributable Flow and unit records,
+PTS definitions and artifacts, calculation requests, results, and a SHA-256
+manifest. Use **Backup** and **Restore Backup** in project management, or call:
+
+```text
+GET  /api/native-project-bundles/projects/{project_id}
+POST /api/native-project-bundles/import?conflict_policy=rename
+```
+
+TIDAS/ILCD export remains the standards-interchange path. Licensed background
+database content, including ecoinvent inventories, is not redistributed in a
+native bundle; exact external identities are recorded as dependencies and are
+reported during restore when the destination installation must supply them.
+
 ## Windows Desktop
 
 Download one of the Windows packages from the GitHub Releases page:
