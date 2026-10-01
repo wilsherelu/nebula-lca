@@ -79,6 +79,7 @@ from ..services.tidas_import_core import (
     import_tidas_process_rows,
 )
 from ..services.flow_versions import TIDAS_NAMESPACE
+from ..tidas_reference import load_tidas_reference_seed
 
 
 api_router = APIRouter(prefix="/api/data-platforms", tags=["data-platforms"])
@@ -843,6 +844,23 @@ def _upsert_sync_record(
     }
 
 
+def _matching_reference_seed_package(item: RemoteUnitGroupDTO) -> str | None:
+    """Recognize a complete reference definition by exact identity and units."""
+    seed = load_tidas_reference_seed()
+    for candidate in seed.get("unit_groups") or []:
+        if (candidate.get("name") != item.name or candidate.get("uuid") != item.source_uuid
+                or candidate.get("version") != item.source_version
+                or candidate.get("reference_unit") != item.reference_unit):
+            continue
+        expected = {str(unit.get("name")): float(unit.get("meanValue"))
+                    for unit in candidate.get("units") or []}
+        observed = {unit.unit_name: unit.factor_to_reference for unit in item.definitions}
+        references = {unit.unit_name for unit in item.definitions if unit.is_reference}
+        if expected == observed and references == {item.reference_unit}:
+            return str(seed.get("source_package_version") or "") or None
+    return None
+
+
 def _upsert_unit_group(db: Session, *, account: DataPlatformAccount, item: RemoteUnitGroupDTO) -> list[dict[str, Any]]:
     synced: list[dict[str, Any]] = []
     row = db.get(UnitGroup, item.name)
@@ -852,14 +870,18 @@ def _upsert_unit_group(db: Session, *, account: DataPlatformAccount, item: Remot
             reference_unit=item.reference_unit,
             source_uuid=item.source_uuid,
             source_version=item.source_version,
-            source_package_version=item.source_package_version or account.platform,
+            source_package_version=_matching_reference_seed_package(item)
+            or item.source_package_version or account.platform,
         )
         db.add(row)
     else:
-        row.reference_unit = item.reference_unit or row.reference_unit
-        row.source_uuid = item.source_uuid or row.source_uuid
-        row.source_version = item.source_version or row.source_version
-        row.source_package_version = item.source_package_version or row.source_package_version or account.platform
+        if (not item.source_uuid or not item.source_version or
+                row.source_uuid != item.source_uuid or row.source_version != item.source_version):
+            raise ConnectorError(f"Unit group identity conflict: {item.name}")
+        if item.reference_unit and row.reference_unit != item.reference_unit:
+            raise ConnectorError(f"Unit group reference unit conflict: {item.name}")
+        # The existing package installed this exact identity. Import lineage
+        # belongs in ExternalDataSyncRecord, not in its package provenance.
     synced.append({"local_kind": "unit_group", "local_uuid": item.name, "remote_id": item.source_uuid, "remote_version": item.source_version})
     for definition in item.definitions:
         existing = (
@@ -877,8 +899,9 @@ def _upsert_unit_group(db: Session, *, account: DataPlatformAccount, item: Remot
                 )
             )
         else:
-            existing.factor_to_reference = definition.factor_to_reference
-            existing.is_reference = definition.is_reference
+            if (existing.factor_to_reference != definition.factor_to_reference or
+                    existing.is_reference != definition.is_reference):
+                raise ConnectorError(f"Unit definition conflict: {item.name}:{definition.unit_name}")
         synced.append({"local_kind": "unit_definition", "local_uuid": f"{item.name}:{definition.unit_name}", "remote_id": item.source_uuid, "remote_version": item.source_version})
     return synced
 
@@ -890,6 +913,7 @@ def _upsert_flow_dependencies(db: Session, *, account: DataPlatformAccount, conn
             warnings.append(f"flow {flow.flow_uuid} dependency unit group is missing name")
             continue
         synced.extend(_upsert_unit_group(db, account=account, item=unit_group))
+        db.flush()
         synced.append(
             _upsert_sync_record(
                 db,
@@ -898,7 +922,8 @@ def _upsert_flow_dependencies(db: Session, *, account: DataPlatformAccount, conn
                 local_uuid=unit_group.name,
                 remote_id=unit_group.source_uuid or unit_group.name,
                 remote_version=unit_group.source_version,
-                metadata={"source_package_version": unit_group.source_package_version},
+                metadata={"source_package_version": db.get(UnitGroup, unit_group.name).source_package_version,
+                          "import_platform": account.platform},
             )
         )
     return synced

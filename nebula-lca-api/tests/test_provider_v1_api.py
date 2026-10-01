@@ -16,7 +16,7 @@ import app.services.provider_tidas_snapshot as provider_tidas_snapshot
 from app.database import Base
 from app.main import app
 from app.models import FlowRecord, FlowVersionRecord, Model, ModelVersion, UnitDefinition, UnitGroup
-from app.schemas import HybridGraph
+from app.schemas import FlowPort, HybridGraph
 from app.services.graph_storage import compute_graph_hash_from_graph
 
 
@@ -148,6 +148,63 @@ def _inline_snapshot(graph: HybridGraph, base_ref: dict | None = None) -> dict:
         "source_policy": "open_mixed",
         "allowed_lcia_scope": "ef31_only",
     }
+
+
+def test_user_project_background_version_expands_in_real_provider_http(client):
+    whole = _graph()
+    source = whole.model_copy(deep=True)
+    source.nodes = [source.nodes[0]]
+    source.nodes[0].outputs = [source.nodes[0].outputs[0]]
+    source.exchanges = []
+    consumer = whole.model_copy(deep=True)
+    consumer.nodes = [consumer.nodes[1]]
+    consumer.exchanges = []
+    source_hash = compute_graph_hash_from_graph(source)
+    db = db_module.SessionLocal()
+    try:
+        db.add(Model(id="user-supply", name="User supply", functional_unit="1 kg intermediate",
+                     source_policy="open_mixed", allowed_lcia_scope="ef31_only"))
+        db.add(ModelVersion(id="user-supply-v1", model_id="user-supply", version=1,
+                            graph_hash=source_hash, hybrid_graph_json=source.model_dump(mode="json", by_alias=True)))
+        db.add(UnitGroup(name="Mass", reference_unit="kg", source_uuid="ug-mass", source_version="1.0"))
+        db.add(UnitDefinition(unit_group="Mass", unit_name="kg", factor_to_reference=1.0, is_reference=True))
+        db.commit()
+    finally:
+        db.close()
+    pin = {"consumer_exchange_id": "node-p2::in-mid", "project_id": "user-supply", "version": 1,
+           "expected_graph_hash": source_hash, "source_node_id": "node-p1", "reference_port_id": "out-mid",
+           "provider_amount_per_consumer_unit": 1.0}
+    request = {"inline_snapshot": _inline_snapshot(consumer),
+               "demand": [{"process_uuid": "p2", "amount": 1.0, "unit": "kg"}],
+               "project_background_pins": [pin]}
+    response = client.post("/api/provider/v1/solve", json=request)
+    assert response.status_code == 200, response.text
+    answer = response.json()
+    assert next(item for item in answer["activity_vector"] if item["process_uuid"] == "p1")["activity_amount"] == pytest.approx(2.0)
+    receipt = answer["project_background_process_receipts"][0]
+    assert receipt["source_graph_hash"] == source_hash
+    assert receipt["pin"]["project_id"] == "user-supply"
+    assert receipt["activity_amount"] == pytest.approx(2.0)
+    shared_consumer = consumer.model_copy(deep=True)
+    shared_consumer.nodes[0].inputs.append(FlowPort.model_validate(_port(
+        "in-mid-extra", "flow-mid", "Intermediate", 1.0, "input", "technosphere")))
+    shared_pin = {**pin, "consumer_exchange_id": "node-p2::in-mid-extra"}
+    shared_request = {**request, "inline_snapshot": _inline_snapshot(shared_consumer),
+                      "project_background_pins": [pin, shared_pin]}
+    shared_response = client.post("/api/provider/v1/solve", json=shared_request)
+    assert shared_response.status_code == 200, shared_response.text
+    shared = shared_response.json()
+    shared_receipts = shared["project_background_process_receipts"]
+    assert len(shared_receipts) == 2
+    assert len({row["source_process_uuid"] for row in shared_receipts}) == 2
+    assert {row["source_model_process_uuid"] for row in shared_receipts} == {"p1"}
+    assert sum(row["activity_amount"] for row in shared_receipts) == pytest.approx(3.0)
+    assert sum(item["activity_amount"] for item in shared["activity_vector"]
+               if item["process_uuid"] != "p2") == pytest.approx(3.0)
+    request["project_background_pins"][0]["expected_graph_hash"] = "f" * 64
+    changed = client.post("/api/provider/v1/solve", json=request)
+    assert changed.status_code == 422
+    assert changed.json()["detail"]["code"] == "PROJECT_BACKGROUND_VERSION_CHANGED"
 
 
 CO2_UUID = "08a91e70-3ddc-11dd-923d-0050c2490048"
@@ -529,6 +586,51 @@ def test_snapshot_returns_full_graph_engine_and_exact_identity_issues(client):
         "version": 7,
         "graph_hash": graph_hash,
     }
+
+
+def test_snapshot_derives_structured_functional_unit_from_explicit_target_product(client):
+    graph = _graph()
+    graph.metadata.pop("functional_unit")
+    graph.metadata["project_preferences"] = {
+        "target_product": {
+            "process_uuid": "p2",
+            "flow_uuid": "flow-final",
+            "quantity_mode": "custom",
+            "quantity": 2,
+        }
+    }
+    graph_hash = compute_graph_hash_from_graph(graph)
+    db = db_module.SessionLocal()
+    try:
+        project = Model(id="target-project", name="Target project", functional_unit="legacy display text")
+        db.add(project)
+        db.add(
+            ModelVersion(
+                id="target-version-1",
+                model_id=project.id,
+                version=1,
+                graph_hash=graph_hash,
+                hybrid_graph_json=graph.model_dump(mode="json", by_alias=True),
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get("/api/provider/v1/models/target-project/versions/1/snapshot")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["functional_unit"] == {
+        "display_text": "2 kg Final product",
+        "amount": 2.0,
+        "flow_uuid": "flow-final",
+        "flow_source_namespace": "test-catalog",
+        "flow_version": "1.0",
+        "unit": "kg",
+        "unit_group_uuid": "ug-mass",
+        "unit_group_version": "1.0",
+    }
+    assert not any(issue["code"] == "FUNCTIONAL_UNIT_NOT_STRUCTURED" for issue in body["issues"])
 
 
 def test_inline_solve_returns_true_activity_vector_and_explicit_boundaries(client):
@@ -944,6 +1046,60 @@ def test_tidas_snapshot_missing_dependency_is_unsupported(client, monkeypatch, t
     assert item["code"] == "TIDAS_REFERENCE_DEPENDENCY_SNAPSHOT_REQUIRED"
 
 
+def test_tidas_snapshot_compares_preserved_ilcd_payload_not_semantic_row_hash(client, monkeypatch):
+    _configure_tidas_snapshot(monkeypatch)
+    document = _snapshot_copy()
+    record = document["records"][0]
+    db = db_module.SessionLocal()
+    try:
+        db.add(
+            FlowVersionRecord(
+                source_namespace="tiangong_open_data",
+                flow_uuid=CRUDE_OIL_UUID,
+                source_version=CRUDE_OIL_VERSION,
+                version_label=CRUDE_OIL_VERSION,
+                flow_name="Crude Oil",
+                flow_type="Product flow",
+                default_unit="kg",
+                unit_group="Units of mass",
+                flow_property_uuid=MASS_PROPERTY_UUID,
+                flow_property_version="03.00.003",
+                unit_group_uuid=MASS_UNIT_GROUP_UUID,
+                unit_group_version="03.00.003",
+                content_hash="normalized-semantic-row-hash",
+                metadata_json={
+                    "source_payload": {
+                        "json": {
+                            **record["payload"],
+                            "id": CRUDE_OIL_UUID,
+                            "version": CRUDE_OIL_VERSION,
+                        }
+                    }
+                },
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        "/api/provider/v1/catalog/resolve",
+        json={
+            "flows": [
+                {
+                    "source_namespace": "tiangong_open_data",
+                    "flow_uuid": CRUDE_OIL_UUID,
+                    "version": CRUDE_OIL_VERSION,
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    item = response.json()["items"][0]
+    assert item["status"] == "resolved"
+    assert item["value"]["content_hash"] == record["content_hash"]
+
+
 def test_tidas_snapshot_database_conflict_fails_closed(client, monkeypatch):
     _configure_tidas_snapshot(monkeypatch)
     db = db_module.SessionLocal()
@@ -1044,7 +1200,7 @@ def test_inline_custom_technosphere_with_exact_ef31_lcia_does_not_write_catalog_
         "method": "EF v3.1",
         "database_release": "EF3.1",
         "asset": "data/EF3.1/indicator_index.csv",
-        "sha256": "d41e72b826f39c93958cab0ed1eec5b0ef6153c502dddcd98e54bd7e4daf99fe",
+        "sha256": hashlib.sha256(provider_ef31._INDICATOR_METHOD_METADATA.read_bytes()).hexdigest(),
         "indicator_count": 25,
     }
     assert indicator_metadata["content_hash"]
@@ -1122,6 +1278,34 @@ def test_inline_custom_technosphere_mfa_without_lcia_remains_available(client):
     assert body["elementary_flow_receipts"] == []
     assert body["activity_vector"]
     assert body["scaled_exchanges"]
+
+
+def test_physical_solve_reports_unreferenced_elementary_flow_without_characterizing_it(
+    client, monkeypatch, tmp_path,
+):
+    _configure_tidas_snapshot(monkeypatch, _water_vapour_snapshot(tmp_path / "water-flow-snapshot.json"))
+    graph = _water_vapour_graph().model_dump(mode="json", by_alias=True)
+    graph["nodes"][0]["outputs"].append(_port(
+        "new-elementary-out", "new-elementary-flow", "new emission", 0.1,
+        "output", "biosphere",
+    ))
+    graph = HybridGraph.model_validate(graph)
+    request = {
+        "inline_snapshot": _inline_snapshot(graph),
+        "demand": [{"process_uuid": "water-process", "amount": 1.0, "unit": "kg"}],
+    }
+
+    response = client.post("/api/provider/v1/solve", json=request)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["lcia"] is None
+    assert body["elementary_flow_receipts"] == []
+    assert {item["exchange_id"] for item in body["scaled_exchanges"]} >= {
+        "reclaimed-water-utilization::new-elementary-out",
+    }
+    assert any(item["code"] == "ELEMENTARY_FLOW_UNCHARACTERIZED" and
+               item["details"]["exchange_ids"] == ["reclaimed-water-utilization::new-elementary-out"]
+               for item in body["issues"])
 
 
 def test_inline_metadata_elementary_ref_returns_exact_receipt_without_lcia_or_background_pins(

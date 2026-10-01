@@ -1,0 +1,26 @@
+{
+  "schema_version": "nebula.tiangong-flow-display-metadata.v1",
+  "source_namespace": "tiangong_open_data",
+  "flow_uuid": "3d76981f-964a-4865-b588-0e067a2a1163",
+  "flow_version": "01.01.003",
+  "display_name_zh": "交流电",
+  "display_name_en": "Alternating current",
+  "display_projection_source": "GET /api/data-platforms/accounts/{account_id}/flows/{flow_uuid}/preview?remote_version=01.01.003",
+  "raw_name_field_path": "flowDataSet.flowInformation.dataSetInformation.name.baseName",
+  "default_unit": "MJ",
+  "flow_property_uuid": "93a60a56-a3c8-11da-a746-0800200c9a66",
+  "flow_property_version": "03.00.003",
+  "unit_group_uuid": "93a60a57-a3c8-11da-a746-0800200c9a66",
+  "unit_group_version": "03.00.003",
+  "flow_payload_content_hash": "d0a8812bc220b6e15e860ca727afeb8bb87e29d8374410ca6456ea8a55e8dc9c",
+  "flow_snapshot_hash": "70dda0cf2d79108ca4ff96a203cb61eb76a9e550288e05be133e684b4747b1dd",
+  "flow_property_payload_content_hash": "6681b7a20422d08035b46be567aee02b160656c6d3123c511dbe7d44279ca96a",
+  "unit_group_payload_content_hash": "781980f2ad6036b604221e9b729936dccf5332994b0f050b453742faf6544cbf",
+  "reference_dependency_snapshot_hash": "92016cdbbd2abd4b1a619d0048432313f9e0cf5327cf1c98a049b5a5c1155f29",
+  "state_scope": "open",
+  "source_modified_at": "2026-09-21T14:07:50.29342+00:00",
+  "notes": [
+    "This file contains public identity and hash metadata only; it contains no account credential or licensed inventory.",
+    "Nebula One should display versioned source metadata and preserve its original seed plus an independent derived revision; it should not hard-code a translated label."
+  ]
+}

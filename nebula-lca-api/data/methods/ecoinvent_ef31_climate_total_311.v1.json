@@ -1,0 +1,38 @@
+{
+  "schema_version": "provider.native-climate-method-package.v1",
+  "package_id": "ecoinvent-ef31-climate-total-3.11",
+  "package_version": "1.0.0",
+  "database_release": "ecoinvent_3.11",
+  "vector_flow_source_identities": ["ecoinvent_3.11", "ecoinvent_3.11_cutoff_lci"],
+  "provider_system_model_evidence": "not_asserted_by_local_vector_metadata",
+  "native_flow_namespace": "ecoinvent",
+  "foreground_flow_namespace": "tiangong_open_data",
+  "method": "EF v3.1",
+  "category": "climate change",
+  "indicator": "global warming potential (GWP100)",
+  "indicator_unit": "kg CO2-Eq",
+  "native_indicator_index": 178,
+  "foreground_indicator_index": 1,
+  "native_flow_unit": "kg",
+  "source_asset_sha256": {
+    "LCIA Implementation 3.11.xlsx": "30e256bb6afab42fbd63055ff7acd6be7de6850ec0dee4f62fa8cf60f31125fd",
+    "ElementaryExchanges.xml": "2f81b4d1319396d9418e60a77d9e7e085c99b04b9ea0bc46f70c0721ffcf2b77",
+    "Units.xml": "e5a424fc15ad1f509743f166f9b4cb156f2d759896d11b9e4342e96189d4dc9b"
+  },
+  "native_runtime_sha256": {
+    "flow_index.csv": "d8b03f615ea85b4208d02f83ebda8ee1e3f275c6d32c5aca5448ab767c37d843",
+    "indicator_index.csv": "da5f6caf96d07173b76fb2131c1e0fea64fe789d11a8c3883373f76ae7cac256",
+    "lcia_factors.csv": "0c270c402e1372da66353a5da5a8f3a4e38a83a0b2d18b52513f0997f2789aeb"
+  },
+  "foreground_runtime_sha256": {
+    "flow_index.csv": "24e5462d1415cb23d0adac35aea43aab8293d09d84170f90a223392613633e4b",
+    "indicator_index.csv": "d41e72b826f39c93958cab0ed1eec5b0ef6153c502dddcd98e54bd7e4daf99fe",
+    "lcia_factors.csv": "6cec4ef2e0a1859d2bc2048239af6664a0ba7801fa0cb96d0a6e1d30892a1c7d"
+  },
+  "certified_core_sha256": "42131add431929dd65c441dc82ba8946020e1e26d60b70846aad88ff073c3fad",
+  "audit_v2_script_sha256": "632337cc23e594270857ecd9b1733bc1a1dab5355d3cbaec2383e7118fe2d40e",
+  "audit_v2_evidence_sha256": "a1807cb24fb5e1b2ac3a67f32b55218fbdfdb6245c694e062034ba0d916c8c38",
+  "no_cf_policy": "uncharacterized_no_numeric_contribution",
+  "merge_policy": "require_certified_identity_and_equal_coefficient_for_each_contributing_foreground_flow",
+  "claim_scope": "partial_background_leaf_climate_total_diagnostic"
+}

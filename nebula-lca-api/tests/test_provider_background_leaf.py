@@ -14,9 +14,26 @@ import app.services.provider_tidas_reference_snapshot as reference_snapshot_serv
 import app.services.provider_tidas_snapshot as flow_snapshot_service
 from app.database import Base
 from app.main import app
-from app.models import FlowRecord, FlowVersionRecord, Model, ReferenceProcess, UnitDefinition, UnitGroup
+from app.lci_vector_codec import pack_lci_vector
+from app.models import (
+    FlowRecord,
+    FlowVersionRecord,
+    LciBiosphereFlowKey,
+    LciProcessVector,
+    Model,
+    ReferenceProcess,
+    UnitDefinition,
+    UnitGroup,
+)
 from app.schemas import HybridEdge, HybridGraph
 from app.services.graph_storage import compute_graph_hash_from_graph
+from app.services.elementary_flow_conversion_service import get_elementary_flow_mapping_registry
+from app.services.provider_mapped_background import (
+    _inverse_elementary_mapping,
+    _standardized_elementary,
+    mapped_process_content_hash,
+)
+from app.services.public_flow_mapping_service import get_public_flow_mapping_registry
 
 
 PROCESS_UUID = "22222222-2222-4222-8222-222222222222"
@@ -63,6 +80,45 @@ def isolated_database():
 @pytest.fixture()
 def client():
     return TestClient(app)
+
+
+def test_inverse_elementary_mapping_prefers_unique_strict_identity():
+    resolution = _inverse_elementary_mapping("16fcd4f9-0bb8-4b84-8334-3ffb1a17aa74")
+    assert resolution is not None
+    assert resolution.mapping_level == "L1"
+    assert resolution.tiangong_flow_uuid == "fe0acd60-3ddc-11dd-a6d5-0050c2490048"
+
+
+def test_inverse_elementary_mapping_uses_certified_canonical_identity_for_l2_aliases():
+    resolution = _inverse_elementary_mapping("99585564-bfce-4845-9aaa-2f24b8f26a41")
+    assert resolution is not None
+    assert resolution.mapping_level == "L2"
+    assert resolution.tiangong_flow_uuid == "9ae45122-e251-11e6-bf01-fe55135034f3"
+    assert resolution.amount_factor == 1.0
+
+
+def test_inverse_elementary_mapping_does_not_guess_unreviewed_identity():
+    assert _inverse_elementary_mapping("b32061b1-8d24-4663-b10d-0a1c705f2937") is None
+
+
+def test_standardized_elementary_reports_certified_adjudication_dependency():
+    key = LciBiosphereFlowKey(
+        flow_uuid="99585564-bfce-4845-9aaa-2f24b8f26a41",
+        compartment="air",
+        subcompartment="non-urban air or from high stacks",
+        direction="output",
+        canonical_unit="kg",
+    )
+    _, amount, dependencies = _standardized_elementary(key, 1.0)
+    certified = get_elementary_flow_mapping_registry()
+    assert amount == pytest.approx(1.0)
+    assert [item.role for item in dependencies] == [
+        "public_interoperability_projection",
+        "certified_elementary_identity_adjudication",
+    ]
+    assert dependencies[1].package_id == certified.package_id
+    assert dependencies[1].package_version == certified.package_version
+    assert dependencies[1].package_hash == certified.package_hash
 
 
 def _hash(value) -> str:
@@ -605,3 +661,430 @@ def test_solve_without_background_pin_remains_numerically_compatible(client, mon
     assert body["provenance"]["background_process_pins_hash"] is None
     assert body["activity_vector"][0]["process_uuid"] == "consumer-process"
     assert body["activity_vector"][0]["activity_amount"] == pytest.approx(1.0)
+
+
+def test_mapped_background_pin_executes_local_vector_and_shared_consumers_with_frozen_mapping_evidence(
+    client,
+    monkeypatch,
+    tmp_path,
+):
+    source_flow_uuid = "3d76981f-964a-4865-b588-0e067a2a1163"
+    source_version = "01.01.001"
+    target_flow_uuid = "759b89bd-3aa6-42ad-b767-5bb9ef5d331d"
+    licensed_process_uuid = "44444444-4444-4444-8444-444444444444"
+    licensed_co2_uuid = "349b29d1-3e58-4c66-98b9-9d1a076efd2e"
+    flow_document = _snapshot(
+        "flow",
+        [
+            _flow_record(
+                source_flow_uuid,
+                source_version,
+                "Product flow",
+                ENERGY_PROPERTY_UUID,
+                "electricity, medium voltage",
+            ),
+            _flow_record(
+                CO2_UUID,
+                "03.00.004",
+                "Elementary flow",
+                MASS_PROPERTY_UUID,
+                "carbon dioxide (fossil)",
+                ["Emissions", "Emissions to air", "Emissions to air, unspecified"],
+            ),
+        ],
+    )
+    flow_path = _write(tmp_path / "mapped-flow-snapshot.json", flow_document)
+    monkeypatch.setattr(flow_snapshot_service.settings, "provider_tidas_flow_snapshot_path", str(flow_path))
+    monkeypatch.setattr(
+        reference_snapshot_service.settings,
+        "provider_tidas_reference_dependency_snapshot_path",
+        str(REFERENCE_FIXTURE),
+    )
+
+    packed = pack_lci_vector([1], [0.5])
+    with db_module.SessionLocal() as db:
+        db.add(
+            FlowRecord(
+                flow_uuid=target_flow_uuid,
+                flow_name="electricity, medium voltage",
+                flow_type="product",
+                default_unit="kWh",
+                unit_group="Units of energy",
+                source="ecoinvent",
+                source_namespace="ecoinvent",
+                source_version="3.11",
+                is_custom=False,
+            )
+        )
+        process = ReferenceProcess(
+            process_uuid=licensed_process_uuid,
+            process_name="synthetic licensed-vector fixture",
+            process_type="lci_dataset",
+            reference_flow_uuid=target_flow_uuid,
+            process_json={
+                "reference_product_amount": 1.0,
+                "reference_product_unit": "kWh",
+                "location": "CN",
+            },
+            source_file="synthetic-test://no-commercial-data",
+        )
+        vector = LciProcessVector(
+            process_uuid=licensed_process_uuid,
+            dataset_level="linked_lci",
+            system_model="synthetic",
+            nnz=packed.nnz,
+            flow_key_ids_blob=packed.flow_key_ids_blob,
+            amounts_blob=packed.amounts_blob,
+            index_dtype=packed.index_dtype,
+            amount_dtype=packed.amount_dtype,
+            compression=packed.compression,
+            canonicalized=True,
+            checksum=packed.checksum,
+            source="synthetic-test",
+            source_package_version="3.11",
+        )
+        db.add(process)
+        db.add(vector)
+        db.add(
+            LciBiosphereFlowKey(
+                flow_key_id=1,
+                flow_uuid=licensed_co2_uuid,
+                compartment="Emissions to air, unspecified",
+                subcompartment=None,
+                direction="output",
+                canonical_unit="kg",
+                source="synthetic-test",
+                source_package_version="3.11",
+            )
+        )
+        db.commit()
+        content_hash = mapped_process_content_hash(process, vector)
+
+    graph = HybridGraph.model_validate(
+        {
+            "functionalUnit": "1 kg product",
+            "nodes": [
+                {
+                    "id": "consumer-node",
+                    "node_kind": "unit_process",
+                    "mode": "normalized",
+                    "process_uuid": "consumer-process",
+                    "name": "Consumer",
+                    "location": "CN",
+                    "reference_product": "product",
+                    "inputs": [
+                        _port(
+                            "electricity-in",
+                            source_flow_uuid,
+                            source_version,
+                            3.6,
+                            "input",
+                            "MJ",
+                        )
+                    ],
+                    "outputs": [
+                        _port("product-out", "case-product", "case-1", 1.0, "output", "kg", product=True)
+                    ],
+                }
+            ],
+            "exchanges": [],
+            "metadata": {"functional_unit": {"display_text": "1 kg product", "amount": 1.0, "unit": "kg"}},
+        }
+    )
+    mapping_registry = get_public_flow_mapping_registry()
+    mapping = mapping_registry.resolve_intermediate(source_flow_uuid)
+    assert mapping is not None
+    request = {
+        "inline_snapshot": {
+            "schema_version": "provider.snapshot.v1",
+            "graph_hash": compute_graph_hash_from_graph(graph),
+            "functional_unit": graph.metadata["functional_unit"],
+            "graph": graph.model_dump(mode="json", by_alias=True),
+            "source_policy": "open_mixed",
+            "allowed_lcia_scope": "ef31_only",
+        },
+        "demand": [{"process_uuid": "consumer-process", "amount": 1.0, "unit": "kg"}],
+        "lcia_methods": ["EF v3.1"],
+        "mapped_background_process_pins": [
+            {
+                "consumer_exchange_id": "consumer-node::electricity-in",
+                "source_flow_namespace": "tiangong_open_data",
+                "source_flow_uuid": source_flow_uuid,
+                "source_flow_version": source_version,
+                "target_flow_uuid": target_flow_uuid,
+                "source_unit": "MJ",
+                "target_unit": "kWh",
+                "amount_factor": mapping.amount_factor,
+                "mapping_level": mapping.mapping_level,
+                "mapping_status": "user_confirmed",
+                "mapping_rule_id": f"nebula-flow-mapping-v1:intermediate:{source_flow_uuid}",
+                "mapping_package_id": mapping_registry.package_id,
+                "mapping_package_version": mapping_registry.package_version,
+                "mapping_package_hash": mapping_registry.package_hash,
+                "database_release": "3.11",
+                "process_uuid": licensed_process_uuid,
+                "expected_process_content_hash": content_hash,
+                "expected_vector_checksum": packed.checksum,
+            }
+        ],
+    }
+    response = client.post("/api/provider/v1/solve", json=request)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    receipt = body["mapped_background_process_receipts"][0]
+    assert receipt["database_release"] == "3.11"
+    assert receipt["mapping_package_hash"] == mapping_registry.package_hash
+    assert receipt["elementary_mapping_dependencies"] == [
+        {
+            "package_id": mapping_registry.package_id,
+            "package_version": mapping_registry.package_version,
+            "package_hash": mapping_registry.package_hash,
+            "role": "public_interoperability_projection",
+        }
+    ]
+    assert receipt["vector_checksum"] == packed.checksum
+    assert receipt["process_content_hash"] == content_hash
+    assert receipt["activity_amount"] == pytest.approx(1.0)
+    assert receipt["consumer_attributed_activity_amount"] == pytest.approx(1.0)
+    assert receipt["shared_process_total_activity_amount"] == pytest.approx(1.0)
+    assert receipt["consumer_process_uuid"] == "consumer-process"
+    assert receipt["provider_instance_id"]
+    assert receipt["shared_activity_schema_version"] == "provider.mapped-background-shared-activity.v1"
+    assert body["provenance"]["database_release"] == "3.11"
+    assert body["provenance"]["mapped_background_process_pins_hash"]
+    assert body["provenance"]["elementary_mapping_dependencies"] == receipt[
+        "elementary_mapping_dependencies"
+    ]
+    assert body["lcia"]["indicator_results"]
+    co2 = next(item for item in body["inventory_totals"] if item["flow_uuid"] == CO2_UUID)
+    assert co2["amount"] == pytest.approx(0.5)
+
+    shared_graph = HybridGraph.model_validate(
+        {
+            "functionalUnit": "1 kg product A + 1 kg product B",
+            "nodes": [
+                {
+                    "id": "consumer-a",
+                    "node_kind": "unit_process",
+                    "mode": "normalized",
+                    "process_uuid": "consumer-process-a",
+                    "name": "Consumer A",
+                    "location": "CN",
+                    "reference_product": "product A",
+                    "inputs": [
+                        _port("electricity-in", source_flow_uuid, source_version, 3.6, "input", "MJ")
+                    ],
+                    "outputs": [
+                        _port("product-out", "case-product-a", "case-1", 1.0, "output", "kg", product=True)
+                    ],
+                },
+                {
+                    "id": "consumer-b",
+                    "node_kind": "unit_process",
+                    "mode": "normalized",
+                    "process_uuid": "consumer-process-b",
+                    "name": "Consumer B",
+                    "location": "CN",
+                    "reference_product": "product B",
+                    "inputs": [
+                        _port("electricity-in", source_flow_uuid, source_version, 7.2, "input", "MJ")
+                    ],
+                    "outputs": [
+                        _port("product-out", "case-product-b", "case-1", 1.0, "output", "kg", product=True)
+                    ],
+                },
+            ],
+            "exchanges": [],
+            "metadata": {
+                "functional_unit": {
+                    "display_text": "1 kg product A + 1 kg product B",
+                    "amount": 2.0,
+                    "unit": "kg",
+                }
+            },
+        }
+    )
+    shared_pin = dict(request["mapped_background_process_pins"][0])
+    shared_request = {
+        "inline_snapshot": {
+            "schema_version": "provider.snapshot.v1",
+            "graph_hash": compute_graph_hash_from_graph(shared_graph),
+            "functional_unit": shared_graph.metadata["functional_unit"],
+            "graph": shared_graph.model_dump(mode="json", by_alias=True),
+            "source_policy": "open_mixed",
+            "allowed_lcia_scope": "ef31_only",
+        },
+        "demand": [
+            {"process_uuid": "consumer-process-a", "amount": 1.0, "unit": "kg"},
+            {"process_uuid": "consumer-process-b", "amount": 1.0, "unit": "kg"},
+        ],
+        "lcia_methods": ["EF v3.1"],
+        "mapped_background_process_pins": [
+            {**shared_pin, "consumer_exchange_id": "consumer-a::electricity-in"},
+            {**shared_pin, "consumer_exchange_id": "consumer-b::electricity-in"},
+        ],
+    }
+    shared_response = client.post("/api/provider/v1/solve", json=shared_request)
+    assert shared_response.status_code == 200, shared_response.text
+    shared_body = shared_response.json()
+    provider_activities = [
+        item for item in shared_body["activity_vector"] if item["process_uuid"] == licensed_process_uuid
+    ]
+    assert len(provider_activities) == 1
+    assert provider_activities[0]["activity_amount"] == pytest.approx(3.0)
+    shared_receipts = shared_body["mapped_background_process_receipts"]
+    assert len(shared_receipts) == 2
+    assert all(
+        item["shared_activity_schema_version"] == "provider.mapped-background-shared-activity.v1"
+        for item in shared_receipts
+    )
+    assert len({item["provider_instance_id"] for item in shared_receipts}) == 1
+    assert {item["consumer_process_uuid"] for item in shared_receipts} == {
+        "consumer-process-a",
+        "consumer-process-b",
+    }
+    assert sorted(item["consumer_attributed_activity_amount"] for item in shared_receipts) == pytest.approx([1.0, 2.0])
+    assert all(item["shared_process_total_activity_amount"] == pytest.approx(3.0) for item in shared_receipts)
+    assert sum(item["consumer_attributed_activity_amount"] for item in shared_receipts) == pytest.approx(3.0)
+    shared_co2 = next(item for item in shared_body["inventory_totals"] if item["flow_uuid"] == CO2_UUID)
+    assert shared_co2["amount"] == pytest.approx(1.5)
+
+    # A 1 kg product demand uses 1/1000 of each foreground process. The mapped
+    # supply is measured in kWh, while both consumer ports remain measured in MJ.
+    chain_graph = HybridGraph.model_validate(
+        {
+            "functionalUnit": "1 kg product B",
+            "nodes": [
+                {
+                    "id": "consumer-a",
+                    "node_kind": "unit_process",
+                    "mode": "normalized",
+                    "process_uuid": "consumer-process-a",
+                    "name": "Consumer A",
+                    "location": "CN",
+                    "reference_product": "intermediate",
+                    "inputs": [_port("electricity-in", source_flow_uuid, source_version, 600.0, "input", "MJ")],
+                    "outputs": [_port("intermediate-out", "case-intermediate", "case-1", 1000.0, "output", "kg", product=True)],
+                },
+                {
+                    "id": "consumer-b",
+                    "node_kind": "unit_process",
+                    "mode": "normalized",
+                    "process_uuid": "consumer-process-b",
+                    "name": "Consumer B",
+                    "location": "CN",
+                    "reference_product": "product B",
+                    "inputs": [
+                        _port("intermediate-in", "case-intermediate", "case-1", 1000.0, "input", "kg"),
+                        _port("electricity-in", source_flow_uuid, source_version, 25.0, "input", "MJ"),
+                    ],
+                    "outputs": [_port("product-out", "case-product-b", "case-1", 1000.0, "output", "kg", product=True)],
+                },
+            ],
+            "exchanges": [
+                {
+                    "id": "foreground-dual-link",
+                    "fromNode": "consumer-a",
+                    "toNode": "consumer-b",
+                    "sourcePortId": "intermediate-out",
+                    "targetPortId": "intermediate-in",
+                    "flowUuid": "case-intermediate",
+                    "flowName": "intermediate",
+                    "quantityMode": "dual",
+                    "amount": 1000.0,
+                    "providerAmount": 1000.0,
+                    "consumerAmount": 1000.0,
+                    "unit": "kg",
+                    "type": "technosphere",
+                }
+            ],
+            "metadata": {"functional_unit": {"display_text": "1 kg product B", "amount": 1.0, "unit": "kg"}},
+        }
+    )
+    chain_request = {
+        **shared_request,
+        "inline_snapshot": {
+            **shared_request["inline_snapshot"],
+            "graph_hash": compute_graph_hash_from_graph(chain_graph),
+            "functional_unit": chain_graph.metadata["functional_unit"],
+            "graph": chain_graph.model_dump(mode="json", by_alias=True),
+        },
+        "demand": [{"process_uuid": "consumer-process-b", "amount": 1.0, "unit": "kg"}],
+    }
+    chain_response = client.post("/api/provider/v1/solve", json=chain_request)
+    assert chain_response.status_code == 200, chain_response.text
+    chain = chain_response.json()
+    scaled = {item["exchange_id"]: item for item in chain["scaled_exchanges"]}
+    assert scaled["consumer-a::electricity-in"]["raw_amount"] == pytest.approx(600.0)
+    assert scaled["consumer-a::electricity-in"]["scaled_amount"] == pytest.approx(0.6)
+    assert scaled["consumer-a::electricity-in"]["unit"] == "MJ"
+    assert scaled["consumer-b::electricity-in"]["raw_amount"] == pytest.approx(25.0)
+    assert scaled["consumer-b::electricity-in"]["scaled_amount"] == pytest.approx(0.025)
+    assert scaled["consumer-b::electricity-in"]["unit"] == "MJ"
+    assert scaled["consumer-b::intermediate-in"]["raw_amount"] == pytest.approx(1000.0)
+    assert scaled["consumer-b::intermediate-in"]["scaled_amount"] == pytest.approx(1.0)
+    assert scaled["consumer-b::intermediate-in"]["unit"] == "kg"
+    provider_activity = next(item for item in chain["activity_vector"] if item["process_uuid"] == licensed_process_uuid)
+    assert provider_activity["activity_amount"] == pytest.approx(0.1736111111111111)
+    assert provider_activity["unit"] == "kWh"
+    receipts = {item["consumer_exchange_id"]: item for item in chain["mapped_background_process_receipts"]}
+    assert receipts["consumer-a::electricity-in"]["consumer_converted_amount"] == pytest.approx(166.66666666666666)
+    assert receipts["consumer-b::electricity-in"]["consumer_converted_amount"] == pytest.approx(6.944444444444445)
+    assert receipts["consumer-a::electricity-in"]["consumer_attributed_activity_amount"] == pytest.approx(0.16666666666666666)
+    assert receipts["consumer-b::electricity-in"]["consumer_attributed_activity_amount"] == pytest.approx(0.006944444444444445)
+
+
+def test_mapped_background_pin_rejects_mapping_hash_drift(client, monkeypatch, tmp_path):
+    # Request validation reaches the mapping evidence check before any licensed Process lookup.
+    source_flow_uuid = "3d76981f-964a-4865-b588-0e067a2a1163"
+    source_version = "01.01.001"
+    target_flow_uuid = "759b89bd-3aa6-42ad-b767-5bb9ef5d331d"
+    flow_document = _snapshot(
+        "flow",
+        [_flow_record(source_flow_uuid, source_version, "Product flow", ENERGY_PROPERTY_UUID, "electricity")],
+    )
+    flow_path = _write(tmp_path / "mapped-flow-snapshot.json", flow_document)
+    monkeypatch.setattr(flow_snapshot_service.settings, "provider_tidas_flow_snapshot_path", str(flow_path))
+    monkeypatch.setattr(
+        reference_snapshot_service.settings,
+        "provider_tidas_reference_dependency_snapshot_path",
+        str(REFERENCE_FIXTURE),
+    )
+    graph = _graph(3.6)
+    graph.nodes[0].inputs[0].flowUuid = source_flow_uuid
+    graph.nodes[0].inputs[0].flow_version = source_version
+    registry = get_public_flow_mapping_registry()
+    mapping = registry.resolve_intermediate(source_flow_uuid)
+    request = {
+        "inline_snapshot": {
+            "graph_hash": compute_graph_hash_from_graph(graph),
+            "functional_unit": graph.metadata["functional_unit"],
+            "graph": graph.model_dump(mode="json", by_alias=True),
+        },
+        "demand": [{"process_uuid": "consumer-process", "amount": 1.0, "unit": "kg"}],
+        "mapped_background_process_pins": [
+            {
+                "consumer_exchange_id": "consumer-node::electricity-in",
+                "source_flow_namespace": "tiangong_open_data",
+                "source_flow_uuid": source_flow_uuid,
+                "source_flow_version": source_version,
+                "target_flow_uuid": target_flow_uuid,
+                "source_unit": "MJ",
+                "target_unit": "kWh",
+                "amount_factor": mapping.amount_factor,
+                "mapping_level": mapping.mapping_level,
+                "mapping_status": "user_confirmed",
+                "mapping_rule_id": f"nebula-flow-mapping-v1:intermediate:{source_flow_uuid}",
+                "mapping_package_id": registry.package_id,
+                "mapping_package_version": registry.package_version,
+                "mapping_package_hash": "0" * 64,
+                "database_release": "3.11",
+                "process_uuid": "44444444-4444-4444-8444-444444444444",
+                "expected_process_content_hash": "1" * 64,
+                "expected_vector_checksum": "2" * 64,
+            }
+        ],
+    }
+    response = client.post("/api/provider/v1/solve", json=request)
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "MAPPED_BACKGROUND_MAPPING_EVIDENCE_MISMATCH"

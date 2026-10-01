@@ -95,6 +95,7 @@ class UnitConversion:
 class ElementaryFlow:
     flow_uuid: str
     flow_name: str
+    unit_id: str = ""
     flow_name_en: Optional[str] = None
     flow_type: str = "Elementary flow"
     default_unit: str = ""
@@ -344,6 +345,7 @@ def parse_elementary_exchanges(data_dir: Path, units: Dict[str, UnitRecord]) -> 
             flow = ElementaryFlow(
                 flow_uuid=flow_uuid,
                 flow_name=flow_name,
+                unit_id=unit_id,
                 flow_name_en=flow_name_en,
                 default_unit=unit_name,
                 compartment=compartment if compartment else None,

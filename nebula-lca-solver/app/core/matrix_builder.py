@@ -165,7 +165,13 @@ def build_matrices_from_snapshot(
             continue
         quantity_mode = str(link.get("quantity_mode", "")).lower()
         if quantity_mode == "dual":
-            input_amount = _to_float(link.get("consumer_amount"))
+            provider_unit = str(link.get("provider_unit") or "")
+            consumer_unit = str(link.get("consumer_unit") or "")
+            # The matrix coefficient demands the provider's reference product. When the
+            # consumer input is expressed in another unit (for example MJ -> kWh),
+            # its numeric amount must not be read as a provider-unit quantity.
+            input_amount = _to_float(link.get("provider_amount") if provider_unit and consumer_unit
+                                     and provider_unit != consumer_unit else link.get("consumer_amount"))
         else:
             input_amount = _to_float(link.get("amount"))
         if input_amount is None or input_amount <= 0:

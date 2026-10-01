@@ -11,7 +11,13 @@ lca_demo.db
 *.db-journal
 *.sqlite
 *.sqlite3
-data
+data/*
+!data/EF3.1/
+!data/EF3.1/**
+!data/Tiangong/
+!data/Tiangong/**
+!data/flow_mappings/
+!data/flow_mappings/**
 runtime
 import-cache
 tmp

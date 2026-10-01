@@ -206,8 +206,10 @@ def _file_fingerprint(path: Path) -> Tuple[int, int]:
 def _load_runtime_source(ef_dir: str, fingerprint: _RuntimeFingerprint) -> _RuntimeSource:
     root = Path(ef_dir)
     flow_uuid_to_index: Dict[str, int] = {}
-    with (root / "flow_index.csv").open("r", encoding="utf-8") as handle:
-        reader = csv.reader(handle, delimiter=";")
+    with (root / "flow_index.csv").open("r", encoding="utf-8-sig") as handle:
+        delimiter = ";" if handle.readline().count(";") else ","
+        handle.seek(0)
+        reader = csv.reader(handle, delimiter=delimiter)
         header = _strip_bom_header(next(reader, []))
         col_map = {name: idx for idx, name in enumerate(header)}
         flow_uuid_idx = col_map.get("FlowUUID")
@@ -221,8 +223,10 @@ def _load_runtime_source(ef_dir: str, fingerprint: _RuntimeFingerprint) -> _Runt
 
     indicator_ids: List[int] = []
     indicator_lookup: Dict[int, dict] = {}
-    with (root / "indicator_index.csv").open("r", encoding="utf-8") as handle:
-        reader = csv.reader(handle, delimiter=";")
+    with (root / "indicator_index.csv").open("r", encoding="utf-8-sig") as handle:
+        delimiter = ";" if handle.readline().count(";") else ","
+        handle.seek(0)
+        reader = csv.reader(handle, delimiter=delimiter)
         header = _strip_bom_header(next(reader, []))
         col_map = {name: idx for idx, name in enumerate(header)}
         indicator_idx_col = col_map.get("indicator_index")
@@ -243,8 +247,10 @@ def _load_runtime_source(ef_dir: str, fingerprint: _RuntimeFingerprint) -> _Runt
 
     index_to_flow_uuid = {idx: flow_uuid for flow_uuid, idx in flow_uuid_to_index.items()}
     factors_by_flow_index: Dict[int, List[Tuple[int, float]]] = {}
-    with (root / "lcia_factors.csv").open("r", encoding="utf-8") as handle:
-        reader = csv.reader(handle, delimiter=";")
+    with (root / "lcia_factors.csv").open("r", encoding="utf-8-sig") as handle:
+        delimiter = ";" if handle.readline().count(";") else ","
+        handle.seek(0)
+        reader = csv.reader(handle, delimiter=delimiter)
         header = _strip_bom_header(next(reader, []))
         col_map = {name: idx for idx, name in enumerate(header)}
         row_idx_col = col_map.get("row")

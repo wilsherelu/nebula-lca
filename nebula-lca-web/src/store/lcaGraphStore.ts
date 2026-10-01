@@ -180,6 +180,7 @@ type HandleValidationIssue = {
 
 type LcaGraphState = {
   functionalUnit: string;
+  sourceMetadata: Record<string, unknown>;
   uiLanguage: "zh" | "en";
   flowAnimationEnabled: boolean;
   edgeRoutingStyle: "classic_curve" | "orthogonal_avoid";
@@ -1823,7 +1824,8 @@ const resolveEdgeDataByNodes = (
 
   const flowUuid = resolvedFlowUuid;
 
-  const quantityMode = edge.data?.quantityMode ?? resolveQuantityMode(sourceNode, targetNode);
+  const nodeQuantityMode = resolveQuantityMode(sourceNode, targetNode);
+  const quantityMode = nodeQuantityMode === "dual" ? "dual" : edge.data?.quantityMode ?? nodeQuantityMode;
   const consumerFromTarget = targetPort && Number.isFinite(targetPort.amount) ? targetPort.amount : undefined;
   const providerFromSource = sourcePort && Number.isFinite(sourcePort.amount) ? sourcePort.amount : undefined;
 
@@ -2485,6 +2487,7 @@ const rootCanvas: CanvasGraph = {
 
 export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
   functionalUnit: "1 kg 对二甲苯",
+  sourceMetadata: {},
   uiLanguage: resolveInitialUiLanguage(),
   flowAnimationEnabled: true,
   edgeRoutingStyle: "classic_curve",
@@ -6668,6 +6671,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
     return {
       functionalUnit: state.functionalUnit,
       metadata: {
+        ...state.sourceMetadata,
         source: "lca-graph-editor",
         node_positions: nodePositions,
         viewport: state.viewport,
@@ -6898,7 +6902,17 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
         };
       }
       nextCanvases = Object.fromEntries(
-        Object.entries(nextCanvases).map(([id, canvas]) => [id, backfillAutoInputFlowIdentity(canvas)]),
+        Object.entries(nextCanvases).map(([id, canvas]) => {
+          const backfilled = backfillAutoInputFlowIdentity(canvas);
+          const nodeById = new Map(backfilled.nodes.map((node) => [node.id, node]));
+          return [id, {
+            ...backfilled,
+            edges: backfilled.edges.map((edge) => {
+              const resolved = resolveEdgeDataByNodes(edge, nodeById);
+              return resolved ? { ...edge, data: { ...edge.data, ...resolved.data } } : edge;
+            }),
+          }];
+        }),
       );
       endDeserializeSpan();
 
@@ -6911,6 +6925,7 @@ export const useLcaGraphStore = create<LcaGraphState>((set, get) => ({
       const nextState = {
         ...setActiveCanvas(state, nextCanvases, ROOT_CANVAS_ID, false),
         functionalUnit: graph.functionalUnit || state.functionalUnit,
+        sourceMetadata: { ...(graph.metadata ?? {}) },
         viewport: isValidViewport(viewportRaw) ? viewportRaw : state.viewport,
         inspectorOpen: false,
         ptsPortEditor: { open: false },

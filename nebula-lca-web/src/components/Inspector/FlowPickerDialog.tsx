@@ -10,6 +10,10 @@ export type FlowPickerCatalogFlow = {
   source?: string | null;
   source_namespace?: string | null;
   source_version?: string | null;
+  tidas_flow_property_uuid?: string | null;
+  flow_property_version?: string | null;
+  unit_group_uuid?: string | null;
+  unit_group_version?: string | null;
   version_label?: string | null;
   is_custom?: boolean;
   conversion_compatible?: boolean | null;
@@ -110,6 +114,7 @@ export function FlowPickerDialog({
               <option value="">{t("全部来源", "All Sources")}</option>
               <option value="ecoinvent">ecoinvent</option>
               <option value="tiangong">TIDAS / EF</option>
+              <option value="versioned_open">{t("天工开放数据（精确版本）", "TianGong open data (exact versions)")}</option>
               <option value="custom">custom</option>
             </select>
           </div>
@@ -161,6 +166,8 @@ export function FlowPickerDialog({
                       <td className="flow-picker-source-cell">
                         <span>{flow.source || "unknown"}</span>
                         {(flow.version_label || flow.source_version) && <small>{flow.version_label || flow.source_version}</small>}
+                        {elementary && (!flow.source_namespace || !flow.source_version) &&
+                          <small>{t("缺少精确来源版本，不能直接用于 LCIA", "Exact source/version missing; not ready for LCIA")}</small>}
                       </td>
                       <td className="flow-picker-action-cell">
                         <div className="flow-picker-action-group">

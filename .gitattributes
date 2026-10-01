@@ -1,0 +1,11 @@
+# Reproducible source checkout on Windows and Unix.
+* text=auto eol=lf
+
+# Reference packages are verified by byte hash; never rewrite their line endings.
+/nebula-lca-api/data/** -text
+/nebula-lca-solver/data/** -text
+*.zip -text
+*.xlsx -text
+*.png -text
+*.jpg -text
+*.pdf -text

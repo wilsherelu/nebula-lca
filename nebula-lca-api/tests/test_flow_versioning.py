@@ -105,6 +105,22 @@ def test_flow_upload_api_persists_same_uuid_as_distinct_exact_versions() -> None
             assert response.status_code == 200, response.text
             assert response.json()["failed"] == 0
 
+        listed = client.get("/api/flow-versions", params={
+            "search": flow_uuid, "source_namespace": TIDAS_NAMESPACE,
+        })
+        assert listed.status_code == 200, listed.text
+        assert [(item["flow_id"], item["source_version"], item["unit"])
+                for item in listed.json()["items"]] == [
+            (flow_uuid, "01.01.002", "kg"), (flow_uuid, "01.01.003", "MJ")]
+        exact = client.get(f"/api/flow-versions/{TIDAS_NAMESPACE}/{flow_uuid}/01.01.003")
+        assert exact.status_code == 200, exact.text
+        assert exact.json()["source_namespace"] == TIDAS_NAMESPACE
+        assert exact.json()["content_hash"]
+        assert exact.json()["unit"] == "MJ"
+        legacy = client.get(f"/api/reference/flows/{flow_uuid}")
+        assert legacy.status_code == 200, legacy.text
+        assert legacy.json()["source_version"] == "01.01.002"
+
     db = SessionLocal()
     try:
         snapshots = (

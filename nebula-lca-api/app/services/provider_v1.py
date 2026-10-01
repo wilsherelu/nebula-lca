@@ -25,6 +25,7 @@ from ..provider_schemas import (
     ProviderInventoryTotal,
     ProviderIssue,
     ProviderModelSnapshot,
+    ProviderNativeBackgroundClimateResponse,
     ProviderScaledExchange,
     ProviderSnapshotRef,
     ProviderSolveProvenance,
@@ -40,6 +41,7 @@ from .graph_storage import (
     compute_graph_hash_from_slim_graph,
     hydrate_graph_for_api,
 )
+from .flow_versions import flow_snapshot_content_hash
 from .provider_contract import ProviderContractError
 from .provider_ef31 import (
     EF31_DATABASE_RELEASE,
@@ -56,6 +58,15 @@ from .provider_background_leaf import (
     build_background_process_receipts,
     expand_background_process_pins,
 )
+from .provider_mapped_background import (
+    build_mapped_background_process_receipts,
+    expand_mapped_background_process_pins,
+)
+from .provider_project_background import (
+    build_project_background_receipts,
+    expand_project_background_pins,
+)
+from .provider_native_climate import characterize_native_climate, load_native_climate_runtime
 from .provider_process_identity import build_process_identity_receipts
 from .provider_runtime_identity import build_solve_runtime_fingerprint
 from .provider_tidas_snapshot import (
@@ -114,19 +125,66 @@ def provider_solve_runtime_fingerprint(
 def _functional_unit(graph: HybridGraph, display_fallback: str | None = None) -> tuple[ProviderFunctionalUnit, list[ProviderIssue]]:
     metadata = graph.metadata or {}
     raw = None
+    raw_path = "graph.metadata.functional_unit"
+    issues: list[ProviderIssue] = []
     for key in ("functional_unit", "functionalUnitStructured", "functional_unit_structured"):
         if isinstance(metadata.get(key), dict):
             raw = metadata[key]
             break
     display_text = str(graph.functionalUnit or display_fallback or "").strip()
     if raw is None:
-        return ProviderFunctionalUnit(display_text=display_text), [
+        preferences = metadata.get("project_preferences")
+        target = preferences.get("target_product") if isinstance(preferences, dict) else None
+        if isinstance(target, dict):
+            process_uuid = str(target.get("process_uuid") or target.get("processUuid") or "").strip()
+            flow_uuid = str(target.get("flow_uuid") or target.get("flowUuid") or "").strip()
+            quantity = target.get("quantity")
+            try:
+                amount = float(quantity)
+            except (TypeError, ValueError):
+                amount = 0.0
+            matches = [
+                port
+                for node in graph.nodes
+                if node.process_uuid == process_uuid
+                for port in node.outputs
+                if port.flowUuid == flow_uuid and bool(port.isProduct)
+            ]
+            if process_uuid and flow_uuid and amount > 0 and len(matches) == 1:
+                port = matches[0]
+                raw = {
+                    "display_text": f"{amount:g} {port.unit} {port.name}".strip(),
+                    "amount": amount,
+                    "flow_uuid": port.flowUuid,
+                    "flow_source_namespace": port.flow_source_namespace,
+                    "flow_version": port.flow_version,
+                    "unit": port.unit,
+                    "unit_group_uuid": port.unit_group_uuid,
+                    "unit_group_version": port.unit_group_version,
+                }
+                raw_path = "graph.metadata.project_preferences.target_product"
+            else:
+                issues.append(
+                    ProviderIssue(
+                        code="TARGET_PRODUCT_NOT_EXACTLY_RESOLVED",
+                        message="The explicit target product could not be resolved to exactly one product output with a positive quantity.",
+                        path="graph.metadata.project_preferences.target_product",
+                        details={
+                            "process_uuid": process_uuid,
+                            "flow_uuid": flow_uuid,
+                            "matching_product_outputs": len(matches),
+                        },
+                    )
+                )
+    if raw is None:
+        issues.append(
             ProviderIssue(
                 code="FUNCTIONAL_UNIT_NOT_STRUCTURED",
                 message="The graph contains only a display functional unit; exact amount, Flow, and unit identity are unavailable.",
                 path="graph.functionalUnit",
             )
-        ]
+        )
+        return ProviderFunctionalUnit(display_text=display_text), issues
     value = ProviderFunctionalUnit(
         display_text=str(raw.get("display_text") or raw.get("displayText") or display_text),
         amount=raw.get("amount"),
@@ -150,13 +208,12 @@ def _functional_unit(graph: HybridGraph, display_fallback: str | None = None) ->
         )
         if getattr(value, field) is None
     ]
-    issues = []
     if missing:
         issues.append(
             ProviderIssue(
                 code="FUNCTIONAL_UNIT_EXACT_IDENTITY_INCOMPLETE",
                 message="The structured functional unit is missing exact identity fields.",
-                path="graph.metadata.functional_unit",
+                path=raw_path,
                 details={"missing_fields": missing},
             )
         )
@@ -481,8 +538,25 @@ def _pinned_process_database_content_hash(row: ReferenceProcess) -> str:
 def _snapshot_database_conflicts(row: FlowVersionRecord | None, value: dict[str, Any]) -> dict[str, Any]:
     if row is None:
         return {}
+    database_content_hash = row.content_hash
+    metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+    source_payload = metadata.get("source_payload")
+    payload_candidates = [
+        source_payload,
+        source_payload.get("json") if isinstance(source_payload, dict) else None,
+        source_payload.get("json_ordered") if isinstance(source_payload, dict) else None,
+    ]
+    for candidate in payload_candidates:
+        if isinstance(candidate, dict) and isinstance(candidate.get("flowDataSet"), dict):
+            # flow_versions.content_hash is the normalized semantic-row hash.
+            # Compare an exact upstream snapshot against the preserved ILCD
+            # payload instead; these two hash domains are intentionally distinct.
+            database_content_hash = flow_snapshot_content_hash(
+                {"flowDataSet": candidate["flowDataSet"]}
+            )
+            break
     comparisons = {
-        "content_hash": (row.content_hash, value.get("content_hash")),
+        "content_hash": (database_content_hash, value.get("content_hash")),
         "flow_property_uuid": (row.flow_property_uuid, value.get("flow_property_uuid")),
         "flow_property_version": (row.flow_property_version, value.get("flow_property_version")),
         "unit_group_uuid": (row.unit_group_uuid, value.get("unit_group_uuid")),
@@ -704,11 +778,48 @@ def solve_provider(
         if (
             request.inline_snapshot is not None
             or request.background_process_pins
+            or request.mapped_background_process_pins
+            or request.project_background_pins
             or request.elementary_flows
             or request.lcia_methods
         )
         else None
     )
+    native_runtime = None
+    if request.native_background_climate is not None:
+        if (
+            request.lcia_methods != ["EF v3.1"]
+            or request.background_process_pins
+            or request.project_background_pins
+            or not request.mapped_background_process_pins
+        ):
+            raise ProviderContractError(
+                422,
+                "NATIVE_CLIMATE_UNSUPPORTED_SCOPE",
+                "Native background climate total requires EF v3.1, mapped providers, and no other background pins.",
+            )
+        native_runtime = load_native_climate_runtime(
+            request.native_background_climate,
+            flow_snapshot=tidas_flow_snapshot,
+        )
+    elif request.native_background_inventory is not None:
+        if (
+            request.lcia_methods
+            or request.background_process_pins
+            or request.project_background_pins
+            or not request.mapped_background_process_pins
+            or len({pin.process_uuid for pin in request.mapped_background_process_pins}) != 1
+        ):
+            raise ProviderContractError(
+                422, "NATIVE_INVENTORY_UNSUPPORTED_SCOPE",
+                "Native inventory requires one shared mapped provider, no other background pins and no LCIA method.",
+            )
+        from .provider_native_inventory import load_native_inventory_runtime
+
+        native_runtime = load_native_inventory_runtime(
+            request.native_background_inventory,
+            flow_snapshot=tidas_flow_snapshot,
+        )
     process_identity_receipts, process_identities_hash = build_process_identity_receipts(
         db,
         graph,
@@ -734,6 +845,20 @@ def solve_provider(
             issues,
             tidas_flow_snapshot,
         )
+    consumer_ids = [pin.consumer_exchange_id for pin in [
+        *request.background_process_pins, *request.mapped_background_process_pins,
+        *request.project_background_pins,
+    ]]
+    if len(consumer_ids) != len(set(consumer_ids)):
+        raise ProviderContractError(422, "BACKGROUND_PROCESS_PIN_DUPLICATE", "One consumer input may have only one background provider.")
+    try:
+        project_background_expansion = expand_project_background_pins(
+            db, graph=graph, pins=request.project_background_pins,
+            get_snapshot=get_model_snapshot, flow_snapshot=tidas_flow_snapshot,
+        )
+    except ProviderBackgroundLeafError as exc:
+        raise ProviderContractError(422, exc.code, exc.message, **exc.details) from exc
+    graph = project_background_expansion.graph
     try:
         background_expansion = expand_background_process_pins(
             graph=graph,
@@ -752,8 +877,32 @@ def solve_provider(
     except ProviderBackgroundLeafError as exc:
         raise ProviderContractError(422, exc.code, exc.message, **exc.details) from exc
     graph = background_expansion.graph
+    try:
+        mapped_background_expansion = expand_mapped_background_process_pins(
+            db,
+            graph=graph,
+            pins=request.mapped_background_process_pins,
+            flow_snapshot=(
+                tidas_flow_snapshot
+                if request.mapped_background_process_pins
+                else None
+            ),
+            native_elementary=native_runtime is not None,
+            native_allowed_flow_sources=(
+                native_runtime.allowed_flow_sources if native_runtime is not None else ()
+            ),
+            native_source_flows=(
+                native_runtime.native_source_flows if native_runtime is not None else None
+            ),
+            native_unit_bindings=(
+                native_runtime.unit_bindings if native_runtime is not None else None
+            ),
+        )
+    except ProviderBackgroundLeafError as exc:
+        raise ProviderContractError(422, exc.code, exc.message, **exc.details) from exc
+    graph = mapped_background_expansion.graph
     provider_graph_hash = compute_graph_hash_from_graph(graph)
-    if background_expansion.receipt_drafts:
+    if project_background_expansion.receipt_drafts or background_expansion.receipt_drafts or mapped_background_expansion.receipt_drafts:
         issues.append(
             ProviderIssue(
                 code="PARTIAL_BACKGROUND_LEAF_CLAIM",
@@ -768,6 +917,24 @@ def solve_provider(
         )
     raw_database_release = (graph.metadata or {}).get("database_release")
     database_release = raw_database_release.strip() if isinstance(raw_database_release, str) else ""
+    if mapped_background_expansion.database_releases:
+        if len(mapped_background_expansion.database_releases) != 1:
+            raise ProviderContractError(
+                422,
+                "MAPPED_BACKGROUND_DATABASE_RELEASE_CONFLICT",
+                "One solve may not mix mapped background Processes from different database releases.",
+                database_releases=list(mapped_background_expansion.database_releases),
+            )
+        mapped_release = mapped_background_expansion.database_releases[0]
+        if database_release and database_release != mapped_release and native_runtime is None:
+            raise ProviderContractError(
+                422,
+                "MAPPED_BACKGROUND_DATABASE_RELEASE_CONFLICT",
+                "The graph database release conflicts with the mapped background pin.",
+                graph_database_release=database_release,
+                mapped_database_release=mapped_release,
+            )
+        database_release = mapped_release
     if not database_release:
         database_release = "unpinned"
         issues.append(
@@ -959,6 +1126,14 @@ def solve_provider(
             activity_by_process=activity_by_process,
             scaled_exchanges=scaled,
         ),
+        mapped_background_process_receipts=build_mapped_background_process_receipts(
+            drafts=mapped_background_expansion.receipt_drafts,
+            activity_by_process=activity_by_process,
+            allocation_total_by_process=base.get("allocation_total") or {},
+        ),
+        project_background_process_receipts=build_project_background_receipts(
+            project_background_expansion, activity_by_process,
+        ),
         process_identity_receipts=process_identity_receipts,
         process_residuals=[],
         contribution_graph={},
@@ -971,12 +1146,19 @@ def solve_provider(
             operation_hash=request.operation_hash,
             solver_build=engine_identity().commit,
             database_release=database_release,
+            foreground_source_release=(
+                str(raw_database_release) if native_runtime is not None and raw_database_release else None
+            ),
             system_revision_hash=consumer_graph_hash,
             consumer_graph_hash=consumer_graph_hash,
             provider_graph_hash=provider_graph_hash,
             background_process_pins_hash=background_expansion.pins_hash,
+            mapped_background_process_pins_hash=mapped_background_expansion.pins_hash,
+            project_background_pins_hash=project_background_expansion.pins_hash,
             background_claim_scope=(
-                BACKGROUND_CLAIM_LIMIT if background_expansion.receipt_drafts else None
+                BACKGROUND_CLAIM_LIMIT
+                if project_background_expansion.receipt_drafts or background_expansion.receipt_drafts or mapped_background_expansion.receipt_drafts
+                else None
             ),
             process_identities_hash=process_identities_hash,
             flow_snapshot_hash=(
@@ -989,6 +1171,21 @@ def solve_provider(
                 if tidas_flow_snapshot is not None
                 and tidas_flow_snapshot.reference_dependencies is not None
                 else None
+            ),
+            elementary_mapping_dependencies=list(
+                mapped_background_expansion.elementary_mapping_dependencies
+            ),
+            native_climate_method_package_sha256=(
+                native_runtime.package_sha256 if request.native_background_climate is not None else None
+            ),
+            native_climate_runtime_manifest_sha256=(
+                native_runtime.manifest_sha256 if request.native_background_climate is not None else None
+            ),
+            native_inventory_runtime_manifest_sha256=(
+                native_runtime.manifest_sha256 if request.native_background_inventory is not None else None
+            ),
+            native_unit_binding_sha256=(
+                native_runtime.unit_binding_sha256 if native_runtime is not None else None
             ),
         ),
     )
@@ -1017,7 +1214,12 @@ def solve_provider(
                     ) from exc
 
     elementary_refs_by_exchange: dict[str, ProviderElementaryFlowRef] = {}
-    for ref in [*request.elementary_flows, *background_expansion.elementary_refs]:
+    for ref in [
+        *request.elementary_flows,
+        *background_expansion.elementary_refs,
+        *mapped_background_expansion.elementary_refs,
+        *project_background_expansion.elementary_refs,
+    ]:
         if ref.exchange_id in elementary_refs_by_exchange:
             raise ProviderContractError(
                 422,
@@ -1047,6 +1249,46 @@ def solve_provider(
         if existing is None:
             elementary_refs_by_exchange[ref.exchange_id] = ref
     elementary_refs = list(elementary_refs_by_exchange.values())
+    if request.native_background_inventory is not None:
+        response.native_background_inventory = {
+            "schema_version": "provider.native-background-inventory.response.v1",
+            "database_release": request.native_background_inventory.database_release,
+            "inventory_runtime_manifest_sha256": native_runtime.manifest_sha256,
+            "source_asset_sha256": native_runtime.source_asset_sha256,
+            "unit_binding_sha256": native_runtime.unit_binding_sha256,
+            "provider_process_uuid": request.mapped_background_process_pins[0].process_uuid,
+            "native_exchange_count": sum(
+                item.exchange_type == "elementary" and item.process_uuid == request.mapped_background_process_pins[0].process_uuid
+                for item in response.scaled_exchanges
+            ),
+            "claim_limit": "partial_background_leaf_only_no_lcia_score",
+        }
+        return response
+    if native_runtime is not None:
+        response.native_background_climate = ProviderNativeBackgroundClimateResponse.model_validate(
+            characterize_native_climate(
+                runtime=native_runtime,
+                scaled_exchanges=response.scaled_exchanges,
+                foreground_refs=elementary_refs,
+                flow_snapshot=tidas_flow_snapshot,
+                native_process_uuids={pin.process_uuid for pin in request.mapped_background_process_pins},
+            )
+        )
+        return response
+    if not request.lcia_methods:
+        solved_elementary_ids = {
+            item.exchange_id for item in response.scaled_exchanges
+            if item.exchange_type == "elementary"
+        }
+        unreferenced_ids = sorted(solved_elementary_ids.difference(elementary_refs_by_exchange))
+        if unreferenced_ids:
+            response.issues.append(ProviderIssue(
+                code="ELEMENTARY_FLOW_UNCHARACTERIZED",
+                message="Physical inventory was solved; some elementary exchanges lack exact LCIA references.",
+                severity="warning",
+                details={"exchange_ids": unreferenced_ids},
+            ))
+            return response
     if request.lcia_methods or elementary_refs:
         require_characterization = bool(request.lcia_methods)
 
@@ -1096,7 +1338,8 @@ def solve_provider(
         if request.lcia_methods:
             response.lcia = lcia
         response.elementary_flow_receipts = receipts
-        response.provenance.database_release = EF31_DATABASE_RELEASE
+        if not mapped_background_expansion.database_releases:
+            response.provenance.database_release = EF31_DATABASE_RELEASE
     return response
 
 

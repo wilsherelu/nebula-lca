@@ -50,6 +50,7 @@ def list_projects_api(
     page_size: int = Query(default=20, ge=1, le=200),
     recent: bool = Query(default=False),
     limit: int | None = Query(default=None, ge=1, le=200),
+    include_resources: bool = Query(default=False),
     if_none_match: str | None = Header(default=None, alias="If-None-Match"),
     db: Session = Depends(get_db),
 ) -> PaginatedProjectsResponse:
@@ -61,7 +62,7 @@ def list_projects_api(
     search_key = (search or "").strip().lower()
     cache_key = (
         f"projects:v1:rev={_cache_helpers['_cache_revision']('projects')}:search={search_key}:"
-        f"page={page}:page_size={page_size}:recent={int(bool(recent))}:limit={limit or ''}"
+        f"page={page}:page_size={page_size}:recent={int(bool(recent))}:limit={limit or ''}:resources={int(include_resources)}"
     )
     cached = _cache_helpers["_cache_get"](cache_key, ttl_seconds=CACHE_TTL_PROJECTS_SECONDS)
     if isinstance(cached, dict):
@@ -73,6 +74,8 @@ def list_projects_api(
             return JSONResponse(content=payload, headers={"ETag": etag})
 
     query = db.query(Model)
+    if not include_resources:
+        query = query.filter(Model.status != "resource")
     if search and search.strip():
         token = f"%{search.strip().lower()}%"
         query = query.filter(

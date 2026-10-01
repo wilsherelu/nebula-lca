@@ -80,7 +80,13 @@ def to_tiangong_like(
         if not flow_uuid_key:
             continue
         if edge.quantityMode == "dual":
-            input_amount = float(edge.consumerAmount or 0.0)
+            # A mapped link carries its supply quantity in the target unit, while
+            # the consumer exchange remains in the source port's own unit.
+            input_amount = (
+                target_port_amount
+                if edge.intermediate_flow_link_factor is not None and target_port_amount > 0
+                else float(edge.consumerAmount or 0.0)
+            )
             if input_amount <= 0 and target_port_amount > 0:
                 input_amount = target_port_amount
         else:
@@ -365,6 +371,8 @@ def to_tiangong_like(
                 "quantity_mode": edge.quantityMode,
                 "provider_amount": provider_amount,
                 "consumer_amount": consumer_amount,
+                "provider_unit": edge.provider_unit,
+                "consumer_unit": edge.consumer_unit,
                 "amount": amount,
             }
         )

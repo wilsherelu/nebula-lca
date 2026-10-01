@@ -97,7 +97,7 @@ def _safe_str(value: object) -> str | None:
     return s or None
 
 
-_PROJECT_STATUS_SET = {"active", "draft", "archived"}
+_PROJECT_STATUS_SET = {"active", "draft", "archived", "resource"}
 
 
 def _normalize_project_status(value: str | None) -> str:
@@ -108,7 +108,7 @@ def _normalize_project_status(value: str | None) -> str:
     if normalized not in _PROJECT_STATUS_SET:
         raise HTTPException(
             status_code=400,
-            detail={"code": "INVALID_REQUEST", "message": f"Invalid status: {raw}. Allowed: active|draft|archived"},
+            detail={"code": "INVALID_REQUEST", "message": f"Invalid status: {raw}. Allowed: active|draft|archived|resource"},
         )
     return normalized
 

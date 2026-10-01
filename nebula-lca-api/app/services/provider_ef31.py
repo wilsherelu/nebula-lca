@@ -5,6 +5,7 @@ import hashlib
 import importlib
 import json
 import math
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
@@ -29,7 +30,9 @@ TIANGONG_OPEN_NAMESPACE = "tiangong_open_data"
 TIANGONG_ELEMENTARY_FLOW_VERSION = "03.00.004"
 
 _REFERENCE_SEED = PROJECT_ROOT / "data" / "Tiangong" / "tidas_reference_seed.json"
-_ELEMENTARY_CATALOG = PROJECT_ROOT / "data" / "Tiangong" / "elementary_flows_sample.csv"
+_ELEMENTARY_CATALOG = Path(os.environ["NEBULA_PROVIDER_ELEMENTARY_CATALOG_PATH"]) if os.environ.get(
+    "NEBULA_PROVIDER_ELEMENTARY_CATALOG_PATH"
+) else PROJECT_ROOT / "data" / "Tiangong" / "elementary_flows_sample.csv"
 _INDICATOR_METHOD_METADATA = PROJECT_ROOT / "data" / "EF3.1" / "indicator_index.csv"
 
 
@@ -134,8 +137,10 @@ def _elementary_catalog() -> dict[str, dict[str, Any]]:
 @lru_cache(maxsize=4)
 def _runtime_flow_index(runtime_dir_raw: str) -> dict[str, int]:
     result: dict[str, int] = {}
-    with (Path(runtime_dir_raw) / "flow_index.csv").open("r", encoding="utf-8", newline="") as handle:
-        for row in csv.DictReader(handle, delimiter=";"):
+    with (Path(runtime_dir_raw) / "flow_index.csv").open("r", encoding="utf-8-sig", newline="") as handle:
+        delimiter = ";" if handle.readline().count(";") else ","
+        handle.seek(0)
+        for row in csv.DictReader(handle, delimiter=delimiter):
             flow_uuid = str(row.get("FlowUUID") or "").strip()
             if flow_uuid:
                 result[flow_uuid] = int(row.get("flow_index") or 0)
@@ -236,6 +241,13 @@ def _indicator_unit_metadata(runtime_dirs: list[Path]) -> tuple[dict[str, dict[s
     for indicator_index, method_row in sorted(method_rows.items()):
         runtime_row = reference_rows[indicator_index]
         canonical_key = str(runtime_row.get("ecoinvent_category") or "").strip().casefold()
+        if not canonical_key:
+            # The bundled EF3.1 index carries its exact identity as method and
+            # indicator fields; the solver uses this same key for legacy rows.
+            canonical_key = (
+                f"{method_row['method_en'].strip().casefold()}|"
+                f"{method_row['indicator_en'].strip().casefold()}"
+            )
         if not canonical_key:
             raise ProviderEf31Error(
                 "EF31_INDICATOR_IDENTITY_UNAVAILABLE",
@@ -376,8 +388,10 @@ def resolve_standard_flow(ref: ExactFlowRef) -> dict[str, Any] | None:
 def _runtime_factor_coverage(runtime_dir_raw: str) -> dict[int, dict[str, Any]]:
     factors: dict[int, list[dict[str, Any]]] = {}
     path = Path(runtime_dir_raw) / "lcia_factors.csv"
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        for row in csv.DictReader(handle, delimiter=";"):
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        delimiter = ";" if handle.readline().count(";") else ","
+        handle.seek(0)
+        for row in csv.DictReader(handle, delimiter=delimiter):
             try:
                 flow_index = int(row.get("column") or -1)
                 indicator_index = int(row.get("row") or -1)

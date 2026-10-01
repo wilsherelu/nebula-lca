@@ -10,6 +10,7 @@ from app.flow_unit_semantics import (
     resolve_flow_port_unit_semantics,
 )
 from app.main import _build_product_result_view_from_graph
+from app.main import _graph_with_solver_unit_defaults
 from app.ef31_db_service import _ensure_unit_group
 from app.models import FlowRecord, ReferenceProcess, UnitDefinition, UnitGroup
 from app.schemas import HybridGraph
@@ -68,6 +69,25 @@ class _FakeDb:
         if model is UnitGroup:
             return _FakeQuery(self.unit_groups)
         return _FakeQuery([])
+
+
+@pytest.mark.parametrize('source_mode,target_mode,expected', [
+    ('normalized','balanced','dual'), ('balanced','normalized','dual'),
+    ('normalized','normalized','dual'), ('balanced','balanced','single'),
+])
+def test_solver_derives_normalized_edge_semantics_without_mutating_the_source(source_mode,target_mode,expected):
+    port=lambda port_id,direction,amount: dict(id=port_id,flowUuid='oil-flow',name='oil',amount=amount,unit='m3',unitGroup='Units of volume',type='technosphere',direction=direction,isProduct=direction=='output')
+    graph=HybridGraph.model_validate(dict(functionalUnit='1 m3 oil',nodes=[
+        dict(id='source',node_kind='unit_process',mode=source_mode,process_uuid='source',name='source',location='GLO',reference_product='oil',inputs=[],outputs=[port('out','output',10)]),
+        dict(id='target',node_kind='unit_process',mode=target_mode,process_uuid='target',name='target',location='GLO',reference_product='oil',inputs=[port('in','input',3)],outputs=[]),
+    ],exchanges=[dict(id='edge',fromNode='source',toNode='target',source_port_id='out',target_port_id='in',flowUuid='oil-flow',flowName='oil',quantityMode='single',amount=3,providerAmount=3,consumerAmount=3,unit='m3',type='technosphere',allocation='none')]))
+    before=graph.model_dump()
+    resolved=_graph_with_solver_unit_defaults(db=_FakeDb(),graph=graph,unit_factor_by_group_and_name={('Units of volume','m3'):1},reference_unit_by_group={'Units of volume':'m3'})
+    assert graph.model_dump()==before
+    assert resolved.exchanges[0].quantityMode==expected
+    if expected=='dual':
+        assert resolved.exchanges[0].providerAmount==10
+        assert resolved.exchanges[0].consumerAmount==3
 
 
 def _switched_oil_port(amount=800, unit="kg"):

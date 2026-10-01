@@ -1,0 +1,22 @@
+{
+  "schema_version": "nebula_lca.selected-elementary-catalog.v1",
+  "selection": "original CSV lines for every elementary Flow in the exact steel snapshot",
+  "source_asset": "Tiangong/elementary_flows_sample.csv",
+  "source_sha256": "5d72690c98b7ec120dd598148251479f73f5c3f4f808bd0ee54e28d5ac41fda0",
+  "selection_snapshot_asset": "steel_tiangong_open_flows.v2.json",
+  "selection_snapshot_sha256": "ed18b03239d257dd0d9537716577e1ba3e21f99bda99549c2d659000b0ac31b5",
+  "selected_asset": "steel_elementary_catalog.v1.csv",
+  "selected_sha256": "c85c809fe1be23e8c6517f3434d85da432d5647fef567dfade687f96e7f7e6e2",
+  "flow_uuids": [
+    "08a91e70-3ddc-11dd-923d-0050c2490048",
+    "f79d0f8f-2b0e-49cb-bed0-b1ea0fbd8625",
+    "fe0acd60-3ddc-11dd-ac48-0050c2490048"
+  ],
+  "reference_seed_sha256": "94ac0c4515fe7d2ebfb7f8ec740e3f4cb46887d7cfe97acbb14188ab51e9396a",
+  "claim": "identity and unit metadata only; no characterization factors or LCI vectors",
+  "licence_status": "source redistribution terms not established; exact Flow licence evidence retained in snapshot",
+  "unit_group_names": [
+    "Units of energy",
+    "Units of mass"
+  ]
+}

@@ -7,6 +7,9 @@ __pycache__/
 
 .vscode/
 .idea/
+.agents/
+.codex/
+.pytest_cache/
 .DS_Store
 Thumbs.db
 
@@ -42,6 +45,7 @@ nebula-lca-desktop/release/
 nebula-lca-desktop/release-*/
 exports/
 outputs/
+output/
 reports/
 audit-output/
 artifacts/
@@ -55,6 +59,8 @@ docs/
 docs/**
 agent-memory/
 agent-memory/**
+paper/
+paper/**
 
 # local connector credentials, import caches, and external data packages
 local-connectors/

@@ -21,6 +21,16 @@ import { UnitProcessImportDialog } from "./components/NodePalette/UnitProcessImp
 import { ProjectManagement, type CreateProjectForm, type SourcePolicy, type TidasRepairTarget } from "./components/ProjectManagement/ProjectManagement";
 import type { LcaGraphPayload } from "./model/exchange";
 import type { FlowPort, LcaNodeKind, ProcessMode } from "./model/node";
+import {
+  buildEditorHandoffReturnUrl,
+  buildEditorHandoffSearch,
+  clearEditorHandoffCandidate,
+  parseEditorHandoffRequest,
+  persistEditorHandoffCandidate,
+  restoreEditorHandoffCandidate,
+  validateNebulaOneReturnOrigin,
+  type EditorHandoffCandidate,
+} from "./services/editorHandoff";
 import { useLcaGraphStore } from "./store/lcaGraphStore";
 
 type ModelCreateResponse = {
@@ -41,6 +51,7 @@ type ModelCreateResponse = {
 type ModelVersionResponse = {
   project_id: string;
   version: number;
+  graph_hash?: string | null;
   graph: LcaGraphPayload;
   created_at: string;
   name?: string | null;
@@ -631,7 +642,16 @@ const translateStatusText = (message: string, uiLanguage: "zh" | "en"): string =
     ["已到最新版本。", "Already at the latest version."],
     ["已同步当前项目的 flow 名称。", "Flow names for the current project have been synced."],
     ["项目列表读取失败。", "Failed to load project list."],
+    ["建模协作链接无效，未打开任何模型版本。", "The modeling handoff link is invalid. No model version was opened."],
+    ["建模协作链接缺少明确版本，未自动打开最新版本。", "The modeling handoff is missing an exact version. The latest version was not opened."],
+    ["当前建模协作要求新建专业模型，不能改用已有项目。", "This handoff requires a new professional model and cannot use an existing project."],
+    ["当前建模协作已绑定明确项目，不能切换到其他项目。", "This handoff is bound to an exact project and cannot switch to another project."],
+    ["当前建模协作已绑定明确项目，不能新建其他项目。", "This handoff is bound to an exact project and cannot create another project."],
     ["正在保存模型...", "Saving model..."],
+    ["模型内容未变化，尚未生成可返回的新版本。", "The model is unchanged, so no new version is available to return."],
+    ["模型已保存，但服务端未返回权威图哈希，无法返回 Nebula One。", "The model was saved, but the server did not return an authoritative graph hash. The handoff cannot return."],
+    ["未配置 Nebula One 返回地址，当前不能返回。", "The Nebula One return origin is not configured."],
+    ["请先手动保存并生成明确的新版本，再返回 Nebula One。", "Save an explicit new version before returning to Nebula One."],
     ["仅支持在主图中解封 PTS 节点。", "Only PTS nodes on the main graph can be unpacked."],
     ["当前 PTS 缺少 pts_uuid，无法解封。", "The current PTS is missing pts_uuid and cannot be unpacked."],
     ["正在解封 PTS...", "Unpacking PTS..."],
@@ -2100,10 +2120,24 @@ export default function App() {
   const setUnitAutoScaleEnabled = useLcaGraphStore((state) => state.setUnitAutoScaleEnabled);
   const uiLanguage = useLcaGraphStore((state) => state.uiLanguage);
   const setUiLanguage = useLcaGraphStore((state) => state.setUiLanguage);
-  const updateEdgeData = useLcaGraphStore((state) => state.updateEdgeData);
   const pendingPtsCompileNodeId = useLcaGraphStore((state) => state.pendingPtsCompileNodeId);
   const consumePendingPtsCompile = useLcaGraphStore((state) => state.consumePendingPtsCompile);
   const openNodeInspector = useLcaGraphStore((state) => state.openNodeInspector);
+  const initialEditorRequest = useMemo(
+    () => parseEditorHandoffRequest(window.location.pathname, window.location.search),
+    [],
+  );
+  const fromNebulaOne = useMemo(() => new URLSearchParams(window.location.search).get("from_nebula_one") === "1", []);
+  const [editorHandoff] = useState(initialEditorRequest.context);
+  const [editorHandoffErrorCode, setEditorHandoffErrorCode] = useState(initialEditorRequest.errorCode);
+  const [routeProjectVersion, setRouteProjectVersion] = useState<number | null>(initialEditorRequest.requestedVersion);
+  const [handoffSavedCandidate, setHandoffSavedCandidate] = useState<EditorHandoffCandidate | null>(null);
+  const [handoffSavedFingerprint, setHandoffSavedFingerprint] = useState("");
+  const [handoffCandidateRestoring, setHandoffCandidateRestoring] = useState(false);
+  const handoffReturnOrigin = useMemo(
+    () => validateNebulaOneReturnOrigin(window.__NEBULA_DESKTOP__?.oneOrigin ?? import.meta.env.VITE_NEBULA_ONE_RETURN_ORIGIN),
+    [],
+  );
 
   const [projectId, setProjectId] = useState("");
   const [version, setVersion] = useState("1");
@@ -2232,14 +2266,22 @@ export default function App() {
   });
   const [projectIntegrity, setProjectIntegrity] = useState<ProjectIntegritySummary>(EMPTY_PROJECT_INTEGRITY);
   const [showProjectIntegrityDialog, setShowProjectIntegrityDialog] = useState(false);
-  const [dismissedNormalizedEdgeFixFingerprint, setDismissedNormalizedEdgeFixFingerprint] = useState("");
   const hydratedRef = useRef(false);
   const routeSyncRef = useRef("");
   const routeHydrationAttemptRef = useRef("");
 
-  const syncProjectRoute = useCallback((nextProjectId: string, nextAppMode: AppMode, replace = false) => {
-    const nextPath = nextAppMode === "editor" && nextProjectId ? buildProjectPathname(nextProjectId) : "/";
-    const currentPath = window.location.pathname || "/";
+  const syncProjectRoute = useCallback((
+    nextProjectId: string,
+    nextAppMode: AppMode,
+    replace = false,
+    nextVersion: number | null = routeProjectVersion,
+  ) => {
+    const nextPathname = nextAppMode === "editor" && nextProjectId ? buildProjectPathname(nextProjectId) : "/";
+    const nextParams = new URLSearchParams(buildEditorHandoffSearch(editorHandoff, nextAppMode === "editor" ? nextVersion : null));
+    if (fromNebulaOne && !editorHandoff) nextParams.set("from_nebula_one", "1");
+    const nextSearch = nextParams.size ? `?${nextParams}` : "";
+    const nextPath = `${nextPathname}${nextSearch}`;
+    const currentPath = `${window.location.pathname || "/"}${window.location.search || ""}`;
     if (currentPath === nextPath) {
       routeSyncRef.current = nextPath;
       return;
@@ -2247,8 +2289,9 @@ export default function App() {
     const method = replace ? "replaceState" : "pushState";
     window.history[method](window.history.state, "", nextPath);
     routeSyncRef.current = nextPath;
-    setRouteProjectId(getProjectIdFromPathname(nextPath));
-  }, []);
+    setRouteProjectId(getProjectIdFromPathname(nextPathname));
+    setRouteProjectVersion(nextAppMode === "editor" ? nextVersion : null);
+  }, [editorHandoff, fromNebulaOne, routeProjectVersion]);
   const navigateToManagement = useCallback(() => {
     setStatusText("");
     setAppMode("management");
@@ -2265,6 +2308,22 @@ export default function App() {
   const ptsDraftInitializedRef = useRef<Record<string, true>>({});
   const loadPerformanceSpanCounterRef = useRef(0);
   const activeProjectLoadTokenRef = useRef(0);
+  const handoffCurrentFingerprint = useMemo(
+    () => JSON.stringify(
+      applyProjectTargetProductConfig(
+        normalizeGraphPayload(exportGraph()),
+        selectedProductKey
+          ? {
+            processUuid: selectedProductKey.split("::")[0] ?? "",
+            flowUuid: selectedProductKey.split("::")[1] ?? "",
+            quantityMode: targetProductQuantityMode,
+            quantity: parseTargetProductQuantity(targetProductQuantity),
+          }
+          : null,
+      ),
+    ),
+    [canvases, exportGraph, functionalUnit, selectedProductKey, targetProductQuantity, targetProductQuantityMode],
+  );
 
   const startLoadPerformanceSpan = useCallback((label: string) => {
     if (typeof performance === "undefined" || typeof performance.mark !== "function") {
@@ -2796,6 +2855,12 @@ export default function App() {
           close: "关闭",
           summary: "Summary",
           issues: "内容",
+          handoffNew: "正在为 Nebula One 新建专业模型。请新建项目并手动保存一个版本。",
+          handoffExisting: "正在编辑 Nebula One 指定的模型版本。保存将生成新的专业模型版本。",
+          handoffConfigMissing: "未配置 Nebula One 返回地址，保存后暂时无法返回。",
+          handoffSavedReady: "新版本已保存，可返回 Nebula One 复核并确认接入。",
+          cancelHandoff: "取消并返回",
+          returnToOne: "返回 Nebula One",
         }
         : {
           appTitle: "Nebula LCA",
@@ -2815,6 +2880,12 @@ export default function App() {
           close: "Close",
           summary: "Summary",
           issues: "Message",
+          handoffNew: "Creating a professional model for Nebula One. Create a project and save one version manually.",
+          handoffExisting: "Editing the exact model version selected by Nebula One. Saving creates a new professional model version.",
+          handoffConfigMissing: "The Nebula One return origin is not configured, so this session cannot return yet.",
+          handoffSavedReady: "The new version is saved and ready for Nebula One to verify and attach.",
+          cancelHandoff: "Cancel and return",
+          returnToOne: "Return to Nebula One",
         },
     [uiLanguage],
   );
@@ -2964,6 +3035,7 @@ export default function App() {
           setProjectName(resolvedProjectName);
           setCurrentSourcePolicy(normalizeSourcePolicy(latest.source_policy));
           setVersion(String(latest.version));
+          setRouteProjectVersion(null);
           setVersionTraveling(false);
           if (options.announceRestore !== false) {
             setStatusText(`已恢复项目: ${resolvedProjectName} (version=${latest.version})`);
@@ -3028,6 +3100,7 @@ export default function App() {
           setProjectName(resolvedDraftProjectName);
           setCurrentSourcePolicy(normalizeSourcePolicy(projects.find((item) => item.project_id === targetProjectId)?.source_policy));
           setVersion("0");
+          setRouteProjectVersion(null);
           setVersionTraveling(false);
           setStatusText(`已恢复草稿: ${resolvedDraftProjectName}`);
           scheduleAfterNextPaint(() => {
@@ -3067,6 +3140,7 @@ export default function App() {
         setProjectName(resolvedEmptyProjectName);
         setCurrentSourcePolicy(normalizeSourcePolicy(projects.find((item) => item.project_id === targetProjectId)?.source_policy));
         setVersion("0");
+        setRouteProjectVersion(null);
         setVersionTraveling(false);
         setStatusText(`项目为空: ${resolvedEmptyProjectName}`);
         const endPostLoadUiSpan = startLoadPerformanceSpan("project-load:post-load-ui");
@@ -3108,10 +3182,10 @@ export default function App() {
   );
 
   const loadProjectVersion = useCallback(
-    async (targetProjectId: string, targetVersion: number, targetProjectName?: string) => {
+    async (targetProjectId: string, targetVersion: number, targetProjectName?: string): Promise<boolean> => {
       const loadToken = ++activeProjectLoadTokenRef.current;
       if (!targetProjectId || !Number.isFinite(targetVersion) || targetVersion < 1) {
-        return;
+        return false;
       }
       setStatusText(`正在切换到历史版本 v${targetVersion}...`);
       setBusy(true);
@@ -3122,7 +3196,21 @@ export default function App() {
         if (resp.ok) {
           const payload = (await resp.json()) as ModelVersionResponse;
           if (loadToken !== activeProjectLoadTokenRef.current) {
-            return;
+            return false;
+          }
+          let exactGraphHash = String(payload.graph_hash || "").trim();
+          if (editorHandoff && !exactGraphHash) {
+            try {
+              const snapshotResponse = await fetch(
+                `${API_BASE}/provider/v1/models/${encodeURIComponent(payload.project_id)}/versions/${encodeURIComponent(String(payload.version))}/snapshot`,
+              );
+              if (snapshotResponse.ok) {
+                const snapshot = (await snapshotResponse.json()) as { graph_hash?: string | null };
+                exactGraphHash = String(snapshot.graph_hash || "").trim();
+              }
+            } catch {
+              exactGraphHash = "";
+            }
           }
           const normalizedPayloadGraph = normalizeGraphPayload(payload.graph);
           debugPts("loadProjectVersion:payload", {
@@ -3153,6 +3241,18 @@ export default function App() {
             setShowProjectIntegrityDialog(!nextProjectIntegrity.ok);
           }
           lastSavedFingerprintRef.current = JSON.stringify(normalizedPayloadGraph);
+          if (editorHandoff) {
+            const restoredCandidate = restoreEditorHandoffCandidate(
+              window.sessionStorage,
+              editorHandoff,
+              payload.project_id,
+              payload.version,
+              exactGraphHash,
+            );
+            setHandoffSavedCandidate(restoredCandidate);
+            setHandoffSavedFingerprint("");
+            setHandoffCandidateRestoring(Boolean(restoredCandidate));
+          }
           suppressAutoSaveUntilRef.current = Date.now() + 30000;
           {
             const targetProductConfig = readProjectTargetProductConfig(normalizedPayloadGraph);
@@ -3170,33 +3270,44 @@ export default function App() {
           setProjectName(resolvedProjectName);
           setCurrentSourcePolicy(normalizeSourcePolicy(payload.source_policy));
           setVersion(String(payload.version));
+          setRouteProjectVersion(payload.version);
           localStorage.setItem(CURRENT_PROJECT_KEY, payload.project_id);
           localStorage.setItem(
             snapshotKey(payload.project_id),
             JSON.stringify({ project_id: payload.project_id, version: payload.version }),
           );
           setVersionTraveling(true);
+          setEditorHandoffErrorCode((current) =>
+            current === "EXACT_VERSION_NOT_FOUND" || current === "EXACT_VERSION_LOAD_FAILED" ? null : current,
+          );
           setStatusText(`已恢复项目: ${resolvedProjectName || payload.project_id} (version=${payload.version})`);
-          return;
+          return true;
         }
         if (resp.status === 404) {
           if (loadToken === activeProjectLoadTokenRef.current) {
+            if (editorHandoff?.mode === "existing") {
+              setEditorHandoffErrorCode("EXACT_VERSION_NOT_FOUND");
+            }
             setStatusText(`版本 ${targetVersion} 不存在（可能已到最早/最新边界）。`);
           }
-          return;
+          return false;
         }
         throw new Error(await resp.text());
       } catch (error) {
         if (loadToken === activeProjectLoadTokenRef.current) {
+          if (editorHandoff?.mode === "existing") {
+            setEditorHandoffErrorCode("EXACT_VERSION_LOAD_FAILED");
+          }
           setStatusText(`历史版本读取失败: ${formatApiError(error)}`);
         }
+        return false;
       } finally {
         if (loadToken === activeProjectLoadTokenRef.current) {
           setBusy(false);
         }
       }
     },
-    [applyHandleValidationIssues, importGraphWithLoadKey, projectName, projects],
+    [applyHandleValidationIssues, editorHandoff, importGraphWithLoadKey, projectName, projects],
   );
   const navigateVersion = useCallback(
     (step: -1 | 1) => {
@@ -3314,6 +3425,11 @@ export default function App() {
   const hydrate = useCallback(async () => {
     try {
       const rows = await refreshProjects();
+      if (initialEditorRequest.errorCode) {
+        setStatusText("建模协作链接无效，未打开任何模型版本。");
+        setAppMode(getProjectIdFromPathname(window.location.pathname) ? "editor" : "management");
+        return;
+      }
       if (!rows.length) {
         setAppMode("management");
         return;
@@ -3321,22 +3437,33 @@ export default function App() {
       const routeTargetProjectId = getProjectIdFromPathname(window.location.pathname);
       if (routeTargetProjectId) {
         const target = rows.find((item) => item.project_id === routeTargetProjectId);
-        routeHydrationAttemptRef.current = routeTargetProjectId;
+        routeHydrationAttemptRef.current = `${routeTargetProjectId}@${initialEditorRequest.requestedVersion ?? "latest"}`;
         setAppMode("editor");
-        await loadProjectGraph(routeTargetProjectId, target?.name ?? routeTargetProjectId);
+        if (initialEditorRequest.requestedVersion != null) {
+          await loadProjectVersion(
+            routeTargetProjectId,
+            initialEditorRequest.requestedVersion,
+            target?.name ?? routeTargetProjectId,
+          );
+        } else {
+          await loadProjectGraph(routeTargetProjectId, target?.name ?? routeTargetProjectId);
+        }
       }
     } catch {
       setStatusText("项目列表读取失败。");
     } finally {
       setHydrated(true);
     }
-  }, [loadProjectGraph, refreshProjects]);
+  }, [initialEditorRequest, loadProjectGraph, loadProjectVersion, refreshProjects]);
 
   const persistModel = useCallback(
     async (mode: SaveMode) => {
       const strictValidation = mode === "manual";
       const backgroundSave = mode !== "manual";
       const nonBlockingWarnings: string[] = [];
+      if (backgroundSave && editorHandoff) {
+        return;
+      }
       if (backgroundSave && suppressAutoSaveRef.current) {
         return;
       }
@@ -3564,6 +3691,7 @@ export default function App() {
       activeCanvasId,
       activeCanvasKind,
       busy,
+      editorHandoff,
       exportGraph,
       getBalancedWarningsForCanvas,
       getBalancedWarnings,
@@ -3582,6 +3710,89 @@ export default function App() {
       versionTraveling,
     ],
   );
+
+  const handleManualModelSave = useCallback(async () => {
+    const saved = await persistModel("manual");
+    if (!saved) {
+      return saved;
+    }
+    if ((editorHandoff || routeProjectVersion != null) && saved.created_new_version === true) {
+      setRouteProjectVersion(saved.version);
+      syncProjectRoute(saved.project_id, "editor", true, saved.version);
+    }
+    if (!editorHandoff) {
+      return saved;
+    }
+    const upstreamGraphHash = String(saved.graph_hash || "").trim();
+    if (saved.created_new_version !== true) {
+      setHandoffSavedCandidate(null);
+      clearEditorHandoffCandidate(window.sessionStorage, editorHandoff.handoffId);
+      setStatusText("模型内容未变化，尚未生成可返回的新版本。");
+      return saved;
+    }
+    if (!upstreamGraphHash) {
+      setHandoffSavedCandidate(null);
+      clearEditorHandoffCandidate(window.sessionStorage, editorHandoff.handoffId);
+      setStatusText("模型已保存，但服务端未返回权威图哈希，无法返回 Nebula One。");
+      return saved;
+    }
+    const candidate = {
+      projectId: saved.project_id,
+      savedVersion: saved.version,
+      upstreamGraphHash,
+    };
+    setHandoffSavedCandidate(candidate);
+    persistEditorHandoffCandidate(window.sessionStorage, editorHandoff, candidate);
+    setHandoffSavedFingerprint(handoffCurrentFingerprint);
+    setHandoffCandidateRestoring(false);
+    return saved;
+  }, [editorHandoff, handoffCurrentFingerprint, persistModel, routeProjectVersion, syncProjectRoute]);
+
+  const returnFromEditorHandoff = useCallback((status: "cancelled" | "saved") => {
+    if (!editorHandoff) {
+      return;
+    }
+    if (!handoffReturnOrigin) {
+      setEditorHandoffErrorCode("RETURN_ORIGIN_NOT_CONFIGURED");
+      setStatusText("未配置 Nebula One 返回地址，当前不能返回。");
+      return;
+    }
+    if (
+      status === "saved" &&
+      (!handoffSavedCandidate || handoffCandidateRestoring || handoffSavedFingerprint !== handoffCurrentFingerprint)
+    ) {
+      setHandoffSavedCandidate(null);
+      setStatusText("请先手动保存并生成明确的新版本，再返回 Nebula One。");
+      return;
+    }
+    const returnUrl = buildEditorHandoffReturnUrl(
+      handoffReturnOrigin,
+      editorHandoff,
+      status === "saved"
+        ? { status, candidate: handoffSavedCandidate! }
+        : { status },
+    );
+    clearEditorHandoffCandidate(window.sessionStorage, editorHandoff.handoffId);
+    window.location.assign(returnUrl);
+  }, [editorHandoff, handoffCandidateRestoring, handoffCurrentFingerprint, handoffReturnOrigin, handoffSavedCandidate, handoffSavedFingerprint]);
+
+  useEffect(() => {
+    if (!editorHandoff || !handoffSavedCandidate) {
+      return;
+    }
+    persistEditorHandoffCandidate(window.sessionStorage, editorHandoff, handoffSavedCandidate);
+  }, [editorHandoff, handoffSavedCandidate]);
+
+  useEffect(() => {
+    if (!handoffCandidateRestoring || !handoffSavedCandidate) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setHandoffSavedFingerprint(handoffCurrentFingerprint);
+      setHandoffCandidateRestoring(false);
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [handoffCandidateRestoring, handoffCurrentFingerprint, handoffSavedCandidate]);
 
   const persistRootModelSnapshot = useCallback(
     async (targetProjectId: string) => {
@@ -4317,16 +4528,31 @@ export default function App() {
       if (!nextProjectId) {
         return;
       }
+      if (
+        editorHandoff &&
+        (editorHandoff.mode === "new" || nextProjectId !== editorHandoff.baseProjectId)
+      ) {
+        setStatusText(
+          editorHandoff.mode === "new"
+            ? "当前建模协作要求新建专业模型，不能改用已有项目。"
+            : "当前建模协作已绑定明确项目，不能切换到其他项目。",
+        );
+        return;
+      }
       if (nextProjectId === projectId && appMode === "editor") {
         return;
       }
       const target = projects.find((p) => p.project_id === nextProjectId);
       await loadProjectGraph(nextProjectId, nextProjectName ?? target?.name);
     },
-    [appMode, loadProjectGraph, projectId, projects],
+    [appMode, editorHandoff, loadProjectGraph, projectId, projects],
   );
 
   const handleCreateProject = useCallback(async (form: CreateProjectForm) => {
+    if (editorHandoff?.mode === "existing") {
+      setStatusText("当前建模协作已绑定明确项目，不能新建其他项目。");
+      return;
+    }
     const name = form.projectName.trim();
     if (!name) {
       setStatusText("新建项目失败: 项目名称不能为空。");
@@ -4359,7 +4585,7 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-  }, [loadProjectGraph, refreshProjects]);
+  }, [editorHandoff, loadProjectGraph, refreshProjects]);
 
   const handleDeleteProjectById = useCallback(async (targetProjectId: string) => {
     if (!targetProjectId) {
@@ -4751,43 +4977,69 @@ export default function App() {
 
   useEffect(() => {
     const onPopState = () => {
+      const parsed = parseEditorHandoffRequest(window.location.pathname, window.location.search);
       const nextRouteProjectId = getProjectIdFromPathname(window.location.pathname);
-      routeSyncRef.current = window.location.pathname || "/";
+      const handoffChanged = Boolean(
+        editorHandoff &&
+          (!parsed.context ||
+            parsed.context.handoffId !== editorHandoff.handoffId ||
+            parsed.context.state !== editorHandoff.state ||
+            parsed.context.returnTarget !== editorHandoff.returnTarget),
+      );
+      setEditorHandoffErrorCode(handoffChanged ? "HANDOFF_STATE_CHANGED" : parsed.errorCode);
+      routeSyncRef.current = `${window.location.pathname || "/"}${window.location.search || ""}`;
       setRouteProjectId(nextRouteProjectId);
+      setRouteProjectVersion(parsed.requestedVersion);
       if (!nextRouteProjectId) {
         setAppMode("management");
       }
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, []);
+  }, [editorHandoff]);
 
   useEffect(() => {
     if (!hydrated || !routeProjectId) {
       return;
     }
-    if (routeHydrationAttemptRef.current === routeProjectId) {
+    const routeLoadKey = `${routeProjectId}@${routeProjectVersion ?? "latest"}`;
+    if (routeHydrationAttemptRef.current === routeLoadKey) {
       routeHydrationAttemptRef.current = "";
       return;
     }
-    if (routeProjectId === projectId && appMode === "editor") {
+    if (
+      routeProjectId === projectId &&
+      appMode === "editor" &&
+      (routeProjectVersion == null || routeProjectVersion === Number(version))
+    ) {
       return;
     }
     const target = projects.find((item) => item.project_id === routeProjectId);
     setAppMode("editor");
-    void loadProjectGraph(routeProjectId, target?.name ?? routeProjectId);
-  }, [appMode, hydrated, loadProjectGraph, projectId, projects, routeProjectId]);
+    if (routeProjectVersion != null) {
+      void loadProjectVersion(routeProjectId, routeProjectVersion, target?.name ?? routeProjectId);
+    } else if (editorHandoff?.mode === "existing") {
+      setEditorHandoffErrorCode("EXACT_VERSION_REQUIRED");
+      setStatusText("建模协作链接缺少明确版本，未自动打开最新版本。");
+    } else {
+      void loadProjectGraph(routeProjectId, target?.name ?? routeProjectId);
+    }
+  }, [appMode, editorHandoff, hydrated, loadProjectGraph, loadProjectVersion, projectId, projects, routeProjectId, routeProjectVersion, version]);
 
   useEffect(() => {
     if (!hydrated) {
       return;
     }
-    const nextPath = appMode === "editor" && projectId ? buildProjectPathname(projectId) : "/";
+    if (editorHandoffErrorCode || (editorHandoff?.mode === "existing" && routeProjectId && !projectId)) {
+      return;
+    }
+    const nextPathname = appMode === "editor" && projectId ? buildProjectPathname(projectId) : "/";
+    const nextPath = `${nextPathname}${buildEditorHandoffSearch(editorHandoff, appMode === "editor" ? routeProjectVersion : null)}`;
     if (routeSyncRef.current === nextPath) {
       return;
     }
-    syncProjectRoute(projectId, appMode, true);
-  }, [appMode, hydrated, projectId, syncProjectRoute]);
+    syncProjectRoute(projectId, appMode, true, appMode === "editor" ? routeProjectVersion : null);
+  }, [appMode, editorHandoff, editorHandoffErrorCode, hydrated, projectId, routeProjectId, routeProjectVersion, syncProjectRoute]);
 
   useEffect(() => {
     if (!hydrated || !projectId) {
@@ -4817,8 +5069,9 @@ export default function App() {
     }, LOCAL_DRAFT_SAVE_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [
-    edges,
-    exportGraph,
+      edges,
+      editorHandoff,
+      exportGraph,
     functionalUnit,
     hydrated,
     nodes,
@@ -5403,38 +5656,22 @@ export default function App() {
 
   const displayedStatusText = useMemo(() => translateStatusText(statusText, uiLanguage), [statusText, uiLanguage]);
   const statusLevel = useMemo(() => detectMessageLevel(statusText), [statusText]);
-  const connectionHintLevel = useMemo(() => detectMessageLevel(connectionHint ?? ""), [connectionHint]);
-  const normalizedEdgeFixCandidates = useMemo(() => {
-    const resolveNodeMode = (nodeId: string): "balanced" | "normalized" => {
-      const node = nodes.find((item) => item.id === nodeId);
-      if (!node) {
-        return "normalized";
-      }
-      if (node.data.nodeKind !== "unit_process") {
-        return "normalized";
-      }
-      if ((node.data.processUuid ?? "").startsWith("market_")) {
-        return "normalized";
-      }
-      return node.data.mode ?? "balanced";
-    };
-
-    return edges.filter((edge) => {
-      if ((edge.data?.quantityMode ?? "single") !== "single") {
-        return false;
-      }
-      return resolveNodeMode(edge.source) !== "balanced" || resolveNodeMode(edge.target) !== "balanced";
-    });
-  }, [edges, nodes]);
-  const normalizedEdgeFixSignature = useMemo(
-    () => normalizedEdgeFixCandidates.map((edge) => edge.id).sort().join("|"),
-    [normalizedEdgeFixCandidates],
+  const handoffBlocked = Boolean(editorHandoffErrorCode || (editorHandoff && !handoffReturnOrigin));
+  const handoffSavedCandidateCurrent = Boolean(
+    handoffSavedCandidate &&
+      !handoffCandidateRestoring &&
+      handoffSavedFingerprint === handoffCurrentFingerprint,
   );
-  const showNormalizedEdgeFixBanner =
-    appMode === "editor" &&
-    activeCanvasKind === "root" &&
-    normalizedEdgeFixCandidates.length > 0 &&
-    dismissedNormalizedEdgeFixFingerprint !== normalizedEdgeFixSignature;
+  const handoffBannerText = editorHandoff
+    ? !handoffReturnOrigin
+      ? i18n.handoffConfigMissing
+      : handoffSavedCandidateCurrent
+        ? i18n.handoffSavedReady
+        : editorHandoff.mode === "new"
+          ? i18n.handoffNew
+          : i18n.handoffExisting
+    : "";
+  const connectionHintLevel = useMemo(() => detectMessageLevel(connectionHint ?? ""), [connectionHint]);
   const formatProjectIntegrityIssue = useCallback(
     (issue: ProjectIntegrityIssue) => {
       if (issue.kind === "pts_publication") {
@@ -5472,23 +5709,6 @@ export default function App() {
     return firstIssue ? `${base} ${formatProjectIntegrityIssue(firstIssue)}` : base;
   }, [formatProjectIntegrityIssue, projectIntegrity, uiLanguage]);
 
-  const autoFixNormalizedEdges = useCallback(() => {
-    if (!normalizedEdgeFixCandidates.length) {
-      return;
-    }
-    normalizedEdgeFixCandidates.forEach((edge) => {
-      updateEdgeData(edge.id, { quantityMode: "dual" });
-    });
-    setDismissedNormalizedEdgeFixFingerprint("");
-    setStatusText(`已自动修复 ${normalizedEdgeFixCandidates.length} 条归一化连线，线型已同步为虚线。`);
-  }, [normalizedEdgeFixCandidates, updateEdgeData]);
-
-  useEffect(() => {
-    if (normalizedEdgeFixCandidates.length > 0) {
-      return;
-    }
-    setDismissedNormalizedEdgeFixFingerprint("");
-  }, [normalizedEdgeFixCandidates.length]);
 
   const targetProductCandidates = useMemo(() => {
     const rootNodes = canvases.root?.nodes ?? [];
@@ -5638,10 +5858,24 @@ export default function App() {
     return (
       <>
         {displayedStatusText && <div className={`status-toast status-bar--${statusLevel}`}>{displayedStatusText}</div>}
+        {editorHandoff && (
+          <div className={`handoff-session-banner${handoffBlocked ? " handoff-session-banner--error" : ""}`}>
+            <span>{handoffBannerText}</span>
+            <button
+              type="button"
+              className="pm-ghost-btn"
+              onClick={() => returnFromEditorHandoff("cancelled")}
+              disabled={!handoffReturnOrigin}
+            >
+              {i18n.cancelHandoff}
+            </button>
+          </div>
+        )}
         <ProjectManagement
           projects={projects}
           busy={busy}
           uiLanguage={uiLanguage}
+          oneReturnOrigin={fromNebulaOne ? handoffReturnOrigin ?? undefined : undefined}
           onChangeLanguage={setUiLanguage}
           onStatus={setStatusText}
           onOpenProject={(targetProjectId, targetProjectName, repairTarget?: TidasRepairTarget) => {
@@ -5672,6 +5906,11 @@ export default function App() {
 
   return (
     <div className="layout">
+      {handoffCandidateRestoring && (
+        <div className="handoff-restore-overlay" role="status" aria-live="polite">
+          <span>{uiLanguage === "zh" ? "正在核验已保存版本…" : "Verifying the saved version…"}</span>
+        </div>
+      )}
       <header className="topbar">
         <div className="topbar-brand">
           <button
@@ -5693,6 +5932,17 @@ export default function App() {
         </div>
         {activeCanvasKind === "pts_internal" && <span className="topbar-mode-badge">{i18n.ptsMode}</span>}
         <div className="topbar-actions">
+          {fromNebulaOne && !editorHandoff && handoffReturnOrigin && <a className="topbar-secondary-action" href={handoffReturnOrigin}>{i18n.returnToOne}</a>}
+          {editorHandoff && (
+            <button
+              type="button"
+              className="topbar-secondary-action"
+              onClick={() => returnFromEditorHandoff("cancelled")}
+              disabled={busy || !handoffReturnOrigin}
+            >
+              {i18n.cancelHandoff}
+            </button>
+          )}
           {activeCanvasKind === "pts_internal" ? (
             <>
               <button onClick={() => void saveCurrentPts()} disabled={busy}>
@@ -5705,11 +5955,20 @@ export default function App() {
             </>
           ) : (
             <>
-              <button onClick={() => void persistModel("manual")} disabled={busy}>
+              <button onClick={() => void handleManualModelSave()} disabled={busy || handoffBlocked}>
                 {unitRepairRequired
                   ? uiLanguage === "zh" ? "保存并修复" : "Save and Repair"
                   : i18n.save}
               </button>
+              {editorHandoff && handoffSavedCandidateCurrent && (
+                <button
+                  type="button"
+                  onClick={() => returnFromEditorHandoff("saved")}
+                  disabled={busy || handoffBlocked}
+                >
+                  {i18n.returnToOne}
+                </button>
+              )}
               <button
                 onClick={async () => {
                   setDraftLciaMethodSelection(lciaMethodSelection);
@@ -5722,7 +5981,7 @@ export default function App() {
                   }
                   setShowRunConfigDialog(true);
                 }}
-                disabled={busy}
+                disabled={busy || handoffBlocked}
               >
                 {i18n.run}
               </button>
@@ -5739,21 +5998,9 @@ export default function App() {
         </div>
       </header>
       {displayedStatusText && <div className={`status-toast status-bar--${statusLevel}`}>{displayedStatusText}</div>}
-      {showNormalizedEdgeFixBanner && (
-        <div className="inline-banner inline-banner--warning inline-banner--action">
-          <span>{`检测到 ${normalizedEdgeFixCandidates.length} 条归一化连线仍为实线，是否自动修复为虚线？`}</span>
-          <div className="inline-banner-actions">
-            <button type="button" className="link-btn" onClick={autoFixNormalizedEdges}>
-              自动修复
-            </button>
-            <button
-              type="button"
-              className="link-btn"
-              onClick={() => setDismissedNormalizedEdgeFixFingerprint(normalizedEdgeFixSignature)}
-            >
-              暂不处理
-            </button>
-          </div>
+      {editorHandoff && (
+        <div className={`inline-banner inline-banner--action${handoffBlocked ? " inline-banner--warning" : ""}`}>
+          <span>{handoffBannerText}</span>
         </div>
       )}
       {missingProductNodes.length > 0 && (
@@ -6234,7 +6481,7 @@ export default function App() {
                 onClick={async () => {
                   setLciaMethodSelection(draftLciaMethodSelection);
                   setShowRunConfigDialog(false);
-                  const saved = await persistModel("manual");
+                  const saved = await handleManualModelSave();
                   if (!saved) {
                     return;
                   }

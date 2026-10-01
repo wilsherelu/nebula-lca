@@ -3,6 +3,32 @@ import pytest
 from app.core.matrix_builder import build_matrices_from_snapshot
 
 
+def test_dual_link_uses_provider_quantity_when_units_differ():
+    snapshot = {
+        "processes": [
+            {"process_uuid": "grid", "reference_product_flow_uuid": "grid-out"},
+            {"process_uuid": "steel", "reference_product_flow_uuid": "steel-out"},
+        ],
+        "flows": [
+            {"flow_uuid": "electricity", "flow_type": "Product flow"},
+            {"flow_uuid": "steel-output", "flow_type": "Product flow"},
+        ],
+        "exchanges": [
+            {"exchange_id": "grid-out", "process_uuid": "grid", "flow_uuid": "electricity", "direction": "output", "amount": 1},
+            {"exchange_id": "steel-electricity", "process_uuid": "steel", "flow_uuid": "electricity", "direction": "input", "amount": 610},
+            {"exchange_id": "steel-out", "process_uuid": "steel", "flow_uuid": "steel-output", "direction": "output", "amount": 1000},
+        ],
+        "links": [{"consumer_process_uuid": "steel", "provider_process_uuid": "grid",
+                   "provider_product_exchange_id": "grid-out", "flow_uuid": "electricity",
+                   "quantity_mode": "dual", "consumer_amount": 610,
+                   "provider_amount": 610 / 3.6, "consumer_unit": "MJ", "provider_unit": "kWh"}],
+    }
+    result = build_matrices_from_snapshot(snapshot)
+    assert result["issues"] == []
+    link = next(item for item in result["A"]["data"] if item["row"] == "grid" and item["col"] == "steel")
+    assert link["value"] == pytest.approx(-(610 / 3.6) / 1000)
+
+
 def test_provider_product_conversion_factor_adjusts_technosphere_link():
     snapshot = {
         "processes": [

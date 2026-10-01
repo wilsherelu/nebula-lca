@@ -1,0 +1,933 @@
+{
+  "schema_version": "nebula.steel-template-graph-upgrade.v1",
+  "template_id": "nebula.iron-steel.bf-bof-crude-steel",
+  "template_version": "1.2.0",
+  "base_template_version": "1.1.0",
+  "source_commit": "ad37d2107e7a7427cfc4808e9af6857abcf99a3f",
+  "change_scope": "exact_electricity_flow_identity_only",
+  "replacements": [
+    {
+      "exchange_id": "ore-sintering::grid-electricity-in",
+      "amount_preserved": 600.0,
+      "unit_preserved": "MJ",
+      "before": {
+        "flowUuid": "222665f3-76a4-5894-a34a-27107e793f08",
+        "flowSourceNamespace": "nebula.standard-lca-seed",
+        "flowVersion": "1.3.0",
+        "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200c9a66",
+        "flowPropertyVersion": "03.00.003",
+        "unitGroupUuid": "93a60a57-a3c8-11da-a746-0800200c9a66",
+        "unitGroupVersion": "03.00.003",
+        "unit": "MJ",
+        "unitGroup": "Units of energy"
+      },
+      "after": {
+        "flowUuid": "3d76981f-964a-4865-b588-0e067a2a1163",
+        "flowSourceNamespace": "tiangong_open_data",
+        "flowVersion": "01.01.003",
+        "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200c9a66",
+        "flowPropertyVersion": "03.00.003",
+        "unitGroupUuid": "93a60a57-a3c8-11da-a746-0800200c9a66",
+        "unitGroupVersion": "03.00.003",
+        "unit": "MJ",
+        "unitGroup": "Units of energy"
+      }
+    },
+    {
+      "exchange_id": "continuous-casting::grid-electricity-in",
+      "amount_preserved": 25.0,
+      "unit_preserved": "MJ",
+      "before": {
+        "flowUuid": "222665f3-76a4-5894-a34a-27107e793f08",
+        "flowSourceNamespace": "nebula.standard-lca-seed",
+        "flowVersion": "1.3.0",
+        "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200c9a66",
+        "flowPropertyVersion": "03.00.003",
+        "unitGroupUuid": "93a60a57-a3c8-11da-a746-0800200c9a66",
+        "unitGroupVersion": "03.00.003",
+        "unit": "MJ",
+        "unitGroup": "Units of energy"
+      },
+      "after": {
+        "flowUuid": "3d76981f-964a-4865-b588-0e067a2a1163",
+        "flowSourceNamespace": "tiangong_open_data",
+        "flowVersion": "01.01.003",
+        "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200c9a66",
+        "flowPropertyVersion": "03.00.003",
+        "unitGroupUuid": "93a60a57-a3c8-11da-a746-0800200c9a66",
+        "unitGroupVersion": "03.00.003",
+        "unit": "MJ",
+        "unitGroup": "Units of energy"
+      }
+    }
+  ],
+  "exact_graph_sha256": "1f2f763134c2fe61eb75aa0ce1cc5a42daf9b6a026809d8050c7221c92d94d98",
+  "provider_graph_hash": "27b6de665c8db7062d1d94518aecdea35330cf7b84a4e781c62be97d3a20accf",
+  "graph": {
+    "functionalUnit": "1 kg crude steel",
+    "nodes": [
+      {
+        "id": "ore-sintering",
+        "node_kind": "unit_process",
+        "mode": "normalized",
+        "process_uuid": "ccb77787-6ccb-5b7d-9de5-5ee661f4387a",
+        "name": "Iron ore sintering strand",
+        "location": "CN",
+        "reference_product": "Sintered ore",
+        "reference_product_direction": "output",
+        "source_system": "nebula.standard-lca-seed",
+        "technology_description": "Grid or strand sintering of unagglomerated iron ore with coke breeze and limestone flux. ST-03 puts both saleable pellet production and sinter production in this aggregated goods category, and the direct emissions of sintered ore cover the carbonate decomposition and the solid fuel of the mix.",
+        "time_representativeness": "demonstration steady state",
+        "inputs": [
+          {
+            "id": "iron-ore-in",
+            "flowUuid": "fdba4f91-bbc9-5ea8-86d9-2ecb831afe09",
+            "flowSourceNamespace": "nebula.standard-lca-seed",
+            "flowVersion": "1.1.0",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Iron ore concentrate (not agglomerated)",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1490.0,
+            "type": "technosphere",
+            "direction": "input",
+            "isProduct": false
+          },
+          {
+            "id": "limestone-in",
+            "flowUuid": "ca40b889-cf9a-5aac-89c6-45f820da3b65",
+            "flowSourceNamespace": "nebula.standard-lca-seed",
+            "flowVersion": "1.1.0",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Limestone flux for the sinter mix",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 180.0,
+            "type": "technosphere",
+            "direction": "input",
+            "isProduct": false
+          },
+          {
+            "id": "coke-breeze-in",
+            "flowUuid": "89e07856-8713-57ff-b4a8-104b0119975c",
+            "flowSourceNamespace": "nebula.standard-lca-seed",
+            "flowVersion": "1.1.0",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Coke breeze (sintering solid fuel)",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 60.0,
+            "type": "technosphere",
+            "direction": "input",
+            "isProduct": false
+          },
+          {
+            "id": "grid-electricity-in",
+            "flowUuid": "3d76981f-964a-4865-b588-0e067a2a1163",
+            "flowSourceNamespace": "tiangong_open_data",
+            "flowVersion": "01.01.003",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200c9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a3c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Grid electricity, sintering plant",
+            "unit": "MJ",
+            "unitGroup": "Units of energy",
+            "amount": 600.0,
+            "type": "technosphere",
+            "direction": "input",
+            "isProduct": false
+          }
+        ],
+        "outputs": [
+          {
+            "id": "sinter-out",
+            "flowUuid": "f4c2a1b3-c84d-5582-88f7-30cf0626045c",
+            "flowSourceNamespace": "nebula.standard-lca-seed",
+            "flowVersion": "1.1.0",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Sintered ore",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1602.800755,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          },
+          {
+            "id": "co2-sinter-breeze-out",
+            "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+            "flowSourceNamespace": "tiangong_open_data",
+            "flowVersion": "03.00.004",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Carbon dioxide (fossil), sintering solid fuel",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 193.4592,
+            "type": "biosphere",
+            "direction": "output",
+            "isProduct": false,
+            "emission_kind": "combustion",
+            "clause_refs": [
+              "ST-03",
+              "ST-08",
+              "ST-10",
+              "ST-18"
+            ]
+          },
+          {
+            "id": "co2-sinter-carbonate-out",
+            "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+            "flowSourceNamespace": "tiangong_open_data",
+            "flowVersion": "03.00.004",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Carbon dioxide (fossil), limestone carbonate decomposition in the sinter strand",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 74.448,
+            "type": "biosphere",
+            "direction": "output",
+            "isProduct": false,
+            "emission_kind": "process",
+            "clause_refs": [
+              "ST-03",
+              "ST-08",
+              "ST-18"
+            ]
+          }
+        ],
+        "emissions": []
+      },
+      {
+        "id": "blast-furnace",
+        "node_kind": "unit_process",
+        "mode": "normalized",
+        "process_uuid": "6c426a97-262a-5a7c-877f-8ff58c8eb202",
+        "name": "Blast furnace (liquid pig iron)",
+        "location": "CN",
+        "reference_product": "Liquid pig iron",
+        "reference_product_direction": "output",
+        "source_system": "nebula.standard-lca-seed",
+        "technology_description": "Counter-current shaft furnace reducing sintered iron ore with metallurgical coke, pulverised bituminous coal and injected natural gas. ST-04 makes the liquid hot metal the stream that separates pig iron production from crude steel production, so this node ends at the tap hole.",
+        "time_representativeness": "demonstration steady state",
+        "inputs": [
+          {
+            "id": "sinter-in",
+            "flowUuid": "f4c2a1b3-c84d-5582-88f7-30cf0626045c",
+            "flowSourceNamespace": "nebula.standard-lca-seed",
+            "flowVersion": "1.1.0",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Sintered ore",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1602.800755,
+            "type": "technosphere",
+            "direction": "input",
+            "isProduct": false
+          },
+          {
+            "id": "coke-in",
+            "flowUuid": "1b8ac953-3db1-5fef-8fa7-7112ed40aeb3",
+            "flowSourceNamespace": "nebula.standard-lca-seed",
+            "flowVersion": "1.1.0",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Metallurgical coke",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 400.0,
+            "type": "technosphere",
+            "direction": "input",
+            "isProduct": false
+          },
+          {
+            "id": "pci-coal-in",
+            "flowUuid": "abf85061-0371-5ab5-9426-942df477cd84",
+            "flowSourceNamespace": "nebula.standard-lca-seed",
+            "flowVersion": "1.1.0",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Bituminous coal for pulverised coal injection",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 130.0,
+            "type": "technosphere",
+            "direction": "input",
+            "isProduct": false
+          },
+          {
+            "id": "natural-gas-in",
+            "flowUuid": "345ca664-03ac-55d0-b66b-141c91029812",
+            "flowSourceNamespace": "nebula.standard-lca-seed",
+            "flowVersion": "1.3.0",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Natural gas for furnace injection",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 8.0,
+            "type": "technosphere",
+            "direction": "input",
+            "isProduct": false
+          }
+        ],
+        "outputs": [
+          {
+            "id": "hot-metal-out",
+            "flowUuid": "df1c5ffd-830d-52f4-b600-9a28e8c73013",
+            "flowSourceNamespace": "nebula.standard-lca-seed",
+            "flowVersion": "1.1.0",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Liquid pig iron (hot metal)",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 923.297,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          },
+          {
+            "id": "bf-slag-out",
+            "flowUuid": "e4019f2f-542c-59f4-afbd-cee42dd4915f",
+            "flowSourceNamespace": "nebula.standard-lca-seed",
+            "flowVersion": "1.1.0",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Blast furnace slag",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 424.122369,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": false
+          },
+          {
+            "id": "co2-bf-reduction-out",
+            "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+            "flowSourceNamespace": "tiangong_open_data",
+            "flowVersion": "03.00.004",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Carbon dioxide (fossil), reduction of iron oxides in the burden",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 524.748873,
+            "type": "biosphere",
+            "direction": "output",
+            "isProduct": false,
+            "emission_kind": "process",
+            "clause_refs": [
+              "ST-04",
+              "ST-10",
+              "ST-18"
+            ]
+          },
+          {
+            "id": "co2-bf-raceway-out",
+            "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+            "flowSourceNamespace": "tiangong_open_data",
+            "flowVersion": "03.00.004",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Carbon dioxide (fossil), raceway combustion of coke and injected carbon",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 976.902701,
+            "type": "biosphere",
+            "direction": "output",
+            "isProduct": false,
+            "emission_kind": "combustion",
+            "clause_refs": [
+              "ST-10",
+              "ST-18"
+            ]
+          }
+        ],
+        "emissions": []
+      },
+      {
+        "id": "basic-oxygen-converter",
+        "node_kind": "unit_process",
+        "mode": "normalized",
+        "process_uuid": "b601279e-2bc5-5a33-8b0d-07ca234d7fbb",
+        "name": "Basic oxygen converter",
+        "location": "CN",
+        "reference_product": "Liquid steel",
+        "reference_product_direction": "output",
+        "source_system": "nebula.standard-lca-seed",
+        "technology_description": "Top-blown oxygen converter decarburising hot metal with scrap as the cooling charge and limestone as the flux. ST-08 requires the carbon in and out of the vessel to be read by the mass balance method with the published factor f, and the carbonate flux decomposes inside the same vessel.",
+        "time_representativeness": "demonstration steady state",
+        "inputs": [
+          {
+            "id": "hot-metal-in",
+            "flowUuid": "df1c5ffd-830d-52f4-b600-9a28e8c73013",
+            "flowSourceNamespace": "nebula.standard-lca-seed",
+            "flowVersion": "1.1.0",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Liquid pig iron (hot metal)",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 923.297,
+            "type": "technosphere",
+            "direction": "input",
+            "isProduct": false
+          },
+          {
+            "id": "scrap-in",
+            "flowUuid": "74d988a9-b09d-5549-9672-64234caa6f0a",
+            "flowSourceNamespace": "nebula.standard-lca-seed",
+            "flowVersion": "1.1.0",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Steel scrap",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 150.0,
+            "type": "technosphere",
+            "direction": "input",
+            "isProduct": false
+          },
+          {
+            "id": "limestone-in",
+            "flowUuid": "ca40b889-cf9a-5aac-89c6-45f820da3b65",
+            "flowSourceNamespace": "nebula.standard-lca-seed",
+            "flowVersion": "1.1.0",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Limestone flux for the converter",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 45.0,
+            "type": "technosphere",
+            "direction": "input",
+            "isProduct": false
+          }
+        ],
+        "outputs": [
+          {
+            "id": "liquid-steel-out",
+            "flowUuid": "af57ba56-81ba-58f9-a753-c50d578dc816",
+            "flowSourceNamespace": "nebula.standard-lca-seed",
+            "flowVersion": "1.1.0",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Liquid steel from the converter",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1020.0,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          },
+          {
+            "id": "converter-slag-out",
+            "flowUuid": "320a0821-db11-57c9-a1fb-a5f964b998aa",
+            "flowSourceNamespace": "nebula.standard-lca-seed",
+            "flowVersion": "1.1.0",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Converter slag",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 41.396796,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": false
+          },
+          {
+            "id": "co2-converter-decarburisation-out",
+            "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+            "flowSourceNamespace": "tiangong_open_data",
+            "flowVersion": "03.00.004",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Carbon dioxide (fossil), decarburisation of the hot metal and scrap carbon",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 152.56896,
+            "type": "biosphere",
+            "direction": "output",
+            "isProduct": false,
+            "emission_kind": "process",
+            "clause_refs": [
+              "ST-08",
+              "ST-18"
+            ]
+          },
+          {
+            "id": "co2-converter-flux-out",
+            "flowUuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+            "flowSourceNamespace": "tiangong_open_data",
+            "flowVersion": "03.00.004",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Carbon dioxide (fossil), limestone carbonate decomposition in the converter",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 18.612,
+            "type": "biosphere",
+            "direction": "output",
+            "isProduct": false,
+            "emission_kind": "process",
+            "clause_refs": [
+              "ST-08",
+              "ST-18"
+            ]
+          }
+        ],
+        "emissions": []
+      },
+      {
+        "id": "secondary-metallurgy-and-degassing",
+        "node_kind": "unit_process",
+        "mode": "normalized",
+        "process_uuid": "d422196a-2dba-5c98-ba7a-7c86f1d6ec6b",
+        "name": "Secondary metallurgy and vacuum degassing",
+        "location": "CN",
+        "reference_product": "Treated steel",
+        "reference_product_direction": "output",
+        "source_system": "nebula.standard-lca-seed",
+        "technology_description": "Ladle metallurgy and vacuum degassing between the converter and the caster, named by the ST-06 process list. No alloying element, protective gas or refractory material is authored for this node in version 1.1.0, which is modeling gap MG-S09.",
+        "time_representativeness": "demonstration steady state",
+        "inputs": [
+          {
+            "id": "liquid-steel-in",
+            "flowUuid": "af57ba56-81ba-58f9-a753-c50d578dc816",
+            "flowSourceNamespace": "nebula.standard-lca-seed",
+            "flowVersion": "1.1.0",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Liquid steel from the converter",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1020.0,
+            "type": "technosphere",
+            "direction": "input",
+            "isProduct": false
+          }
+        ],
+        "outputs": [
+          {
+            "id": "treated-steel-out",
+            "flowUuid": "a5d9b9da-dd04-5a82-968a-ec0b131c3f33",
+            "flowSourceNamespace": "nebula.standard-lca-seed",
+            "flowVersion": "1.1.0",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Secondary metallurgy treated steel",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1020.0,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          }
+        ],
+        "emissions": []
+      },
+      {
+        "id": "continuous-casting",
+        "node_kind": "unit_process",
+        "mode": "normalized",
+        "process_uuid": "ea66dbd3-03e1-5ff8-a1d0-9662604392c0",
+        "name": "Continuous slab caster",
+        "location": "CN",
+        "reference_product": "Crude steel slab",
+        "reference_product_direction": "output",
+        "source_system": "nebula.standard-lca-seed",
+        "technology_description": "Strand casting of the treated steel into the slab that leaves the installation as the declared good. ST-06 names continuous casting as the last process of the crude steel boundary and ST-07 keeps only primary hot rolling and rough forging beyond it.",
+        "time_representativeness": "demonstration steady state",
+        "inputs": [
+          {
+            "id": "treated-steel-in",
+            "flowUuid": "a5d9b9da-dd04-5a82-968a-ec0b131c3f33",
+            "flowSourceNamespace": "nebula.standard-lca-seed",
+            "flowVersion": "1.1.0",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Secondary metallurgy treated steel",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1020.0,
+            "type": "technosphere",
+            "direction": "input",
+            "isProduct": false
+          },
+          {
+            "id": "grid-electricity-in",
+            "flowUuid": "3d76981f-964a-4865-b588-0e067a2a1163",
+            "flowSourceNamespace": "tiangong_open_data",
+            "flowVersion": "01.01.003",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200c9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a3c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Grid electricity, caster mould and tundish drives",
+            "unit": "MJ",
+            "unitGroup": "Units of energy",
+            "amount": 25.0,
+            "type": "technosphere",
+            "direction": "input",
+            "isProduct": false
+          }
+        ],
+        "outputs": [
+          {
+            "id": "crude-steel-slab-out",
+            "flowUuid": "e31064bf-4268-5617-b79d-8b7f326d966e",
+            "flowSourceNamespace": "nebula.standard-lca-seed",
+            "flowVersion": "1.1.0",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Crude steel slab (continuously cast semi-finished product)",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 1000.0,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": true
+          },
+          {
+            "id": "casting-crop-out",
+            "flowUuid": "f44cc9da-b3a8-583e-963d-4ac456a4cd49",
+            "flowSourceNamespace": "nebula.standard-lca-seed",
+            "flowVersion": "1.1.0",
+            "flowPropertyUuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+            "flowPropertyVersion": "03.00.003",
+            "unitGroupUuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+            "unitGroupVersion": "03.00.003",
+            "name": "Continuous casting crop and return scrap cut off at the caster",
+            "unit": "kg",
+            "unitGroup": "Units of mass",
+            "amount": 20.0,
+            "type": "technosphere",
+            "direction": "output",
+            "isProduct": false
+          }
+        ],
+        "emissions": []
+      }
+    ],
+    "exchanges": [
+      {
+        "id": "edge-sinter-to-furnace",
+        "fromNode": "ore-sintering",
+        "toNode": "blast-furnace",
+        "sourcePortId": "sinter-out",
+        "targetPortId": "sinter-in",
+        "flowUuid": "f4c2a1b3-c84d-5582-88f7-30cf0626045c",
+        "flowName": "Sintered ore",
+        "quantityMode": "single",
+        "amount": 1602.800755,
+        "providerAmount": 1602.800755,
+        "consumerAmount": 1602.800755,
+        "unit": "kg",
+        "type": "technosphere",
+        "allocation": "none"
+      },
+      {
+        "id": "edge-hot-metal-to-converter",
+        "fromNode": "blast-furnace",
+        "toNode": "basic-oxygen-converter",
+        "sourcePortId": "hot-metal-out",
+        "targetPortId": "hot-metal-in",
+        "flowUuid": "df1c5ffd-830d-52f4-b600-9a28e8c73013",
+        "flowName": "Liquid pig iron (hot metal)",
+        "quantityMode": "single",
+        "amount": 923.297,
+        "providerAmount": 923.297,
+        "consumerAmount": 923.297,
+        "unit": "kg",
+        "type": "technosphere",
+        "allocation": "none"
+      },
+      {
+        "id": "edge-liquid-steel",
+        "fromNode": "basic-oxygen-converter",
+        "toNode": "secondary-metallurgy-and-degassing",
+        "sourcePortId": "liquid-steel-out",
+        "targetPortId": "liquid-steel-in",
+        "flowUuid": "af57ba56-81ba-58f9-a753-c50d578dc816",
+        "flowName": "Liquid steel from the converter",
+        "quantityMode": "single",
+        "amount": 1020.0,
+        "providerAmount": 1020.0,
+        "consumerAmount": 1020.0,
+        "unit": "kg",
+        "type": "technosphere",
+        "allocation": "none"
+      },
+      {
+        "id": "edge-treated-steel",
+        "fromNode": "secondary-metallurgy-and-degassing",
+        "toNode": "continuous-casting",
+        "sourcePortId": "treated-steel-out",
+        "targetPortId": "treated-steel-in",
+        "flowUuid": "a5d9b9da-dd04-5a82-968a-ec0b131c3f33",
+        "flowName": "Secondary metallurgy treated steel",
+        "quantityMode": "single",
+        "amount": 1020.0,
+        "providerAmount": 1020.0,
+        "consumerAmount": 1020.0,
+        "unit": "kg",
+        "type": "technosphere",
+        "allocation": "none"
+      }
+    ],
+    "metadata": {
+      "seed_id": "nebula.iron-steel.bf-bof-crude-steel",
+      "seed_version": "1.1.0",
+      "database_release": "nebula-standard-lca-seeds-1.1.0",
+      "storage_schema_version": "nebula.project.bundle.v1",
+      "functional_unit": {
+        "display_text": "1 kg crude steel",
+        "amount": 1.0,
+        "flow_uuid": "e31064bf-4268-5617-b79d-8b7f326d966e",
+        "flow_source_namespace": "nebula.standard-lca-seed",
+        "flow_version": "1.1.0",
+        "unit": "kg",
+        "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+        "unit_group_version": "03.00.003",
+        "clause_refs": [
+          "ST-01"
+        ],
+        "regulatory_unit": "t crude steel",
+        "conversion": "the CBAM functional unit is one tonne of the CN code good, so the kg model result is divided by the kg_per_tonne contract of boundaries/cbam.json and never by a literal in an operator"
+      },
+      "reference_exchange_id": "continuous-casting::crude-steel-slab-out",
+      "claim_level": "demonstration",
+      "calculation_boundary": "BF-BOF crude steel: ore sintering, blast furnace, basic oxygen converter, secondary metallurgy and degassing and continuous casting, monitored as one production process boundary (ST-06)",
+      "quantity_basis": "one tonne of continuously cast crude steel slab, with the process carbon read by the mass balance method of Annex II point B.3.2 with the published factor f (ST-08); activity figures are demonstration slots, see parameters/activity-data-slots.json",
+      "exclusions": [
+        {
+          "label": "purchase and maintenance of infrastructure and equipment",
+          "clause_refs": [
+            "ST-06"
+          ],
+          "kind": "regulatory_exclusion",
+          "note": "the sector neutral exclusion the framework wording allows; any other excluded label must block import rather than read as zero"
+        },
+        {
+          "label": "finishing rolling, coating and galvanising of iron or steel products",
+          "clause_refs": [
+            "ST-07"
+          ],
+          "kind": "coverage_limit",
+          "state": "not_modelled",
+          "note": "ST-07 admits only primary hot rolling and rough shaping into the crude steel category, so everything beyond it belongs to the iron or steel products boundary of section 3.16 and is modeling gap MG-S01"
+        },
+        {
+          "label": "electric arc furnace and direct reduced iron routes",
+          "clause_refs": [
+            "ST-19"
+          ],
+          "kind": "coverage_limit",
+          "state": "not_modelled",
+          "note": "the electrode and electrode paste source streams belong to the electric arc furnace boundary only, which is why version 1.1.0 has no electrode port; the route itself is modeling gap MG-S03"
+        },
+        {
+          "label": "exported blast furnace gas, coke oven gas and converter gas",
+          "clause_refs": [
+            "ST-10"
+          ],
+          "kind": "coverage_limit",
+          "state": "not_modelled",
+          "note": "the furnace gas carbon is counted where it is generated, so a plant that exports gas to another installation would see a lower numerator; modeling gap MG-S11 records the direction of that bias"
+        }
+      ],
+      "elementary_flow_refs": [
+        {
+          "exchange_id": "ore-sintering::co2-sinter-breeze-out",
+          "source_namespace": "tiangong_open_data",
+          "flow_uuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+          "version": "03.00.004",
+          "flow_property_uuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+          "flow_property_version": "03.00.003",
+          "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+          "unit_group_version": "03.00.003",
+          "unit": "kg",
+          "direction": "output",
+          "compartment": "Emissions to air, unspecified",
+          "emission_kind": "combustion",
+          "clause_refs": [
+            "ST-03",
+            "ST-08",
+            "ST-10",
+            "ST-18"
+          ]
+        },
+        {
+          "exchange_id": "ore-sintering::co2-sinter-carbonate-out",
+          "source_namespace": "tiangong_open_data",
+          "flow_uuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+          "version": "03.00.004",
+          "flow_property_uuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+          "flow_property_version": "03.00.003",
+          "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+          "unit_group_version": "03.00.003",
+          "unit": "kg",
+          "direction": "output",
+          "compartment": "Emissions to air, unspecified",
+          "emission_kind": "process",
+          "clause_refs": [
+            "ST-03",
+            "ST-08",
+            "ST-18"
+          ]
+        },
+        {
+          "exchange_id": "blast-furnace::co2-bf-reduction-out",
+          "source_namespace": "tiangong_open_data",
+          "flow_uuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+          "version": "03.00.004",
+          "flow_property_uuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+          "flow_property_version": "03.00.003",
+          "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+          "unit_group_version": "03.00.003",
+          "unit": "kg",
+          "direction": "output",
+          "compartment": "Emissions to air, unspecified",
+          "emission_kind": "process",
+          "clause_refs": [
+            "ST-04",
+            "ST-10",
+            "ST-18"
+          ]
+        },
+        {
+          "exchange_id": "blast-furnace::co2-bf-raceway-out",
+          "source_namespace": "tiangong_open_data",
+          "flow_uuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+          "version": "03.00.004",
+          "flow_property_uuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+          "flow_property_version": "03.00.003",
+          "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+          "unit_group_version": "03.00.003",
+          "unit": "kg",
+          "direction": "output",
+          "compartment": "Emissions to air, unspecified",
+          "emission_kind": "combustion",
+          "clause_refs": [
+            "ST-10",
+            "ST-18"
+          ]
+        },
+        {
+          "exchange_id": "basic-oxygen-converter::co2-converter-decarburisation-out",
+          "source_namespace": "tiangong_open_data",
+          "flow_uuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+          "version": "03.00.004",
+          "flow_property_uuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+          "flow_property_version": "03.00.003",
+          "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+          "unit_group_version": "03.00.003",
+          "unit": "kg",
+          "direction": "output",
+          "compartment": "Emissions to air, unspecified",
+          "emission_kind": "process",
+          "clause_refs": [
+            "ST-08",
+            "ST-18"
+          ]
+        },
+        {
+          "exchange_id": "basic-oxygen-converter::co2-converter-flux-out",
+          "source_namespace": "tiangong_open_data",
+          "flow_uuid": "08a91e70-3ddc-11dd-923d-0050c2490048",
+          "version": "03.00.004",
+          "flow_property_uuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+          "flow_property_version": "03.00.003",
+          "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+          "unit_group_version": "03.00.003",
+          "unit": "kg",
+          "direction": "output",
+          "compartment": "Emissions to air, unspecified",
+          "emission_kind": "process",
+          "clause_refs": [
+            "ST-08",
+            "ST-18"
+          ]
+        }
+      ],
+      "issues": [
+        {
+          "code": "DEMONSTRATION_MASS_BALANCE_BASIS",
+          "severity": "warning",
+          "path": "graph",
+          "message": "Coefficients derive from the authored carbon book in parameters/carbon-content.json and from the standard factor rows cited in parameters/annex-ii-point-g-standard-factors.json, or are labelled demonstration activity slots. They are not an installation measurement and not a filing value."
+        },
+        {
+          "code": "ELEMENTARY_IDENTITY_RESOLVED_BY_CATALOG",
+          "severity": "info",
+          "path": "graph.nodes.*.outputs.*.flowSourceNamespace",
+          "message": "Every biosphere port carries the exact provider identity returned by POST /api/provider/v1/catalog/resolve on the acceptance engine, whose provenance is recorded in model/flow-dependencies.json. The GET /api/reference/flows endpoint reads null for these fields and is not the source of this identity."
+        },
+        {
+          "code": "NODE_BALANCE_OPEN_WITH_GAP",
+          "severity": "warning",
+          "path": "graph.nodes",
+          "message": "Three of the five process nodes do not close on their own authored mass, because the blast air, the lance oxygen and the natural gas hydrogen oxidation are not ports of this model. boundaries/mfa.json reports the residual and explains it term by term instead of inventing a closing coefficient (modeling gap MG-S09)."
+        }
+      ]
+    }
+  }
+}

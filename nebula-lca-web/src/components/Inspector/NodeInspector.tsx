@@ -3,6 +3,7 @@ import type { Node } from "@xyflow/react";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { AllocationBasisMethod, FlowPort, LcaNodeData, ProcessMode, UnitGroupSwitchSnapshot } from "../../model/node";
+import { uniquePinnedFlowIdentity } from "../../model/pinnedFlowIdentity";
 import { useLcaGraphStore } from "../../store/lcaGraphStore";
 import { CreateFlowDialog } from "../CreateFlowDialog";
 import { FlowAllocationPropertiesModal, type FlowAllocationProperty } from "../FlowAllocationPropertiesModal";
@@ -234,6 +235,10 @@ function toPortFromReference(flow: CatalogFlow, direction: "input" | "output", t
     flowUuid: flow.flow_uuid,
     flowSourceNamespace: String(flow.source_namespace ?? "").trim() || undefined,
     flowVersion: String(flow.source_version ?? "").trim() || undefined,
+    flowPropertyUuid: String(flow.tidas_flow_property_uuid ?? "").trim() || undefined,
+    flowPropertyVersion: String(flow.flow_property_version ?? "").trim() || undefined,
+    unitGroupUuid: String(flow.unit_group_uuid ?? "").trim() || undefined,
+    unitGroupVersion: String(flow.unit_group_version ?? "").trim() || undefined,
     name: flow.flow_name,
     flowNameEn: String(flow.flow_name_en ?? "").trim() || undefined,
     unit: flow.default_unit || "kg",
@@ -569,6 +574,9 @@ export function NodeInspector({
   const nodes = useLcaGraphStore((state) => state.nodes);
   const getPortDisplayName = (port: FlowPort): string => {
     const localizedName = getLocalizedText(port.name, uiLanguage, port.name);
+    if (port.flowSourceNamespace && port.flowVersion) {
+      return uiLanguage === "en" ? String(port.flowNameEn ?? "").trim() || localizedName : localizedName;
+    }
     if (uiLanguage !== "en") {
       return String(flowNameZhByUuid[port.flowUuid] ?? "").trim() || localizedName;
     }
@@ -1544,15 +1552,18 @@ export function NodeInspector({
     } else {
       params.set("type", "intermediate_flow");
     }
-    const sourceSpace = flowSourceSpaceForRequest(flowSourceFilter, sourcePolicy, isElementaryTarget);
+    const versionedOpen = flowSourceFilter === "versioned_open";
+    const sourceSpace = versionedOpen ? "" : flowSourceSpaceForRequest(flowSourceFilter, sourcePolicy, isElementaryTarget);
     if (sourceSpace) {
       params.set("source_space", sourceSpace);
     }
-    if (isElementaryTarget && flowConversionCompatibleOnly) {
+    if (versionedOpen) {
+      params.set("source_namespace", "tiangong_open_data");
+    } else if (isElementaryTarget && flowConversionCompatibleOnly) {
       params.set("conversion_target", "ef_tidas");
     }
     params.set("_ts", String(Date.now()));
-    const endpoint = `${API_BASE}/flows?${params.toString()}`;
+    const endpoint = `${API_BASE}/${versionedOpen ? "flow-versions" : "flows"}?${params.toString()}`;
     fetch(endpoint, { cache: "no-store" })
       .then((resp) => {
         if (!resp.ok) {
@@ -1601,6 +1612,10 @@ export function NodeInspector({
               source: (row.source as string | null | undefined) ?? null,
               source_namespace: (row.source_namespace as string | null | undefined) ?? null,
               source_version: (row.source_version as string | null | undefined) ?? null,
+              tidas_flow_property_uuid: (row.tidas_flow_property_uuid as string | null | undefined) ?? null,
+              flow_property_version: (row.flow_property_version as string | null | undefined) ?? null,
+              unit_group_uuid: (row.unit_group_uuid as string | null | undefined) ?? null,
+              unit_group_version: (row.unit_group_version as string | null | undefined) ?? null,
               version_label: (row.version_label as string | null | undefined) ?? null,
               is_custom: Boolean(row.is_custom),
               conversion_compatible: Boolean(row.conversion_compatible),
@@ -1878,7 +1893,13 @@ export function NodeInspector({
     const isElementary = target.endsWith("elementary");
     const direction = isInput ? "input" : "output";
     const type = isElementary ? "biosphere" : "technosphere";
-    const newPort = toPortFromReference(flow, direction, type);
+    const catalogPort = toPortFromReference(flow, direction, type);
+    const inheritedIdentity = (!catalogPort.flowSourceNamespace || !catalogPort.flowVersion)
+      ? uniquePinnedFlowIdentity(flow.flow_uuid, nodes.flatMap(item => [
+        ...(item.data.inputs ?? []), ...(item.data.outputs ?? []),
+      ]))
+      : null;
+    const newPort = inheritedIdentity ? { ...catalogPort, ...inheritedIdentity } : catalogPort;
     if (marketProcess && !isInput && !isElementary) {
       replaceMarketOutputFlow(node.id, {
         flowUuid: newPort.flowUuid,

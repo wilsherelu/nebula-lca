@@ -1,0 +1,4 @@
+﻿flow_uuid,flow_name_zh,flow_name_en,default_unit,unit_group,compartment,updated_at
+08a91e70-3ddc-11dd-923d-0050c2490048,"二氧化碳, 化石来源",carbon dioxide (fossil),kg,Units of mass,"Emissions;Emissions to air;Emissions to air, unspecified",2012-01-12T15:51:24.775+01:00
+f79d0f8f-2b0e-49cb-bed0-b1ea0fbd8625,氮氧化物,Nitrogen oxides,kg,Units of mass,"Emissions;Emissions to air;Emissions to air, unspecified",2012-01-20T10:26:17+01:00
+fe0acd60-3ddc-11dd-ac48-0050c2490048,二氧化硫,sulfur dioxide,kg,Units of mass,"Emissions;Emissions to air;Emissions to air, unspecified",2012-01-12T15:52:39.350+01:00

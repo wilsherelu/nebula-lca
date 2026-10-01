@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..services.native_project_bundle import NativeBundleError, export_project_bundle, import_project_bundle
+from ..services.native_project_bundle import NativeBundleError, export_project_bundle, import_project_bundle, import_catalog_flows_from_bundle
 
 
 router = APIRouter(prefix="/api/native-project-bundles", tags=["native-project-bundles"])
@@ -43,3 +43,15 @@ async def restore_project_bundle(
         return import_project_bundle(db, payload, conflict_policy=conflict_policy)
     except NativeBundleError as exc:
         raise HTTPException(status_code=422, detail={"code": "INVALID_NATIVE_PROJECT_BUNDLE", "message": str(exc)}) from exc
+
+
+@router.post("/import-catalog-flows")
+async def restore_catalog_flows(
+    file: UploadFile = File(...),
+    flow_uuid: list[str] = Query(...),
+    db: Session = Depends(get_db),
+):
+    try:
+        return import_catalog_flows_from_bundle(db, await file.read(), flow_uuid)
+    except NativeBundleError as exc:
+        raise HTTPException(status_code=422, detail={"code": "INVALID_NATIVE_CATALOG_FLOW_IMPORT", "message": str(exc)}) from exc

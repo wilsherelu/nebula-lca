@@ -22,7 +22,7 @@ from sqlalchemy import case, func as sqla_func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import FlowRecord, UnitDefinition, UnitGroup
+from ..models import FlowRecord, FlowVersionRecord, UnitDefinition, UnitGroup
 from ..source_policy import get_tidas_allowed_unit_groups
 from ..schemas import (
     CreateFlowRequest,
@@ -171,6 +171,77 @@ def _ensure_allocation_properties_editable(row: FlowRecord) -> None:
 @api_router.get("/api/reference/flows/{flow_uuid}", response_model=FlowOut)
 def get_reference_flow(flow_uuid: str, db: Session = Depends(get_db)) -> FlowOut:
     return _flow_out_extended(_find_flow_or_404(flow_uuid, db))
+
+
+def _versioned_flow_item(row: FlowVersionRecord, catalog: FlowRecord | None) -> FlowListItem:
+    return FlowListItem(
+        flow_id=row.flow_uuid,
+        flow_name=row.flow_name,
+        flow_name_en=row.flow_name_en,
+        type=normalize_flow_semantic(row.flow_type) or "intermediate_flow",
+        unit=row.default_unit,
+        unit_group=row.unit_group,
+        category=catalog.compartment if catalog else None,
+        subcompartment=catalog.subcompartment if catalog else None,
+        source=row.source_namespace,
+        source_namespace=row.source_namespace,
+        source_version=row.source_version,
+        content_hash=row.content_hash,
+        version_label=row.version_label,
+        tidas_compatible=True,
+        tidas_unit_group=row.unit_group,
+        tidas_flow_property_uuid=row.flow_property_uuid,
+        flow_property_version=row.flow_property_version,
+        unit_group_uuid=row.unit_group_uuid,
+        unit_group_version=row.unit_group_version,
+    )
+
+
+@api_router.get("/api/flow-versions", response_model=PaginatedFlowsResponse)
+def list_flow_versions_api(
+    search: str | None = Query(default=None),
+    type: str | None = Query(default=None),
+    source_namespace: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=200),
+    db: Session = Depends(get_db),
+) -> PaginatedFlowsResponse:
+    query = db.query(FlowVersionRecord)
+    if source_namespace:
+        query = query.filter(FlowVersionRecord.source_namespace == source_namespace)
+    if type:
+        allowed = {
+            "elementary_flow": "Elementary flow",
+            "product_flow": "Product flow",
+            "waste_flow": "Waste flow",
+        }
+        if type not in allowed:
+            raise HTTPException(status_code=400, detail={"code": "INVALID_REQUEST", "message": "Invalid flow type"})
+        query = query.filter(FlowVersionRecord.flow_type == allowed[type])
+    if search and search.strip():
+        token = f"%{search.strip().lower()}%"
+        query = query.filter(
+            sqla_func.lower(FlowVersionRecord.flow_name).like(token)
+            | sqla_func.lower(sqla_func.coalesce(FlowVersionRecord.flow_name_en, "")).like(token)
+            | sqla_func.lower(FlowVersionRecord.flow_uuid).like(token)
+        )
+    total = query.count()
+    rows = query.order_by(FlowVersionRecord.flow_name, FlowVersionRecord.source_namespace,
+                          FlowVersionRecord.flow_uuid, FlowVersionRecord.source_version).offset((page - 1) * page_size).limit(page_size).all()
+    catalog = {item.flow_uuid: item for item in db.query(FlowRecord).filter(
+        FlowRecord.flow_uuid.in_([row.flow_uuid for row in rows])).all()} if rows else {}
+    return PaginatedFlowsResponse(items=[_versioned_flow_item(row, catalog.get(row.flow_uuid)) for row in rows],
+                                  total=total, page=page, page_size=page_size)
+
+
+@api_router.get("/api/flow-versions/{source_namespace}/{flow_uuid}/{source_version}", response_model=FlowListItem)
+def get_flow_version_api(source_namespace: str, flow_uuid: str, source_version: str,
+                         db: Session = Depends(get_db)) -> FlowListItem:
+    row = db.query(FlowVersionRecord).filter_by(source_namespace=source_namespace,
+                                                flow_uuid=flow_uuid, source_version=source_version).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Flow version not found")
+    return _versioned_flow_item(row, db.get(FlowRecord, row.flow_uuid))
 
 
 # ── Custom flow creation ────────────────────────────────────────────────

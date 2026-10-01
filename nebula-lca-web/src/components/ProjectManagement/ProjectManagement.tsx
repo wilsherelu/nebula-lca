@@ -183,6 +183,7 @@ type Props = {
   projects: ProjectListItem[];
   busy?: boolean;
   uiLanguage?: "zh" | "en";
+  oneReturnOrigin?: string;
   onChangeLanguage?: (lang: "zh" | "en") => void;
   onStatus?: (text: string) => void;
   onOpenProject: (projectId: string, projectName?: string, repairTarget?: TidasRepairTarget) => void;
@@ -1530,7 +1531,7 @@ function TidasExportModal(props: {
 }
 
 export function ProjectManagement(props: Props) {
-  const { projects, busy, uiLanguage = "zh", onChangeLanguage, onStatus, onOpenProject, onCreateProject, onDeleteProject, onCreateProcess } = props;
+  const { projects, busy, uiLanguage = "zh", oneReturnOrigin, onChangeLanguage, onStatus, onOpenProject, onCreateProject, onDeleteProject, onCreateProcess } = props;
   const zh = uiLanguage === "zh";
   const [activeModule, setActiveModule] = useState<NavModule>("project");
   const [activeItem, setActiveItem] = useState<NavItem>("recent_projects");
@@ -2316,6 +2317,7 @@ export function ProjectManagement(props: Props) {
     <div className="pm-layout">
       <header className="pm-topbar">
         <div className="pm-logo">{zh ? "星云 LCA" : "Nebula LCA"}</div>
+        {oneReturnOrigin && <a className="pm-return-one" href={oneReturnOrigin}>{zh ? "返回 Nebula One" : "Return to Nebula One"}</a>}
         {onChangeLanguage && (
           <div className="lang-switch">
             <button

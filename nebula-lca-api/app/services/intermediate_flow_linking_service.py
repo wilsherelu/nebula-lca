@@ -980,6 +980,8 @@ def list_provider_candidates(
         for row in db.query(LciProcessVector.process_uuid).filter(LciProcessVector.nnz > 0).all()
     }
     providers: list[dict[str, Any]] = []
+    from .provider_mapped_background import mapped_process_content_hash
+
     for row in rows:
         process_json = row.process_json if isinstance(row.process_json, dict) else {}
         source_file = str(row.source_file or "")
@@ -992,6 +994,7 @@ def list_provider_candidates(
         ).strip()
         if reference_uuid != target_flow_uuid:
             continue
+        vector = db.get(LciProcessVector, row.process_uuid) if row.process_uuid in vector_ids else None
         providers.append({
             "process_uuid": row.process_uuid,
             "process_name": row.process_name,
@@ -1002,7 +1005,10 @@ def list_provider_candidates(
             "reference_product_name": str(process_json.get("reference_product") or ""),
             "reference_product_unit": str(process_json.get("reference_product_unit") or ""),
             "has_lci_vector": row.process_uuid in vector_ids,
-            "vector_nnz": int(db.get(LciProcessVector, row.process_uuid).nnz) if row.process_uuid in vector_ids else 0,
+            "vector_nnz": int(vector.nnz) if vector is not None else 0,
+            "vector_checksum": vector.checksum if vector is not None else None,
+            "database_release": vector.source_package_version if vector is not None else None,
+            "process_content_hash": mapped_process_content_hash(row, vector) if vector is not None and vector.checksum else None,
         })
     providers.sort(key=lambda item: (not item["has_lci_vector"], item["location"], item["process_name"]))
     return providers

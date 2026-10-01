@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   // Electron file:// 协议下必须使用相对路径，否则 /assets/... 会 404
-  base: "./",
+  base: process.env.VITE_WEB_ASSET_BASE || "./",
   plugins: [react()],
   server: {
     proxy: {

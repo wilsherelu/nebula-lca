@@ -1,4 +1,5 @@
 export type NebulaDesktopBridge = {
+  oneOrigin?: string;
   apiBase?: string;
   openLogs?: () => Promise<void>;
   getDiagnostics?: () => Promise<Record<string, unknown>>;

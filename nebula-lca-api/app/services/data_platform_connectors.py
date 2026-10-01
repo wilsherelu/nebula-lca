@@ -1292,7 +1292,9 @@ def _tiangong_unit_group_from_row(row: dict[str, Any]) -> RemoteUnitGroupDTO:
         reference_unit=reference_unit or None,
         source_uuid=str(row.get("id") or "").strip() or None,
         source_version=_row_version(row),
-        source_package_version="tiangong",
+        # The remote dataset identifies the unit group, not the package that
+        # originally installed an equivalent local reference definition.
+        source_package_version=None,
         definitions=definitions,
         metadata={"row": row},
     )

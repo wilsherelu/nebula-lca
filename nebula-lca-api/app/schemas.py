@@ -558,11 +558,15 @@ class FlowListItem(BaseModel):
     source: str | None = None
     source_namespace: str | None = None
     source_version: str | None = None
+    content_hash: str | None = None
     version_label: str | None = None
     is_custom: bool = False
     tidas_compatible: bool = False
     tidas_unit_group: str | None = None
     tidas_flow_property_uuid: str | None = None
+    flow_property_version: str | None = None
+    unit_group_uuid: str | None = None
+    unit_group_version: str | None = None
     tidas_reference_source: str | None = None
     allocation_properties: list[dict] = Field(default_factory=list)
     used_in_processes: int = 0

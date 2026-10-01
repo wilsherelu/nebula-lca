@@ -44,7 +44,7 @@ from app.services.data_platform_connectors import (
     _tiangong_process_from_row,
     encrypt_credential,
 )
-from app.api.data_platforms import _upsert_sync_record
+from app.api.data_platforms import _upsert_sync_record, _upsert_unit_group
 
 
 def _postgrest_requested_ids(url: str) -> list[str]:
@@ -1570,6 +1570,81 @@ def test_sync_record_upsert_reuses_pending_record(client):
         rows = db.query(ExternalDataSyncRecord).filter(ExternalDataSyncRecord.local_kind == "unit_group").all()
         assert len(rows) == 1
         assert rows[0].remote_version == "2"
+    finally:
+        db.close()
+
+
+def test_dependency_import_keeps_exact_reference_package_and_rejects_conflicts(client):
+    from app.services.data_platform_connectors import RemoteUnitDefinitionDTO, RemoteUnitGroupDTO
+
+    account_id = _create_tiangong_account(client)
+    db = _db_module.SessionLocal()
+    try:
+        account = db.get(DataPlatformAccount, account_id)
+        db.add(UnitGroup(name="Units of energy", reference_unit="MJ", source_uuid="energy-uuid",
+                         source_version="03.00.003", source_package_version="reference-seed-v4"))
+        db.add(UnitDefinition(unit_group="Units of energy", unit_name="MJ", factor_to_reference=1.0,
+                              is_reference=True))
+        db.add(UnitDefinition(unit_group="Units of energy", unit_name="kWh", factor_to_reference=3.6,
+                              is_reference=False))
+        db.commit()
+
+        incoming = RemoteUnitGroupDTO(
+            name="Units of energy", reference_unit="MJ", source_uuid="energy-uuid",
+            source_version="03.00.003", source_package_version="tiangong",
+            definitions=[RemoteUnitDefinitionDTO("MJ", 1.0, True),
+                         RemoteUnitDefinitionDTO("kWh", 3.6, False)],
+        )
+        for _ in range(2):
+            _upsert_unit_group(db, account=account, item=incoming)
+            db.commit()
+        assert db.get(UnitGroup, "Units of energy").source_package_version == "reference-seed-v4"
+
+        for conflict in (
+            {"source_version": "03.00.004"},
+            {"source_uuid": "other-uuid"},
+            {"reference_unit": "kWh"},
+            {"definitions": [RemoteUnitDefinitionDTO("kWh", 3.7, False)]},
+        ):
+            from dataclasses import replace
+            with pytest.raises(ConnectorError):
+                _upsert_unit_group(db, account=account, item=replace(incoming, **conflict))
+            db.rollback()
+        assert db.get(UnitGroup, "Units of energy").source_package_version == "reference-seed-v4"
+        assert db.query(UnitDefinition).filter(UnitDefinition.unit_group == "Units of energy").count() == 2
+    finally:
+        db.close()
+
+
+def test_dependency_import_before_seed_recognizes_only_exact_reference_content(client):
+    from app.services.data_platform_connectors import RemoteUnitDefinitionDTO, RemoteUnitGroupDTO
+    from app.tidas_reference import load_tidas_reference_seed
+
+    account_id = _create_tiangong_account(client)
+    seed = load_tidas_reference_seed()
+    energy = next(row for row in seed["unit_groups"] if row["name"] == "Units of energy")
+    definitions = [RemoteUnitDefinitionDTO(unit_name=row["name"],
+                   factor_to_reference=float(row["meanValue"]),
+                   is_reference=row["name"] == energy["reference_unit"])
+                   for row in energy["units"]]
+    exact = RemoteUnitGroupDTO(name=energy["name"], reference_unit=energy["reference_unit"],
+        source_uuid=energy["uuid"], source_version=energy["version"],
+        definitions=definitions)
+    db = _db_module.SessionLocal()
+    try:
+        account = db.get(DataPlatformAccount, account_id)
+        _upsert_unit_group(db, account=account, item=exact)
+        db.commit()
+        assert db.get(UnitGroup, energy["name"]).source_package_version == seed["source_package_version"]
+        _upsert_unit_group(db, account=account, item=exact)
+        db.commit()
+        assert db.query(UnitDefinition).filter(UnitDefinition.unit_group == energy["name"]).count() == len(definitions)
+
+        from dataclasses import replace
+        other = replace(exact, name="Other energy", definitions=[definitions[0]])
+        _upsert_unit_group(db, account=account, item=other)
+        db.commit()
+        assert db.get(UnitGroup, "Other energy").source_package_version == "tiangong"
     finally:
         db.close()
 

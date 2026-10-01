@@ -1,0 +1,170 @@
+{
+  "schema_version": "provider.steel-external-flow-audit.v1",
+  "audit_date": "2026-09-22",
+  "source_model": {
+    "repository": "nebula-one",
+    "commit": "ad37d2107e7a7427cfc4808e9af6857abcf99a3f",
+    "path": "cases/standard-lca-seeds/iron-steel-bf-bof-crude-steel/model/graph.json",
+    "seed_id": "nebula.iron-steel.bf-bof-crude-steel",
+    "seed_version": "1.1.0"
+  },
+  "mapping_package": {
+    "package_id": "nebula-flow-mapping",
+    "package_version": "1.0.0",
+    "package_hash": "fe6b509db146a01ee9d148aa6ca77157d15b15e619616b66418b429bca7c4ebf",
+    "ecoinvent_release_compatibility": "3.11"
+  },
+  "quantity_identities": {
+    "mass": {
+      "flow_property_uuid": "93a60a56-a3c8-11da-a746-0800200b9a66",
+      "flow_property_version": "03.00.003",
+      "unit_group_uuid": "93a60a57-a4c8-11da-a746-0800200c9a66",
+      "unit_group_version": "03.00.003",
+      "unit": "kg"
+    },
+    "electricity_ncv": {
+      "flow_property_uuid": "93a60a56-a3c8-11da-a746-0800200c9a66",
+      "flow_property_version": "03.00.003",
+      "unit_group_uuid": "93a60a57-a3c8-11da-a746-0800200c9a66",
+      "unit_group_version": "03.00.003",
+      "unit": "MJ",
+      "reference_dependency_snapshot_hash": "a2dd2e73af7f461213b626ab1d940eebe360edb06479c49d92a8411dedba3f16"
+    }
+  },
+  "ready_replacements": [
+    {
+      "role": "grid_electricity",
+      "consumer_exchange_ids": [
+        "ore-sintering::grid-electricity-in",
+        "continuous-casting::grid-electricity-in"
+      ],
+      "existing_amounts": [
+        {"exchange_id": "ore-sintering::grid-electricity-in", "amount": 600.0, "unit": "MJ"},
+        {"exchange_id": "continuous-casting::grid-electricity-in", "amount": 25.0, "unit": "MJ"}
+      ],
+      "source_flow": {
+        "source_namespace": "tiangong_open_data",
+        "flow_uuid": "3d76981f-964a-4865-b588-0e067a2a1163",
+        "version": "01.01.003",
+        "content_hash": "d0a8812bc220b6e15e860ca727afeb8bb87e29d8374410ca6456ea8a55e8dc9c",
+        "exact_snapshot_hash": "9bec5e0454e55a4b660edc0fec33816fa3562437f6e84c22c0e18fb85192d854",
+        "name_en": "Alternating current; 1-35 kV; consumption mix, to user; grid-average electricity supply",
+        "flow_property_uuid": "93a60a56-a3c8-11da-a746-0800200c9a66",
+        "flow_property_version": "03.00.003",
+        "unit_group_uuid": "93a60a57-a3c8-11da-a746-0800200c9a66",
+        "unit_group_version": "03.00.003",
+        "unit": "MJ"
+      },
+      "mapping": {
+        "mapping_level": "L2",
+        "mapping_status_required": "user_confirmed",
+        "relationship": "REVIEWED_COMPATIBILITY",
+        "mapping_rule_id": "nebula-flow-mapping-v1:intermediate:3d76981f-964a-4865-b588-0e067a2a1163",
+        "target_flow_uuid": "759b89bd-3aa6-42ad-b767-5bb9ef5d331d",
+        "conversion_rule_id": "energy-mj-to-kwh",
+        "amount_factor": 0.2777777777777778,
+        "source_unit": "MJ",
+        "target_unit": "kWh"
+      },
+      "template_vnext_action": "Replace only the two seed-owned electricity Flow identities. Preserve their declared MJ amounts. Do not select an ecoinvent Process until the user's licensed local catalog returns an explicit provider candidate and its release, vector checksum, and process content hash are pinned."
+    }
+  ],
+  "unresolved_roles": [
+    {
+      "role": "iron_ore",
+      "consumer_exchange_ids": ["ore-sintering::iron-ore-in"],
+      "candidate": {
+        "flow_uuid": "961fd7b3-4d9f-41bc-b703-44cdc4151a4f",
+        "version": "01.01.001",
+        "content_hash": "cdcf73be2c6d2c92123eeefee076c3497d63c3116420a729e4679fbac491eecc",
+        "mapping_level": "L2",
+        "target_flow_uuid": "686827fc-1f4c-44a4-a361-3ba77f0bc855"
+      },
+      "blocker": "The candidate is a generic iron-ore consumption mix. It does not prove the seed's unagglomerated-concentrate basis or 0.604026845637584 kg Fe/kg composition."
+    },
+    {
+      "role": "limestone_flux",
+      "consumer_exchange_ids": [
+        "ore-sintering::limestone-in",
+        "basic-oxygen-converter::limestone-in"
+      ],
+      "candidate": {
+        "flow_uuid": "c431c0c3-3f5e-4b7b-af99-2ebbdcaf5f98",
+        "version": "01.01.002",
+        "content_hash": "939abc5065ec67e652e65c07f402817006929ed7bd663be55587451098de346a",
+        "mapping_level": "L1",
+        "target_flow_uuid": "6dff6412-4b37-4689-8187-f07be186feef"
+      },
+      "blocker": "The strict-identity mapping covers industrial-grade crushed limestone, but the Flow does not prove the seed's metallurgical-flux use or declared 94% CaCO3 composition."
+    },
+    {
+      "role": "coke_breeze",
+      "consumer_exchange_ids": ["ore-sintering::coke-breeze-in"],
+      "candidate": {
+        "flow_uuid": "2934bd2d-a22f-4936-9bd3-20ff707605f4",
+        "version": "01.01.001",
+        "content_hash": "7df8209b04a43cef20c5e5b75930340266a0bcfd4f42f2903e4f247d38985531",
+        "unit": "kg",
+        "declared_ncv_mj_per_kg": 28.435
+      },
+      "blocker": "The exact TianGong Flow is semantically suitable, but mapping package 1.0.0 has no accepted ecoinvent target for it."
+    },
+    {
+      "role": "metallurgical_coke",
+      "consumer_exchange_ids": ["blast-furnace::coke-in"],
+      "candidate": {
+        "flow_uuid": "a94c42b1-7fa9-42f3-a9d1-1e7353e8490d",
+        "version": "01.01.001",
+        "content_hash": "3b768acc13a3c71a3aa967adfc94260f4b25140bea40a5fe9243162118457410",
+        "unit": "kg",
+        "declared_ncv_mj_per_kg": 28.435
+      },
+      "blocker": "The exact TianGong Flow is semantically suitable, but mapping package 1.0.0 has no accepted ecoinvent target for it."
+    },
+    {
+      "role": "pci_bituminous_coal",
+      "consumer_exchange_ids": ["blast-furnace::pci-coal-in"],
+      "candidate": null,
+      "blocker": "The open catalog exposes multiple coal grades and net-calorific-value bases. None proves the seed's PCI material and 0.78 kg C/kg authored composition; several L2 mappings collapse different grades onto one target."
+    },
+    {
+      "role": "natural_gas",
+      "consumer_exchange_ids": ["blast-furnace::natural-gas-in"],
+      "candidate": {
+        "flow_uuid": "4f19ca0e-7b3b-11dd-ad8b-0800200c9a66",
+        "version": "01.01.001",
+        "content_hash": "9dc8ab318b30105bc60105fd0f2f2c4dd86ac195cb213ae398384237b6ce2077",
+        "mapping_level": "L2",
+        "target_flow_uuid": "f56d1311-8d94-40ca-a6ed-86dfb2dc63ea"
+      },
+      "blocker": "The candidate is delivered gaseous natural gas and does not prove the seed's pure-methane mass basis. Replacing the Flow would change the authored composition contract."
+    },
+    {
+      "role": "steel_scrap",
+      "consumer_exchange_ids": ["basic-oxygen-converter::scrap-in"],
+      "candidate": {
+        "flow_uuid": "6cb5e364-ba39-4009-8b40-a76fdc88bc42",
+        "version": "01.01.001",
+        "content_hash": "0113fd9288151182fad364310088b8df30cf95d53d6a9fc50cd0dcbfc96d05e6"
+      },
+      "blocker": "The candidate bundles pretreatment, melting, and sorting and has no accepted mapping. It does not prove the seed's feed-scrap composition or 0.008 kg C/kg assumption."
+    },
+    {
+      "role": "bof_oxygen",
+      "consumer_exchange_ids": [],
+      "candidate": {
+        "flow_uuid": "586f5f9e-dd94-441d-9a6a-aaa19578fd0a",
+        "version": "01.01.000",
+        "content_hash": "00a64a05c60ae767dbcb06844d5c7a00f1c5ce4c07761df7d1318f211cbf8dc2",
+        "unit": "kg"
+      },
+      "blocker": "The old seed has no oxygen input port or activity amount. Adding this steelworks-specific Flow requires a new process balance and cannot be treated as an identity-only migration."
+    }
+  ],
+  "audit_limits": [
+    "Hybrid search results are recall candidates, not automatic replacements.",
+    "No locally licensed ecoinvent Process UUID or inventory is included.",
+    "The current full TianGong reference-master pull failed closed because Flow Property dependencies reference missing Unit Group f6b07a80-d411-312b-9815-f8e4cb8b1bd4; the electricity quantity identity uses the repository's previously verified exact dependency snapshot.",
+    "The historical steel seed and Nebula One repository are not modified by this audit."
+  ]
+}

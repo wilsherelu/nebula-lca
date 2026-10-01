@@ -1,4 +1,5 @@
 import json
+import os
 import hashlib
 import csv
 import uuid
@@ -939,7 +940,12 @@ def _graph_with_solver_unit_defaults(
                 port["unitGroup"] = sem.flow_default_unit_group
                 normalized_amount_by_node_and_port[(node_id, str(port.get("id") or ""))] = default_amount
 
+    node_modes = {str(node.get("id") or ""): node.get("mode") for node in graph_dict.get("nodes", [])}
     for edge in graph_dict.get("exchanges", []) or []:
+        if any(node_modes.get(str(edge.get(side) or "")) == "normalized" for side in ("fromNode", "toNode")):
+            edge["quantityMode"] = "dual"
+            edge.setdefault("providerAmount", edge.get("amount", 0.0))
+            edge.setdefault("consumerAmount", edge.get("amount", 0.0))
         target_port_id = _resolve_edge_port_id(edge.get("targetHandle") or edge.get("target_port_id") or edge.get("targetPortId"), "in")
         source_port_id = _resolve_edge_port_id(edge.get("sourceHandle") or edge.get("source_port_id") or edge.get("sourcePortId"), "out")
         target_amount = normalized_amount_by_node_and_port.get((str(edge.get("toNode") or ""), str(target_port_id or "")))
@@ -1682,6 +1688,14 @@ def _ensure_flow_catalog_fts_triggers(*, db: Session | None = None) -> dict:
         return {"executed": False, "error": str(exc)}
 
 def _bootstrap_reference_data_if_needed(*, db: Session) -> None:
+    selected_profile = os.getenv("NEBULA_REFERENCE_BOOTSTRAP_PROFILE", "").strip()
+    if selected_profile:
+        from .services.selected_reference_bootstrap import bootstrap_selected_references
+
+        result = bootstrap_selected_references(db, Path(selected_profile), ef31_dir=settings.nebula_lca_ef31_dir,
+                                               elementary_source=BUILTIN_ELEMENTARY_FLOW_SOURCE)
+        print(f"[startup-bootstrap] selected reference profile: {result}")
+        return
     if not settings.auto_bootstrap_reference_data_on_startup:
         return
 
@@ -4397,7 +4411,14 @@ def run_solver_and_persist(
         db.refresh(run_job)
         return "completed", run_job.id, solved, hybrid_result.tiangong_like_input
 
-    solver_graph = expand_lci_vectors_into_graph(db, payload.graph).graph
+    expanded = expand_lci_vectors_into_graph(db, payload.graph)
+    if expanded.missing_vectors:
+        raise HTTPException(status_code=409, detail={
+            "code": "LCI_BACKGROUND_VECTOR_MISSING",
+            "message": "Background inventory is unavailable; import its LCI runtime before calculation.",
+            "process_uuids": sorted(set(expanded.missing_vectors)),
+        })
+    solver_graph = expanded.graph
     normalized_graph = _graph_with_solver_unit_defaults(
         db=db,
         graph=solver_graph,
@@ -4460,6 +4481,12 @@ def run_solver_and_persist(
         return "completed", run_job.id, solved, direct_result.tiangong_like_input
 
     lci_expansion = expand_lci_vectors_into_graph(db, payload.graph)
+    if lci_expansion.missing_vectors:
+        raise HTTPException(status_code=409, detail={
+            "code": "LCI_BACKGROUND_VECTOR_MISSING",
+            "message": "Background inventory is unavailable; import its LCI runtime before calculation.",
+            "process_uuids": sorted(set(lci_expansion.missing_vectors)),
+        })
 
     try:
         tiangong_like = to_tiangong_like(

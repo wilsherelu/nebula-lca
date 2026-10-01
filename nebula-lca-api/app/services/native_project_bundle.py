@@ -258,6 +258,41 @@ def _insert_catalog_rows(db: Session, model_cls: type, rows: list[dict[str, Any]
     return inserted
 
 
+def import_catalog_flows_from_bundle(db: Session, data: bytes, flow_uuids: list[str]) -> dict[str, Any]:
+    """Import exact Flow catalog dependencies from a checked native bundle, without its project."""
+    requested = set(flow_uuids)
+    if not requested or len(requested) != len(flow_uuids):
+        raise NativeBundleError("Select one or more distinct Flow UUIDs")
+    manifest, payloads = _read_bundle(data)
+    flows = [row for row in payloads.get("catalog/flows.json", []) if row.get("flow_uuid") in requested]
+    if {row.get("flow_uuid") for row in flows} != requested:
+        raise NativeBundleError("A requested Flow UUID is absent from the pinned bundle")
+    if any(str(row.get("source_namespace") or "").lower().startswith(LICENSED_NAMESPACES) for row in flows):
+        raise NativeBundleError("Licensed background Flow rows cannot be imported as public catalog dependencies")
+    groups = {row["unit_group"] for row in flows}
+    versions = [row for row in payloads.get("catalog/flow_versions.json", [])
+                if row.get("flow_uuid") in requested]
+    issues: list[dict[str, Any]] = []
+    try:
+        counts = {
+            "unit_groups": _insert_catalog_rows(db, UnitGroup,
+                [row for row in payloads.get("catalog/unit_groups.json", []) if row.get("name") in groups],
+                ("name",), issues),
+            "unit_definitions": _insert_catalog_rows(db, UnitDefinition,
+                [row for row in payloads.get("catalog/unit_definitions.json", []) if row.get("unit_group") in groups],
+                ("unit_group", "unit_name"), issues),
+            "flows": _insert_catalog_rows(db, FlowRecord, flows, ("flow_uuid",), issues),
+            "flow_versions": _insert_catalog_rows(db, FlowVersionRecord, versions,
+                ("source_namespace", "flow_uuid", "source_version"), issues),
+        }
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return {"source_project_id": str(manifest["project_id"]),
+            "flow_uuids": sorted(requested), "counts": counts}
+
+
 def import_project_bundle(db: Session, data: bytes, *, conflict_policy: str = "rename") -> dict[str, Any]:
     if conflict_policy not in {"rename", "fail"}:
         raise NativeBundleError("conflict_policy must be rename or fail")

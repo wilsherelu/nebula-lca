@@ -74,6 +74,14 @@ export function NodePalette() {
     setEditingId(null);
   };
 
+  const openItem = (item: (typeof nodes)[number]) => {
+    if (item.data.nodeKind === "pts_module") {
+      enterPtsNode(item.id);
+    } else {
+      openNodeInspector(item.id);
+    }
+  };
+
   return (
     <aside className="panel panel-left">
       <div className="panel-title">
@@ -94,12 +102,14 @@ export function NodePalette() {
             <div
               key={item.id}
               className={`palette-item palette-item-static ${selection.nodeIds.includes(item.id) ? "active" : ""}`}
-              onClick={() => {
-                if (item.data.nodeKind === "pts_module") {
-                  enterPtsNode(item.id);
-                  return;
+              role="button"
+              tabIndex={0}
+              onClick={() => openItem(item)}
+              onKeyDown={(event) => {
+                if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
+                  event.preventDefault();
+                  openItem(item);
                 }
-                openNodeInspector(item.id);
               }}
             >
               <div className="palette-item-name">

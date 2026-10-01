@@ -123,3 +123,45 @@ def test_native_bundle_conflict_policy_fail_is_non_mutating():
         assert db.query(Model).count() == 1
     finally:
         db.close()
+
+
+def test_native_bundle_imports_only_selected_catalog_flows_without_creating_a_project():
+    project_id = seed_project()
+    with TestClient(app) as client:
+        exported = client.get(f"/api/native-project-bundles/projects/{project_id}")
+        db = db_module.SessionLocal()
+        try:
+            db.query(FlowRecord).filter(FlowRecord.flow_uuid == "flow-custom-electricity").delete()
+            db.commit()
+        finally:
+            db.close()
+        route = "/api/native-project-bundles/import-catalog-flows?flow_uuid=flow-custom-electricity"
+        first = client.post(route, files={"file": ("case.nebula.zip", exported.content, "application/zip")})
+        assert first.status_code == 200, first.text
+        assert first.json()["counts"]["flows"] == 1
+        assert first.json()["flow_uuids"] == ["flow-custom-electricity"]
+        replay = client.post(route, files={"file": ("case.nebula.zip", exported.content, "application/zip")})
+        assert replay.status_code == 200, replay.text
+        assert replay.json()["counts"]["flows"] == 0
+        absent = client.post("/api/native-project-bundles/import-catalog-flows?flow_uuid=missing",
+                             files={"file": ("case.nebula.zip", exported.content, "application/zip")})
+        assert absent.status_code == 422
+    db = db_module.SessionLocal()
+    try:
+        assert db.query(Model).count() == 1
+        assert db.query(FlowRecord).filter(FlowRecord.flow_uuid == "flow-custom-electricity").count() == 1
+    finally:
+        db.close()
+
+
+def test_supply_resource_is_excluded_from_model_list_but_remains_selectable():
+    project_id = seed_project()
+    with TestClient(app) as client:
+        marked = client.patch(f"/api/projects/{project_id}", json={"status": "resource"})
+        assert marked.status_code == 200, marked.text
+        assert marked.json()["status"] == "resource"
+        assert client.get("/api/projects").json()["total"] == 0
+        visible_to_supplier_picker = client.get("/api/projects?include_resources=true").json()
+        assert visible_to_supplier_picker["total"] == 1
+        assert visible_to_supplier_picker["items"][0]["project_id"] == project_id
+        assert client.get(f"/api/projects/{project_id}").status_code == 200

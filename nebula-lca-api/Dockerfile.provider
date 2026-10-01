@@ -1,0 +1,18 @@
+FROM python:3.10-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONUTF8=1
+
+WORKDIR /app
+
+COPY nebula-lca-api/requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY nebula-lca-api/ ./
+COPY nebula-lca-solver/app/core/ /nebula-lca-solver/app/core/
+COPY nebula-lca-solver/data/EF3.1/ /nebula-lca-solver/data/EF3.1/
+RUN mkdir -p /app/data/runtime /app/import-cache /app/runtime
+
+EXPOSE 18080
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "18080"]
