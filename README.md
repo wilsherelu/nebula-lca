@@ -12,6 +12,8 @@ It combines:
 
 ## Repository Structure
 
+Public releases do not bundle commercial LCI databases or their vendor characterization tables, imported databases, backups or derived inventory caches. Users import authorized data separately. This applies to Git history, source archives, Docker images and desktop installers. Import support, independently authored identifier mappings and synthetic test fixtures remain distinct from database content. Review archive contents and the final package inventory before release; ignore rules alone are insufficient.
+
 - `nebula-lca-web`: frontend modeling and result interface
 - `nebula-lca-api`: backend validation, model management, and orchestration
 - `nebula-lca-solver`: matrix construction and LCI/LCIA computation service

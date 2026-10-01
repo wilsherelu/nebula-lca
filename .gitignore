@@ -76,3 +76,20 @@ __pycache__/
 
 # per-repo Qwen Code agent settings (non-deterministic, dev-only)
 .qwen/
+
+# User-imported commercial databases are never release inputs.
+commercial-data/
+licensed-data/
+local-databases/
+local-imports/
+import-cache/
+*.spold
+*.spold2
+*ecoinvent*.zip
+*ecoinvent*.7z
+*ecoinvent*.tar*
+*ecoinvent*.xlsx
+*ecoinvent*.csv
+*ecoinvent*.npz
+*ecoinvent*.npy
+*ecoinvent*.parquet
