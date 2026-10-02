@@ -737,7 +737,6 @@ const translateStatusText = (message: string, uiLanguage: "zh" | "en"): string =
     .replace(/^删除项目失败:/, "Project deletion failed:")
     .replace(/^PTS 读取失败:/, "Failed to load PTS:")
     .replace(/^PTS 草稿初始化失败:/, "PTS draft initialization failed:")
-    .replace(/^已自动修复 (\d+) 条归一化连线，线型已同步为虚线。$/, "Automatically repaired $1 normalized edges; line style was synced to dashed.")
     .replace(/警告：/g, "Warning: ")
     .replace(/示例：/g, "Example: ")
     .replace(/ 项。/g, " items. ")

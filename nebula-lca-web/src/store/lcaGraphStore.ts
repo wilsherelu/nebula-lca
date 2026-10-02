@@ -613,7 +613,7 @@ const getNodeMode = (node: Node<LcaNodeData> | undefined): ProcessMode => {
   return node.data.mode ?? "balanced";
 };
 
-const resolveQuantityMode = (
+export const resolveQuantityMode = (
   sourceNode: Node<LcaNodeData> | undefined,
   targetNode: Node<LcaNodeData> | undefined,
 ): "single" | "dual" => {

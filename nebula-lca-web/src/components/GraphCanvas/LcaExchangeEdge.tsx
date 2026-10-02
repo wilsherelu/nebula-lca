@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { BaseEdge, type EdgeProps } from "@xyflow/react";
 import type { LcaEdgeData } from "../../model/exchange";
-import { useLcaGraphStore } from "../../store/lcaGraphStore";
+import { resolveQuantityMode, useLcaGraphStore } from "../../store/lcaGraphStore";
 
 type Point = { x: number; y: number };
 
@@ -125,6 +125,8 @@ const buildClassicCurvePath = (
 
 export function LcaExchangeEdge({
   id,
+  source,
+  target,
   data,
   selected,
   sourceX,
@@ -143,7 +145,11 @@ export function LcaExchangeEdge({
   const totalEdgeCount = edgeData.renderTotalEdgeCount ?? 0;
   const sourceSide = resolveSourceHorizontalSide(edgeData.renderSourceHandle ?? undefined, sourcePosition);
   const targetSide = resolveTargetHorizontalSide(edgeData.renderTargetHandle ?? undefined, targetPosition);
-  const quantityMode = edgeData.quantityMode ?? "single";
+  const nodeQuantityMode = useLcaGraphStore((state) => resolveQuantityMode(
+    state.nodes.find((node) => node.id === source),
+    state.nodes.find((node) => node.id === target),
+  ));
+  const quantityMode = nodeQuantityMode === "dual" ? "dual" : edgeData.quantityMode ?? "single";
   const strokeColor = quantityMode === "single" ? "#2ea44f" : "#8a94a6";
   const pulseColor = quantityMode === "single" ? "#22c55e" : "#94a3b8";
   const stableEdgeSway = useMemo(() => getStableEdgeSway(id), [id]);
