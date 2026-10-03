@@ -740,6 +740,23 @@ def _technosphere_flow_receipts(
     return receipts
 
 
+def _solver_flow_types(graph: HybridGraph, receipts: list[ProviderTechnosphereFlowReceipt]) -> dict[str, str]:
+    """Keep exact catalog semantics at the UUID-keyed solver adapter boundary."""
+    exact = {row.exchange_id: row.flow_type for row in receipts if row.flow_type}
+    types: dict[str, str] = {}
+    for node in graph.nodes:
+        for port in node.inputs + node.outputs + node.emissions:
+            flow_type = exact.get(f"{node.id}::{port.id}") or (
+                "Elementary flow" if port.type == "biosphere" else "Product flow")
+            previous = types.get(port.flowUuid)
+            if previous is not None and previous != flow_type:
+                raise ProviderContractError(422, "SOLVER_FLOW_TYPE_IDENTITY_CONFLICT",
+                    "Exact Flow identities sharing a UUID have incompatible solver types.",
+                    flow_uuid=port.flowUuid, previous_type=previous, flow_type=flow_type)
+            types[port.flowUuid] = flow_type
+    return types
+
+
 def _resolve_demand_process(demand: Any, base: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     refs: dict[str, dict[str, Any]] = base["reference_products"]
     if demand.process_uuid:
@@ -782,6 +799,8 @@ def solve_provider(
             or request.project_background_pins
             or request.elementary_flows
             or request.lcia_methods
+            or any(port.flow_source_namespace == TIDAS_SOURCE_NAMESPACE and port.type == "technosphere"
+                   for node in graph.nodes for port in node.inputs + node.outputs)
         )
         else None
     )
@@ -839,6 +858,10 @@ def solve_provider(
     technosphere_receipts: list[ProviderTechnosphereFlowReceipt] = []
     if request.inline_snapshot is not None:
         _validate_inline_foreground(graph)
+    if request.inline_snapshot is not None or any(
+        port.flow_source_namespace == TIDAS_SOURCE_NAMESPACE and port.type == "technosphere"
+        for node in graph.nodes for port in node.inputs + node.outputs
+    ):
         technosphere_receipts = _technosphere_flow_receipts(
             db,
             graph,
@@ -952,7 +975,7 @@ def solve_provider(
                 path="provenance.solver_build",
             )
         )
-    solver_snapshot = to_tiangong_like(graph)
+    solver_snapshot = to_tiangong_like(graph, flow_type_by_uuid=_solver_flow_types(graph, technosphere_receipts))
     _ensure_embedded_solver_core()
     matrix_builder = importlib.import_module("app.core.matrix_builder")
     base = matrix_builder.build_matrices_from_snapshot(solver_snapshot)
