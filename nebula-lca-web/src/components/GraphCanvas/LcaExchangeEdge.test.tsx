@@ -13,11 +13,12 @@ afterEach(cleanup);
 
 describe("edge style follows process modes", () => {
   it.each([
-    ["normalized", "balanced", true],
-    ["balanced", "normalized", true],
-    ["normalized", "normalized", true],
-    ["balanced", "balanced", false],
-  ] as const)("renders %s -> %s despite a stale single-mode edge", (sourceMode, targetMode, dashed) => {
+    ["normalized", "balanced", "single", true],
+    ["balanced", "normalized", "single", true],
+    ["normalized", "normalized", "single", true],
+    ["balanced", "balanced", "single", false],
+    ["balanced", "balanced", "dual", false],
+  ] as const)("renders %s -> %s despite a stored %s-mode edge", (sourceMode, targetMode, storedMode, dashed) => {
     useLcaGraphStore.getState().importGraph({
       functionalUnit: "1 kg product", metadata: {}, exchanges: [],
       nodes: [
@@ -25,7 +26,7 @@ describe("edge style follows process modes", () => {
         { id: "target", node_kind: "unit_process", mode: targetMode, process_uuid: "target", name: "target", location: "GLO", reference_product: "product", inputs: [], outputs: [] },
       ],
     });
-    const props = { id: "edge", source: "source", target: "target", sourceX: 0, sourceY: 0, targetX: 100, targetY: 0, sourcePosition: Position.Right, targetPosition: Position.Left, data: { quantityMode: "single" }, selected: false };
+    const props = { id: "edge", source: "source", target: "target", sourceX: 0, sourceY: 0, targetX: 100, targetY: 0, sourcePosition: Position.Right, targetPosition: Position.Left, data: { quantityMode: storedMode }, selected: false };
     const { getByTestId } = render(<svg><LcaExchangeEdge {...props} /></svg>);
     expect(getByTestId("edge").style.strokeDasharray).toBe(dashed ? "7 5" : "");
   });

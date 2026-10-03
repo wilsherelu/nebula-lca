@@ -149,7 +149,7 @@ export function LcaExchangeEdge({
     state.nodes.find((node) => node.id === source),
     state.nodes.find((node) => node.id === target),
   ));
-  const quantityMode = nodeQuantityMode === "dual" ? "dual" : edgeData.quantityMode ?? "single";
+  const quantityMode = nodeQuantityMode;
   const strokeColor = quantityMode === "single" ? "#2ea44f" : "#8a94a6";
   const pulseColor = quantityMode === "single" ? "#22c55e" : "#94a3b8";
   const stableEdgeSway = useMemo(() => getStableEdgeSway(id), [id]);
