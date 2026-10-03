@@ -88,6 +88,15 @@ def _flow_name(payload: dict[str, Any]) -> str | None:
     return _localized_text(name.get("baseName") if isinstance(name, dict) else None)
 
 
+def _flow_display_names(payload: dict[str, Any]) -> dict[str, str]:
+    """Keep language tags from the hashed exact payload; never translate or guess."""
+    information = payload.get("flowDataSet", {}).get("flowInformation", {})
+    value = information.get("dataSetInformation", {}).get("name", {}).get("baseName")
+    return {row["@xml:lang"]: text for row in _as_list(value)
+            if isinstance(row, dict) and row.get("@xml:lang")
+            and (text := _localized_text(row))}
+
+
 def _exact_uuid(value: Any, *, field: str) -> str:
     raw = str(value or "").strip()
     try:
@@ -234,6 +243,7 @@ class TidasFlowSnapshotRecord:
     content_hash: str
     source_modified_at: str | None
     classification_path: tuple[str, ...] = ()
+    display_names: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -307,6 +317,8 @@ class TidasFlowSnapshot:
         unit = binding["unit"]
         return {
             "resolution_source": "tidas_exact_snapshot",
+            "name": record.name,
+            "display_names": dict(record.display_names or {}),
             "source_namespace": record.source_namespace,
             "flow_uuid": record.flow_uuid,
             "version": record.version,
@@ -478,6 +490,7 @@ def _load_snapshot(
             version=version,
             flow_type=flow_type,
             name=_flow_name(payload),
+            display_names=_flow_display_names(payload),
             flow_property_uuid=flow_property_uuid,
             flow_property_version=flow_property_version,
             flow_property_mean_value=mean_value,
