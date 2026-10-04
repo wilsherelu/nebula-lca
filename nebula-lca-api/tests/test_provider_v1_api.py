@@ -799,6 +799,8 @@ def test_tidas_snapshot_exact_catalog_and_solve_receipts_do_not_write_database(c
     assert item["status"] == "resolved"
     assert item["value"] == {
         "resolution_source": "tidas_exact_snapshot",
+        "name": "Crude Oil",
+        "display_names": {"en": "Crude Oil"},
         "source_namespace": "tiangong_open_data",
         "flow_uuid": CRUDE_OIL_UUID,
         "version": CRUDE_OIL_VERSION,
