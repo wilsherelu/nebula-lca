@@ -51,7 +51,7 @@ def get_stats_api(db: Session = Depends(get_db)) -> StatsResponse:
     if isinstance(cached, StatsResponse):
         return cached
 
-    projects = db.query(Model).count()
+    projects = db.query(Model).filter(Model.status != "resource").count()
     flows_library_total = db.query(FlowRecord).count()
     process_library_total = db.query(ReferenceProcess).count()
     latest_rows = _cc._latest_graphs_with_project_meta(db)
