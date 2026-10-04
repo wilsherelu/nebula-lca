@@ -1,6 +1,9 @@
 export type NebulaDesktopBridge = {
   oneOrigin?: string;
   apiBase?: string;
+  integratedOne?: boolean;
+  returnToOne?: () => Promise<boolean>;
+  setEditorDirty?: (dirty: boolean) => void;
   openLogs?: () => Promise<void>;
   getDiagnostics?: () => Promise<Record<string, unknown>>;
   chooseImportFile?: () => Promise<string | null>;

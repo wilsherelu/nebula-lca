@@ -1561,6 +1561,7 @@ export function ProjectManagement(props: Props) {
   const [flowTotal, setFlowTotal] = useState(0);
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
+  const [statsError, setStatsError] = useState(false);
   const [tidasImportOpen, setTidasImportOpen] = useState(false);
   const [tidasImportKind, setTidasImportKind] = useState<TidasImportKind>("models");
   const [tidasExportOpen, setTidasExportOpen] = useState(false);
@@ -1907,13 +1908,15 @@ export function ProjectManagement(props: Props) {
           setStats(cached);
         }
         setStatsLoading(!cached);
+        setStatsError(false);
         try {
           const resp = await fetch(`${API_BASE}/stats`);
           if (!resp.ok || cancelled) {
-            if (!cancelled) setStatsLoading(false);
+            if (!cancelled) { setStatsLoading(false); setStatsError(true); }
             return;
           }
           const payload = (await resp.json()) as StatsResponse;
+          if (![payload.projects, payload.processes, payload.flows_library_total ?? payload.flows].every(value => typeof value === 'number' && Number.isFinite(value))) throw new Error('Invalid statistics response');
           const nextStats = {
             projects: Number(payload.projects ?? 0),
             processes: Number(payload.processes ?? 0),
@@ -1925,13 +1928,14 @@ export function ProjectManagement(props: Props) {
             setStats(nextStats);
             writePmCache(cacheKey, nextStats);
             setStatsLoading(false);
+            setStatsError(false);
             setForceStatsRefresh(false);
           }
         } catch {
           if (!cancelled) {
             setStatsLoading(false);
+            setStatsError(true);
           }
-          // keep fallback
         }
       };
       void loadStats();
@@ -1952,7 +1956,7 @@ export function ProjectManagement(props: Props) {
       );
     }
     if (typeof value !== "number" || Number.isNaN(value)) {
-      return "-";
+      return statsError ? (zh ? "加载失败" : "Load failed") : "-";
     }
     return String(value);
   };
@@ -2317,7 +2321,7 @@ export function ProjectManagement(props: Props) {
     <div className="pm-layout">
       <header className="pm-topbar">
         <div className="pm-logo">{zh ? "星云 LCA" : "Nebula LCA"}</div>
-        {oneReturnOrigin && <a className="pm-return-one" href={oneReturnOrigin}>{zh ? "返回 Nebula One" : "Return to Nebula One"}</a>}
+        {window.__NEBULA_DESKTOP__?.integratedOne ? <button type="button" className="pm-return-one" onClick={() => void window.__NEBULA_DESKTOP__?.returnToOne?.()}>{zh ? "返回 Nebula One" : "Return to Nebula One"}</button> : oneReturnOrigin && <a className="pm-return-one" href={oneReturnOrigin}>{zh ? "返回 Nebula One" : "Return to Nebula One"}</a>}
         {onChangeLanguage && (
           <div className="lang-switch">
             <button
@@ -2430,9 +2434,11 @@ export function ProjectManagement(props: Props) {
               <div className="pm-page-head">
                 <div>
                   <h2>{zh ? "LCA 项目" : "LCA Projects"}</h2>
-                  <p>{zh ? "管理和维护你的生命周期评价模型项目" : "Manage and maintain your LCA modeling projects."}</p>
+                  <p>{window.__NEBULA_DESKTOP__?.integratedOne
+                    ? (zh ? "查看已有模型。要将修改用于 One，请从 One 的工艺模板进入建模，保存后返回确认。独立新建或导入模型暂不支持直接转为 One 模板。" : "View existing models. To use changes in One, open modelling from a One process template, save, then return to confirm. Standalone created or imported models cannot yet become One templates directly.")
+                    : (zh ? "管理和维护你的生命周期评价模型项目" : "Manage and maintain your LCA modeling projects.")}</p>
                 </div>
-                <div className="pm-head-actions">
+                {!window.__NEBULA_DESKTOP__?.integratedOne && <div className="pm-head-actions">
                   <input
                     ref={nativeBundleInputRef}
                     type="file"
@@ -2467,7 +2473,7 @@ export function ProjectManagement(props: Props) {
                   >
                     {zh ? "新建" : "Create"}
                   </button>
-                </div>
+                </div>}
               </div>
               {activeItem === "recent_projects" ? (
                 <>

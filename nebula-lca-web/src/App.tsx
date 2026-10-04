@@ -2324,6 +2324,12 @@ export default function App() {
     [canvases, exportGraph, functionalUnit, selectedProductKey, targetProductQuantity, targetProductQuantityMode],
   );
 
+  useEffect(() => {
+    if (!busy) window.__NEBULA_DESKTOP__?.setEditorDirty?.(Boolean(
+      projectId && lastSavedFingerprintRef.current && handoffCurrentFingerprint !== lastSavedFingerprintRef.current,
+    ));
+  }, [busy, projectId, handoffCurrentFingerprint]);
+
   const startLoadPerformanceSpan = useCallback((label: string) => {
     if (typeof performance === "undefined" || typeof performance.mark !== "function") {
       return () => { };
@@ -5931,7 +5937,7 @@ export default function App() {
         </div>
         {activeCanvasKind === "pts_internal" && <span className="topbar-mode-badge">{i18n.ptsMode}</span>}
         <div className="topbar-actions">
-          {fromNebulaOne && !editorHandoff && handoffReturnOrigin && <a className="topbar-secondary-action" href={handoffReturnOrigin}>{i18n.returnToOne}</a>}
+          {window.__NEBULA_DESKTOP__?.integratedOne ? <button type="button" className="topbar-secondary-action" onClick={() => void window.__NEBULA_DESKTOP__?.returnToOne?.()}>{i18n.returnToOne}</button> : fromNebulaOne && !editorHandoff && handoffReturnOrigin && <a className="topbar-secondary-action" href={handoffReturnOrigin}>{i18n.returnToOne}</a>}
           {editorHandoff && (
             <button
               type="button"
