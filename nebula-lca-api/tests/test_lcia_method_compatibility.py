@@ -255,6 +255,12 @@ def test_unconfigured_licensed_conversion_returns_503(client, monkeypatch):
     response = client.get("/api/flows?type=elementary_flow&conversion_target=ef_tidas")
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "ELEMENTARY_FLOW_MAPPING_PACKAGE_UNAVAILABLE"
+    from app.services.elementary_flow_conversion_service import get_elementary_flow_mapping_registry
+    from app.services.provider_contract import ProviderContractError
+    with pytest.raises(ProviderContractError) as unavailable:
+        get_elementary_flow_mapping_registry()
+    assert unavailable.value.status_code == 503
+    assert unavailable.value.code == "ELEMENTARY_FLOW_MAPPING_PACKAGE_UNAVAILABLE"
     clear_elementary_flow_mapping_registry_cache()
 
 

@@ -15,6 +15,7 @@ from ..elementary_flow_conversion.package_loader import configured_mapping_packa
 from ..flow_unit_semantics import build_unit_reference_maps, resolve_flow_port_unit_semantics
 from ..models import FlowRecord, ReferenceProcess
 from ..source_policy import SOURCE_SPACE_TIANGONG, classify_flow_source
+from .provider_contract import ProviderContractError
 
 
 MAPPING_MISSING = "ELEMENTARY_FLOW_MAPPING_MISSING"
@@ -170,7 +171,13 @@ class ElementaryFlowMappingRegistry:
 
 @lru_cache(maxsize=1)
 def get_elementary_flow_mapping_registry() -> ElementaryFlowMappingRegistry:
-    return ElementaryFlowMappingRegistry()
+    try:
+        return ElementaryFlowMappingRegistry()
+    except (OSError, ValueError) as exc:
+        raise ProviderContractError(
+            503, MAPPING_PACKAGE_UNAVAILABLE,
+            "The locally supplied certified GHG mapping package is unavailable or invalid.",
+        ) from exc
 
 
 def clear_elementary_flow_mapping_registry_cache() -> None:
