@@ -10,6 +10,8 @@ It combines:
 - Partially terminated system (PTS) packaging for modular modeling and controlled publishing
 - LCI and LCIA calculation workflows
 
+Certified cross-database GHG conversion additionally requires a locally licensed mapping core configured with `NEBULA_CERTIFIED_GHG_MAPPING_PATH`. It is not bundled in current source or binaries. Missing assets return an explicit unavailable response; native climate requests still verify the core hash in their pinned method package. Historical commits may retain earlier data; this removal does not rewrite published history.
+
 ## Repository Structure
 
 Public releases do not bundle commercial LCI databases or their vendor characterization tables, imported databases, backups or derived inventory caches. Users import authorized data separately. This applies to Git history, source archives, Docker images and desktop installers. Import support, independently authored identifier mappings and synthetic test fixtures remain distinct from database content. Review archive contents and the final package inventory before release; ignore rules alone are insufficient.

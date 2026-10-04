@@ -11,7 +11,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ..elementary_flow_conversion.package_loader import load_mapping_package
+from ..elementary_flow_conversion.package_loader import configured_mapping_package_path, load_mapping_package
 from ..flow_unit_semantics import build_unit_reference_maps, resolve_flow_port_unit_semantics
 from ..models import FlowRecord, ReferenceProcess
 from ..source_policy import SOURCE_SPACE_TIANGONG, classify_flow_source
@@ -22,14 +22,6 @@ MAPPING_CONTEXT_MISMATCH = "ELEMENTARY_FLOW_MAPPING_CONTEXT_MISMATCH"
 MAPPING_UNIT_MISMATCH = "ELEMENTARY_FLOW_MAPPING_UNIT_MISMATCH"
 MAPPING_DIRECTION_MISMATCH = "ELEMENTARY_FLOW_MAPPING_DIRECTION_MISMATCH"
 MAPPING_PACKAGE_UNAVAILABLE = "ELEMENTARY_FLOW_MAPPING_PACKAGE_UNAVAILABLE"
-
-DEFAULT_MAPPING_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "data"
-    / "flow_mappings"
-    / "ghg_ef31_v1.json"
-)
-
 
 def _flow_uuid(row: dict[str, Any]) -> str:
     return str(
@@ -95,7 +87,8 @@ class EfShadowExportView:
 class ElementaryFlowMappingRegistry:
     """Certified package plus indexes needed by search and EF export."""
 
-    def __init__(self, path: Path = DEFAULT_MAPPING_PATH):
+    def __init__(self, path: Path | None = None):
+        path = path if path is not None else configured_mapping_package_path()
         self.path = path
         payload = json.loads(path.read_text(encoding="utf-8"))
         compiled = load_mapping_package(path)

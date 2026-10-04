@@ -58,7 +58,6 @@ datas = [
         (str(api_root / "data" / relative), f"data/{Path(relative).parent}")
         for relative in api_data_files
     ),
-    (str(mapping_parent / "ghg_ef31_v1.json"), "data/flow_mappings"),
     *(
         (str(public_mapping_root / relative), f"data/flow_mappings/{public_mapping_root.name}/{Path(relative).parent}")
         for relative in public_mapping_files

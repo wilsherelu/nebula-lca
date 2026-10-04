@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ..ecoinvent_ef31_loader import parse_elementary_exchanges, parse_units
+from ..elementary_flow_conversion.package_loader import configured_mapping_package_path
 from ..provider_schemas import (
     ProviderElementaryFlowRef,
     ProviderNativeBackgroundClimateRequest,
@@ -256,7 +257,10 @@ def load_native_climate_runtime(
     foreground_columns = _flow_columns(foreground_dir / "flow_index.csv")
     native_factors = _factor_columns(native_dir / "lcia_factors.csv", native_index)
     foreground_factors = _factor_columns(foreground_dir / "lcia_factors.csv", foreground_index)
-    mapping_path = API_ROOT / "data/flow_mappings/ghg_ef31_v1.json"
+    try:
+        mapping_path = configured_mapping_package_path()
+    except OSError as exc:
+        raise ProviderContractError(422, "NATIVE_CLIMATE_RUNTIME_UNAVAILABLE", "The local certified GHG mapping package is not configured or unavailable.") from exc
     _check_hash(mapping_path, package["certified_core_sha256"])
     mappings = _read_json(mapping_path)["mappings"]
     certified = {row["ef_flow_uuid"]: row for row in mappings}

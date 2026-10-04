@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from .certification import compile_bidirectional_core
@@ -16,6 +17,17 @@ from .contracts import (
     MethodScope,
     SemanticStatus,
 )
+
+
+def configured_mapping_package_path() -> Path:
+    """Licensed certified cores are supplied locally, never bundled as public data."""
+    configured = os.getenv("NEBULA_CERTIFIED_GHG_MAPPING_PATH", "").strip()
+    if not configured:
+        raise FileNotFoundError("NEBULA_CERTIFIED_GHG_MAPPING_PATH is not configured")
+    path = Path(configured).expanduser()
+    if not path.is_file():
+        raise FileNotFoundError("The configured certified GHG mapping package is unavailable")
+    return path
 
 
 def _identity(mapping: dict[str, object], namespace: str) -> FlowIdentity:

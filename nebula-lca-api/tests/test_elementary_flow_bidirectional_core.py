@@ -20,12 +20,6 @@ from app.elementary_flow_conversion import (
 )
 
 
-REAL_GHG_PACKAGE = (
-    Path(__file__).resolve().parents[1]
-    / "data"
-    / "flow_mappings"
-    / "ghg_ef31_v1.json"
-)
 REAL_GHG_CONTEXT_CROSSWALK = (
     Path(__file__).resolve().parents[1]
     / "data"
@@ -255,8 +249,8 @@ def test_unmapped_exchange_is_preserved_as_residual_with_trace():
     ]
 
 
-def test_real_ghg_package_compiles_and_round_trips_all_reviewed_pairs():
-    compiled = load_mapping_package(REAL_GHG_PACKAGE)
+def test_real_ghg_package_compiles_and_round_trips_all_reviewed_pairs(licensed_ghg_package_path):
+    compiled = load_mapping_package(licensed_ghg_package_path)
 
     assert not compiled.rejected
     assert len(compiled.package.forward_mappings) == 180
@@ -306,8 +300,8 @@ def test_real_ghg_package_compiles_and_round_trips_all_reviewed_pairs():
     assert restored.converted[0].flow != alias.source
 
 
-def test_real_ghg_package_rejects_unresolved_evidence(tmp_path):
-    payload = json.loads(REAL_GHG_PACKAGE.read_text(encoding="utf-8"))
+def test_real_ghg_package_rejects_unresolved_evidence(tmp_path, licensed_ghg_package_path):
+    payload = json.loads(licensed_ghg_package_path.read_text(encoding="utf-8"))
     payload["mappings"][0]["evidence_ids"].append("missing:evidence")
     invalid_package = tmp_path / "invalid-ghg-package.json"
     invalid_package.write_text(json.dumps(payload), encoding="utf-8")

@@ -12,6 +12,7 @@ import sys
 import tempfile
 import uuid
 from pathlib import Path
+import pytest
 
 # These MUST be set BEFORE app.main is imported (settings singleton)
 os.environ["KEEP_LATEST_VERSIONS_PER_PROJECT"] = "20"
@@ -23,3 +24,14 @@ os.environ["AUTO_PRUNE_ON_STARTUP"] = "0"
 # isolated temp database.
 _TEST_DB = Path(tempfile.gettempdir()) / f"nebula_test_{uuid.uuid4().hex}.db"
 os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DB}"
+
+
+@pytest.fixture()
+def licensed_ghg_package_path():
+    configured = os.getenv("NEBULA_CERTIFIED_GHG_MAPPING_PATH", "").strip()
+    if not configured:
+        pytest.skip("Requires a locally licensed NEBULA_CERTIFIED_GHG_MAPPING_PATH")
+    path = Path(configured).expanduser()
+    if not path.is_file():
+        pytest.fail("The explicitly configured licensed GHG core is missing")
+    return path

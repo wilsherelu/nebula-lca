@@ -49,3 +49,6 @@ import-cache/
 **/*ecoinvent*.npz
 **/*ecoinvent*.npy
 **/*ecoinvent*.parquet
+
+# Certified commercial-source CF cores are local assets, not release inputs.
+**/ghg_ef31_v1.json

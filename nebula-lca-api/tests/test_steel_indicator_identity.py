@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 import pytest
+from app.elementary_flow_conversion.package_loader import configured_mapping_package_path
 
 API_ROOT = Path(__file__).resolve().parents[1]
 METHOD_PACKAGE_PATH = API_ROOT / "data" / "methods" / "ecoinvent_ef31_climate_total_311.v1.json"
@@ -22,6 +23,14 @@ STEEL_SEED_BIOSPHERE_COMPARTMENT = "Emissions to air, unspecified"
 
 
 def _load_json(path: Path) -> dict:
+    if path == CERTIFIED_CORE_PATH:
+        try:
+            path = configured_mapping_package_path()
+        except FileNotFoundError:
+            import os
+            if os.getenv("NEBULA_CERTIFIED_GHG_MAPPING_PATH", "").strip():
+                raise
+            pytest.skip("Requires a locally licensed NEBULA_CERTIFIED_GHG_MAPPING_PATH")
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -96,11 +105,11 @@ def test_certified_core_package_metadata_is_valid():
     assert core["mapping_count"] == len(core["mappings"])
 
 
-def test_method_package_certified_core_sha_matches_committed_file():
+def test_method_package_certified_core_sha_matches_local_file(licensed_ghg_package_path):
     pkg = _load_json(METHOD_PACKAGE_PATH)
     expected_sha = pkg["certified_core_sha256"]
     import hashlib
-    actual_sha = hashlib.sha256(CERTIFIED_CORE_PATH.read_bytes()).hexdigest()
+    actual_sha = hashlib.sha256(licensed_ghg_package_path.read_bytes()).hexdigest()
     assert actual_sha == expected_sha, (
         f"Certified core file hash {actual_sha} does not match method package pin {expected_sha}"
     )

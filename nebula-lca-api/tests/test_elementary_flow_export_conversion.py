@@ -23,7 +23,13 @@ from app.services.elementary_flow_conversion_service import (
 from app.tidas_export import build_tidas_readiness, export_bundle
 
 
-PACKAGE_PATH = Path(__file__).resolve().parents[1] / "data" / "flow_mappings" / "ghg_ef31_v1.json"
+PACKAGE_PATH: Path
+
+
+@pytest.fixture(autouse=True)
+def _licensed_core(licensed_ghg_package_path):
+    global PACKAGE_PATH
+    PACKAGE_PATH = licensed_ghg_package_path
 
 
 @pytest.fixture()

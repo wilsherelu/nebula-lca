@@ -50,3 +50,7 @@ HTTP 422 uses the existing `{ "detail": { "code", "message", "details" } }` shap
 This contract supports one climate-total indicator for one locally authorized ecoinvent 3.11 installation. It does not assert complete EF v3.1 multi-indicator coverage, CBAM/enterprise-GHG compliance, permanent carbon removal, or a complete product carbon footprint. Public code and synthetic fixtures can exercise the contract; local licensed files and commercial row evidence stay ignored. A local asset's presence alone is not a license to distribute it.
 
 The selected provider vector pins an exact Process UUID, release, content hash, and vector checksum. Its local `system_model` metadata is empty; this contract does not infer a system model from mixed Flow-key source labels. A future system-model claim requires separate source evidence.
+
+## Locally supplied certified core
+
+Set `NEBULA_CERTIFIED_GHG_MAPPING_PATH` to a locally licensed certified mapping package. No certified CF vectors are distributed with the current source. The native method keeps its existing exact core SHA-256 pin; absent or mismatched local assets fail explicitly. This requirement does not change the public EF/TianGong steel calculation path. Published Git history is preserved and may still contain earlier revisions of the removed package.

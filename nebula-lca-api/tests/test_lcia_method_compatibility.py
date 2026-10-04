@@ -248,8 +248,18 @@ def test_flows_api_ranks_exact_before_prefix_and_contains_when_fts_is_available(
     ]
 
 
-def test_flows_api_filters_and_annotates_ef_tidas_conversion_rows(client):
-    package_path = Path(__file__).resolve().parents[1] / "data" / "flow_mappings" / "ghg_ef31_v1.json"
+def test_unconfigured_licensed_conversion_returns_503(client, monkeypatch):
+    from app.services.elementary_flow_conversion_service import clear_elementary_flow_mapping_registry_cache
+    monkeypatch.delenv("NEBULA_CERTIFIED_GHG_MAPPING_PATH", raising=False)
+    clear_elementary_flow_mapping_registry_cache()
+    response = client.get("/api/flows?type=elementary_flow&conversion_target=ef_tidas")
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "ELEMENTARY_FLOW_MAPPING_PACKAGE_UNAVAILABLE"
+    clear_elementary_flow_mapping_registry_cache()
+
+
+def test_flows_api_filters_and_annotates_ef_tidas_conversion_rows(client, licensed_ghg_package_path):
+    package_path = licensed_ghg_package_path
     package = json.loads(package_path.read_text(encoding="utf-8"))
     mapped = package["mappings"][0]
     db = _db_module.SessionLocal()
