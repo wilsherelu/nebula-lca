@@ -22,6 +22,12 @@ Public releases do not bundle commercial LCI databases or their vendor character
 - `nebula-lca-desktop`: standalone Windows desktop packaging
 - `deploy`: deployment-related files
 
+## JavaScript Development
+
+The Web and desktop projects use pnpm 10.27.0 with independent lockfiles. Install this version with `npm install --global pnpm@10.27.0`, then run `pnpm install --frozen-lockfile` in both `nebula-lca-web` and `nebula-lca-desktop`. Keep each project's `pnpm-lock.yaml`; do not generate a second npm lockfile. Configure shared storage on the development machine rather than committing local drive paths.
+
+In `nebula-lca-web`, run `pnpm run test:run --maxWorkers=2` and `pnpm run build`. In `nebula-lca-desktop`, `pnpm run build` compiles the Electron code, while `pnpm run build:web` builds and copies the sibling Web project. Full desktop commands remain `pnpm run desktop:build`, `pnpm run desktop:smoke`, and `pnpm run desktop:dist`; these also depend on the separately configured Python/API packaging environment. Changing the Node package manager does not migrate Python environments or application data.
+
 ## Core Capabilities
 
 - Visual modeling for processes, flows, products, and markets

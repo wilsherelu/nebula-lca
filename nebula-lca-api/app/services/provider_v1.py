@@ -62,6 +62,7 @@ from .provider_mapped_background import (
     build_mapped_background_process_receipts,
     expand_mapped_background_process_pins,
 )
+from .provider_path_weighted import build_path_weighted_contribution_receipts
 from .provider_project_background import (
     build_project_background_receipts,
     expand_project_background_pins,
@@ -596,7 +597,7 @@ def _resolve_tidas_snapshot_value(
     *,
     flow_uuid: str,
     version: str,
-    require_elementary_factor_coverage: bool = True,
+    require_elementary_factor_coverage: bool = False,
 ) -> dict[str, Any] | None:
     try:
         return snapshot.resolve(
@@ -1322,7 +1323,7 @@ def solve_provider(
                 tidas_flow_snapshot,
                 flow_uuid=ref.flow_uuid,
                 version=ref.version,
-                require_elementary_factor_coverage=require_characterization,
+                require_elementary_factor_coverage=False,
             )
             if value is not None and value.get("flow_type") != "Elementary flow":
                 raise ProviderContractError(
@@ -1360,6 +1361,15 @@ def solve_provider(
             raise ProviderContractError(422, exc.code, exc.message, **exc.details) from exc
         if request.lcia_methods:
             response.lcia = lcia
+            path_receipts, path_issues = build_path_weighted_contribution_receipts(
+                lcia=lcia,
+                mapped_background_process_receipts=response.mapped_background_process_receipts,
+                background_process_receipts=response.background_process_receipts,
+                project_background_process_receipts=response.project_background_process_receipts,
+            )
+            lcia["path_weighted_contribution_receipts"] = path_receipts
+            if path_issues:
+                response.issues = [*response.issues, *path_issues]
         response.elementary_flow_receipts = receipts
         if not mapped_background_expansion.database_releases:
             response.provenance.database_release = EF31_DATABASE_RELEASE
@@ -1468,7 +1478,10 @@ def resolve_catalog(db: Session, request: ProviderCatalogResolveRequest) -> list
         key = ref.model_dump(mode="python")
         if ref.source_namespace == TIDAS_SOURCE_NAMESPACE and tidas_snapshot is not None:
             try:
-                snapshot_value = tidas_snapshot.resolve(ref.flow_uuid, ref.version)
+                # Identity resolution is independent of indicator-specific factor coverage.
+                snapshot_value = tidas_snapshot.resolve(
+                    ref.flow_uuid, ref.version, require_elementary_factor_coverage=False,
+                )
             except ProviderTidasSnapshotError as exc:
                 items.append(
                     ProviderCatalogResolution(

@@ -2,16 +2,17 @@
   "name": "nebula-lca-desktop",
   "private": true,
   "version": "0.1.0",
+  "packageManager": "pnpm@10.27.0",
   "type": "module",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "build:web": "node scripts/build-web.js",
     "build:api": "node scripts/build-api.js",
-    "desktop:build": "npm run build:web && npm run build:api && npm run build",
-    "desktop:dist": "npm run desktop:build && electron-builder --config electron-builder.yml",
+    "desktop:build": "pnpm run build:web && pnpm run build:api && pnpm run build",
+    "desktop:dist": "pnpm run desktop:build && electron-builder --config electron-builder.yml",
     "desktop:audit": "node scripts/audit-release.js",
-    "desktop:smoke": "npm run build && electron dist/main.js --smoke"
+    "desktop:smoke": "pnpm run build && electron dist/main.js --smoke"
   },
   "dependencies": {
     "electron-is-dev": "^3.0.1"

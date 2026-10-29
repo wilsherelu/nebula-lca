@@ -73,8 +73,11 @@ def _resolve_ef31_flow_index_path(path_like: str) -> Path:
 
 
 def _resolve_default_ef31_flow_index_path() -> Path | None:
+    from .config import settings
+
     repo_root = Path(__file__).resolve().parent.parent
     candidates = [
+        Path(settings.nebula_lca_ef31_dir) / "flow_index.csv",
         repo_root / "data" / "EF3.1" / "flow_index.csv",
         repo_root / "data" / "flow_index.csv",
     ]

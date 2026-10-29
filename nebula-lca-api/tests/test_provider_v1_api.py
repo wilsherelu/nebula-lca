@@ -1230,7 +1230,9 @@ def test_inline_custom_technosphere_with_exact_ef31_lcia_does_not_write_catalog_
         item["canonical_indicator_key"] for item in body["lcia"]["indicator_results"]
     }
     for receipt in contribution_receipts.values():
-        assert len(receipt["terms"]) == 2
+        coverage = receipt["characterization_coverage"]
+        assert len(receipt["terms"]) + len(coverage["uncharacterized_exchanges"]) == 2
+        assert all(item["numeric_contribution"] is None for item in coverage["uncharacterized_exchanges"])
         assert receipt["contribution_total"] == pytest.approx(receipt["indicator_value"])
         assert receipt["reconciliation_delta"] == pytest.approx(0.0, abs=1e-12)
         assert receipt["solve_hash"] == body["lcia"]["solve_hash"]
@@ -1263,6 +1265,54 @@ def test_inline_custom_technosphere_with_exact_ef31_lcia_does_not_write_catalog_
     finally:
         db.close()
     assert after == before
+
+
+@pytest.mark.parametrize("factor,index_present", [(None, True), (None, False), (0.0, True), (1.0, True)])
+def test_public_factor_absence_is_not_explicit_zero(client, monkeypatch, tmp_path, factor, index_present):
+    import csv
+    import shutil
+    public = Path(__file__).resolve().parents[2] / "nebula-lca-solver/data/EF3.1-public"
+    runtime = tmp_path / "public"
+    shutil.copytree(public, runtime)
+    with (runtime / "flow_index.csv").open(encoding="utf-8-sig", newline="") as handle:
+        flow_rows = list(csv.DictReader(handle, delimiter=";"))
+        index = next(row["flow_index"] for row in flow_rows if row["FlowUUID"] == CO2_UUID)
+    if not index_present:
+        with (runtime / "flow_index.csv").open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(flow_rows[0]), delimiter=";")
+            writer.writeheader()
+            writer.writerows(row for row in flow_rows if row["FlowUUID"] != CO2_UUID)
+    with (runtime / "lcia_factors.csv").open(encoding="utf-8-sig", newline="") as handle:
+        rows = list(csv.DictReader(handle, delimiter=";"))
+    rows = [row for row in rows if row["column"] != index]
+    if factor is not None:
+        rows.append({"row": "1", "column": index, "coefficient": str(factor)})
+    with (runtime / "lcia_factors.csv").open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["row", "column", "coefficient"], delimiter=";")
+        writer.writeheader()
+        writer.writerows(rows)
+    monkeypatch.setattr(provider_ef31, "_runtime_dirs", lambda: [runtime])
+    graph = _petrochemical_graph()
+    response = client.post("/api/provider/v1/solve", json={
+        "inline_snapshot": _inline_snapshot(graph),
+        "demand": [{"process_uuid": "process-desulfurization", "amount": 1.0, "unit": "kg"}],
+        "lcia_methods": ["EF v3.1"], "elementary_flows": _co2_refs(graph),
+    })
+    assert response.status_code == 200, response.text
+    lcia = response.json()["lcia"]
+    assert len(lcia["indicator_results"]) == 1
+    receipt = lcia["indicator_contribution_receipts"][0]
+    coverage = receipt["characterization_coverage"]
+    if factor is None:
+        assert coverage["status"] == "partial"
+        assert receipt["terms"] == []
+        assert len(coverage["uncharacterized_exchanges"]) == 2
+        assert all(row["numeric_contribution"] is None for row in coverage["uncharacterized_exchanges"])
+    else:
+        assert coverage["status"] == "complete"
+        assert len(receipt["terms"]) == 2
+        assert {row["cf_presence"] for row in receipt["terms"]} == {"explicit_zero" if factor == 0 else "explicit_nonzero"}
+        assert receipt["indicator_value"] == pytest.approx(0.7 * factor)
 
 
 def test_inline_custom_technosphere_mfa_without_lcia_remains_available(client):

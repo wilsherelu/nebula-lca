@@ -949,6 +949,53 @@ def test_mapped_background_pin_executes_local_vector_and_shared_consumers_with_f
     shared_co2 = next(item for item in shared_body["inventory_totals"] if item["flow_uuid"] == CO2_UUID)
     assert shared_co2["amount"] == pytest.approx(1.5)
 
+    # R3 path-weighted contribution view (extends the versioned public contract): per-characterized-
+    # term split by consumption path, reconciled to the source totals and never double-counting
+    # foreground with background. This is HTTP-level acceptance, not a mock-only check.
+    path_receipts = shared_body["lcia"]["path_weighted_contribution_receipts"]
+    indicator_receipts = shared_body["lcia"]["indicator_contribution_receipts"]
+    assert len(path_receipts) == len(indicator_receipts)
+    for indicator_receipt, path_receipt in zip(indicator_receipts, path_receipts, strict=True):
+        # Per-indicator reconciliation: Σ path == Σ term (no double count, no dropped contribution).
+        assert path_receipt["reconciliation_delta"] == pytest.approx(0.0, abs=1e-9)
+        assert path_receipt["path_weighted_total"] == pytest.approx(
+            indicator_receipt["contribution_total"], rel=1e-9, abs=1e-9
+        )
+        per_process_term: dict[str, float] = {}
+        for term in indicator_receipt["terms"]:
+            per_process_term[term["process_uuid"]] = (
+                per_process_term.get(term["process_uuid"], 0.0) + float(term["contribution_value"])
+            )
+        per_process_path: dict[str, float] = {}
+        for row in path_receipt["terms"]:
+            per_process_path[row["process_uuid"]] = (
+                per_process_path.get(row["process_uuid"], 0.0) + float(row["path_contribution_value"])
+            )
+        assert set(per_process_path) == set(per_process_term)
+        for process_uuid, expected in per_process_term.items():
+            assert per_process_path[process_uuid] == pytest.approx(expected, rel=1e-9, abs=1e-9)
+    # The shared background's split across the two consumers uses the exact dimensionless shares
+    # (1/3 and 2/3), carries the consumer process instance per row, and preserves source evidence.
+    primary_path = next(item for item in path_receipts if item["canonical_indicator_key"] == "climate change")
+    bg_rows = [
+        row for row in primary_path["terms"] if row["process_uuid"] == licensed_process_uuid
+    ]
+    assert bg_rows, "the shared background process must appear in the path-weighted receipt"
+    assert {row["consumer_exchange_id"] for row in bg_rows} == {
+        "consumer-a::electricity-in",
+        "consumer-b::electricity-in",
+    }
+    assert sorted(row["path_share"] for row in bg_rows) == pytest.approx([1.0 / 3.0, 2.0 / 3.0])
+    assert {row["consumer_process_uuid"] for row in bg_rows} == {
+        "consumer-process-a",
+        "consumer-process-b",
+    }
+    assert all(row["attribution_basis"] == "background_consumer_path" for row in bg_rows)
+    assert all(row["solve_hash"] == shared_body["lcia"]["solve_hash"] for row in bg_rows)
+    # Attribution for the shared background is complete → no unattributed remainder rows.
+    assert primary_path["attribution_coverage"] == "complete"
+    assert primary_path["unattributed_contribution_value"] == pytest.approx(0.0, abs=1e-9)
+
     # A 1 kg product demand uses 1/1000 of each foreground process. The mapped
     # supply is measured in kWh, while both consumer ports remain measured in MJ.
     chain_graph = HybridGraph.model_validate(

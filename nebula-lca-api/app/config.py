@@ -77,6 +77,7 @@ def _default_ef31_dir() -> str:
 class Settings(BaseModel):
     app_name: str = "LCA Backend Demo"
     desktop_mode: bool = Field(default_factory=lambda: _env_bool("NEBULA_DESKTOP", False))
+    public_characterization_only: bool = Field(default_factory=lambda: _env_bool("NEBULA_PUBLIC_CHARACTERIZATION_ONLY", False))
     data_dir: str = Field(default_factory=lambda: str(_default_data_dir()))
     database_url: str = Field(default_factory=_default_database_url)
     cors_origins: list[str] = Field(default_factory=lambda: _env_list("NEBULA_CORS_ORIGINS", ["http://localhost:5173", "http://127.0.0.1:5173"]))

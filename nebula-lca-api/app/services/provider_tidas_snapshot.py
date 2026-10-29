@@ -264,7 +264,7 @@ class TidasFlowSnapshot:
         flow_uuid: str,
         version: str,
         *,
-        require_elementary_factor_coverage: bool = True,
+        require_elementary_factor_coverage: bool = False,
     ) -> dict[str, Any] | None:
         record = self.records.get((flow_uuid, version))
         if record is None:

@@ -327,14 +327,47 @@ def test_snapshot_hash_mismatch_fails_closed(client, monkeypatch, tmp_path):
     assert response.json()["detail"]["code"] == "TIDAS_FLOW_SNAPSHOT_HASH_MISMATCH"
 
 
-def test_elementary_flow_without_cf_coverage_is_unsupported(client, monkeypatch):
+def test_elementary_identity_resolves_without_claiming_cf_coverage(client, monkeypatch):
     _configure(monkeypatch)
     monkeypatch.setattr(provider_ef31, "_runtime_factor_coverage", lambda runtime_dir: {})
     response = client.post("/api/provider/v1/catalog/resolve", json={"flows": [_flow_refs()[0]]})
     assert response.status_code == 200
     item = response.json()["items"][0]
-    assert item["status"] == "unsupported"
-    assert item["code"] == "ELEMENTARY_FLOW_CF_NOT_FOUND"
+    assert item["status"] == "resolved"
+    assert item["value"]["factor_count"] == 0
+    assert item["value"]["factor_hash"] == _hash([])
+    snapshot = provider_v1._configured_tidas_snapshot()
+    assert snapshot.resolve(NOX_UUID, NOX_VERSION)["factor_count"] == 0
+    with pytest.raises(flow_snapshot_service.ProviderTidasSnapshotError) as strict:
+        snapshot.resolve(NOX_UUID, NOX_VERSION, require_elementary_factor_coverage=True)
+    assert strict.value.code == "ELEMENTARY_FLOW_CF_NOT_FOUND"
+
+
+def test_public_climate_keeps_nox_inventory_without_inventing_a_zero_factor(client, monkeypatch):
+    _configure(monkeypatch)
+    public = Path(__file__).resolve().parents[2] / "nebula-lca-solver/data/EF3.1-public"
+    monkeypatch.setattr(provider_ef31, "_runtime_dirs", lambda: [public])
+    graph = _single_process_graph()
+    ref = {**_flow_refs()[0], "exchange_id": "node-p1::out-nox",
+           "flow_property_uuid": MASS_PROPERTY_UUID, "flow_property_version": "03.00.003",
+           "unit_group_uuid": MASS_UNIT_GROUP_UUID, "unit_group_version": "03.00.003",
+           "unit": "kg", "direction": "output", "compartment": "Emissions to air, unspecified"}
+    response = client.post("/api/provider/v1/solve", json={
+        "inline_snapshot": _inline_snapshot(graph),
+        "demand": [{"process_uuid": "p1", "amount": 1.0, "unit": "kg"}],
+        "lcia_methods": ["EF v3.1"], "elementary_flows": [ref],
+    })
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["inventory_totals"][0]["flow_uuid"] == NOX_UUID
+    assert len(body["lcia"]["indicator_results"]) == 1  # only installed climate factors
+    receipt = body["lcia"]["indicator_contribution_receipts"][0]
+    assert receipt["terms"] == []
+    coverage = receipt["characterization_coverage"]
+    assert coverage["status"] == "partial"
+    assert coverage["value_kind"] == "known_subtotal"
+    assert coverage["uncharacterized_exchanges"][0]["numeric_contribution"] is None
+    assert body["elementary_flow_receipts"][0]["factor_count"] == 0
 
 
 def test_elementary_flow_absent_from_ef31_runtime_is_unsupported(client, monkeypatch, tmp_path):

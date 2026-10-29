@@ -1,0 +1,65 @@
+{
+  "schema_version": "ef31-public-provenance.v1",
+  "source": {
+    "name": "JRC ILCD LCIA Method - Climate change GWP100",
+    "data_set_uuid": "6209b35f-9447-40b5-b68c-a1099e3674a0",
+    "owner": "European Commission - JRC directorate D",
+    "commissioner": "IPCC",
+    "original_source": "IPCC 2013 (AR5)",
+    "data_set_version": "01.00.000",
+    "authoritative_source_file": "6209b35f-9447-40b5-b68c-a1099e3674a0.xml",
+    "authoritative_source_sha256": "c0fe31d3c045ae85b64bd85a3bfa41e1f246d664e8f8d463005f37dee003a5a8",
+    "local_source_file": "C:\\Users\\31534\\PycharmProjects\\ILCD\\characterisation_factors.xlsx",
+    "local_source_sha256": "9625891c5b7a47764e9c76e27597ec9ee6a9ee5ae9ee570432058b03d2ccd4b1",
+    "source_note": "The ILCD XML data set is authoritative. The workbook is a spreadsheet rendering of the same data set; both were parsed independently and agree on all 1099 (flow UUID, flow name, mean value) triples in the same document order. Neither file is committed to the repository: they are external inputs identified by UUID and sha256 so the conversion can be re-run and re-audited.",
+    "not_used": "No row of these assets was taken from the ecoinvent-derived data/EF3.1 flow_index.csv (sha256 21f8ea69c6a73b1fbb2a30538911113e9795fbdc3713e61f318624bf9792b0ce, 89070 flows) or lcia_factors.csv (sha256 ac319af1b1eca835df6e80783af486875d04543dbc7a326789fa36a72f0193d3, 319575 factors). Those tables are not redistributed and are excluded from the public desktop payload."
+  },
+  "license": {
+    "copyright": true,
+    "access_restrictions": "Free use, distribution, format conversion with attribution to JRC.",
+    "attribution": "European Commission, Joint Research Centre (JRC)",
+    "redistribution_allowed": true
+  },
+  "conversion": {
+    "script": "nebula-lca-solver/scripts/build_ef31_public.py",
+    "command": "python scripts/build_ef31_public.py --source-xml <ILCD>/6209b35f-9447-40b5-b68c-a1099e3674a0.xml --catalog-csv ../nebula-lca-api/data/provider_profiles/steel_elementary_catalog.v1.csv --indicator-source data/EF3.1/indicator_index.csv --out data/EF3.1-public --verify",
+    "inputs": {
+      "source_xml_sha256": "c0fe31d3c045ae85b64bd85a3bfa41e1f246d664e8f8d463005f37dee003a5a8",
+      "steel_elementary_catalog_sha256": "c85c809fe1be23e8c6517f3434d85da432d5647fef567dfade687f96e7f7e6e2",
+      "indicator_source_sha256": "3571bf99117714546d9e240ac8013af4fdaffd79bca40c931659c4b0e8fb9bcd"
+    },
+    "rules": [
+      "flow_index.csv: one row per distinct flow UUID, sorted ascending by UUID, flow_index assigned 0..1100 in that order.",
+      "FlowName is the JRC common:shortDescription (xml:lang=en) copied verbatim; no name was edited, translated or re-derived.",
+      "lcia_factors.csv: one row per source factor in source document order, row=1 (climate change indicator_index), column=flow_index, coefficient=meanValue rendered by str(float(...)).",
+      "All 1099 source factors are kept, including the 9 whose meanValue is 0.0; the engine skips zero coefficients when it builds the C matrix, and keeping the rows preserves a row-for-row correspondence with the JRC source.",
+      "Encoding: UTF-8 without BOM for flow_index.csv and lcia_factors.csv, CRLF line endings for both.",
+      "--verify fails unless every output matches the sha256 recorded below; it was run and passed, so these assets are reproducible from the recorded inputs."
+    ]
+  },
+  "indicator_index_provenance": {
+    "sha256": "3571bf99117714546d9e240ac8013af4fdaffd79bca40c931659c4b0e8fb9bcd",
+    "origin": "Project-authored EF 3.1 method structure table (25 impact categories, indicator_index 0..24), byte-identical to nebula-lca-solver/data/EF3.1/indicator_index.csv and shipped verbatim by the builder.",
+    "content": "Impact category names in English and Chinese plus EF 3.1 category labels. It contains no flow records and no characterization factors, so it carries no ecoinvent database content.",
+    "column_note": "The column named ecoinvent_category holds EF 3.1 impact category labels. The engine's canonical indicator key resolver reads that column by name (app/core/matrix_builder._canonical_ef31_indicator_key), so it is retained verbatim: renaming it would break indicator binding, and renaming a dataset column to disguise origin is explicitly out of scope."
+  },
+  "additional_flows": {
+    "source": "steel_elementary_catalog.v1.csv (ILCD UUIDs)",
+    "uuids": [
+      "f79d0f8f-2b0e-49cb-bed0-b1ea0fbd8625",
+      "fe0acd60-3ddc-11dd-ac48-0050c2490048"
+    ],
+    "naming_note": "These two rows are absent from the JRC characterisation factor set (no GWP100 factor) and were added from the steel elementary catalog so the engine's UUID allowlist admits them. Their FlowName carries the full compartment path ('Emissions, Emissions to air, Emissions to air, unspecified') while the 1099 factor-derived rows carry only the leaf compartment. FlowName is display-only: the engine resolves characterization exclusively by FlowUUID + flow_index, never by name. The grammar difference is disclosed rather than normalized, because renaming rows of a public dataset is out of scope without the data owner's adjudication."
+  },
+  "output_hashes": {
+    "flow_index.csv": "12e3bcb3a402aa283ece1c48589e95ceae1a8dcb299358c20befe07ec8e0b736",
+    "indicator_index.csv": "3571bf99117714546d9e240ac8013af4fdaffd79bca40c931659c4b0e8fb9bcd",
+    "lcia_factors.csv": "07fe84e0adbc3a7ecd2ead2f09dbfa22c76ed80f98707e368b0f3a1dbb6145a7"
+  },
+  "flow_count": 1101,
+  "factor_count": 1099,
+  "zero_coefficient_rows": 9,
+  "indicators_covered": [
+    "climate change (GWP100)"
+  ]
+}

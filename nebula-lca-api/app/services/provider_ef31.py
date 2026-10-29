@@ -373,8 +373,6 @@ def resolve_standard_flow(ref: ExactFlowRef) -> dict[str, Any] | None:
         ),
         None,
     )
-    if runtime_index is None:
-        return None
     return {
         **record,
         "default_unit": record["unit"],
@@ -402,8 +400,8 @@ def _runtime_factor_coverage(runtime_dir_raw: str) -> dict[int, dict[str, Any]]:
                     "The EF3.1 runtime factor file contains an invalid row.",
                     asset=str(path),
                 ) from exc
-            if coefficient == 0.0:
-                continue
+            if not math.isfinite(coefficient):
+                raise ProviderEf31Error("EF31_FACTOR_RUNTIME_INVALID", "A factor must be finite.", asset=str(path))
             factors.setdefault(flow_index, []).append(
                 {
                     "indicator_index": indicator_index,
@@ -500,11 +498,14 @@ def resolve_snapshot_elementary_flow(
             conflicts=conflicts,
         )
     runtime_match: tuple[int, dict[str, Any]] | None = None
+    identity_index: int | None = None
     for runtime_dir in _runtime_dirs():
         runtime_key = str(runtime_dir.resolve())
         flow_index = _runtime_flow_index(runtime_key).get(flow_uuid)
         if flow_index is None:
             continue
+        if identity_index is None:
+            identity_index = flow_index
         coverage = _runtime_factor_coverage(runtime_key).get(flow_index)
         if coverage is not None:
             runtime_match = (flow_index, coverage)
@@ -516,7 +517,7 @@ def resolve_snapshot_elementary_flow(
             flow_uuid=flow_uuid,
             version=version,
         )
-    flow_index, coverage = runtime_match if runtime_match is not None else (None, None)
+    flow_index, coverage = runtime_match if runtime_match is not None else (identity_index, None)
     return {
         **local,
         "resolution_source": "tidas_exact_elementary_snapshot",
@@ -829,14 +830,8 @@ def characterize_scaled_inventory(
             }
         )
     runtime_assets_hash = _canonical_hash(runtime_assets)
-    runtime_flow_uuids = set(c_pack.get("runtime_flow_uuids") or set())
-    missing = sorted(set(flow_uuids).difference(runtime_flow_uuids))
-    if missing:
-        raise ProviderEf31Error(
-            "ELEMENTARY_FLOW_CF_NOT_FOUND",
-            "At least one exact elementary Flow has no EF3.1 runtime coverage.",
-            flow_uuids=missing,
-        )
+    # Identity/property/unit checks above remain mandatory. Absence from a factor
+    # runtime is a coverage gap, including when that runtime has no flow-index row.
     c_matrix = c_pack["C"]
     if not c_matrix.get("rows"):
         raise ProviderEf31Error("EF31_INDICATOR_SET_EMPTY", "The EF3.1 runtime returned no indicators for the requested method.")
@@ -849,7 +844,7 @@ def characterize_scaled_inventory(
     factor_evidence: dict[tuple[str, str], dict[str, Any]] = {}
     factor_sources = c_pack.get("factor_sources") or {}
     indicator_lookup = c_pack.get("indicator_lookup") or {}
-    for entry in c_matrix.get("data") or []:
+    for entry in c_pack.get("factor_entries", c_matrix.get("data")) or []:
         row_pos = int(entry["row_index"])
         flow_uuid = str(entry["col"])
         coefficient = float(entry["value"])
@@ -906,18 +901,12 @@ def characterize_scaled_inventory(
         }
         for flow_uuid, factors in factors_by_flow.items()
     }
-    uncovered = sorted(set(flow_uuids).difference(factor_receipt_by_flow))
-    if uncovered:
-        raise ProviderEf31Error(
-            "ELEMENTARY_FLOW_CF_NOT_FOUND",
-            "At least one exact elementary Flow has no non-zero EF3.1 characterization factor.",
-            flow_uuids=uncovered,
-        )
-
     receipts = []
     for exchange in scaled_elementary:
         standard = standard_by_exchange[exchange.exchange_id]
-        factor_receipt = factor_receipt_by_flow[exchange.flow_uuid]
+        factor_receipt = factor_receipt_by_flow.get(exchange.flow_uuid, {
+            "factor_count": 0, "factor_hash": _canonical_hash([]),
+        })
         receipts.append(
             ProviderElementaryFlowReceipt(
                 exchange_id=exchange.exchange_id,
@@ -939,7 +928,7 @@ def characterize_scaled_inventory(
                 reference_dependency_snapshot_hash=standard.get(
                     "reference_dependency_snapshot_hash"
                 ),
-                runtime_flow_index=int(standard["runtime_flow_index"]),
+                runtime_flow_index=standard.get("runtime_flow_index"),
                 method=EF31_METHOD,
                 factor_count=int(factor_receipt["factor_count"]),
                 factor_hash=str(factor_receipt["factor_hash"]),
@@ -960,6 +949,10 @@ def characterize_scaled_inventory(
                 indicator_en=str(info.get("indicator_en") or ""),
                 canonical_indicator_key=canonical_key,
             )
+        # An index may describe more indicators than the installed factor dataset covers.
+        # Never publish those unused rows as zero-valued LCIA results.
+        if canonical_key not in c_pack.get("characterized_indicator_keys", set()):
+            continue
         indicators.append(
             {
                 **info,
@@ -986,10 +979,22 @@ def characterize_scaled_inventory(
     for indicator in indicators:
         canonical_key = str(indicator.get("canonical_indicator_key") or "")
         terms = []
+        uncharacterized = []
         for exchange in scaled_elementary:
             standard = standard_by_exchange[exchange.exchange_id]
             evidence = factor_evidence.get((canonical_key, exchange.flow_uuid))
-            coefficient = float(evidence["coefficient"]) if evidence is not None else 0.0
+            if evidence is None:
+                uncharacterized.append({
+                    "exchange_id": exchange.exchange_id,
+                    "process_uuid": exchange.process_uuid,
+                    "flow_uuid": exchange.flow_uuid,
+                    "flow_version": standard["version"],
+                    "flow_name": standard.get("name"),
+                    "amount": float(exchange.scaled_amount), "amount_unit": exchange.unit,
+                    "status": "factor_not_found", "numeric_contribution": None,
+                })
+                continue
+            coefficient = float(evidence["coefficient"])
             factor_identity = {
                 "method": EF31_METHOD,
                 "database_release": EF31_DATABASE_RELEASE,
@@ -997,7 +1002,7 @@ def characterize_scaled_inventory(
                 "flow_uuid": exchange.flow_uuid,
                 "cf_version": EF31_DATABASE_RELEASE,
                 "coefficient": coefficient,
-                "presence": "explicit_nonzero" if evidence is not None else "implicit_zero",
+                "presence": "explicit_nonzero" if coefficient else "explicit_zero",
                 "runtime_id": evidence["runtime_id"] if evidence is not None else None,
                 "source_runtime_ids": evidence["source_runtime_ids"] if evidence is not None else [],
                 "runtime_assets_hash": runtime_assets_hash,
@@ -1050,6 +1055,13 @@ def characterize_scaled_inventory(
             "contribution_total": contribution_total,
             "reconciliation_delta": contribution_total - float(indicator["value"]),
             "terms": terms,
+            "characterization_coverage": {
+                "schema_version": "provider.lcia.characterization-coverage.v1",
+                "status": "partial" if uncharacterized else "complete",
+                "value_kind": "known_subtotal" if uncharacterized else "characterized_total",
+                "uncharacterized_exchanges": uncharacterized,
+                "runtime_assets_hash": runtime_assets_hash,
+            },
             "snapshot_hash": consumer_graph_hash,
             "provider_graph_hash": provider_graph_hash,
             "solve_hash": solve_hash,

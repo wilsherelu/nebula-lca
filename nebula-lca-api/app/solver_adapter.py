@@ -62,6 +62,9 @@ def _has_ef31_runtime_csvs(path: Path) -> bool:
 
 
 def _embedded_ef31_candidates() -> list[Path]:
+    if settings.public_characterization_only:
+        # Explicit public builds cannot auto-merge old user runtime or developer assets.
+        return [Path(settings.nebula_lca_ef31_dir)]
     candidates: list[Path] = []
     pyinstaller_root_raw = str(getattr(sys, "_MEIPASS", "") or "").strip()
     if settings.desktop_mode:

@@ -5,7 +5,11 @@ from PyInstaller.utils.hooks import collect_submodules
 api_root = Path(SPECPATH).parent
 solver_root = api_root.parent / "nebula-lca-solver"
 files = [
-    "EF3.1/flow_index.csv", "EF3.1/indicator_index.csv", "EF3.1/lcia_factors.csv",
+    # indicator_index.csv (LCIA_unit variant) is the indicator/unit metadata table required by
+    # provider_ef31 and main.py; it carries no characterization factors.  The ecoinvent-derived
+    # flow_index.csv / lcia_factors.csv must never ship in a public build: characterization is
+    # served by the license-clean data/ef31-characterization trio packed further below.
+    "EF3.1/indicator_index.csv",
     "Tiangong/tidas_reference_seed.json",
     "provider_profiles/steel_elementary_catalog.v1.csv",
     "provider_profiles/steel_elementary_catalog.v1.provenance.json",
@@ -20,6 +24,17 @@ datas += [(str(mapping / name), str(Path("data/flow_mappings/nebula-flow-mapping
                        "data/elementary-flow-mappings.v1.jsonl")]
 datas += [(str(p), str(Path("solver-core") / p.parent.relative_to(solver_root / "app/core")))
           for p in (solver_root / "app/core").rglob("*.py")]
+# Public EF3.1 characterization runtime (JRC ILCD source, license-clean).
+# Provides the ecoinvent_category indicator_index + matching flow_index/lcia_factors
+# required by the engine's characterization resolver. Replaces the ecoinvent-derived
+# solver-data/EF3.1 that cannot ship in public builds.
+ef31_public = solver_root / "data" / "EF3.1-public"
+for _name in ("flow_index.csv", "indicator_index.csv", "lcia_factors.csv"):
+    _src = ef31_public / _name
+    if not _src.is_file():
+        raise FileNotFoundError(f"Public EF3.1 characterization asset missing: {_src}")
+datas += [(str(ef31_public / _name), str(Path("data") / "ef31-characterization"))
+          for _name in ("flow_index.csv", "indicator_index.csv", "lcia_factors.csv")]
 hidden = collect_submodules("app") + collect_submodules("uvicorn")
 a = Analysis([str(api_root / "app/desktop_entry.py")], pathex=[str(api_root)],
              binaries=[], datas=datas, hiddenimports=hidden, hookspath=[],

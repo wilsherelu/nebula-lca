@@ -98,3 +98,52 @@ def test_user_project_pin_rejects_changed_source_and_open_supply(monkeypatch):
     with pytest.raises(ProviderBackgroundLeafError, match="open supply"):
         expand_project_background_pins(None, graph=consumer, pins=[pin.model_copy(update={"expected_graph_hash": snapshot.graph_hash})],
             get_snapshot=lambda *_args: snapshot, flow_snapshot=None)
+
+
+def test_closed_two_node_supply_keeps_internal_link_and_attributes_every_process(monkeypatch):
+    from app.schemas import HybridEdge
+    consumer = graph("sinter", "consumer", [port("power", POWER, "MJ", 610, "input", "technosphere")], [])
+    source = graph("supply", "provider", [port("upstream", POWER, "kWh", 2, "input", "technosphere")],
+                   [port("electricity", POWER, "kWh", 1, "output", "technosphere", True)])
+    upstream = graph("upstream", "upstream-provider", [], [
+        port("electricity", POWER, "kWh", 1, "output", "technosphere", True),
+        port("co2", CO2, "kg", 0.5, "output", "biosphere")]).nodes[0]
+    source.nodes.append(upstream)
+    source.exchanges.append(HybridEdge(id="internal", fromNode="upstream", toNode="supply",
+        sourcePortId="electricity", targetPortId="upstream", sourceHandle="out:electricity",
+        targetHandle="in:upstream", amount=2, unit="kWh", flowUuid=POWER, flowName="electricity",
+        quantityMode="single", type="technosphere"))
+    snapshot = SimpleNamespace(graph_hash="a" * 64, graph=source)
+    monkeypatch.setattr("app.services.provider_project_background.convert_unit_value",
+                        lambda *_args, **_kwargs: {"converted_value": 1 / 3.6})
+    catalog = SimpleNamespace(resolve=lambda *_args: {"source_namespace": "tiangong_open_data", "compartment": "air"})
+    pin = ProviderProjectBackgroundPin(consumer_exchange_id="sinter::power", project_id="supplier",
+        version=2, expected_graph_hash=snapshot.graph_hash, source_node_id="supply", reference_port_id="electricity",
+        provider_amount_per_consumer_unit=1 / 3.6)
+    result = expand_project_background_pins(None, graph=consumer, pins=[pin], get_snapshot=lambda *_args: snapshot,
+                                          flow_snapshot=catalog)
+    assert len(result.graph.nodes) == 3
+    assert len(result.graph.exchanges) == 2
+    assert result.graph.exchanges[0].amount == 2
+    assert result.graph.exchanges[1].providerAmount == pytest.approx(610 / 3.6)
+    assert result.elementary_refs[0].exchange_id.startswith(result.graph.nodes[2].id + "::")
+    receipts = build_project_background_receipts(result, {"provider": 610 / 3.6, "upstream-provider": 2 * 610 / 3.6})
+    assert len(receipts) == 2
+    assert {r["pin"]["consumer_exchange_id"] for r in receipts} == {"sinter::power"}
+    assert {r["expansion_mode"] for r in receipts} == {"closed_network"}
+    assert source.nodes[0].id == "supply" and source.exchanges[0].fromNode == "upstream"
+    consumer.nodes[0].inputs.append(consumer.nodes[0].inputs[0].model_copy(update={"id": "power-2", "amount": 25}))
+    paired = expand_project_background_pins(None, graph=consumer,
+        pins=[pin, pin.model_copy(update={"consumer_exchange_id": "sinter::power-2"})],
+        get_snapshot=lambda *_args: snapshot, flow_snapshot=catalog)
+    assert len(paired.graph.nodes) == 5 and len(paired.graph.exchanges) == 4
+    assert len({node.process_uuid for node in paired.graph.nodes}) == 5
+    networks = [set(row["expanded_network_node_ids"]) for row in paired.receipt_drafts]
+    assert networks[0].isdisjoint(networks[-1])
+    assert all(edge.fromNode in networks[0] and edge.toNode in networks[0]
+               for edge in paired.graph.exchanges[:1])
+    # An unresolved upstream input must still refuse instead of silently dropping its contribution.
+    source.exchanges.clear()
+    with pytest.raises(ProviderBackgroundLeafError, match="open supply"):
+        expand_project_background_pins(None, graph=consumer, pins=[pin], get_snapshot=lambda *_args: snapshot,
+                                      flow_snapshot=catalog)

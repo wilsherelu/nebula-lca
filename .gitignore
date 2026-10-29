@@ -96,3 +96,10 @@ import-cache/
 
 # Certified commercial-source CF cores are local assets, not release inputs.
 **/ghg_ef31_v1.json
+
+# Licensed characterization data remains local; public builds use EF3.1-public.
+/nebula-lca-api/data/EF3.1/flow_index.csv
+/nebula-lca-api/data/EF3.1/lcia_factors.csv
+/nebula-lca-solver/data/EF3.1/flow_index.csv
+/nebula-lca-solver/data/EF3.1/lcia_factors.csv
+/nebula-lca-api/data/methods/ecoinvent_ef31_climate_total_311.v1.json

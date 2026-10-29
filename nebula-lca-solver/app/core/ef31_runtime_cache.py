@@ -100,6 +100,7 @@ class Ef31RuntimeCache:
         factor_sources: Dict[Tuple[str, str], List[dict]] = {}
         matched_flow_uuids: set[str] = set()
         runtime_flow_uuids: set[str] = set()
+        characterized_indicator_keys: set[str] = set()
         cache_hits: List[bool] = []
 
         for source_index, ef_dir in enumerate(existing_dirs):
@@ -113,6 +114,7 @@ class Ef31RuntimeCache:
                 report_missing=False,
             )
             runtime_flow_uuids.update(pack.get("runtime_flow_uuids", set()))
+            characterized_indicator_keys.update(pack.get("characterized_indicator_keys", set()))
             matched_flow_uuids.update(pack.get("matched_flow_uuids", set()))
             lookup = pack.get("indicator_lookup", {})
             c_matrix = pack.get("C", {})
@@ -126,7 +128,7 @@ class Ef31RuntimeCache:
                     canonical_order.append(canonical_key)
                     canonical_lookup[canonical_key] = _canonical_ef31_indicator_info(info)
 
-            for entry in c_matrix.get("data", []) or []:
+            for entry in pack.get("factor_entries", c_matrix.get("data", [])) or []:
                 row_id = entry.get("row")
                 flow_uuid = str(entry.get("col") or "")
                 info = lookup.get(row_id, {})
@@ -135,7 +137,7 @@ class Ef31RuntimeCache:
                     continue
                 key = (canonical_key, flow_uuid)
                 value = _to_float(entry.get("value"))
-                if value is None or value == 0:
+                if value is None:
                     continue
                 factor_sources.setdefault(key, []).append(
                     {"source_index": source_index, "coefficient": value}
@@ -173,6 +175,11 @@ class Ef31RuntimeCache:
             "matched_flow_uuids": matched_flow_uuids,
             "runtime_flow_uuids": runtime_flow_uuids,
             "factor_sources": factor_sources,
+            "factor_entries": [
+                {"row": row, "row_index": row, "col": flow_uuid, "value": value}
+                for (row, flow_uuid), value in c_entries_by_index.items()
+            ],
+            "characterized_indicator_keys": characterized_indicator_keys,
             "cache_hit": bool(cache_hits) and all(cache_hits),
             "runtime_source_count": len(existing_dirs),
         }
@@ -265,7 +272,7 @@ def _load_runtime_source(ef_dir: str, fingerprint: _RuntimeFingerprint) -> _Runt
                 if indicator_idx not in indicator_lookup or flow_idx not in index_to_flow_uuid:
                     continue
                 coeff = _to_float(row[coeff_col] if coeff_col < len(row) else None)
-                if coeff is None or coeff == 0:
+                if coeff is None:
                     continue
                 factors_by_flow_index.setdefault(flow_idx, []).append((indicator_idx, coeff))
 
@@ -317,9 +324,19 @@ def _build_source_c_matrix(
 
     return {
         "C": _build_matrix(indicator_ids, b_flow_ids, c_entries),
+        # Sparse matrices omit zeros, but coverage/provenance must retain explicit zero rows.
+        "factor_entries": [
+            {"row": row, "col": flow_uuid, "value": value}
+            for (row, flow_uuid), value in c_entries.items()
+        ],
         "indicator_lookup": indicator_lookup,
         "matched_flow_uuids": set(flow_index_to_uuid.values()),
         "runtime_flow_uuids": set(source.flow_uuid_to_index.keys()),
+        "characterized_indicator_keys": {
+            _canonical_ef31_indicator_key(indicator_lookup.get(indicator_idx, {}))
+            for factors in source.factors_by_flow_index.values()
+            for indicator_idx, _ in factors if indicator_idx in indicator_id_set
+        },
     }
 
 

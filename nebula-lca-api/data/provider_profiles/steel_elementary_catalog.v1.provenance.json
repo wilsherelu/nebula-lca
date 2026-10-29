@@ -14,7 +14,7 @@
   ],
   "reference_seed_sha256": "94ac0c4515fe7d2ebfb7f8ec740e3f4cb46887d7cfe97acbb14188ab51e9396a",
   "claim": "identity and unit metadata only; no characterization factors or LCI vectors",
-  "licence_status": "source redistribution terms not established; exact Flow licence evidence retained in snapshot",
+  "licence_status": "MIT; TianGong source licence and attribution retained in data/Tiangong/NOTICE.md and LICENSE.TianGong; exact Flow source declarations retained in snapshot",
   "unit_group_names": [
     "Units of energy",
     "Units of mass"

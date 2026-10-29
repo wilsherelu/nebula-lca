@@ -149,7 +149,7 @@ class ProviderProjectBackgroundPin(BaseModel):
     source_node_id: str = Field(min_length=1)
     reference_port_id: str = Field(min_length=1)
     provider_amount_per_consumer_unit: float = Field(gt=0, allow_inf_nan=False)
-    claim_role: Literal["user_declared_partial_background_leaf"] = "user_declared_partial_background_leaf"
+    claim_role: Literal["user_declared_partial_background_leaf", "user_declared_partial_background_network"] = "user_declared_partial_background_leaf"
 
 
 class ProviderProcessIdentityRef(BaseModel):
@@ -397,6 +397,89 @@ class ProviderMappedBackgroundProcessReceipt(BaseModel):
     consumer_attributed_activity_amount: float | None = None
     shared_process_total_activity_amount: float | None = None
     attributed_process_scale: float | None = None
+
+
+class ProviderPathWeightedContributionTerm(BaseModel):
+    schema_version: Literal["provider.lcia.path-weighted-contribution-term.v1"] = (
+        "provider.lcia.path-weighted-contribution-term.v1"
+    )
+    attribution_basis: Literal[
+        "foreground_direct",
+        "background_consumer_path",
+        "background_unattributed",
+    ]
+    consumer_exchange_id: str | None = None
+    consumer_process_uuid: str | None = None
+    provider_instance_id: str | None = None
+    background_process_content_hash: str | None = None
+    mapping_rule_id: str | None = None
+    mapping_package_id: str | None = None
+    mapping_package_version: str | None = None
+    mapping_package_hash: str | None = None
+    source_flow_uuid: str | None = None
+    source_flow_version: str | None = None
+    target_flow_uuid: str | None = None
+    amount_factor: float | None = None
+    mapping_level: Literal["L1", "L2"] | None = None
+    mapping_status: Literal["auto", "user_confirmed"] | None = None
+    process_uuid: str
+    exchange_id: str
+    source_namespace: str
+    flow_uuid: str
+    flow_version: str
+    flow_property_uuid: str | None = None
+    flow_property_version: str | None = None
+    unit_group_uuid: str | None = None
+    unit_group_version: str | None = None
+    amount: float
+    amount_unit: str
+    direction: Literal["input", "output"]
+    compartment: str | None = None
+    cf_method: str
+    cf_database_release: str
+    cf_indicator_key: str
+    cf_version: str
+    cf_presence: Literal["explicit_nonzero", "implicit_zero"]
+    cf_value: float
+    cf_hash: str
+    path_share: float = Field(ge=0, le=1)
+    consumer_attributed_activity_amount: float | None = None
+    shared_process_total_activity_amount: float | None = None
+    contribution_value: float
+    path_contribution_value: float
+    contribution_unit: str
+    flow_snapshot_hash: str | None = None
+    snapshot_hash: str
+    provider_graph_hash: str
+    solve_hash: str
+    provider_commit: str | None = None
+    claim_role: Literal["partial_background_leaf"] | None = None
+    claim_limit: str | None = None
+
+
+class ProviderPathWeightedContributionReceipt(BaseModel):
+    schema_version: Literal["provider.lcia.path-weighted-contribution-receipt.v1"] = (
+        "provider.lcia.path-weighted-contribution-receipt.v1"
+    )
+    method: str
+    database_release: str
+    canonical_indicator_key: str
+    indicator_index: int | None = None
+    indicator_unit: str
+    indicator_value: float
+    source_contribution_total: float
+    path_weighted_total: float
+    reconciliation_delta: float
+    attribution_coverage: Literal["complete", "partial", "missing", "foreground_only"]
+    unattributed_contribution_value: float
+    terms: list[ProviderPathWeightedContributionTerm] = Field(default_factory=list)
+    processes_without_path_attribution: list[dict[str, Any]] = Field(default_factory=list)
+    snapshot_hash: str
+    provider_graph_hash: str
+    solve_hash: str
+    provider_commit: str | None = None
+    runtime_assets_hash: str | None = None
+    content_hash: str | None = None
 
 
 class ProviderProcessIdentityReceipt(BaseModel):

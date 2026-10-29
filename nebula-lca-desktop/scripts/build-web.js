@@ -6,6 +6,6 @@ const repoRoot = path.resolve(process.cwd(), "..");
 const webRoot = path.join(repoRoot, "nebula-lca-web");
 const target = path.join(process.cwd(), "resources", "web");
 
-execFileSync("npm", ["run", "build"], { cwd: webRoot, stdio: "inherit", shell: process.platform === "win32" });
+execFileSync("pnpm", ["run", "build"], { cwd: webRoot, stdio: "inherit", shell: process.platform === "win32" });
 fs.rmSync(target, { recursive: true, force: true });
 fs.cpSync(path.join(webRoot, "dist"), target, { recursive: true });
